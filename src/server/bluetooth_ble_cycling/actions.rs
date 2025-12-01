@@ -128,6 +128,60 @@ impl Protocol for BluetoothBleCyclingProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE cycling sensor
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-cycling",
+                "instruction": "Simulate cycling at 25 km/h with 80 RPM cadence",
+                "startup_params": {
+                    "device_name": "NetGet-Cycling"
+                }
+            }),
+            // Script mode: Code-based cycling handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-cycling",
+                "startup_params": {
+                    "device_name": "NetGet-Cycling"
+                },
+                "event_handlers": [{
+                    "event_pattern": "cycling_measurement",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<cycling_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed cycling measurement
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-cycling",
+                "startup_params": {
+                    "device_name": "NetGet-Cycling"
+                },
+                "event_handlers": [{
+                    "event_pattern": "cycling_measurement",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "set_speed",
+                            "kmh": 25
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleCyclingProtocol {

@@ -290,6 +290,64 @@ impl Protocol for MongodbClientProtocol {
         "Database"
     }
 
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls MongoDB operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:27017",
+                "base_stack": "mongodb",
+                "instruction": "Find all users with age greater than 25 and summarize the results"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:27017",
+                "base_stack": "mongodb",
+                "event_handlers": [{
+                    "event_pattern": "mongodb_result_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mongodb_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed MongoDB query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:27017",
+                "base_stack": "mongodb",
+                "event_handlers": [
+                    {
+                        "event_pattern": "mongodb_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "find_documents",
+                                "collection": "users",
+                                "filter": {},
+                                "limit": 10
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "mongodb_result_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         vec![
             crate::llm::actions::ParameterDefinition {

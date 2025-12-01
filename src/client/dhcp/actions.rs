@@ -213,6 +213,63 @@ impl Protocol for DhcpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls DHCP discovery
+            json!({
+                "type": "open_client",
+                "remote_addr": "255.255.255.255:67",
+                "base_stack": "dhcp",
+                "instruction": "Send DHCP DISCOVER with MAC 00:11:22:33:44:55 and report the offered IP"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "255.255.255.255:67",
+                "base_stack": "dhcp",
+                "event_handlers": [{
+                    "event_pattern": "dhcp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dhcp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed DHCP discover on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "255.255.255.255:67",
+                "base_stack": "dhcp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "dhcp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "dhcp_discover",
+                                "mac_address": "00:11:22:33:44:55",
+                                "broadcast": true
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "dhcp_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

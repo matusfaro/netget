@@ -165,6 +165,50 @@ impl Protocol for IrcProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 6667,
+                "base_stack": "irc",
+                "instruction": "IRC chat server, send welcome on NICK/USER, echo messages back"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 6667,
+                "base_stack": "irc",
+                "event_handlers": [{
+                    "event_pattern": "irc_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle IRC messages\nmsg = event.get('message', '').strip()\nif msg.startswith('NICK'):\n    nick = msg.split()[1] if len(msg.split()) > 1 else 'guest'\n    respond([{'type': 'send_irc_welcome', 'nickname': nick, 'server': 'irc.netget.local', 'message': 'Welcome to NetGet IRC'}])\nelif msg.startswith('PING'):\n    token = msg.split(':')[1] if ':' in msg else ''\n    respond([{'type': 'send_irc_pong', 'token': token}])\nelif msg.startswith('JOIN'):\n    channel = msg.split()[1] if len(msg.split()) > 1 else '#general'\n    respond([{'type': 'send_irc_join', 'nickname': 'guest', 'channel': channel}])\nelse:\n    respond([{'type': 'wait_for_more'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 6667,
+                "base_stack": "irc",
+                "event_handlers": [{
+                    "event_pattern": "irc_message_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_irc_welcome",
+                            "nickname": "guest",
+                            "server": "irc.netget.local",
+                            "message": "Welcome to NetGet IRC"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

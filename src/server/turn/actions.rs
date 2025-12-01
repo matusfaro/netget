@@ -65,6 +65,48 @@ impl Protocol for TurnProtocol {
     fn group_name(&self) -> &'static str {
         "Proxy & Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 3478,
+                "base_stack": "turn",
+                "instruction": "TURN relay server for NAT traversal. Allocate relay addresses on request. Grant 600 second lifetimes for allocations."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 3478,
+                "base_stack": "turn",
+                "event_handlers": [{
+                    "event": "turn_allocate_request",
+                    "script": "return {type='send_turn_allocate_response', relay_address='203.0.113.100:55000', transaction_id=event.transaction_id, lifetime_seconds=600}"
+                }, {
+                    "event": "turn_refresh_request",
+                    "script": "return {type='send_turn_refresh_response', transaction_id=event.transaction_id, lifetime_seconds=600}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 3478,
+                "base_stack": "turn",
+                "event_handlers": [{
+                    "event": "turn_allocate_request",
+                    "static_response": [{
+                        "type": "send_turn_allocate_response",
+                        "relay_address": "203.0.113.100:55000",
+                        "transaction_id": "0123456789abcdef01234567",
+                        "lifetime_seconds": 600
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

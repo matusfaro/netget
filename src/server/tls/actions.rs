@@ -88,6 +88,59 @@ impl Protocol for TlsProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "port": 8443,
+                "base_stack": "tls",
+                "instruction": "Secure TLS server for custom encrypted protocols"
+            }),
+            json!({
+                "type": "open_server",
+                "port": 8443,
+                "base_stack": "tls",
+                "event_handlers": [{
+                    "event_pattern": "tls_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tls_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "port": 8443,
+                "base_stack": "tls",
+                "event_handlers": [
+                    {
+                        "event_pattern": "tls_connection_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_tls_data",
+                                "data": "220 Welcome to secure server\r\n"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "tls_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_tls_data",
+                                "data": "OK\r\n"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

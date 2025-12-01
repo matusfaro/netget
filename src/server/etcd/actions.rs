@@ -241,6 +241,53 @@ impl Protocol for EtcdProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all etcd responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 2379,
+                "base_stack": "etcd",
+                "instruction": "etcd v3 key-value store handling Range, Put, Delete operations"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 2379,
+                "base_stack": "etcd",
+                "event_handlers": [{
+                    "event_pattern": "etcd_range_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<etcd_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 2379,
+                "base_stack": "etcd",
+                "event_handlers": [{
+                    "event_pattern": "etcd_range_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "etcd_range_response",
+                            "kvs": [],
+                            "more": false,
+                            "count": 0
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

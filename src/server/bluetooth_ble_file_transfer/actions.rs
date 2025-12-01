@@ -64,6 +64,59 @@ impl Protocol for BluetoothBleFileTransferProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE file transfer device
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-file-transfer",
+                "instruction": "Act as a BLE file transfer device that accepts and sends files",
+                "startup_params": {
+                    "device_name": "NetGet-FileTransfer"
+                }
+            }),
+            // Script mode: Code-based file transfer handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-file-transfer",
+                "startup_params": {
+                    "device_name": "NetGet-FileTransfer"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_file_transfer_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<file_transfer_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed file transfer action
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-file-transfer",
+                "startup_params": {
+                    "device_name": "NetGet-FileTransfer"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_file_transfer_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleFileTransferProtocol {

@@ -230,6 +230,52 @@ impl Protocol for LdapProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all LDAP responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 389,
+                "base_stack": "ldap",
+                "instruction": "LDAP directory server handling bind and search operations"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 389,
+                "base_stack": "ldap",
+                "event_handlers": [{
+                    "event_pattern": "ldap_search",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ldap_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 389,
+                "base_stack": "ldap",
+                "event_handlers": [{
+                    "event_pattern": "ldap_bind",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "ldap_bind_response",
+                            "message_id": 1,
+                            "success": true
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -128,6 +128,60 @@ impl Protocol for BluetoothBleRunningProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE running sensor
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-running",
+                "instruction": "Simulate running at 5:30 min/km pace with 180 SPM cadence",
+                "startup_params": {
+                    "device_name": "NetGet-Running"
+                }
+            }),
+            // Script mode: Code-based running handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-running",
+                "startup_params": {
+                    "device_name": "NetGet-Running"
+                },
+                "event_handlers": [{
+                    "event_pattern": "running_measurement",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<running_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed running measurement
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-running",
+                "startup_params": {
+                    "device_name": "NetGet-Running"
+                },
+                "event_handlers": [{
+                    "event_pattern": "running_measurement",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "set_pace",
+                            "min_per_km": 5.5
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleRunningProtocol {

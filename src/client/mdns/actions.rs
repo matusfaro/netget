@@ -205,6 +205,62 @@ impl Protocol for MdnsClientProtocol {
     fn group_name(&self) -> &'static str {
         "DNS"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls mDNS service discovery
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:5353",
+                "base_stack": "mdns",
+                "instruction": "Browse for HTTP services on the local network and list all discovered web servers"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:5353",
+                "base_stack": "mdns",
+                "event_handlers": [{
+                    "event_pattern": "mdns_service_resolved",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mdns_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed mDNS browse on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:5353",
+                "base_stack": "mdns",
+                "event_handlers": [
+                    {
+                        "event_pattern": "mdns_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "browse_service",
+                                "service_type": "_http._tcp.local"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "mdns_service_resolved",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

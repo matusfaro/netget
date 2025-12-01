@@ -366,6 +366,63 @@ impl Protocol for MavenClientProtocol {
     fn group_name(&self) -> &'static str {
         "Package Managers"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Maven operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "repo.maven.apache.org",
+                "base_stack": "maven",
+                "instruction": "Download commons-lang3 version 3.12.0 and show its dependencies"
+            }),
+            // Script mode: Code-based artifact handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "repo.maven.apache.org",
+                "base_stack": "maven",
+                "event_handlers": [{
+                    "event_pattern": "maven_artifact_downloaded",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<maven_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed artifact download
+            json!({
+                "type": "open_client",
+                "remote_addr": "repo.maven.apache.org",
+                "base_stack": "maven",
+                "event_handlers": [
+                    {
+                        "event_pattern": "maven_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "download_artifact",
+                                "group_id": "org.apache.commons",
+                                "artifact_id": "commons-lang3",
+                                "version": "3.12.0"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "maven_artifact_downloaded",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

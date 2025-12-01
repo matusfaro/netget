@@ -93,6 +93,52 @@ impl Protocol for CassandraProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all Cassandra responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 9042,
+                "base_stack": "cassandra",
+                "instruction": "Cassandra/CQL database server answering queries"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 9042,
+                "base_stack": "cassandra",
+                "event_handlers": [{
+                    "event_pattern": "cassandra_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<cassandra_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 9042,
+                "base_stack": "cassandra",
+                "event_handlers": [{
+                    "event_pattern": "cassandra_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "cassandra_result_rows",
+                            "columns": [{"name": "result", "type": "varchar"}],
+                            "rows": [["OK"]]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

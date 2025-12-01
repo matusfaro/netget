@@ -364,6 +364,54 @@ impl Protocol for UsbClientProtocol {
     fn group_name(&self) -> &'static str {
         "Hardware"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles USB device operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "usb:1234:5678",
+                "base_stack": "usb",
+                "instruction": "Connect to USB device and get device descriptor"
+            }),
+            // Script mode: Code-based USB handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "usb:1234:5678",
+                "base_stack": "usb",
+                "event_handlers": [{
+                    "event_pattern": "usb_device_opened",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<usb_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed USB action
+            json!({
+                "type": "open_client",
+                "remote_addr": "usb:1234:5678",
+                "base_stack": "usb",
+                "event_handlers": [{
+                    "event_pattern": "usb_device_opened",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "control_transfer",
+                            "request_type": 128,
+                            "request": 6,
+                            "value": 256,
+                            "index": 0,
+                            "length": 18
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

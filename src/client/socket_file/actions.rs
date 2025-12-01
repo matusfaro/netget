@@ -158,6 +158,51 @@ impl Protocol for SocketFileClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles Unix socket client
+            json!({
+                "type": "open_client",
+                "remote_addr": "./app.sock",
+                "base_stack": "socket-file",
+                "instruction": "Connect to Unix socket and send 'PING', echo responses"
+            }),
+            // Script mode: Code-based socket handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "./app.sock",
+                "base_stack": "socket-file",
+                "event_handlers": [{
+                    "event_pattern": "socket_file_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<socket_file_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed socket response
+            json!({
+                "type": "open_client",
+                "remote_addr": "./app.sock",
+                "base_stack": "socket-file",
+                "event_handlers": [{
+                    "event_pattern": "socket_file_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_socket_file_data",
+                            "data_hex": "48454c4c4f"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

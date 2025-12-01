@@ -272,6 +272,60 @@ impl Protocol for McpClientProtocol {
     fn group_name(&self) -> &'static str {
         "RPC & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls MCP operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:8000",
+                "base_stack": "mcp",
+                "instruction": "List available tools and call the calculate tool with expression 2+2"
+            }),
+            // Script mode: Code-based MCP handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:8000",
+                "base_stack": "mcp",
+                "event_handlers": [{
+                    "event_pattern": "mcp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mcp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed MCP tool call
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:8000",
+                "base_stack": "mcp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "mcp_client_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "list_tools"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "mcp_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

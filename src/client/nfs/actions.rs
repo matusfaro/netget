@@ -305,6 +305,61 @@ impl Protocol for NfsClientProtocol {
     fn group_name(&self) -> &'static str {
         "File Sharing"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls NFS operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:/export/data",
+                "base_stack": "nfs",
+                "instruction": "Read /readme.txt and list the root directory"
+            }),
+            // Script mode: Code-based file operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:/export/data",
+                "base_stack": "nfs",
+                "event_handlers": [{
+                    "event_pattern": "nfs_operation_result",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<nfs_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed file read
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:/export/data",
+                "base_stack": "nfs",
+                "event_handlers": [
+                    {
+                        "event_pattern": "nfs_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "nfs_list_dir",
+                                "path": "/"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "nfs_operation_result",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 impl Client for NfsClientProtocol {

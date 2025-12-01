@@ -123,13 +123,8 @@ impl ProtocolExampleTest {
             .get(&self.protocol_name)
             .ok_or_else(|| format!("Protocol '{}' not found in registry", self.protocol_name))?;
 
-        // Get startup examples
-        let startup_examples = protocol.get_startup_examples().ok_or_else(|| {
-            format!(
-                "Protocol '{}' has no startup examples defined",
-                self.protocol_name
-            )
-        })?;
+        // Get startup examples (required for all protocols)
+        let _startup_examples = protocol.get_startup_examples();
 
         // Get event types for mock configuration
         let event_types = protocol.get_event_types();
@@ -241,7 +236,7 @@ impl ProtocolExampleTest {
         protocol: &Arc<dyn Server>,
         event_types: &[netget::protocol::event_type::EventType],
     ) -> E2EResult<MockLlmBuilder> {
-        let startup_examples = protocol.get_startup_examples().unwrap();
+        let startup_examples = protocol.get_startup_examples();
         let mut builder = MockLlmBuilder::new();
 
         // Configure mock for server startup (user command interpretation)
@@ -386,12 +381,11 @@ pub fn get_all_protocol_names() -> Vec<String> {
         .collect()
 }
 
-/// Get protocols that have startup examples defined
+/// Get all protocols (all protocols now have startup examples as it's required)
 pub fn get_protocols_with_examples() -> Vec<String> {
     let reg = registry();
     reg.all_protocols()
         .into_iter()
-        .filter(|(_, protocol)| protocol.get_startup_examples().is_some())
         .map(|(name, _)| name)
         .collect()
 }

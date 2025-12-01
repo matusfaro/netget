@@ -311,6 +311,46 @@ impl Protocol for WebRtcProtocol {
     fn group_name(&self) -> &'static str {
         "Real-time"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "webrtc",
+                "instruction": "WebRTC data channel server. Accept peer connections via manual SDP exchange. Echo messages back to connected peers."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "webrtc",
+                "event_handlers": [{
+                    "event": "webrtc_peer_connected",
+                    "script": "return {type='send_message', message='Welcome to NetGet WebRTC!'}"
+                }, {
+                    "event": "webrtc_message_received",
+                    "script": "return {type='send_message', message='Echo: '..event.message}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "webrtc",
+                "event_handlers": [{
+                    "event": "webrtc_peer_connected",
+                    "static_response": [{
+                        "type": "send_message",
+                        "message": "Welcome to NetGet WebRTC server!"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

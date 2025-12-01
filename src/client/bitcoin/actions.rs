@@ -343,6 +343,61 @@ impl Protocol for BitcoinClientProtocol {
     fn group_name(&self) -> &'static str {
         "Blockchain"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles Bitcoin RPC queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8332",
+                "base_stack": "bitcoin",
+                "instruction": "Connect to Bitcoin Core and get blockchain info",
+                "startup_params": {
+                    "rpc_user": "bitcoinrpc",
+                    "rpc_password": "password"
+                }
+            }),
+            // Script mode: Code-based Bitcoin RPC handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8332",
+                "base_stack": "bitcoin",
+                "startup_params": {
+                    "rpc_user": "bitcoinrpc",
+                    "rpc_password": "password"
+                },
+                "event_handlers": [{
+                    "event_pattern": "bitcoin_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bitcoin_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Bitcoin RPC action
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8332",
+                "base_stack": "bitcoin",
+                "startup_params": {
+                    "rpc_user": "bitcoinrpc",
+                    "rpc_password": "password"
+                },
+                "event_handlers": [{
+                    "event_pattern": "bitcoin_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "get_blockchain_info"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

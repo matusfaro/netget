@@ -183,10 +183,10 @@ impl Protocol for FtpProtocol {
         "Application"
     }
 
-    fn get_startup_examples(&self) -> Option<crate::llm::actions::StartupExamples> {
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
-        Some(StartupExamples::new(
+        StartupExamples::new(
             // LLM mode: LLM handles all FTP responses intelligently
             json!({
                 "type": "open_server",
@@ -228,7 +228,7 @@ impl Protocol for FtpProtocol {
                     }
                 }]
             }),
-        ))
+        )
     }
 }
 

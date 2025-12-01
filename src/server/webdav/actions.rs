@@ -62,6 +62,41 @@ impl Protocol for WebDavProtocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles WebDAV with library-driven filesystem
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "webdav",
+                "instruction": "WebDAV file server with virtual filesystem"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "webdav",
+                "event_handlers": [{
+                    "event_pattern": "webdav_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<webdav_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Library-driven (no static actions for WebDAV)
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "webdav"
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

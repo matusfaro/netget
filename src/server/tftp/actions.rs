@@ -174,6 +174,52 @@ impl Protocol for TftpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all TFTP responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 69,
+                "base_stack": "tftp",
+                "instruction": "TFTP file transfer server for network booting"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 69,
+                "base_stack": "tftp",
+                "event_handlers": [{
+                    "event_pattern": "tftp_read_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tftp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 69,
+                "base_stack": "tftp",
+                "event_handlers": [{
+                    "event_pattern": "tftp_read_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_tftp_error",
+                            "error_code": 1,
+                            "error_message": "File not found"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

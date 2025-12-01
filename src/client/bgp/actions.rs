@@ -237,6 +237,73 @@ impl Protocol for BgpClientProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls BGP session and route monitoring
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:179",
+                "base_stack": "bgp",
+                "instruction": "Establish BGP session and monitor routing updates",
+                "startup_params": {
+                    "local_as": 65000,
+                    "router_id": "192.168.1.100"
+                }
+            }),
+            // Script mode: Code-based BGP update handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:179",
+                "base_stack": "bgp",
+                "startup_params": {
+                    "local_as": 65000,
+                    "router_id": "192.168.1.100"
+                },
+                "event_handlers": [{
+                    "event_pattern": "bgp_update_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bgp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed BGP keepalive response
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:179",
+                "base_stack": "bgp",
+                "startup_params": {
+                    "local_as": 65000,
+                    "router_id": "192.168.1.100",
+                    "hold_time": 180
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "bgp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_keepalive"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "bgp_update_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_keepalive"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -223,6 +223,49 @@ impl Protocol for TorrentDhtClientProtocol {
     fn group_name(&self) -> &'static str {
         "P2P"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles DHT queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "router.bittorrent.com:6881",
+                "base_stack": "torrent-dht",
+                "instruction": "Query the DHT for peers with a specific info_hash"
+            }),
+            // Script mode: Code-based DHT handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "router.bittorrent.com:6881",
+                "base_stack": "torrent-dht",
+                "event_handlers": [{
+                    "event_pattern": "dht_response",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dht_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed DHT action
+            json!({
+                "type": "open_client",
+                "remote_addr": "router.bittorrent.com:6881",
+                "base_stack": "torrent-dht",
+                "event_handlers": [{
+                    "event_pattern": "dht_response",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "disconnect"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

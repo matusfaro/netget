@@ -139,15 +139,9 @@ pub trait Protocol: Send + Sync {
     /// All examples must be valid `open_server` or `open_client` actions
     /// that can be directly executed. They are validated by parameterized tests.
     ///
-    /// # Returns
-    /// - `Some(StartupExamples)` - Examples for this protocol
-    /// - `None` - Protocol has not yet provided startup examples
-    ///
-    /// Default implementation returns `None`. Protocols should override this
-    /// to provide protocol-specific examples.
-    fn get_startup_examples(&self) -> Option<StartupExamples> {
-        None
-    }
+    /// This method is REQUIRED for all protocols. Every protocol must provide
+    /// valid startup examples for all three modes (llm, script, static).
+    fn get_startup_examples(&self) -> StartupExamples;
 
     /// Get the group name for categorizing this protocol
     ///

@@ -226,6 +226,60 @@ impl Protocol for OpenApiProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "openapi",
+                "instruction": "OpenAPI server for TODO API. GET /todos returns list, POST /todos creates item, GET /todos/{id} returns single item",
+                "startup_params": {
+                    "spec": "openapi: 3.1.0\ninfo:\n  title: TODO API\n  version: 1.0.0\npaths:\n  /todos:\n    get:\n      operationId: listTodos\n      responses:\n        '200':\n          description: List of todos"
+                }
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "openapi",
+                "startup_params": {
+                    "spec": "openapi: 3.1.0\ninfo:\n  title: API\n  version: 1.0.0\npaths:\n  /items:\n    get:\n      operationId: listItems\n      responses:\n        '200':\n          description: OK"
+                },
+                "event_handlers": [{
+                    "event_pattern": "openapi_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "path = event.get('path', '')\nif path == '/items':\n    action('send_openapi_response', status_code=200, headers={'content-type': 'application/json'}, body='[{\"id\": 1}]')\nelse:\n    action('send_openapi_response', status_code=404, body='{\"error\": \"Not found\"}')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "openapi",
+                "startup_params": {
+                    "spec": "openapi: 3.1.0\ninfo:\n  title: Health API\n  version: 1.0.0\npaths:\n  /health:\n    get:\n      operationId: healthCheck\n      responses:\n        '200':\n          description: OK"
+                },
+                "event_handlers": [{
+                    "event_pattern": "openapi_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_openapi_response",
+                            "status_code": 200,
+                            "headers": {"content-type": "application/json"},
+                            "body": "{\"status\": \"healthy\"}"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

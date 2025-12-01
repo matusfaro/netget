@@ -66,6 +66,45 @@ impl Protocol for PypiProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "pypi",
+                "instruction": "PyPI repository server. Serve package 'hello-world' version 1.0.0. Return HTML package listings for /simple/ and package files for downloads."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "pypi",
+                "event_handlers": [{
+                    "event": "pypi_request",
+                    "script": "if event.request_type == 'list_packages' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a></body></html>'} elseif event.request_type == 'list_files' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello_world-1.0.0-py3-none-any.whl\">hello_world-1.0.0-py3-none-any.whl</a></body></html>'} else return {type='send_pypi_response', status=404, body='Not found'} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "pypi",
+                "event_handlers": [{
+                    "event": "pypi_request",
+                    "static_response": [{
+                        "type": "send_pypi_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "text/html"},
+                        "body": "<!DOCTYPE html>\n<html>\n<body>\n<a href=\"hello-world/\">hello-world</a>\n</body>\n</html>"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

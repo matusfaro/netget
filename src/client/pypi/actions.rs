@@ -275,6 +275,61 @@ impl Protocol for PypiClientProtocol {
     fn group_name(&self) -> &'static str {
         "Package Registries"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls PyPI queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "pypi.org",
+                "base_stack": "pypi",
+                "instruction": "Get information about the requests package"
+            }),
+            // Script mode: Code-based package handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "pypi.org",
+                "base_stack": "pypi",
+                "event_handlers": [{
+                    "event_pattern": "pypi_package_info_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<pypi_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed package query
+            json!({
+                "type": "open_client",
+                "remote_addr": "pypi.org",
+                "base_stack": "pypi",
+                "event_handlers": [
+                    {
+                        "event_pattern": "pypi_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "get_package_info",
+                                "package_name": "requests"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "pypi_package_info_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

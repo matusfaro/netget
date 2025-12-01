@@ -355,6 +355,57 @@ impl Protocol for NfcClientProtocol {
             },
         ]
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles NFC reader operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "nfc:0",
+                "base_stack": "nfc",
+                "instruction": "Connect to NFC reader and read NDEF data from tag",
+                "startup_params": {
+                    "reader_index": 0
+                }
+            }),
+            // Script mode: Code-based NFC handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "nfc:0",
+                "base_stack": "nfc",
+                "startup_params": {
+                    "reader_index": 0
+                },
+                "event_handlers": [{
+                    "event_pattern": "nfc_card_detected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<nfc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed NFC action
+            json!({
+                "type": "open_client",
+                "remote_addr": "nfc:0",
+                "base_stack": "nfc",
+                "startup_params": {
+                    "reader_index": 0
+                },
+                "event_handlers": [{
+                    "event_pattern": "nfc_card_detected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "read_ndef"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Client for NfcClientProtocol {

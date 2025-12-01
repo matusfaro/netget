@@ -64,6 +64,52 @@ impl Protocol for SnmpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 161,
+                "base_stack": "snmp",
+                "instruction": "SNMP agent serving OID 1.3.6.1.2.1.1.1.0 (sysDescr) as 'NetGet SNMP Server v1.0'"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 161,
+                "base_stack": "snmp",
+                "event_handlers": [{
+                    "event_pattern": "snmp_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle SNMP GET request\noids = event.get('oids', [])\nvariables = [{'oid': oid, 'type': 'string', 'value': 'NetGet SNMP Server'} for oid in oids]\nrespond([{'type': 'send_snmp_response', 'variables': variables}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 161,
+                "base_stack": "snmp",
+                "event_handlers": [{
+                    "event_pattern": "snmp_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_snmp_response",
+                            "variables": [{
+                                "oid": "1.3.6.1.2.1.1.1.0",
+                                "type": "string",
+                                "value": "NetGet SNMP Server v1.0"
+                            }]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

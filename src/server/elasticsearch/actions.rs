@@ -364,6 +364,53 @@ impl Protocol for ElasticsearchProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all Elasticsearch responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 9200,
+                "base_stack": "elasticsearch",
+                "instruction": "Elasticsearch search engine handling API requests"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 9200,
+                "base_stack": "elasticsearch",
+                "event_handlers": [{
+                    "event_pattern": "elasticsearch_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<elasticsearch_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 9200,
+                "base_stack": "elasticsearch",
+                "event_handlers": [{
+                    "event_pattern": "elasticsearch_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_cluster_info",
+                            "cluster_name": "netget-elasticsearch",
+                            "status": "green",
+                            "version": "8.0.0"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -238,6 +238,49 @@ impl Protocol for NntpProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 119,
+                "base_stack": "nntp",
+                "instruction": "NNTP news server with newsgroups comp.lang.rust and misc.test"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 119,
+                "base_stack": "nntp",
+                "event_handlers": [{
+                    "event_pattern": "nntp_command_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle NNTP commands\ncmd = event.get('command', '').upper()\nif cmd == 'LIST':\n    respond([{'type': 'send_nntp_list', 'groups': [{'name': 'comp.lang.rust', 'high': 100, 'low': 1, 'status': 'y'}]}])\nelif cmd.startswith('GROUP'):\n    respond([{'type': 'send_nntp_group', 'name': 'comp.lang.rust', 'count': 100, 'low': 1, 'high': 100}])\nelif cmd == 'QUIT':\n    respond([{'type': 'send_nntp_response', 'code': 205, 'text': 'Goodbye'}])\nelse:\n    respond([{'type': 'send_nntp_response', 'code': 200, 'text': 'OK'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 119,
+                "base_stack": "nntp",
+                "event_handlers": [{
+                    "event_pattern": "nntp_command_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_nntp_response",
+                            "code": 200,
+                            "text": "NetGet NNTP Server Ready"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

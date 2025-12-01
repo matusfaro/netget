@@ -62,6 +62,50 @@ impl Protocol for VncProtocol {
     fn group_name(&self) -> &'static str {
         "Network Services"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all VNC responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 5900,
+                "base_stack": "vnc",
+                "instruction": "VNC remote desktop server displaying content"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 5900,
+                "base_stack": "vnc",
+                "event_handlers": [{
+                    "event_pattern": "vnc_framebuffer_update_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<vnc_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 5900,
+                "base_stack": "vnc",
+                "event_handlers": [{
+                    "event_pattern": "vnc_auth_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "vnc_auth_success"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
                 ActionDefinition {

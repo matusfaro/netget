@@ -223,6 +223,49 @@ impl Protocol for TorrentPeerClientProtocol {
     fn group_name(&self) -> &'static str {
         "P2P"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles peer wire protocol
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:6881",
+                "base_stack": "torrent-peer",
+                "instruction": "Connect to peer and exchange pieces for a torrent"
+            }),
+            // Script mode: Code-based peer handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:6881",
+                "base_stack": "torrent-peer",
+                "event_handlers": [{
+                    "event_pattern": "peer_handshake",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<peer_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed peer action
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:6881",
+                "base_stack": "torrent-peer",
+                "event_handlers": [{
+                    "event_pattern": "peer_message",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "disconnect"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -226,6 +226,60 @@ impl Protocol for SshAgentClientProtocol {
     fn group_name(&self) -> &'static str {
         "Security"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SSH agent operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "./ssh-agent.sock",
+                "base_stack": "ssh-agent",
+                "instruction": "List all identities and sign 'Hello World' with the first key"
+            }),
+            // Script mode: Code-based agent operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "./ssh-agent.sock",
+                "base_stack": "ssh-agent",
+                "event_handlers": [{
+                    "event_pattern": "ssh_agent_client_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ssh_agent_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed identity request
+            json!({
+                "type": "open_client",
+                "remote_addr": "./ssh-agent.sock",
+                "base_stack": "ssh-agent",
+                "event_handlers": [
+                    {
+                        "event_pattern": "ssh_agent_client_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "request_identities"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ssh_agent_client_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -137,6 +137,60 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE weight scale
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-weight-scale",
+                "instruction": "Act as a weight scale showing 70.5 kg with BMI calculation",
+                "startup_params": {
+                    "device_name": "NetGet-WeightScale"
+                }
+            }),
+            // Script mode: Code-based weight handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-weight-scale",
+                "startup_params": {
+                    "device_name": "NetGet-WeightScale"
+                },
+                "event_handlers": [{
+                    "event_pattern": "weight_measurement",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<weight_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed weight measurement
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-weight-scale",
+                "startup_params": {
+                    "device_name": "NetGet-WeightScale"
+                },
+                "event_handlers": [{
+                    "event_pattern": "weight_measurement",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "set_weight",
+                            "kg": 70.5
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleWeightScaleProtocol {

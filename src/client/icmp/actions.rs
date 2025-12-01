@@ -71,6 +71,54 @@ impl Protocol for IcmpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles ICMP client
+            json!({
+                "type": "open_client",
+                "remote_addr": "8.8.8.8",
+                "base_stack": "icmp",
+                "instruction": "Ping 8.8.8.8 five times and report average latency"
+            }),
+            // Script mode: Code-based ICMP handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "8.8.8.8",
+                "base_stack": "icmp",
+                "event_handlers": [{
+                    "event_pattern": "icmp_echo_reply",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<icmp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed ICMP ping
+            json!({
+                "type": "open_client",
+                "remote_addr": "8.8.8.8",
+                "base_stack": "icmp",
+                "event_handlers": [{
+                    "event_pattern": "icmp_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_echo_request",
+                            "destination_ip": "8.8.8.8",
+                            "identifier": 1234,
+                            "sequence": 1,
+                            "ttl": 64
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

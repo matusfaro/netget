@@ -97,6 +97,46 @@ impl Protocol for IsisProtocol {
     fn group_name(&self) -> &'static str {
         "Experimental"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles IS-IS adjacency formation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "isis",
+                "instruction": "IS-IS router with system-id 0000.0000.0001 in area 49.0001. Respond to Hello PDUs and form adjacencies with neighbors."
+            }),
+            // Script mode: Scripted IS-IS Hello response
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "isis",
+                "event_handlers": [{
+                    "event": "isis_hello",
+                    "script": "return {type='send_isis_hello', pdu_type='lan_hello_l2', system_id='0000.0000.0001', area_id='49.0001', holding_time=30}"
+                }]
+            }),
+            // Static mode: Fixed IS-IS Hello response
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "isis",
+                "event_handlers": [{
+                    "event": "isis_hello",
+                    "static_response": [{
+                        "type": "send_isis_hello",
+                        "pdu_type": "lan_hello_l2",
+                        "system_id": "0000.0000.0001",
+                        "area_id": "49.0001",
+                        "holding_time": 30
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

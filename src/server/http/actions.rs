@@ -69,11 +69,11 @@ impl Protocol for HttpProtocol {
         "Core"
     }
 
-    fn get_startup_examples(&self) -> Option<crate::llm::actions::StartupExamples> {
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
-        Some(StartupExamples::new(
+        StartupExamples::new(
             // LLM mode: LLM handles all HTTP responses intelligently
             json!({
                 "type": "open_server",
@@ -113,7 +113,7 @@ impl Protocol for HttpProtocol {
                     }
                 }]
             }),
-        ))
+        )
     }
 }
 

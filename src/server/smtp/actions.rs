@@ -224,6 +224,48 @@ impl Protocol for SmtpProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 25,
+                "base_stack": "smtp",
+                "instruction": "SMTP server accepting mail for any domain, respond with 220 greeting and standard SMTP flow"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 25,
+                "base_stack": "smtp",
+                "event_handlers": [{
+                    "event_pattern": "smtp_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle SMTP commands\ncmd = event.get('command', '').upper()\nif cmd.startswith('EHLO') or cmd.startswith('HELO'):\n    respond([{'type': 'send_smtp_ehlo', 'hostname': 'mail.example.com', 'extensions': ['8BITMIME', 'SIZE 10240000']}])\nelif cmd.startswith('MAIL FROM'):\n    respond([{'type': 'send_smtp_ok', 'message': 'Sender OK'}])\nelif cmd.startswith('RCPT TO'):\n    respond([{'type': 'send_smtp_ok', 'message': 'Recipient OK'}])\nelif cmd == 'DATA':\n    respond([{'type': 'send_smtp_start_data'}])\nelif cmd == 'QUIT':\n    respond([{'type': 'send_smtp_quit'}])\nelse:\n    respond([{'type': 'send_smtp_ok'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 25,
+                "base_stack": "smtp",
+                "event_handlers": [{
+                    "event_pattern": "smtp_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_smtp_ok",
+                            "message": "OK"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -69,6 +69,52 @@ impl Protocol for TorrentDhtProtocol {
     fn group_name(&self) -> &'static str {
         "P2P"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BitTorrent DHT
+            json!({
+                "type": "open_server",
+                "port": 6881,
+                "base_stack": "torrent-dht",
+                "instruction": "Act as BitTorrent DHT node. Respond to ping, find_node, and get_peers queries"
+            }),
+            // Script mode: Code-based DHT handling
+            json!({
+                "type": "open_server",
+                "port": 6881,
+                "base_stack": "torrent-dht",
+                "event_handlers": [{
+                    "event_pattern": "dht_ping_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dht_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed DHT responses
+            json!({
+                "type": "open_server",
+                "port": 6881,
+                "base_stack": "torrent-dht",
+                "event_handlers": [{
+                    "event_pattern": "dht_ping_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_ping_response",
+                            "transaction_id": "aa",
+                            "node_id": "0123456789abcdef0123456789abcdef01234567"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

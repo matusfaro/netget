@@ -69,6 +69,54 @@ impl Protocol for SamlSpProtocol {
     fn group_name(&self) -> &'static str {
         "Authentication"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles SAML SP authorization
+            json!({
+                "type": "open_server",
+                "port": 8081,
+                "base_stack": "saml-sp",
+                "instruction": "Accept SAML assertions from IDP and grant access to authenticated users"
+            }),
+            // Script mode: Code-based SAML SP handling
+            json!({
+                "type": "open_server",
+                "port": 8081,
+                "base_stack": "saml-sp",
+                "event_handlers": [{
+                    "event_pattern": "saml_sp_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<saml_sp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed SAML SP action
+            json!({
+                "type": "open_server",
+                "port": 8081,
+                "base_stack": "saml-sp",
+                "event_handlers": [{
+                    "event_pattern": "saml_sp_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "process_assertion",
+                            "user_id": "testuser",
+                            "attributes": {
+                                "email": "test@example.com",
+                                "role": "user"
+                            }
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

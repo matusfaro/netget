@@ -210,6 +210,61 @@ impl Protocol for TelnetClientProtocol {
     fn group_name(&self) -> &'static str {
         "Infrastructure"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Telnet session
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:23",
+                "base_stack": "telnet",
+                "instruction": "Login and execute 'whoami' command"
+            }),
+            // Script mode: Code-based command handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:23",
+                "base_stack": "telnet",
+                "event_handlers": [{
+                    "event_pattern": "telnet_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<telnet_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed command sequence
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:23",
+                "base_stack": "telnet",
+                "event_handlers": [
+                    {
+                        "event_pattern": "telnet_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_command",
+                                "command": "whoami"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "telnet_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

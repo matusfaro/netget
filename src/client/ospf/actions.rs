@@ -407,6 +407,66 @@ impl Protocol for OspfClientProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls OSPF client for topology discovery
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:0",
+                "base_stack": "ospf",
+                "instruction": "Discover OSPF neighbors in area 0 and request topology info"
+            }),
+            // Script mode: Code-based handling of OSPF events
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:0",
+                "base_stack": "ospf",
+                "event_handlers": [{
+                    "event_pattern": "ospf_hello_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ospf_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed OSPF Hello sending
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:0",
+                "base_stack": "ospf",
+                "event_handlers": [
+                    {
+                        "event_pattern": "ospf_client_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_hello",
+                                "router_id": "1.1.1.1",
+                                "area_id": "0.0.0.0",
+                                "network_mask": "255.255.255.0",
+                                "priority": 0,
+                                "neighbors": [],
+                                "destination": "multicast"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ospf_hello_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

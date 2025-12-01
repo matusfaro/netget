@@ -104,6 +104,51 @@ impl Protocol for DotProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 853,
+                "base_stack": "dot",
+                "instruction": "DNS-over-TLS server resolving all A queries for example.com to 93.184.216.34, NXDOMAIN for others"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 853,
+                "base_stack": "dot",
+                "event_handlers": [{
+                    "event_pattern": "dot_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Echo DNS response over TLS\nif event.get('domain') == 'example.com':\n    respond([{'type': 'send_dns_a_response', 'query_id': event['query_id'], 'domain': event['domain'], 'ip': '93.184.216.34'}])\nelse:\n    respond([{'type': 'send_dns_nxdomain', 'query_id': event['query_id'], 'domain': event['domain']}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 853,
+                "base_stack": "dot",
+                "event_handlers": [{
+                    "event_pattern": "dot_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_dns_a_response",
+                            "query_id": 0,
+                            "domain": "example.com",
+                            "ip": "127.0.0.1",
+                            "ttl": 300
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

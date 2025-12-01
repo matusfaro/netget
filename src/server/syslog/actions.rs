@@ -63,6 +63,51 @@ impl Protocol for SyslogProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all syslog messages intelligently
+            json!({
+                "type": "open_server",
+                "port": 514,
+                "base_stack": "syslog",
+                "instruction": "Syslog server collecting and analyzing system logs"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 514,
+                "base_stack": "syslog",
+                "event_handlers": [{
+                    "event_pattern": "syslog_message",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<syslog_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 514,
+                "base_stack": "syslog",
+                "event_handlers": [{
+                    "event_pattern": "syslog_message",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "store_syslog_message",
+                            "message": ""
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

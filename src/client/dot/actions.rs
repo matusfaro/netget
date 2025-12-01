@@ -222,6 +222,63 @@ impl Protocol for DotClientProtocol {
     fn group_name(&self) -> &'static str {
         "DNS"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls DNS queries over TLS
+            json!({
+                "type": "open_client",
+                "remote_addr": "dns.google:853",
+                "base_stack": "dot",
+                "instruction": "Query example.com for A and AAAA records, then report the IP addresses"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "dns.google:853",
+                "base_stack": "dot",
+                "event_handlers": [{
+                    "event_pattern": "dot_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dot_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed DNS query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "dns.google:853",
+                "base_stack": "dot",
+                "event_handlers": [
+                    {
+                        "event_pattern": "dot_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_dns_query",
+                                "domain": "example.com",
+                                "query_type": "A"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "dot_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

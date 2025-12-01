@@ -367,6 +367,71 @@ impl Protocol for DcClientProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls DC hub interaction
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:411",
+                "base_stack": "dc",
+                "instruction": "Connect as alice and say hello in chat",
+                "startup_params": {
+                    "nickname": "alice",
+                    "description": "NetGet DC Client"
+                }
+            }),
+            // Script mode: Code-based DC message handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:411",
+                "base_stack": "dc",
+                "startup_params": {
+                    "nickname": "alice"
+                },
+                "event_handlers": [{
+                    "event_pattern": "dc_client_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed DC chat message
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:411",
+                "base_stack": "dc",
+                "startup_params": {
+                    "nickname": "alice"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "dc_client_authenticated",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_dc_chat",
+                                "message": "Hello everyone!"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "dc_client_message_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -105,6 +105,40 @@ impl Protocol for OpenvpnProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles peer authorization
+            json!({
+                "type": "open_server",
+                "port": 1194,
+                "base_stack": "openvpn",
+                "instruction": "OpenVPN server. Authorize all incoming peers and assign VPN IPs from 10.8.0.0/24 pool. Log connection events."
+            }),
+            // Script mode: Scripted peer handling
+            json!({
+                "type": "open_server",
+                "port": 1194,
+                "base_stack": "openvpn",
+                "event_handlers": [{
+                    "event": "openvpn_peer_request",
+                    "script": "return {type='authorize_peer', peer_addr=event.peer_addr}"
+                }]
+            }),
+            // Static mode: Fixed authorization response
+            json!({
+                "type": "open_server",
+                "port": 1194,
+                "base_stack": "openvpn",
+                "event_handlers": [{
+                    "event": "openvpn_peer_connected",
+                    "static_response": [{"type": "no_action"}]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

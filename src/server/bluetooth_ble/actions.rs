@@ -242,6 +242,79 @@ impl Protocol for BluetoothBleProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE GATT server
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble",
+                "instruction": "Act as a BLE heart rate monitor with Heart Rate Service (0x180D)",
+                "startup_params": {
+                    "device_name": "NetGet-HeartRate",
+                    "auto_advertise": true
+                }
+            }),
+            // Script mode: Code-based BLE handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble",
+                "startup_params": {
+                    "device_name": "NetGet-BLE"
+                },
+                "event_handlers": [{
+                    "event_pattern": "bluetooth_ble_started",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bluetooth_ble_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed BLE action
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble",
+                "startup_params": {
+                    "device_name": "NetGet-BLE"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_ble_started",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "add_service",
+                                "uuid": "180D",
+                                "primary": true,
+                                "characteristics": [{
+                                    "uuid": "2A37",
+                                    "properties": ["read", "notify"],
+                                    "permissions": ["readable"],
+                                    "initial_value": "0048"
+                                }]
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "respond_to_read",
+                                "value": "0048"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

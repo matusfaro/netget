@@ -300,6 +300,76 @@ impl Protocol for KafkaClientProtocol {
     fn group_name(&self) -> &'static str {
         "Messaging"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Kafka produce/consume
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9092",
+                "base_stack": "kafka",
+                "startup_params": {
+                    "mode": "consumer",
+                    "topics": ["events"],
+                    "group_id": "netget-group"
+                },
+                "instruction": "Subscribe to events topic and log received messages"
+            }),
+            // Script mode: Code-based message processing
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9092",
+                "base_stack": "kafka",
+                "startup_params": {
+                    "mode": "consumer",
+                    "topics": ["events"],
+                    "group_id": "netget-group"
+                },
+                "event_handlers": [{
+                    "event_pattern": "kafka_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<kafka_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed message handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9092",
+                "base_stack": "kafka",
+                "startup_params": {
+                    "mode": "producer",
+                    "client_id": "netget-producer"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "kafka_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "produce_message",
+                                "topic": "events",
+                                "payload": "{\"event\": \"startup\"}"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "kafka_message_delivered",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

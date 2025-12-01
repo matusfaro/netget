@@ -84,6 +84,62 @@ impl Protocol for BitcoinProtocol {
     fn group_name(&self) -> &'static str {
         "Blockchain"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles Bitcoin P2P protocol
+            json!({
+                "type": "open_server",
+                "port": 8333,
+                "base_stack": "bitcoin",
+                "instruction": "Act as Bitcoin P2P node. Respond to version with our version, handle ping/pong",
+                "startup_params": {
+                    "network": "mainnet"
+                }
+            }),
+            // Script mode: Code-based Bitcoin P2P handling
+            json!({
+                "type": "open_server",
+                "port": 8333,
+                "base_stack": "bitcoin",
+                "startup_params": {
+                    "network": "mainnet"
+                },
+                "event_handlers": [{
+                    "event_pattern": "bitcoin_connection_opened",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bitcoin_server_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Bitcoin P2P responses
+            json!({
+                "type": "open_server",
+                "port": 8333,
+                "base_stack": "bitcoin",
+                "startup_params": {
+                    "network": "mainnet"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "bitcoin_message_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_verack",
+                                "network": "mainnet"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

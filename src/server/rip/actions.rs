@@ -65,6 +65,48 @@ impl Protocol for RipProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 520,
+                "base_stack": "rip",
+                "instruction": "RIPv2 routing server. Advertise routes for 192.168.1.0/24 (metric 1) and 10.0.0.0/8 (metric 5). Respond to route requests."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 520,
+                "base_stack": "rip",
+                "event_handlers": [{
+                    "event": "rip_request",
+                    "script": "if event.message_type == 'request' then return {type='send_rip_response', routes={{ip_address='192.168.1.0', subnet_mask='255.255.255.0', next_hop='0.0.0.0', metric=1}, {ip_address='10.0.0.0', subnet_mask='255.0.0.0', next_hop='0.0.0.0', metric=5}}} else return {type='ignore_request'} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 520,
+                "base_stack": "rip",
+                "event_handlers": [{
+                    "event": "rip_request",
+                    "static_response": [{
+                        "type": "send_rip_response",
+                        "routes": [{
+                            "ip_address": "192.168.1.0",
+                            "subnet_mask": "255.255.255.0",
+                            "next_hop": "0.0.0.0",
+                            "metric": 1
+                        }]
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

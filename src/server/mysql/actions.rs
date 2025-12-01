@@ -95,6 +95,52 @@ impl Protocol for MysqlProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all MySQL responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 3306,
+                "base_stack": "mysql",
+                "instruction": "MySQL database server answering SQL queries"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 3306,
+                "base_stack": "mysql",
+                "event_handlers": [{
+                    "event_pattern": "mysql_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mysql_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 3306,
+                "base_stack": "mysql",
+                "event_handlers": [{
+                    "event_pattern": "mysql_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "mysql_query_response",
+                            "columns": [{"name": "result", "type": "VARCHAR"}],
+                            "rows": [["OK"]]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

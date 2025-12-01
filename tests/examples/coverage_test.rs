@@ -31,7 +31,7 @@ fn get_tested_protocols() -> HashSet<String> {
     tested
 }
 
-/// Get protocols that have startup examples defined but no tests
+/// Get protocols that don't have E2E example tests yet
 fn get_protocols_without_tests() -> Vec<(String, usize)> {
     let reg = registry();
     let tested = get_tested_protocols();
@@ -39,14 +39,10 @@ fn get_protocols_without_tests() -> Vec<(String, usize)> {
     reg.all_protocols()
         .into_iter()
         .filter_map(|(name, protocol)| {
-            // Only check protocols that have startup examples
-            if protocol.get_startup_examples().is_some() {
-                let event_count = protocol.get_event_types().len();
-                if !tested.contains(&name) {
-                    Some((name, event_count))
-                } else {
-                    None
-                }
+            // All protocols have startup examples (required by trait)
+            let event_count = protocol.get_event_types().len();
+            if !tested.contains(&name) {
+                Some((name, event_count))
             } else {
                 None
             }
@@ -62,18 +58,11 @@ fn get_protocols_without_tests() -> Vec<(String, usize)> {
 fn example_test_coverage_summary() {
     let reg = registry();
     let tested = get_tested_protocols();
-    let total_protocols: Vec<_> = reg
-        .all_protocols()
-        .into_iter()
-        .filter(|(_, p)| p.get_startup_examples().is_some())
-        .collect();
+    let total_protocols: Vec<_> = reg.all_protocols().into_iter().collect();
 
     println!("\n=== Protocol Example Test Coverage Summary ===");
-    println!(
-        "Protocols with startup examples: {}",
-        total_protocols.len()
-    );
-    println!("Protocols with example tests: {}", tested.len());
+    println!("Total protocols: {}", total_protocols.len());
+    println!("Protocols with E2E example tests: {}", tested.len());
 
     let coverage_pct = if total_protocols.is_empty() {
         100.0
@@ -179,10 +168,9 @@ fn example_test_count_testable_examples() {
             total_alternative_examples += event_type.alternative_examples.len();
         }
 
-        // Count startup examples (3 per protocol that has them)
-        if protocol.get_startup_examples().is_some() {
-            total_startup_examples += 3; // llm_mode, script_mode, static_mode
-        }
+        // Count startup examples (3 per protocol - all protocols have them now)
+        let _examples = protocol.get_startup_examples();
+        total_startup_examples += 3; // llm_mode, script_mode, static_mode
     }
 
     println!("\n=== Testable Examples Count ===");

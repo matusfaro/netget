@@ -200,6 +200,51 @@ impl Protocol for UdpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles UDP client
+            json!({
+                "type": "open_client",
+                "remote_addr": "127.0.0.1:8080",
+                "base_stack": "udp",
+                "instruction": "Send a UDP datagram containing 'HELLO' and echo any responses"
+            }),
+            // Script mode: Code-based UDP handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "127.0.0.1:8080",
+                "base_stack": "udp",
+                "event_handlers": [{
+                    "event_pattern": "udp_datagram_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<udp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed UDP response
+            json!({
+                "type": "open_client",
+                "remote_addr": "127.0.0.1:8080",
+                "base_stack": "udp",
+                "event_handlers": [{
+                    "event_pattern": "udp_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_udp_datagram",
+                            "data_hex": "48454c4c4f"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

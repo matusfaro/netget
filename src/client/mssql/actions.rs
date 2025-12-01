@@ -176,6 +176,61 @@ impl Protocol for MssqlClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls MSSQL queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1433;database=master;user=sa",
+                "base_stack": "mssql",
+                "instruction": "Query the database version and list all tables"
+            }),
+            // Script mode: Code-based SQL execution
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1433;database=master;user=sa",
+                "base_stack": "mssql",
+                "event_handlers": [{
+                    "event_pattern": "mssql_query_result",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mssql_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed query responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1433;database=master;user=sa",
+                "base_stack": "mssql",
+                "event_handlers": [
+                    {
+                        "event_pattern": "mssql_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_query",
+                                "query": "SELECT @@VERSION"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "mssql_query_result",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

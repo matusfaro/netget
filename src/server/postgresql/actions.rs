@@ -92,6 +92,52 @@ impl Protocol for PostgresqlProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all PostgreSQL responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 5432,
+                "base_stack": "postgresql",
+                "instruction": "PostgreSQL database server answering SQL queries"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 5432,
+                "base_stack": "postgresql",
+                "event_handlers": [{
+                    "event_pattern": "postgresql_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<postgresql_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 5432,
+                "base_stack": "postgresql",
+                "event_handlers": [{
+                    "event_pattern": "postgresql_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "postgresql_query_response",
+                            "columns": [{"name": "result", "type": "text"}],
+                            "rows": [["OK"]]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -281,6 +281,62 @@ impl Protocol for NntpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Messaging"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls NNTP operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "news.example.com:119",
+                "base_stack": "nntp",
+                "instruction": "List available newsgroups and select comp.lang.rust to view recent articles"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "news.example.com:119",
+                "base_stack": "nntp",
+                "event_handlers": [{
+                    "event_pattern": "nntp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<nntp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed NNTP group selection on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "news.example.com:119",
+                "base_stack": "nntp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "nntp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "nntp_group",
+                                "group_name": "comp.lang.rust"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "nntp_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

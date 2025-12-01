@@ -310,6 +310,65 @@ impl Protocol for HttpProxyClientProtocol {
     fn group_name(&self) -> &'static str {
         "Proxy"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls HTTP proxy tunnel
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8080",
+                "base_stack": "http_proxy",
+                "instruction": "Establish tunnel to example.com:443 and send a GET request"
+            }),
+            // Script mode: Code-based proxy handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8080",
+                "base_stack": "http_proxy",
+                "event_handlers": [{
+                    "event_pattern": "http_proxy_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http_proxy_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed tunnel establishment
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8080",
+                "base_stack": "http_proxy",
+                "event_handlers": [
+                    {
+                        "event_pattern": "http_proxy_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "establish_tunnel",
+                                "target_host": "example.com",
+                                "target_port": 80
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "http_proxy_tunnel_established",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_http_request",
+                                "method": "GET",
+                                "path": "/",
+                                "headers": {"Host": "example.com"}
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

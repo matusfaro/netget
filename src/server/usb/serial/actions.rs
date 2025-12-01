@@ -175,6 +175,51 @@ impl Protocol for UsbSerialProtocol {
     fn group_name(&self) -> &'static str {
         "USB Devices"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles USB serial device
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-serial",
+                "instruction": "Create a USB serial port and echo back any data received"
+            }),
+            // Script mode: Code-based serial handling
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-serial",
+                "event_handlers": [{
+                    "event_pattern": "usb_serial_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<serial_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed serial response
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-serial",
+                "event_handlers": [{
+                    "event_pattern": "usb_serial_attached",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_data",
+                            "data": "Welcome to NetGet USB Serial!\r\n"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 #[cfg(feature = "usb-serial")]

@@ -300,6 +300,73 @@ impl Protocol for LdapClientProtocol {
     fn group_name(&self) -> &'static str {
         "Directory"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls LDAP operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:389",
+                "base_stack": "ldap",
+                "instruction": "Bind as cn=admin,dc=example,dc=com and search for all users"
+            }),
+            // Script mode: Code-based directory operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:389",
+                "base_stack": "ldap",
+                "event_handlers": [{
+                    "event_pattern": "ldap_search_results",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ldap_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed bind and search
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:389",
+                "base_stack": "ldap",
+                "event_handlers": [
+                    {
+                        "event_pattern": "ldap_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "bind",
+                                "dn": "cn=admin,dc=example,dc=com",
+                                "password": "secret"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ldap_bind_response",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "search",
+                                "base_dn": "dc=example,dc=com",
+                                "filter": "(objectClass=person)"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ldap_search_results",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

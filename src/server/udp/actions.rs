@@ -77,6 +77,47 @@ impl Protocol for UdpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "udp",
+                "instruction": "UDP echo server that responds to datagrams"
+            }),
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "udp",
+                "event_handlers": [{
+                    "event_pattern": "udp_datagram_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<udp_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "udp",
+                "event_handlers": [{
+                    "event_pattern": "udp_datagram_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_udp_response",
+                            "data": "PONG"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

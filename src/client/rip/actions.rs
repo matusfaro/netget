@@ -160,6 +160,61 @@ impl Protocol for RipClientProtocol {
     fn group_name(&self) -> &'static str {
         "Routing"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls RIP routing table queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:520",
+                "base_stack": "rip",
+                "instruction": "Query routing table using RIPv2 and analyze routes"
+            }),
+            // Script mode: Code-based RIP response handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:520",
+                "base_stack": "rip",
+                "event_handlers": [{
+                    "event_pattern": "rip_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<rip_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed RIP routing table request
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:520",
+                "base_stack": "rip",
+                "event_handlers": [
+                    {
+                        "event_pattern": "rip_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_rip_request",
+                                "version": 2
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "rip_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

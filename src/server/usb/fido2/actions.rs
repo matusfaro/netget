@@ -349,6 +349,66 @@ impl Protocol for UsbFido2Protocol {
     fn group_name(&self) -> &'static str {
         "USB"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles FIDO2 security key
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-fido2",
+                "instruction": "Create a FIDO2 security key that auto-approves authentication requests",
+                "startup_params": {
+                    "support_u2f": true,
+                    "support_fido2": true,
+                    "auto_approve": true
+                }
+            }),
+            // Script mode: Code-based FIDO2 handling
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-fido2",
+                "startup_params": {
+                    "support_u2f": true,
+                    "support_fido2": true,
+                    "auto_approve": false
+                },
+                "event_handlers": [{
+                    "event_pattern": "fido2_authenticate_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<fido2_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed FIDO2 approval
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-fido2",
+                "startup_params": {
+                    "support_u2f": true,
+                    "support_fido2": true,
+                    "auto_approve": false
+                },
+                "event_handlers": [{
+                    "event_pattern": "fido2_authenticate_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "approve_request",
+                            "approval_id": 1
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait

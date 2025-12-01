@@ -214,6 +214,63 @@ impl Protocol for HttpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls HTTP client interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.example.com",
+                "base_stack": "http",
+                "instruction": "Fetch the API status and report the results"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.example.com",
+                "base_stack": "http",
+                "event_handlers": [{
+                    "event_pattern": "http_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.example.com",
+                "base_stack": "http",
+                "event_handlers": [
+                    {
+                        "event_pattern": "http_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_http_request",
+                                "method": "GET",
+                                "path": "/health",
+                                "headers": {"Accept": "application/json"}
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "http_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

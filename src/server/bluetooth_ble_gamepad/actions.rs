@@ -64,6 +64,59 @@ impl Protocol for BluetoothBleGamepadProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE gamepad device
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-gamepad",
+                "instruction": "Act as a BLE gamepad with buttons and analog sticks",
+                "startup_params": {
+                    "device_name": "NetGet-Gamepad"
+                }
+            }),
+            // Script mode: Code-based gamepad handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-gamepad",
+                "startup_params": {
+                    "device_name": "NetGet-Gamepad"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_gamepad_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<gamepad_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed gamepad action
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-gamepad",
+                "startup_params": {
+                    "device_name": "NetGet-Gamepad"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_gamepad_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleGamepadProtocol {

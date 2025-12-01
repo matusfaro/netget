@@ -87,6 +87,49 @@ impl Protocol for DataLinkProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "datalink",
+                "instruction": "Capture and analyze Layer 2 Ethernet frames"
+            }),
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "datalink",
+                "filter": "arp",
+                "event_handlers": [{
+                    "event_pattern": "datalink_packet_captured",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<datalink_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "datalink",
+                "filter": "arp",
+                "event_handlers": [{
+                    "event_pattern": "datalink_packet_captured",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "show_message",
+                            "message": "Packet captured"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

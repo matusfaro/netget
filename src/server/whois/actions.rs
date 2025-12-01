@@ -66,6 +66,51 @@ impl Protocol for WhoisProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 43,
+                "base_stack": "whois",
+                "instruction": "WHOIS server responding with fake registration info for any domain"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 43,
+                "base_stack": "whois",
+                "event_handlers": [{
+                    "event_pattern": "whois_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Return WHOIS record for queried domain\ndomain = event.get('query', 'unknown.com').strip()\nrespond([{'type': 'send_whois_record', 'domain': domain, 'registrar': 'Example Registrar Inc.', 'registrant': 'Example Organization', 'name_servers': ['ns1.example.com', 'ns2.example.com']}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 43,
+                "base_stack": "whois",
+                "event_handlers": [{
+                    "event_pattern": "whois_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_whois_record",
+                            "domain": "example.com",
+                            "registrar": "Example Registrar Inc.",
+                            "registrant": "Example Organization",
+                            "name_servers": ["ns1.example.com", "ns2.example.com"]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

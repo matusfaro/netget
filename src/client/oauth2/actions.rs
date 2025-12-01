@@ -366,6 +366,64 @@ impl Protocol for OAuth2ClientProtocol {
     fn group_name(&self) -> &'static str {
         "Authentication"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles OAuth2 flows intelligently
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://provider.example.com/oauth",
+                "base_stack": "oauth2",
+                "instruction": "Authenticate using client credentials flow to get an access token",
+                "startup_params": {
+                    "client_id": "my-client-id",
+                    "client_secret": "my-client-secret",
+                    "token_url": "https://provider.example.com/oauth/token"
+                }
+            }),
+            // Script mode: Code-based OAuth2 handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://provider.example.com/oauth",
+                "base_stack": "oauth2",
+                "startup_params": {
+                    "client_id": "my-client-id",
+                    "token_url": "https://provider.example.com/oauth/token"
+                },
+                "event_handlers": [{
+                    "event_pattern": "oauth2_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<oauth2_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed OAuth2 action
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://provider.example.com/oauth",
+                "base_stack": "oauth2",
+                "startup_params": {
+                    "client_id": "my-client-id",
+                    "client_secret": "my-client-secret",
+                    "token_url": "https://provider.example.com/oauth/token"
+                },
+                "event_handlers": [{
+                    "event_pattern": "oauth2_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "exchange_client_credentials",
+                            "scopes": "api.read api.write"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

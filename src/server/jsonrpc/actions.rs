@@ -71,6 +71,49 @@ impl Protocol for JsonRpcProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "jsonrpc",
+                "instruction": "JSON-RPC 2.0 server. Implement add(a,b), subtract(a,b), and echo(message) methods. Return -32601 for unknown methods"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "jsonrpc",
+                "event_handlers": [{
+                    "event_pattern": "jsonrpc_method_call",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "method = event.get('method', '')\nparams = event.get('params', [])\nif method == 'add' and len(params) >= 2:\n    action('jsonrpc_success', result=params[0] + params[1])\nelse:\n    action('jsonrpc_error', code=-32601, message='Method not found')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "jsonrpc",
+                "event_handlers": [{
+                    "event_pattern": "jsonrpc_method_call",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "jsonrpc_success",
+                            "result": {"status": "ok", "version": "1.0.0"}
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -211,6 +211,52 @@ impl Protocol for UsbKeyboardProtocol {
     fn group_name(&self) -> &'static str {
         "USB Devices"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles USB keyboard device
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-keyboard",
+                "instruction": "Create a USB keyboard device and type 'hello world' when attached"
+            }),
+            // Script mode: Code-based keyboard handling
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-keyboard",
+                "event_handlers": [{
+                    "event_pattern": "usb_keyboard_attached",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<keyboard_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed keyboard action
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-keyboard",
+                "event_handlers": [{
+                    "event_pattern": "usb_keyboard_attached",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "type_text",
+                            "text": "Hello from NetGet!",
+                            "typing_speed_ms": 50
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait

@@ -86,6 +86,59 @@ impl Protocol for BluetoothBleThermometerProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls temperature simulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-thermometer",
+                "instruction": "Act as a thermometer at 37°C body temperature",
+                "startup_params": {
+                    "device_name": "NetGet-Thermometer"
+                }
+            }),
+            // Script mode: Code-based temperature simulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-thermometer",
+                "startup_params": {
+                    "device_name": "NetGet-Thermometer"
+                },
+                "event_handlers": [{
+                    "event_pattern": "temperature_updated",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<thermometer_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed temperature
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-thermometer",
+                "startup_params": {
+                    "device_name": "NetGet-Thermometer"
+                },
+                "event_handlers": [{
+                    "event_pattern": "temperature_updated",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "set_temperature",
+                            "celsius": 37.0
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleThermometerProtocol {

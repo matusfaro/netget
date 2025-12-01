@@ -120,6 +120,51 @@ impl Protocol for TelnetProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all Telnet responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 23,
+                "base_stack": "telnet",
+                "instruction": "Telnet terminal server handling user commands"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 23,
+                "base_stack": "telnet",
+                "event_handlers": [{
+                    "event_pattern": "telnet_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<telnet_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 23,
+                "base_stack": "telnet",
+                "event_handlers": [{
+                    "event_pattern": "telnet_message_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_telnet_line",
+                            "line": "Command received"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

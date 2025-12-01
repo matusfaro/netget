@@ -128,6 +128,49 @@ impl Protocol for OllamaProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 11435,
+                "base_stack": "ollama",
+                "instruction": "Ollama-compatible API server. Respond to /api/generate and /api/chat requests with helpful LLM responses, and list models on /api/tags"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 11435,
+                "base_stack": "ollama",
+                "event_handlers": [{
+                    "event_pattern": "ollama_chat_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "model = event.get('model', 'llama2')\naction('ollama_chat_response', message_content=f'Hello from {model}!')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 11435,
+                "base_stack": "ollama",
+                "event_handlers": [{
+                    "event_pattern": "ollama_models_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "ollama_models_response",
+                            "models": ["llama2", "codellama", "mistral"]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

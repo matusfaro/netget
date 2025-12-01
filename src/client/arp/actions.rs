@@ -280,6 +280,62 @@ impl Protocol for ArpClientProtocol {
             example: json!("eth0"),
         }]
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles ARP client
+            json!({
+                "type": "open_client",
+                "remote_addr": "eth0",
+                "base_stack": "arp",
+                "instruction": "Send ARP requests for 192.168.1.0/24 and discover live hosts",
+                "startup_params": {
+                    "interface": "eth0"
+                }
+            }),
+            // Script mode: Code-based ARP handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "eth0",
+                "base_stack": "arp",
+                "startup_params": {
+                    "interface": "eth0"
+                },
+                "event_handlers": [{
+                    "event_pattern": "arp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<arp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed ARP request
+            json!({
+                "type": "open_client",
+                "remote_addr": "eth0",
+                "base_stack": "arp",
+                "startup_params": {
+                    "interface": "eth0"
+                },
+                "event_handlers": [{
+                    "event_pattern": "arp_client_started",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_arp_request",
+                            "sender_mac": "aa:bb:cc:dd:ee:ff",
+                            "sender_ip": "192.168.1.100",
+                            "target_ip": "192.168.1.1"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

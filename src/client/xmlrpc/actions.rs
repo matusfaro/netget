@@ -178,6 +178,62 @@ impl Protocol for XmlRpcClientProtocol {
     fn group_name(&self) -> &'static str {
         "RPC & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls XML-RPC method calls
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://example.com/xmlrpc",
+                "base_stack": "xmlrpc",
+                "instruction": "Call system.listMethods to discover available methods"
+            }),
+            // Script mode: Code-based XML-RPC handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://example.com/xmlrpc",
+                "base_stack": "xmlrpc",
+                "event_handlers": [{
+                    "event_pattern": "xmlrpc_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<xmlrpc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed XML-RPC method call
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://example.com/xmlrpc",
+                "base_stack": "xmlrpc",
+                "event_handlers": [
+                    {
+                        "event_pattern": "xmlrpc_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "call_xmlrpc_method",
+                                "method_name": "system.listMethods",
+                                "params": []
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "xmlrpc_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

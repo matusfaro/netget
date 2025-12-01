@@ -132,6 +132,51 @@ impl Protocol for TorRelayProtocol {
     fn group_name(&self) -> &'static str {
         "Network Services"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles Tor relay operations
+            json!({
+                "type": "open_server",
+                "port": 9001,
+                "base_stack": "tor-relay",
+                "instruction": "Act as Tor exit relay allowing connections to localhost"
+            }),
+            // Script mode: Code-based Tor relay handling
+            json!({
+                "type": "open_server",
+                "port": 9001,
+                "base_stack": "tor-relay",
+                "event_handlers": [{
+                    "event_pattern": "tor_relay_cell_detected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tor_relay_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Tor relay responses
+            json!({
+                "type": "open_server",
+                "port": 9001,
+                "base_stack": "tor-relay",
+                "event_handlers": [{
+                    "event_pattern": "tor_relay_cell_detected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "detect_relay_cell",
+                            "message": "Cell detected and logged"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

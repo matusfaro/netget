@@ -73,6 +73,63 @@ impl Protocol for TorrentPeerProtocol {
     fn group_name(&self) -> &'static str {
         "P2P"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BitTorrent peer wire protocol
+            json!({
+                "type": "open_server",
+                "port": 51413,
+                "base_stack": "torrent-peer",
+                "instruction": "Act as BitTorrent seeder. Respond to handshakes, send bitfield, and serve piece requests"
+            }),
+            // Script mode: Code-based peer handling
+            json!({
+                "type": "open_server",
+                "port": 51413,
+                "base_stack": "torrent-peer",
+                "event_handlers": [{
+                    "event_pattern": "peer_handshake",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<peer_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed peer responses
+            json!({
+                "type": "open_server",
+                "port": 51413,
+                "base_stack": "torrent-peer",
+                "event_handlers": [
+                    {
+                        "event_pattern": "peer_handshake",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "send_handshake",
+                                    "info_hash": "0123456789abcdef0123456789abcdef01234567",
+                                    "peer_id": "-NT0001-xxxxxxxxxxxx"
+                                },
+                                {
+                                    "type": "send_bitfield",
+                                    "bitfield": "ff"
+                                },
+                                {
+                                    "type": "send_unchoke"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

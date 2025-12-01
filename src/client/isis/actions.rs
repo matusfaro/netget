@@ -146,6 +146,58 @@ impl Protocol for IsisClientProtocol {
             example: json!("eth0"),
         }]
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM analyzes IS-IS topology from captured PDUs
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:0",
+                "base_stack": "isis",
+                "instruction": "Capture IS-IS PDUs on eth0 and analyze network topology",
+                "startup_params": {
+                    "interface": "eth0"
+                }
+            }),
+            // Script mode: Code-based PDU analysis
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:0",
+                "base_stack": "isis",
+                "startup_params": {
+                    "interface": "eth0"
+                },
+                "event_handlers": [{
+                    "event_pattern": "isis_pdu_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<isis_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Passive monitoring
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:0",
+                "base_stack": "isis",
+                "startup_params": {
+                    "interface": "eth0"
+                },
+                "event_handlers": [{
+                    "event_pattern": "isis_pdu_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

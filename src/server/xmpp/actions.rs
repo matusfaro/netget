@@ -142,6 +142,49 @@ impl Protocol for XmppProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 5222,
+                "base_stack": "xmpp",
+                "instruction": "XMPP messaging server, accept all authentication, echo messages"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 5222,
+                "base_stack": "xmpp",
+                "event_handlers": [{
+                    "event_pattern": "xmpp_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle XMPP XML data\nxml = event.get('xml_data', '')\nif '<stream:stream' in xml:\n    respond([{'type': 'send_stream_header', 'from': 'localhost'}, {'type': 'send_stream_features', 'mechanisms': ['PLAIN']}])\nelif '<auth' in xml:\n    respond([{'type': 'send_auth_success'}])\nelif '<message' in xml:\n    respond([{'type': 'send_message', 'from': 'server@localhost', 'to': 'user@localhost', 'body': 'Message received'}])\nelse:\n    respond([{'type': 'wait_for_more'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 5222,
+                "base_stack": "xmpp",
+                "event_handlers": [{
+                    "event_pattern": "xmpp_data_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_stream_header",
+                            "from": "localhost",
+                            "stream_id": "stream-123"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -275,6 +275,62 @@ impl Protocol for SnmpClientProtocol {
             },
         ]
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SNMP queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:161",
+                "base_stack": "snmp",
+                "instruction": "Query the system description (1.3.6.1.2.1.1.1.0) and system uptime (1.3.6.1.2.1.1.3.0)"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:161",
+                "base_stack": "snmp",
+                "event_handlers": [{
+                    "event_pattern": "snmp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<snmp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed SNMP GET on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:161",
+                "base_stack": "snmp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "snmp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_snmp_get",
+                                "oids": ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"]
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "snmp_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

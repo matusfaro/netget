@@ -342,6 +342,59 @@ impl Protocol for KubernetesClientProtocol {
     fn group_name(&self) -> &'static str {
         "Cloud & Orchestration"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles Kubernetes cluster queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "kubernetes.local:6443",
+                "base_stack": "kubernetes",
+                "instruction": "Connect to Kubernetes cluster and list all pods in the default namespace",
+                "startup_params": {
+                    "namespace": "default"
+                }
+            }),
+            // Script mode: Code-based Kubernetes handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "kubernetes.local:6443",
+                "base_stack": "kubernetes",
+                "startup_params": {
+                    "namespace": "default"
+                },
+                "event_handlers": [{
+                    "event_pattern": "k8s_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<kubernetes_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Kubernetes action
+            json!({
+                "type": "open_client",
+                "remote_addr": "kubernetes.local:6443",
+                "base_stack": "kubernetes",
+                "startup_params": {
+                    "namespace": "default"
+                },
+                "event_handlers": [{
+                    "event_pattern": "k8s_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "k8s_list_pods",
+                            "namespace": "default"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait with client-specific methods

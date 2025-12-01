@@ -347,6 +347,63 @@ impl Protocol for ImapClientProtocol {
             },
         ]
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls email retrieval
+            json!({
+                "type": "open_client",
+                "remote_addr": "imap.example.com:993",
+                "base_stack": "imap",
+                "instruction": "Select INBOX, search for unread messages, and fetch the first one"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "imap.example.com:993",
+                "base_stack": "imap",
+                "event_handlers": [{
+                    "event_pattern": "imap_message_fetched",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<imap_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed IMAP operations on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "imap.example.com:993",
+                "base_stack": "imap",
+                "event_handlers": [
+                    {
+                        "event_pattern": "imap_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "select_mailbox",
+                                "mailbox": "INBOX"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "imap_mailbox_selected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "search_messages",
+                                "criteria": "UNSEEN"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

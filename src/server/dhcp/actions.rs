@@ -92,6 +92,52 @@ impl Protocol for DhcpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 67,
+                "base_stack": "dhcp",
+                "instruction": "DHCP server assigning IPs from 192.168.1.100-200, subnet 255.255.255.0, gateway 192.168.1.1, DNS 8.8.8.8"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 67,
+                "base_stack": "dhcp",
+                "event_handlers": [{
+                    "event_pattern": "dhcp_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle DHCP DISCOVER/REQUEST\nif event.get('message_type') == 'DISCOVER':\n    respond([{'type': 'send_dhcp_offer', 'offered_ip': '192.168.1.100', 'subnet_mask': '255.255.255.0', 'router': '192.168.1.1', 'dns_servers': ['8.8.8.8'], 'lease_time': 86400}])\nelif event.get('message_type') == 'REQUEST':\n    respond([{'type': 'send_dhcp_ack', 'assigned_ip': '192.168.1.100', 'subnet_mask': '255.255.255.0', 'router': '192.168.1.1', 'dns_servers': ['8.8.8.8'], 'lease_time': 86400}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 67,
+                "base_stack": "dhcp",
+                "event_handlers": [{
+                    "event_pattern": "dhcp_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_dhcp_offer",
+                            "offered_ip": "192.168.1.100",
+                            "subnet_mask": "255.255.255.0",
+                            "router": "192.168.1.1",
+                            "dns_servers": ["8.8.8.8"],
+                            "lease_time": 86400
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

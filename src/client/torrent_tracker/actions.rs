@@ -203,6 +203,49 @@ impl Protocol for TorrentTrackerClientProtocol {
     fn group_name(&self) -> &'static str {
         "P2P"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles tracker communication
+            json!({
+                "type": "open_client",
+                "remote_addr": "tracker.example.com:6969",
+                "base_stack": "torrent-tracker",
+                "instruction": "Announce to the tracker with info_hash and get peer list"
+            }),
+            // Script mode: Code-based tracker handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "tracker.example.com:6969",
+                "base_stack": "torrent-tracker",
+                "event_handlers": [{
+                    "event_pattern": "tracker_announce_response",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tracker_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed tracker action
+            json!({
+                "type": "open_client",
+                "remote_addr": "tracker.example.com:6969",
+                "base_stack": "torrent-tracker",
+                "event_handlers": [{
+                    "event_pattern": "tracker_announce_response",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "disconnect"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -123,6 +123,59 @@ impl Protocol for BluetoothBleMouseProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE mouse interaction
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-mouse",
+                "instruction": "Act as a Bluetooth mouse. When a device connects, move the cursor in a circle and then click.",
+                "startup_params": {
+                    "device_name": "NetGet-Mouse"
+                }
+            }),
+            // Script mode: Code-based mouse handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-mouse",
+                "startup_params": {
+                    "device_name": "NetGet-Mouse"
+                },
+                "event_handlers": [{
+                    "event_pattern": "mouse_client_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mouse_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed mouse actions on connect
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-mouse",
+                "startup_params": {
+                    "device_name": "NetGet-Mouse"
+                },
+                "event_handlers": [{
+                    "event_pattern": "mouse_client_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [
+                            {"type": "move_cursor", "dx": 10, "dy": 0},
+                            {"type": "click", "button": "left"}
+                        ]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleMouseProtocol {

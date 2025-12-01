@@ -320,6 +320,64 @@ impl Protocol for VncClientProtocol {
             example: json!("mypassword"),
         }]
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls VNC interaction
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5900",
+                "base_stack": "vnc",
+                "instruction": "Click at position (100, 200) and type 'Hello'"
+            }),
+            // Script mode: Code-based VNC control
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5900",
+                "base_stack": "vnc",
+                "event_handlers": [{
+                    "event_pattern": "vnc_framebuffer_update",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<vnc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed pointer event
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5900",
+                "base_stack": "vnc",
+                "event_handlers": [
+                    {
+                        "event_pattern": "vnc_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "request_framebuffer_update",
+                                "incremental": true
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "vnc_framebuffer_update",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_pointer_event",
+                                "x": 100,
+                                "y": 200,
+                                "button_mask": 1
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

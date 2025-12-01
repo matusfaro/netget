@@ -121,6 +121,59 @@ impl Protocol for BluetoothBleKeyboardProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE keyboard interaction
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-keyboard",
+                "instruction": "Act as a Bluetooth keyboard. When a device connects, type 'Hello from NetGet!' and wait for further instructions.",
+                "startup_params": {
+                    "device_name": "NetGet-Keyboard"
+                }
+            }),
+            // Script mode: Code-based keyboard handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-keyboard",
+                "startup_params": {
+                    "device_name": "NetGet-Keyboard"
+                },
+                "event_handlers": [{
+                    "event_pattern": "keyboard_client_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<keyboard_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed keyboard actions on connect
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-keyboard",
+                "startup_params": {
+                    "device_name": "NetGet-Keyboard"
+                },
+                "event_handlers": [{
+                    "event_pattern": "keyboard_client_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "type_text",
+                            "text": "Hello from NetGet!"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleKeyboardProtocol {

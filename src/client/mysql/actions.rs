@@ -182,6 +182,63 @@ impl Protocol for MysqlClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls MySQL queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:3306",
+                "base_stack": "mysql",
+                "instruction": "Query the users table and show all active users, then summarize the results"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:3306",
+                "base_stack": "mysql",
+                "event_handlers": [{
+                    "event_pattern": "mysql_result_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mysql_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed MySQL query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:3306",
+                "base_stack": "mysql",
+                "event_handlers": [
+                    {
+                        "event_pattern": "mysql_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_query",
+                                "query": "SELECT * FROM users LIMIT 10"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "mysql_result_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         vec![
             crate::llm::actions::ParameterDefinition {

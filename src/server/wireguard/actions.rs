@@ -117,6 +117,55 @@ impl Protocol for WireguardProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls peer authorization
+            json!({
+                "type": "open_server",
+                "port": 51820,
+                "base_stack": "wireguard",
+                "instruction": "Accept VPN clients and authorize peers with 10.20.30.x addresses"
+            }),
+            // Script mode: Code-based peer authorization
+            json!({
+                "type": "open_server",
+                "port": 51820,
+                "base_stack": "wireguard",
+                "event_handlers": [{
+                    "event_pattern": "wireguard_peer_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<wireguard_server_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed peer authorization
+            json!({
+                "type": "open_server",
+                "port": 51820,
+                "base_stack": "wireguard",
+                "event_handlers": [
+                    {
+                        "event_pattern": "wireguard_peer_request",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "authorize_peer",
+                                "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                                "allowed_ips": ["10.20.30.2/32"],
+                                "message": "Peer authorized"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

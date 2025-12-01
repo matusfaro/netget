@@ -234,6 +234,65 @@ impl Protocol for SmtpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Email"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls email sending
+            json!({
+                "type": "open_client",
+                "remote_addr": "smtp.example.com:587",
+                "base_stack": "smtp",
+                "instruction": "Send a test email to user@example.com with subject 'Hello' and body 'Test message'"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "smtp.example.com:587",
+                "base_stack": "smtp",
+                "event_handlers": [{
+                    "event_pattern": "smtp_email_sent",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<smtp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed email send on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "smtp.example.com:587",
+                "base_stack": "smtp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "smtp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_email",
+                                "from": "sender@example.com",
+                                "to": ["recipient@example.com"],
+                                "subject": "Test Email",
+                                "body": "Hello from NetGet SMTP client."
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "smtp_email_sent",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

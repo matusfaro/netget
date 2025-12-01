@@ -491,6 +491,76 @@ impl Protocol for BgpProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls BGP peering decisions
+            json!({
+                "type": "open_server",
+                "port": 179,
+                "base_stack": "bgp",
+                "instruction": "Accept BGP peers and respond with KEEPALIVE to maintain sessions",
+                "startup_params": {
+                    "as_number": 65001,
+                    "router_id": "192.168.1.1"
+                }
+            }),
+            // Script mode: Code-based BGP message handling
+            json!({
+                "type": "open_server",
+                "port": 179,
+                "base_stack": "bgp",
+                "startup_params": {
+                    "as_number": 65001,
+                    "router_id": "192.168.1.1"
+                },
+                "event_handlers": [{
+                    "event_pattern": "bgp_open",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bgp_server_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed BGP response flow
+            json!({
+                "type": "open_server",
+                "port": 179,
+                "base_stack": "bgp",
+                "startup_params": {
+                    "as_number": 65001,
+                    "router_id": "192.168.1.1"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "bgp_open",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_bgp_open",
+                                "my_as": 65001,
+                                "hold_time": 180,
+                                "router_id": "192.168.1.1"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "bgp_keepalive",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_bgp_keepalive"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

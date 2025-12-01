@@ -378,6 +378,62 @@ impl Protocol for BluetoothClientProtocol {
     fn group_name(&self) -> &'static str {
         "Wireless"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles Bluetooth BLE operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "ble:scan",
+                "base_stack": "bluetooth",
+                "instruction": "Scan for BLE devices, connect to heart rate monitor, and read battery level"
+            }),
+            // Script mode: Code-based BLE handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "ble:scan",
+                "base_stack": "bluetooth",
+                "event_handlers": [{
+                    "event_pattern": "bluetooth_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bluetooth_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed BLE action
+            json!({
+                "type": "open_client",
+                "remote_addr": "ble:scan",
+                "base_stack": "bluetooth",
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "discover_services"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "bluetooth_services_discovered",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "read_characteristic",
+                                "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+                                "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

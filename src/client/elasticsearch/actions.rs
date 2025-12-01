@@ -340,6 +340,63 @@ impl Protocol for ElasticsearchClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Elasticsearch operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9200",
+                "base_stack": "elasticsearch",
+                "instruction": "Search the 'logs' index for error messages and summarize the findings"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9200",
+                "base_stack": "elasticsearch",
+                "event_handlers": [{
+                    "event_pattern": "elasticsearch_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<elasticsearch_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Elasticsearch search on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9200",
+                "base_stack": "elasticsearch",
+                "event_handlers": [
+                    {
+                        "event_pattern": "elasticsearch_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "search",
+                                "index": "users",
+                                "query": {"match_all": {}}
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "elasticsearch_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

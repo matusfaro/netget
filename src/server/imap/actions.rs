@@ -530,6 +530,50 @@ impl Protocol for ImapProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 143,
+                "base_stack": "imap",
+                "instruction": "IMAP server with INBOX containing 5 messages, accept login for 'testuser'"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 143,
+                "base_stack": "imap",
+                "event_handlers": [{
+                    "event_pattern": "imap_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle IMAP commands\ntag = event.get('tag', 'A001')\ncmd = event.get('command', '').upper()\nif cmd == 'CAPABILITY':\n    respond([{'type': 'send_imap_capability', 'capabilities': ['IMAP4rev1']}, {'type': 'send_imap_response', 'tag': tag, 'status': 'OK', 'message': 'CAPABILITY completed'}])\nelif cmd == 'LOGIN':\n    respond([{'type': 'send_imap_response', 'tag': tag, 'status': 'OK', 'message': 'LOGIN completed'}])\nelif cmd == 'SELECT':\n    respond([{'type': 'send_imap_select', 'exists': 5, 'recent': 0}, {'type': 'send_imap_response', 'tag': tag, 'status': 'OK', 'code': 'READ-WRITE', 'message': 'SELECT completed'}])\nelse:\n    respond([{'type': 'send_imap_response', 'tag': tag, 'status': 'OK', 'message': 'Completed'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 143,
+                "base_stack": "imap",
+                "event_handlers": [{
+                    "event_pattern": "imap_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_imap_response",
+                            "tag": "A001",
+                            "status": "OK",
+                            "message": "Completed"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

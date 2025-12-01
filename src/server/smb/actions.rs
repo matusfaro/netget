@@ -73,6 +73,43 @@ impl Protocol for SmbProtocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 445,
+                "base_stack": "smb",
+                "instruction": "SMB file server. Accept all guest connections. Provide /documents directory with sample files. Return file content on reads."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 445,
+                "base_stack": "smb",
+                "event_handlers": [{
+                    "event": "smb_operation",
+                    "script": "if event.operation == 'session_setup' then return {type='smb_auth_success', username='guest'} elseif event.operation == 'query_directory' then return {type='smb_list_directory', files={{name='readme.txt', size=1024, is_directory=false}}} elseif event.operation == 'read' then return {type='smb_read_file', content='File content'} else return {type='smb_get_file_info', size=1024, is_directory=false} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 445,
+                "base_stack": "smb",
+                "event_handlers": [{
+                    "event": "smb_operation",
+                    "static_response": [{
+                        "type": "smb_auth_success",
+                        "username": "guest"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

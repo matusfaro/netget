@@ -563,6 +563,53 @@ impl Protocol for KafkaProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all Kafka responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 9092,
+                "base_stack": "kafka",
+                "instruction": "Kafka broker handling produce, fetch, and metadata requests"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 9092,
+                "base_stack": "kafka",
+                "event_handlers": [{
+                    "event_pattern": "kafka_produce_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<kafka_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 9092,
+                "base_stack": "kafka",
+                "event_handlers": [{
+                    "event_pattern": "kafka_produce_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "produce_response",
+                            "topic": "default",
+                            "partition": 0,
+                            "offset": 0,
+                            "error_code": 0
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

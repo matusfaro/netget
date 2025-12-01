@@ -246,6 +246,50 @@ impl Protocol for XmlRpcProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "xmlrpc",
+                "instruction": "XML-RPC server with add(a,b), subtract(a,b), and system.listMethods. Return proper fault codes for errors"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "xmlrpc",
+                "event_handlers": [{
+                    "event_pattern": "xmlrpc_method_call",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "method = event.get('method_name', '')\nparams = event.get('params', [])\nif method == 'add' and len(params) >= 2:\n    action('xmlrpc_success_response', value_type='int', value=params[0] + params[1])\nelse:\n    action('xmlrpc_fault_response', fault_code=-32601, fault_string='Method not found')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "xmlrpc",
+                "event_handlers": [{
+                    "event_pattern": "xmlrpc_method_call",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "xmlrpc_success_response",
+                            "value_type": "string",
+                            "value": "Hello from XML-RPC server"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

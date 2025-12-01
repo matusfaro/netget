@@ -163,6 +163,61 @@ impl Protocol for FtpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls FTP client interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "ftp.example.com:21",
+                "base_stack": "ftp",
+                "instruction": "Login anonymously and list the root directory files"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "ftp.example.com:21",
+                "base_stack": "ftp",
+                "event_handlers": [{
+                    "event_pattern": "ftp_response",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ftp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses - login sequence
+            json!({
+                "type": "open_client",
+                "remote_addr": "ftp.example.com:21",
+                "base_stack": "ftp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "ftp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ftp_response",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_ftp_command",
+                                "command": "QUIT"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -249,6 +249,43 @@ impl Protocol for MercurialProtocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "mercurial",
+                "instruction": "Mercurial HTTP server. Serve virtual repository 'hello-world' with default branch. Return capabilities, heads, and branchmap for clone/pull operations."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "mercurial",
+                "event_handlers": [{
+                    "event": "hg_command",
+                    "script": "if event.command == 'capabilities' then return {type='hg_capabilities', capabilities={'batch', 'branchmap', 'getbundle', 'httpheader=1024', 'known', 'lookup'}} elseif event.command == 'heads' then return {type='hg_heads', heads={'abc123def456abc123def456abc123def456abc1'}} else return {type='hg_branchmap', branches={default={'abc123def456abc123def456abc123def456abc1'}}} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "mercurial",
+                "event_handlers": [{
+                    "event": "hg_command",
+                    "static_response": [{
+                        "type": "hg_capabilities",
+                        "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup"]
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

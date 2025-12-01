@@ -184,6 +184,62 @@ impl Protocol for DataLinkClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles DataLink client
+            json!({
+                "type": "open_client",
+                "remote_addr": "eth0",
+                "base_stack": "datalink",
+                "instruction": "Inject an ARP request and capture responses",
+                "startup_params": {
+                    "interface": "eth0",
+                    "promiscuous": true
+                }
+            }),
+            // Script mode: Code-based frame handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "eth0",
+                "base_stack": "datalink",
+                "startup_params": {
+                    "interface": "eth0",
+                    "promiscuous": true
+                },
+                "event_handlers": [{
+                    "event_pattern": "datalink_frame_captured",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<datalink_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed frame injection
+            json!({
+                "type": "open_client",
+                "remote_addr": "eth0",
+                "base_stack": "datalink",
+                "startup_params": {
+                    "interface": "eth0",
+                    "promiscuous": false
+                },
+                "event_handlers": [{
+                    "event_pattern": "datalink_frame_injected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

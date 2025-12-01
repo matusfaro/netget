@@ -296,6 +296,61 @@ impl Protocol for NpmClientProtocol {
     fn group_name(&self) -> &'static str {
         "Package Managers"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls NPM queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "registry.npmjs.org",
+                "base_stack": "npm",
+                "instruction": "Search for express packages and get info on the most popular one"
+            }),
+            // Script mode: Code-based package handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "registry.npmjs.org",
+                "base_stack": "npm",
+                "event_handlers": [{
+                    "event_pattern": "npm_package_info_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<npm_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed package query
+            json!({
+                "type": "open_client",
+                "remote_addr": "registry.npmjs.org",
+                "base_stack": "npm",
+                "event_handlers": [
+                    {
+                        "event_pattern": "npm_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "get_package_info",
+                                "package_name": "express"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "npm_package_info_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

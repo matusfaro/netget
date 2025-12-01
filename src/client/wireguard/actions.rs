@@ -194,6 +194,67 @@ impl Protocol for WireguardClientProtocol {
             },
         ]
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls VPN connection and status
+            json!({
+                "type": "open_client",
+                "remote_addr": "1.2.3.4:51820",
+                "base_stack": "wireguard",
+                "instruction": "Connect to VPN and check connection status",
+                "startup_params": {
+                    "server_public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                    "server_endpoint": "1.2.3.4:51820",
+                    "client_address": "10.20.30.2/32"
+                }
+            }),
+            // Script mode: Code-based VPN event handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "1.2.3.4:51820",
+                "base_stack": "wireguard",
+                "startup_params": {
+                    "server_public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                    "server_endpoint": "1.2.3.4:51820",
+                    "client_address": "10.20.30.2/32"
+                },
+                "event_handlers": [{
+                    "event_pattern": "wireguard_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<wireguard_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed VPN connection (stays connected)
+            json!({
+                "type": "open_client",
+                "remote_addr": "1.2.3.4:51820",
+                "base_stack": "wireguard",
+                "startup_params": {
+                    "server_public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                    "server_endpoint": "1.2.3.4:51820",
+                    "client_address": "10.20.30.2/32",
+                    "keepalive": 25
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "wireguard_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "get_connection_status"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

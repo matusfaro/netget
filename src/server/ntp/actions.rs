@@ -66,6 +66,49 @@ impl Protocol for NtpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 123,
+                "base_stack": "ntp",
+                "instruction": "NTP server responding with current system time as stratum 2"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 123,
+                "base_stack": "ntp",
+                "event_handlers": [{
+                    "event_pattern": "ntp_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Return NTP time response\nrespond([{'type': 'send_ntp_time_response', 'stratum': 2, 'reference_id': 'LOCL'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 123,
+                "base_stack": "ntp",
+                "event_handlers": [{
+                    "event_pattern": "ntp_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_ntp_time_response",
+                            "stratum": 2,
+                            "reference_id": "LOCL"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -112,6 +112,59 @@ impl Protocol for Http3Protocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "port": 4433,
+                "base_stack": "http3",
+                "instruction": "HTTP/3 multiplexed stream server with TLS 1.3"
+            }),
+            json!({
+                "type": "open_server",
+                "port": 4433,
+                "base_stack": "http3",
+                "event_handlers": [{
+                    "event_pattern": "http3_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http3_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "port": 4433,
+                "base_stack": "http3",
+                "event_handlers": [
+                    {
+                        "event_pattern": "http3_stream_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_http3_data",
+                                "data": "Hello HTTP/3\n"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "http3_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_http3_data",
+                                "data": "ACK\n"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

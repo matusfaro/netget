@@ -86,6 +86,40 @@ impl Protocol for IpsecProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM analyzes IKE reconnaissance attempts
+            json!({
+                "type": "open_server",
+                "port": 500,
+                "base_stack": "ipsec",
+                "instruction": "IPSec/IKEv2 honeypot. Log all IKE handshake attempts with detailed protocol analysis. Extract SPIs, exchange types, and payload information."
+            }),
+            // Script mode: Scripted IKE analysis
+            json!({
+                "type": "open_server",
+                "port": 500,
+                "base_stack": "ipsec",
+                "event_handlers": [{
+                    "event": "ipsec_handshake",
+                    "script": "return {type='log_handshake', details='IKE ' .. event.ike_version .. ' ' .. event.exchange_type .. ' from ' .. event.peer_addr}"
+                }]
+            }),
+            // Static mode: Fixed logging response
+            json!({
+                "type": "open_server",
+                "port": 500,
+                "base_stack": "ipsec",
+                "event_handlers": [{
+                    "event": "ipsec_handshake",
+                    "static_response": [{"type": "log_handshake", "details": "IKE handshake detected"}]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

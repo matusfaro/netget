@@ -136,6 +136,50 @@ impl Protocol for ProxyProtocol {
     fn group_name(&self) -> &'static str {
         "Proxy & Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "proxy",
+                "instruction": "HTTP/HTTPS proxy server. Pass all HTTP requests through. For HTTPS CONNECT requests, allow all connections in pass-through mode."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "proxy",
+                "event_handlers": [{
+                    "event": "proxy_http_request",
+                    "script": "return {type='handle_request_pass'}"
+                }, {
+                    "event": "proxy_https_connect",
+                    "script": "return {type='handle_https_connection_allow'}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "proxy",
+                "event_handlers": [{
+                    "event": "proxy_http_request",
+                    "static_response": [{
+                        "type": "handle_request_pass"
+                    }]
+                }, {
+                    "event": "proxy_https_connect",
+                    "static_response": [{
+                        "type": "handle_https_connection_allow"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

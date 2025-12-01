@@ -392,6 +392,53 @@ impl Protocol for OpenIdProtocol {
     fn group_name(&self) -> &'static str {
         "Authentication"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "openid",
+                "instruction": "OpenID Connect provider. Handle discovery, authorization, token, and userinfo endpoints. Issue JWT tokens with proper claims"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "openid",
+                "event_handlers": [{
+                    "event_pattern": "openid_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "endpoint = event.get('endpoint_type', '')\nif endpoint == 'discovery':\n    action('send_discovery_document', issuer='http://localhost:8080', authorization_endpoint='http://localhost:8080/authorize', token_endpoint='http://localhost:8080/token', userinfo_endpoint='http://localhost:8080/userinfo', jwks_uri='http://localhost:8080/jwks.json')\nelif endpoint == 'userinfo':\n    action('send_userinfo_response', sub='user123', name='Test User', email='test@example.com')\nelse:\n    action('send_error_response', error='unsupported_endpoint')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "openid",
+                "event_handlers": [{
+                    "event_pattern": "openid_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_discovery_document",
+                            "issuer": "http://localhost:8080",
+                            "authorization_endpoint": "http://localhost:8080/authorize",
+                            "token_endpoint": "http://localhost:8080/token",
+                            "userinfo_endpoint": "http://localhost:8080/userinfo",
+                            "jwks_uri": "http://localhost:8080/jwks.json"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

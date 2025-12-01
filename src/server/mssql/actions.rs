@@ -90,6 +90,52 @@ impl Protocol for MssqlProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all MSSQL responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 1433,
+                "base_stack": "mssql",
+                "instruction": "MSSQL database server answering SQL queries"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 1433,
+                "base_stack": "mssql",
+                "event_handlers": [{
+                    "event_pattern": "mssql_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mssql_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 1433,
+                "base_stack": "mssql",
+                "event_handlers": [{
+                    "event_pattern": "mssql_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "mssql_query_response",
+                            "columns": [{"name": "result", "type": "INT"}],
+                            "rows": [[1]]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

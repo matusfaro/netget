@@ -66,6 +66,47 @@ impl Protocol for MavenProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "maven",
+                "instruction": "Maven repository server. Serve artifact com.example:hello-world:1.0.0 with JAR and POM files. Return maven-metadata.xml for version listings."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "maven",
+                "event_handlers": [{
+                    "event": "maven_artifact_request",
+                    "script": "if event.is_metadata then return {type='send_maven_metadata', group_id=event.group_id, artifact_id=event.artifact_id, versions={'1.0.0'}, latest='1.0.0', release='1.0.0'} elseif event.extension == 'pom' then return {type='send_maven_artifact', body='<project><groupId>'..event.group_id..'</groupId><artifactId>'..event.artifact_id..'</artifactId><version>'..event.version..'</version></project>', content_type='application/xml'} else return {type='send_maven_error', status=404, message='Artifact not found'} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "maven",
+                "event_handlers": [{
+                    "event": "maven_artifact_request",
+                    "static_response": [{
+                        "type": "send_maven_metadata",
+                        "group_id": "com.example",
+                        "artifact_id": "hello-world",
+                        "versions": ["1.0.0"],
+                        "latest": "1.0.0",
+                        "release": "1.0.0"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

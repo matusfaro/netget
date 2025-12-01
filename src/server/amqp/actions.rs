@@ -67,6 +67,40 @@ impl Protocol for AmqpProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 5672,
+                "base_stack": "amqp",
+                "instruction": "AMQP broker accepting connections, create queues on demand"
+            }),
+            // Script-based example (placeholder as AMQP is not fully implemented)
+            json!({
+                "type": "open_server",
+                "port": 5672,
+                "base_stack": "amqp",
+                "event_handlers": [{
+                    "event_pattern": "amqp_connection",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# AMQP placeholder - accept connections\nrespond([{'type': 'accept_connection'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 5672,
+                "base_stack": "amqp",
+                "instruction": "Simple AMQP message broker"
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

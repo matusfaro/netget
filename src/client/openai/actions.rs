@@ -254,6 +254,76 @@ impl Protocol for OpenAiClientProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls OpenAI API interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.openai.com",
+                "base_stack": "openai",
+                "instruction": "Ask GPT-4 to explain quantum computing in simple terms",
+                "startup_params": {
+                    "api_key": "sk-...",
+                    "default_model": "gpt-4"
+                }
+            }),
+            // Script mode: Code-based OpenAI interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.openai.com",
+                "base_stack": "openai",
+                "startup_params": {
+                    "api_key": "sk-...",
+                    "default_model": "gpt-3.5-turbo"
+                },
+                "event_handlers": [{
+                    "event_pattern": "openai_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<openai_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed chat completion request
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.openai.com",
+                "base_stack": "openai",
+                "startup_params": {
+                    "api_key": "sk-...",
+                    "default_model": "gpt-3.5-turbo"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "openai_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_chat_completion",
+                                "messages": [
+                                    {"role": "user", "content": "Hello!"}
+                                ],
+                                "model": "gpt-3.5-turbo"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "openai_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

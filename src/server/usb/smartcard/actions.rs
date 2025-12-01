@@ -334,6 +334,63 @@ impl Protocol for UsbSmartCardProtocol {
     fn group_name(&self) -> &'static str {
         "USB Devices"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles smart card
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-smartcard",
+                "instruction": "Create a virtual smart card reader that emulates a PIV card with PIN 123456",
+                "startup_params": {
+                    "card_type": "piv",
+                    "default_pin": "123456"
+                }
+            }),
+            // Script mode: Code-based smart card handling
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-smartcard",
+                "startup_params": {
+                    "card_type": "generic",
+                    "default_pin": "123456"
+                },
+                "event_handlers": [{
+                    "event_pattern": "smartcard_pin_requested",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<smartcard_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed smart card response
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-smartcard",
+                "startup_params": {
+                    "card_type": "generic",
+                    "default_pin": "123456"
+                },
+                "event_handlers": [{
+                    "event_pattern": "smartcard_inserted",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "list_files",
+                            "connection_id": "conn_1"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait

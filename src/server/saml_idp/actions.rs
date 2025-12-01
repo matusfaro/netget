@@ -68,6 +68,50 @@ impl Protocol for SamlIdpProtocol {
     fn group_name(&self) -> &'static str {
         "Authentication"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "saml-idp",
+                "instruction": "SAML Identity Provider. Authenticate all users as 'testuser' with email 'test@example.com'. Return SAML assertions for SSO requests"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "saml-idp",
+                "event_handlers": [{
+                    "event_pattern": "saml_idp_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "path = event.get('path', '')\nif '/metadata' in path:\n    action('send_metadata', metadata_xml='<EntityDescriptor>...</EntityDescriptor>')\nelse:\n    action('send_saml_response', assertion_xml='<saml:Assertion>...</saml:Assertion>')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "saml-idp",
+                "event_handlers": [{
+                    "event_pattern": "saml_idp_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_saml_response",
+                            "assertion_xml": "<saml:Assertion><saml:Subject><saml:NameID>testuser</saml:NameID></saml:Subject></saml:Assertion>",
+                            "relay_state": "original-url"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

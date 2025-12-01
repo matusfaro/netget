@@ -205,6 +205,62 @@ impl Protocol for EtcdClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls etcd operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:2379",
+                "base_stack": "etcd",
+                "instruction": "Store a configuration key and retrieve it back"
+            }),
+            // Script mode: Code-based key-value operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:2379",
+                "base_stack": "etcd",
+                "event_handlers": [{
+                    "event_pattern": "etcd_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<etcd_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed get/put operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:2379",
+                "base_stack": "etcd",
+                "event_handlers": [
+                    {
+                        "event_pattern": "etcd_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "etcd_put",
+                                "key": "/config/app",
+                                "value": "production"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "etcd_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

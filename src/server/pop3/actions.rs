@@ -471,6 +471,48 @@ impl Protocol for Pop3Protocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 110,
+                "base_stack": "pop3",
+                "instruction": "POP3 server with 3 test messages, accept any credentials"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 110,
+                "base_stack": "pop3",
+                "event_handlers": [{
+                    "event_pattern": "pop3_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle POP3 commands\ncmd = event.get('command', '').upper()\nif cmd.startswith('USER'):\n    respond([{'type': 'send_pop3_ok', 'message': 'user accepted'}])\nelif cmd.startswith('PASS'):\n    respond([{'type': 'send_pop3_ok', 'message': 'logged in, 3 messages'}])\nelif cmd == 'STAT':\n    respond([{'type': 'send_pop3_stat', 'message_count': 3, 'total_size': 1024}])\nelif cmd == 'LIST':\n    respond([{'type': 'send_pop3_list', 'messages': [{'id': 1, 'size': 512}, {'id': 2, 'size': 256}, {'id': 3, 'size': 256}]}])\nelif cmd == 'QUIT':\n    respond([{'type': 'send_pop3_ok', 'message': 'bye'}])\nelse:\n    respond([{'type': 'send_pop3_ok'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 110,
+                "base_stack": "pop3",
+                "event_handlers": [{
+                    "event_pattern": "pop3_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_pop3_ok",
+                            "message": "OK"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

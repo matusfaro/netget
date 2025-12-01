@@ -146,6 +146,61 @@ impl Protocol for NtpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Network Infrastructure"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls NTP queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "time.google.com:123",
+                "base_stack": "ntp",
+                "instruction": "Query the time server and report the current time offset and stratum level"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "pool.ntp.org:123",
+                "base_stack": "ntp",
+                "event_handlers": [{
+                    "event_pattern": "ntp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ntp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed NTP query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "time.google.com:123",
+                "base_stack": "ntp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "ntp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "query_time"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ntp_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

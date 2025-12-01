@@ -822,6 +822,48 @@ impl Protocol for OspfProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Routing"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM simulates OSPF router behavior
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ospf",
+                "instruction": "OSPF router with ID 192.168.1.1 in area 0. Respond to Hello packets from neighbors. Claim DR role with priority 100."
+            }),
+            // Script mode: Scripted OSPF Hello response
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ospf",
+                "event_handlers": [{
+                    "event": "ospf_hello",
+                    "script": "return {type='send_hello', router_id='192.168.1.1', area_id='0.0.0.0', network_mask='255.255.255.0', priority=100, dr='192.168.1.1', bdr='0.0.0.0', neighbors={event.neighbor_id}}"
+                }]
+            }),
+            // Static mode: Fixed OSPF Hello response
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ospf",
+                "event_handlers": [{
+                    "event": "ospf_hello",
+                    "static_response": [{
+                        "type": "send_hello",
+                        "router_id": "192.168.1.1",
+                        "area_id": "0.0.0.0",
+                        "network_mask": "255.255.255.0",
+                        "priority": 1,
+                        "dr": "0.0.0.0",
+                        "bdr": "0.0.0.0"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

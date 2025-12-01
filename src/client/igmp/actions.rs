@@ -204,6 +204,53 @@ impl Protocol for IgmpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls multicast operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:5000",
+                "base_stack": "igmp",
+                "instruction": "Join multicast group 239.1.2.3 and log received data"
+            }),
+            // Script mode: Code-based multicast handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:5000",
+                "base_stack": "igmp",
+                "event_handlers": [{
+                    "event_pattern": "igmp_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<igmp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed multicast group join
+            json!({
+                "type": "open_client",
+                "remote_addr": "0.0.0.0:5000",
+                "base_stack": "igmp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "igmp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "join_multicast_group",
+                                "multicast_addr": "239.1.2.3",
+                                "interface_addr": "0.0.0.0"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

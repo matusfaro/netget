@@ -69,6 +69,50 @@ impl Protocol for SipProtocol {
     fn group_name(&self) -> &'static str {
         "Proxy & Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 5060,
+                "base_stack": "sip",
+                "instruction": "SIP VoIP signaling server. Accept REGISTER requests with 200 OK. For INVITE requests, respond with 200 OK and SDP. Log all call setup attempts."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 5060,
+                "base_stack": "sip",
+                "event_handlers": [{
+                    "event": "sip_register",
+                    "script": "return {type='sip_register', status_code=200, expires=3600}"
+                }, {
+                    "event": "sip_invite",
+                    "script": "return {type='sip_invite', status_code=200, sdp='v=0\\no=- 0 0 IN IP4 127.0.0.1\\ns=Call\\nc=IN IP4 127.0.0.1\\nt=0 0\\nm=audio 8000 RTP/AVP 0\\n'}"
+                }, {
+                    "event": "sip_options",
+                    "script": "return {type='sip_options', status_code=200, allow_methods={'INVITE', 'ACK', 'BYE', 'REGISTER', 'OPTIONS'}}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 5060,
+                "base_stack": "sip",
+                "event_handlers": [{
+                    "event": "sip_register",
+                    "static_response": [{
+                        "type": "sip_register",
+                        "status_code": 200,
+                        "expires": 3600
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

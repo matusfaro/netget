@@ -109,6 +109,59 @@ impl Protocol for BluetoothBleHeartRateProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls heart rate simulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-heart-rate",
+                "instruction": "Act as a heart rate monitor. Start at 60 BPM, increase to 120 during exercise.",
+                "startup_params": {
+                    "device_name": "NetGet-HeartRate"
+                }
+            }),
+            // Script mode: Code-based heart rate simulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-heart-rate",
+                "startup_params": {
+                    "device_name": "NetGet-HeartRate"
+                },
+                "event_handlers": [{
+                    "event_pattern": "heart_rate_updated",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<heart_rate_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed heart rate
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-heart-rate",
+                "startup_params": {
+                    "device_name": "NetGet-HeartRate"
+                },
+                "event_handlers": [{
+                    "event_pattern": "heart_rate_updated",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "set_bpm",
+                            "bpm": 72
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleHeartRateProtocol {

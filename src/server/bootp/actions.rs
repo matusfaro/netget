@@ -92,6 +92,50 @@ impl Protocol for BootpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 67,
+                "base_stack": "bootp",
+                "instruction": "BOOTP server for PXE boot, assign IPs from 192.168.1.100, boot file 'boot/pxeboot.n12'"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 67,
+                "base_stack": "bootp",
+                "event_handlers": [{
+                    "event_pattern": "bootp_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Handle BOOTP request\nif event.get('op_code') == 'BootRequest':\n    respond([{'type': 'send_bootp_reply', 'assigned_ip': '192.168.1.100', 'server_ip': '192.168.1.1', 'boot_file': 'boot/pxeboot.n12', 'server_hostname': 'bootserver.local'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 67,
+                "base_stack": "bootp",
+                "event_handlers": [{
+                    "event_pattern": "bootp_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_bootp_reply",
+                            "assigned_ip": "192.168.1.100",
+                            "server_ip": "192.168.1.1",
+                            "boot_file": "boot/pxeboot.n12"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

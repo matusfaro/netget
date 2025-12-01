@@ -64,6 +64,59 @@ impl Protocol for BluetoothBleProximityProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE proximity device
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-proximity",
+                "instruction": "Act as a BLE proximity sensor that detects and reports nearby devices",
+                "startup_params": {
+                    "device_name": "NetGet-Proximity"
+                }
+            }),
+            // Script mode: Code-based proximity handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-proximity",
+                "startup_params": {
+                    "device_name": "NetGet-Proximity"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_proximity_detected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<proximity_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed proximity action
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-proximity",
+                "startup_params": {
+                    "device_name": "NetGet-Proximity"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_proximity_detected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleProximityProtocol {

@@ -169,6 +169,62 @@ impl Protocol for BluetoothBleDataStreamProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE data streaming
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-data-stream",
+                "instruction": "Stream IMU sensor data at 10 Hz with realistic accelerometer values",
+                "startup_params": {
+                    "device_name": "NetGet-Stream"
+                }
+            }),
+            // Script mode: Code-based stream handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-data-stream",
+                "startup_params": {
+                    "device_name": "NetGet-Stream"
+                },
+                "event_handlers": [{
+                    "event_pattern": "stream_started",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<stream_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed stream action
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-data-stream",
+                "startup_params": {
+                    "device_name": "NetGet-Stream"
+                },
+                "event_handlers": [{
+                    "event_pattern": "stream_started",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "start_stream",
+                            "stream_id": "sensor_data",
+                            "sample_rate": 10,
+                            "data_type": "imu"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleDataStreamProtocol {

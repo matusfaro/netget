@@ -101,6 +101,53 @@ impl Protocol for BluetoothBleBeaconProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles beacon broadcasting
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-beacon",
+                "instruction": "Act as an iBeacon with UUID 12345678-1234-5678-1234-567812345678, major 1, minor 100. Broadcast proximity data."
+            }),
+            // Script mode: Code-based beacon control
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-beacon",
+                "event_handlers": [{
+                    "event_pattern": "beacon_started",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<beacon_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed beacon configuration
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-beacon",
+                "event_handlers": [{
+                    "event_pattern": "beacon_started",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "advertise_ibeacon",
+                            "uuid": "12345678-1234-5678-1234-567812345678",
+                            "major": 1,
+                            "minor": 100,
+                            "tx_power": -59
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleBeaconProtocol {

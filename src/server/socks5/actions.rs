@@ -115,6 +115,46 @@ impl Protocol for Socks5Protocol {
     fn group_name(&self) -> &'static str {
         "Proxy & Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 1080,
+                "base_stack": "socks5",
+                "instruction": "SOCKS5 proxy server. Accept all connections without authentication. Allow all CONNECT requests to pass through."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 1080,
+                "base_stack": "socks5",
+                "event_handlers": [{
+                    "event": "socks5_connect_request",
+                    "script": "return {type='allow_socks5_connect', mitm=false}"
+                }, {
+                    "event": "socks5_auth_request",
+                    "script": "return {type='allow_socks5_auth'}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 1080,
+                "base_stack": "socks5",
+                "event_handlers": [{
+                    "event": "socks5_connect_request",
+                    "static_response": [{
+                        "type": "allow_socks5_connect",
+                        "mitm": false
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

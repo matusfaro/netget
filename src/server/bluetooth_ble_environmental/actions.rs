@@ -64,6 +64,51 @@ impl Protocol for BluetoothBleEnvironmentalProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls environmental sensor
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-environmental",
+                "instruction": "Act as a BLE environmental sensor. Report temperature, humidity, and pressure.",
+                "startup_params": {
+                    "device_name": "NetGet-Environment"
+                }
+            }),
+            // Script mode: Code-based environmental data
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-environmental",
+                "startup_params": {
+                    "device_name": "NetGet-Environment"
+                },
+                "event_handlers": [{
+                    "event_pattern": "environmental_update",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<environmental_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed environmental data
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-environmental",
+                "startup_params": {
+                    "device_name": "NetGet-Environment"
+                },
+                "event_handlers": []
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleEnvironmentalProtocol {

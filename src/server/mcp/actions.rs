@@ -71,6 +71,53 @@ impl Protocol for McpProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "mcp",
+                "instruction": "MCP server with resources (file:///README.md), tools (calculate, search), and prompts (code-review). Initialize with proper capabilities"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "mcp",
+                "event_handlers": [{
+                    "event_pattern": "mcp_tools_call",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "tool_name = event.get('name', '')\nargs = event.get('arguments', {})\nif tool_name == 'calculate':\n    result = str(eval(args.get('expression', '0')))\n    action('mcp_tools_call_response', response={'content': [{'type': 'text', 'text': result}]})\nelse:\n    action('mcp_error_response', code=-32601, message='Tool not found')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "mcp",
+                "event_handlers": [{
+                    "event_pattern": "mcp_initialize",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "mcp_initialize_response",
+                            "response": {
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
+                                "serverInfo": {"name": "netget-mcp", "version": "0.1.0"}
+                            }
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

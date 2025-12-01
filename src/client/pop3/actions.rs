@@ -179,6 +179,62 @@ impl Protocol for Pop3ClientProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls POP3 operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "pop.example.com:995",
+                "base_stack": "pop3",
+                "instruction": "Authenticate with USER alice and PASS secret, then retrieve all messages"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "pop.example.com:995",
+                "base_stack": "pop3",
+                "event_handlers": [{
+                    "event_pattern": "pop3_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<pop3_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed POP3 authentication on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "pop.example.com:995",
+                "base_stack": "pop3",
+                "event_handlers": [
+                    {
+                        "event_pattern": "pop3_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_pop3_command",
+                                "command": "USER alice"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "pop3_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

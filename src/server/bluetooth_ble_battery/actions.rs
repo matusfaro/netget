@@ -104,6 +104,62 @@ impl Protocol for BluetoothBleBatteryProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls battery level simulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-battery",
+                "instruction": "Act as a Bluetooth battery. Start at 100%, drain by 10% every 5 seconds.",
+                "startup_params": {
+                    "device_name": "NetGet-Battery",
+                    "initial_level": 100
+                }
+            }),
+            // Script mode: Code-based battery simulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-battery",
+                "startup_params": {
+                    "device_name": "NetGet-Battery",
+                    "initial_level": 100
+                },
+                "event_handlers": [{
+                    "event_pattern": "battery_level_changed",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<battery_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed battery level
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-battery",
+                "startup_params": {
+                    "device_name": "NetGet-Battery",
+                    "initial_level": 75
+                },
+                "event_handlers": [{
+                    "event_pattern": "battery_level_changed",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "set_battery_level",
+                            "level": 75
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleBatteryProtocol {

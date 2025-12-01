@@ -190,6 +190,44 @@ impl Protocol for DcProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 411,
+                "base_stack": "dc",
+                "instruction": "Direct Connect hub server. Accept users with $Hello, send hub name, and broadcast welcome messages. Support chat and search."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 411,
+                "base_stack": "dc",
+                "event_handlers": [{
+                    "event": "dc_command_received",
+                    "script": "if event.command_type == 'ValidateNick' then return {type='send_dc_lock'} elseif event.command_type == 'Key' then return {{type='send_dc_hello', nickname=event.client_nickname or 'user'}, {type='send_dc_hubname', name='NetGet DC Hub'}} else return {type='wait_for_more'} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 411,
+                "base_stack": "dc",
+                "event_handlers": [{
+                    "event": "dc_command_received",
+                    "static_response": [{
+                        "type": "send_dc_lock",
+                        "lock": "EXTENDEDPROTOCOLABCABCABCABCABCABC",
+                        "pk": "NetGetHub"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

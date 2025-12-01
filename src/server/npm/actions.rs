@@ -87,6 +87,50 @@ impl Protocol for NpmProtocol {
     fn group_name(&self) -> &'static str {
         "Package Management"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 4873,
+                "base_stack": "npm",
+                "instruction": "NPM registry server. Serve 'express' package with version 4.18.2. Return package metadata for GET /{package} and search results for /-/v1/search."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 4873,
+                "base_stack": "npm",
+                "event_handlers": [{
+                    "event": "NPM_PACKAGE_REQUEST",
+                    "script": "return {type='npm_package_metadata', metadata={name='express', version='4.18.2', description='Fast web framework', versions={['4.18.2']={name='express', version='4.18.2'}}}}"
+                }, {
+                    "event": "NPM_SEARCH_REQUEST",
+                    "script": "return {type='npm_package_search', results={objects={{package={name='express', version='4.18.2'}}}, total=1}}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 4873,
+                "base_stack": "npm",
+                "event_handlers": [{
+                    "event": "NPM_PACKAGE_REQUEST",
+                    "static_response": [{
+                        "type": "npm_package_metadata",
+                        "metadata": {
+                            "name": "express",
+                            "version": "4.18.2",
+                            "description": "Fast, unopinionated, minimalist web framework"
+                        }
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

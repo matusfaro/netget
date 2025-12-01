@@ -286,6 +286,62 @@ impl Protocol for TurnClientProtocol {
     fn group_name(&self) -> &'static str {
         "Network Infrastructure"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls TURN relay
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:3478",
+                "base_stack": "turn",
+                "instruction": "Allocate a relay address and create permission for peer 192.168.1.100:5000"
+            }),
+            // Script mode: Code-based TURN handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:3478",
+                "base_stack": "turn",
+                "event_handlers": [{
+                    "event_pattern": "turn_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<turn_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed relay allocation
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:3478",
+                "base_stack": "turn",
+                "event_handlers": [
+                    {
+                        "event_pattern": "turn_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "allocate_turn_relay",
+                                "lifetime_seconds": 600
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "turn_allocated",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "create_permission",
+                                "peer_address": "192.168.1.100:5000"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

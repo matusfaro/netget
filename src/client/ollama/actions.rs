@@ -269,6 +269,62 @@ impl Protocol for OllamaClientProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Ollama API interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:11434",
+                "base_stack": "ollama",
+                "instruction": "Ask llama2 to generate a poem about Rust programming"
+            }),
+            // Script mode: Code-based Ollama interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:11434",
+                "base_stack": "ollama",
+                "event_handlers": [{
+                    "event_pattern": "ollama_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ollama_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed generation request
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:11434",
+                "base_stack": "ollama",
+                "event_handlers": [
+                    {
+                        "event_pattern": "ollama_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_generate_request",
+                                "prompt": "What is the capital of France?",
+                                "model": "llama2"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ollama_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

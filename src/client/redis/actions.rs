@@ -134,6 +134,62 @@ impl Protocol for RedisClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Redis commands
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:6379",
+                "base_stack": "redis",
+                "instruction": "Get the value of 'user:123' and report its contents"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:6379",
+                "base_stack": "redis",
+                "event_handlers": [{
+                    "event_pattern": "redis_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<redis_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Redis command on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:6379",
+                "base_stack": "redis",
+                "event_handlers": [
+                    {
+                        "event_pattern": "redis_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_redis_command",
+                                "command": "GET status"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "redis_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

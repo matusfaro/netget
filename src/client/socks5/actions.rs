@@ -194,6 +194,70 @@ impl Protocol for Socks5ClientProtocol {
     fn group_name(&self) -> &'static str {
         "Proxy"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SOCKS5 tunnel
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1080",
+                "base_stack": "socks5",
+                "startup_params": {
+                    "target_addr": "example.com:80"
+                },
+                "instruction": "Send an HTTP GET request through the SOCKS5 tunnel"
+            }),
+            // Script mode: Code-based SOCKS5 handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1080",
+                "base_stack": "socks5",
+                "startup_params": {
+                    "target_addr": "example.com:80"
+                },
+                "event_handlers": [{
+                    "event_pattern": "socks5_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<socks5_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed data send through tunnel
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1080",
+                "base_stack": "socks5",
+                "startup_params": {
+                    "target_addr": "example.com:80"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "socks5_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_socks5_data",
+                                "data_hex": "474554202f20485454502f312e310d0a486f73743a206578616d706c652e636f6d0d0a0d0a"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "socks5_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

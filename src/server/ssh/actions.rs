@@ -146,6 +146,51 @@ impl Protocol for SshProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all SSH responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 2222,
+                "base_stack": "ssh",
+                "instruction": "SSH server providing secure shell access"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 2222,
+                "base_stack": "ssh",
+                "event_handlers": [{
+                    "event_pattern": "ssh_shell_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ssh_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 2222,
+                "base_stack": "ssh",
+                "event_handlers": [{
+                    "event_pattern": "ssh_auth",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "ssh_auth_decision",
+                            "allowed": true
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

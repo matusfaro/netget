@@ -272,6 +272,72 @@ impl Protocol for GrpcClientProtocol {
     fn group_name(&self) -> &'static str {
         "RPC & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls gRPC method calls
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:50051",
+                "base_stack": "grpc",
+                "instruction": "Call the Calculator.Add method with a=5 and b=3",
+                "startup_params": {
+                    "proto_schema": "CpUCCg9jYWxjdWxhdG9yLnByb3RvEgpjYWxjdWxhdG9yIikKCkFkZFJlcXVlc3QSCwoDYQgBIAEoBVIBYRILCgNiCAIgASgFUgFiIiIKC0FkZFJlc3BvbnNlEhMKBnJlc3VsdBgBIAEoBVIGcmVzdWx0MkIKCkNhbGN1bGF0b3ISNAoDQWRkEhYuY2FsY3VsYXRvci5BZGRSZXF1ZXN0Gh0uY2FsY3VsYXRvci5BZGRSZXNwb25zZSIAYgZwcm90bzM="
+                }
+            }),
+            // Script mode: Code-based gRPC call handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:50051",
+                "base_stack": "grpc",
+                "startup_params": {
+                    "proto_schema": "CpUCCg9jYWxjdWxhdG9yLnByb3RvEgpjYWxjdWxhdG9yIikKCkFkZFJlcXVlc3QSCwoDYQgBIAEoBVIBYRILCgNiCAIgASgFUgFiIiIKC0FkZFJlc3BvbnNlEhMKBnJlc3VsdBgBIAEoBVIGcmVzdWx0MkIKCkNhbGN1bGF0b3ISNAoDQWRkEhYuY2FsY3VsYXRvci5BZGRSZXF1ZXN0Gh0uY2FsY3VsYXRvci5BZGRSZXNwb25zZSIAYgZwcm90bzM="
+                },
+                "event_handlers": [{
+                    "event_pattern": "grpc_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<grpc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed gRPC method call
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:50051",
+                "base_stack": "grpc",
+                "startup_params": {
+                    "proto_schema": "CpUCCg9jYWxjdWxhdG9yLnByb3RvEgpjYWxjdWxhdG9yIikKCkFkZFJlcXVlc3QSCwoDYQgBIAEoBVIBYRILCgNiCAIgASgFUgFiIiIKC0FkZFJlc3BvbnNlEhMKBnJlc3VsdBgBIAEoBVIGcmVzdWx0MkIKCkNhbGN1bGF0b3ISNAoDQWRkEhYuY2FsY3VsYXRvci5BZGRSZXF1ZXN0Gh0uY2FsY3VsYXRvci5BZGRSZXNwb25zZSIAYgZwcm90bzM="
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "grpc_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "call_grpc_method",
+                                "service": "calculator.Calculator",
+                                "method": "Add",
+                                "request": {"a": 5, "b": 3}
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "grpc_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

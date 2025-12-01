@@ -216,6 +216,75 @@ impl Protocol for NfcServerProtocol {
         "NFC & Smart Cards"
     }
 
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles NFC tag emulation
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "nfc",
+                "instruction": "Act as a virtual NFC tag that responds to APDU commands",
+                "startup_params": {
+                    "tag_type": "type4",
+                    "uid": "04A1B2C3D4E5F6"
+                }
+            }),
+            // Script mode: Code-based NFC handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "nfc",
+                "startup_params": {
+                    "tag_type": "type4"
+                },
+                "event_handlers": [{
+                    "event_pattern": "nfc_server_started",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<nfc_server_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed NFC tag responses
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "nfc",
+                "startup_params": {
+                    "tag_type": "type4"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "nfc_server_started",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "set_ndef_message",
+                                "records": [{"type": "text", "language": "en", "text": "Hello NFC!"}]
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "nfc_apdu_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "respond_to_apdu",
+                                "data_hex": "D2760000850101",
+                                "sw1": "90",
+                                "sw2": "00"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {

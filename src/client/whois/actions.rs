@@ -133,6 +133,62 @@ impl Protocol for WhoisClientProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls WHOIS queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "whois.verisign-grs.com:43",
+                "base_stack": "whois",
+                "instruction": "Query example.com and extract the registrar, creation date, and expiration date"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "whois.iana.org:43",
+                "base_stack": "whois",
+                "event_handlers": [{
+                    "event_pattern": "whois_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<whois_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed WHOIS query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "whois.verisign-grs.com:43",
+                "base_stack": "whois",
+                "event_handlers": [
+                    {
+                        "event_pattern": "whois_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "query_whois",
+                                "query": "example.com"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "whois_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -396,6 +396,62 @@ impl Protocol for DynamoDbClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls DynamoDB operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8000",
+                "base_stack": "dynamodb",
+                "instruction": "Scan the Users table and report all items with age greater than 21"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8000",
+                "base_stack": "dynamodb",
+                "event_handlers": [{
+                    "event_pattern": "dynamodb_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dynamodb_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed DynamoDB scan on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:8000",
+                "base_stack": "dynamodb",
+                "event_handlers": [
+                    {
+                        "event_pattern": "dynamodb_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "scan",
+                                "table_name": "Users"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "dynamodb_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

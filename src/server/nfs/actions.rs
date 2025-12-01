@@ -79,6 +79,47 @@ impl Protocol for NfsProtocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 2049,
+                "base_stack": "nfs",
+                "instruction": "NFS file server. On file reads, return content based on the path. On writes, acknowledge with updated attributes. Provide directory listings with sample files."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 2049,
+                "base_stack": "nfs",
+                "event_handlers": [{
+                    "event": "nfs_operation",
+                    "script": "if event.operation == 'lookup' then return {type='nfs_lookup_response', fileid=42} elseif event.operation == 'read' then return {type='nfs_read_response', data='File content', eof=true} elseif event.operation == 'readdir' then return {type='nfs_readdir_response', entries={{name='file.txt', fileid=42}}, eof=true} else return {type='nfs_getattr_response', file_type='regular', mode=420, size=1024} end"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 2049,
+                "base_stack": "nfs",
+                "event_handlers": [{
+                    "event": "nfs_operation",
+                    "static_response": [{
+                        "type": "nfs_getattr_response",
+                        "file_type": "regular",
+                        "mode": 420,
+                        "size": 1024,
+                        "uid": 1000,
+                        "gid": 1000
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for NfsProtocol {

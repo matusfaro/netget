@@ -95,6 +95,51 @@ impl Protocol for RedisProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all Redis responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 6379,
+                "base_stack": "redis",
+                "instruction": "Redis in-memory data store responding to commands"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 6379,
+                "base_stack": "redis",
+                "event_handlers": [{
+                    "event_pattern": "redis_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<redis_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 6379,
+                "base_stack": "redis",
+                "event_handlers": [{
+                    "event_pattern": "redis_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "redis_simple_string",
+                            "value": "OK"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

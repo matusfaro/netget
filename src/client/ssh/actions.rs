@@ -192,6 +192,73 @@ impl Protocol for SshClientProtocol {
             },
         ]
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SSH commands
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:22",
+                "base_stack": "ssh",
+                "startup_params": {
+                    "username": "user",
+                    "password": "pass"
+                },
+                "instruction": "Execute 'uname -a' and 'df -h' to check system info"
+            }),
+            // Script mode: Code-based command execution
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:22",
+                "base_stack": "ssh",
+                "startup_params": {
+                    "username": "user",
+                    "password": "pass"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ssh_output_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ssh_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed command sequence
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:22",
+                "base_stack": "ssh",
+                "startup_params": {
+                    "username": "user",
+                    "password": "pass"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "ssh_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_command",
+                                "command": "hostname"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ssh_output_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -163,6 +163,51 @@ impl Protocol for SqsProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all SQS responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 9324,
+                "base_stack": "sqs",
+                "instruction": "AWS SQS-compatible message queue handling queue operations"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 9324,
+                "base_stack": "sqs",
+                "event_handlers": [{
+                    "event_pattern": "sqs_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<sqs_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 9324,
+                "base_stack": "sqs",
+                "event_handlers": [{
+                    "event_pattern": "sqs_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_sqs_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -68,6 +68,51 @@ impl Protocol for SvnProtocol {
     fn group_name(&self) -> &'static str {
         "Infrastructure"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 3690,
+                "base_stack": "svn",
+                "instruction": "SVN server. Respond to commands with standard repository layout (trunk, branches, tags). Latest revision is 42."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 3690,
+                "base_stack": "svn",
+                "event_handlers": [
+                    {
+                        "event": "svn_greeting",
+                        "script": "return {type='send_svn_greeting', min_version=2, max_version=2, mechanisms={'ANONYMOUS'}}"
+                    },
+                    {
+                        "event": "svn_command",
+                        "script": "if event.command == 'get-latest-rev' then return {type='send_svn_success', data='42'} else return {type='send_svn_list', items={{name='trunk', kind='dir', revision=1}, {name='branches', kind='dir', revision=1}}} end"
+                    }
+                ]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 3690,
+                "base_stack": "svn",
+                "event_handlers": [{
+                    "event": "svn_greeting",
+                    "static_response": [{
+                        "type": "send_svn_greeting",
+                        "min_version": 2,
+                        "max_version": 2,
+                        "mechanisms": ["ANONYMOUS"]
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

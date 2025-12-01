@@ -157,6 +157,51 @@ impl Protocol for MongodbProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all MongoDB responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 27017,
+                "base_stack": "mongodb",
+                "instruction": "MongoDB database server handling document queries"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 27017,
+                "base_stack": "mongodb",
+                "event_handlers": [{
+                    "event_pattern": "mongodb_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mongodb_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 27017,
+                "base_stack": "mongodb",
+                "event_handlers": [{
+                    "event_pattern": "mongodb_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "find_response",
+                            "documents": []
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

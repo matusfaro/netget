@@ -171,6 +171,58 @@ impl Protocol for GrpcProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 50051,
+                "base_stack": "grpc",
+                "instruction": "gRPC server with UserService. Respond to GetUser with user details, CreateUser with success confirmation",
+                "startup_params": {
+                    "proto_schema": "syntax = \"proto3\"; package test; service UserService { rpc GetUser(UserId) returns (User); } message UserId { int32 id = 1; } message User { int32 id = 1; string name = 2; string email = 3; }"
+                }
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 50051,
+                "base_stack": "grpc",
+                "startup_params": {
+                    "proto_schema": "syntax = \"proto3\"; package test; service Calculator { rpc Add(AddRequest) returns (AddResponse); } message AddRequest { int32 a = 1; int32 b = 2; } message AddResponse { int32 result = 1; }"
+                },
+                "event_handlers": [{
+                    "event_pattern": "grpc_unary_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "req = event.get('request', {})\nresult = req.get('a', 0) + req.get('b', 0)\naction('grpc_unary_response', message={'result': result})"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 50051,
+                "base_stack": "grpc",
+                "startup_params": {
+                    "proto_schema": "syntax = \"proto3\"; package test; service Greeter { rpc SayHello(HelloRequest) returns (HelloReply); } message HelloRequest { string name = 1; } message HelloReply { string message = 1; }"
+                },
+                "event_handlers": [{
+                    "event_pattern": "grpc_unary_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "grpc_unary_response",
+                            "message": {"message": "Hello, World!"}
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

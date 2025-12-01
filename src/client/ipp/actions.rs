@@ -211,6 +211,69 @@ impl Protocol for IppClientProtocol {
     fn group_name(&self) -> &'static str {
         "File & Print"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls print operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:631",
+                "base_stack": "ipp",
+                "startup_params": {
+                    "printer_path": "/printers/test-printer"
+                },
+                "instruction": "Query printer capabilities and submit a test print job"
+            }),
+            // Script mode: Code-based print job handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:631",
+                "base_stack": "ipp",
+                "startup_params": {
+                    "printer_path": "/printers/test-printer"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ipp_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ipp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed printer query
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:631",
+                "base_stack": "ipp",
+                "startup_params": {
+                    "printer_path": "/printers/test-printer"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "ipp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "get_printer_attributes"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "ipp_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

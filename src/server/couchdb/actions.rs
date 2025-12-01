@@ -518,6 +518,51 @@ impl Protocol for CouchDbProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all CouchDB responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 5984,
+                "base_stack": "couchdb",
+                "instruction": "CouchDB document database handling REST API requests"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 5984,
+                "base_stack": "couchdb",
+                "event_handlers": [{
+                    "event_pattern": "couchdb_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<couchdb_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 5984,
+                "base_stack": "couchdb",
+                "event_handlers": [{
+                    "event_pattern": "couchdb_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_server_info",
+                            "version": "3.5.1"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -54,6 +54,40 @@ impl Protocol for MqttProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 1883,
+                "base_stack": "mqtt",
+                "instruction": "MQTT broker accepting all connections, allow publish/subscribe to any topic"
+            }),
+            // Script-based example (placeholder as MQTT is not fully implemented)
+            json!({
+                "type": "open_server",
+                "port": 1883,
+                "base_stack": "mqtt",
+                "event_handlers": [{
+                    "event_pattern": "mqtt_connect",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# MQTT placeholder - accept connections\nrespond([{'type': 'accept_connection'}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 1883,
+                "base_stack": "mqtt",
+                "instruction": "Simple MQTT broker for IoT devices"
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

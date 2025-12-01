@@ -203,6 +203,63 @@ impl Protocol for JsonRpcClientProtocol {
     fn group_name(&self) -> &'static str {
         "RPC"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls JSON-RPC method calls
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:8080",
+                "base_stack": "jsonrpc",
+                "instruction": "Call the 'add' method with params [5, 3] and report the result"
+            }),
+            // Script mode: Code-based JSON-RPC handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:8080",
+                "base_stack": "jsonrpc",
+                "event_handlers": [{
+                    "event_pattern": "jsonrpc_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<jsonrpc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed JSON-RPC method call
+            json!({
+                "type": "open_client",
+                "remote_addr": "http://localhost:8080",
+                "base_stack": "jsonrpc",
+                "event_handlers": [
+                    {
+                        "event_pattern": "jsonrpc_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_jsonrpc_request",
+                                "method": "add",
+                                "params": [5, 3],
+                                "id": 1
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "jsonrpc_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

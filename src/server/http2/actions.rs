@@ -70,6 +70,51 @@ impl Protocol for Http2Protocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "port": 8443,
+                "base_stack": "http2",
+                "instruction": "HTTP/2 server with multiplexing and fast responses"
+            }),
+            json!({
+                "type": "open_server",
+                "port": 8443,
+                "base_stack": "http2",
+                "event_handlers": [{
+                    "event_pattern": "http2_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http2_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "port": 8443,
+                "base_stack": "http2",
+                "event_handlers": [{
+                    "event_pattern": "http2_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_http2_response",
+                            "status": 200,
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": "{\"message\": \"Hello from HTTP/2!\"}"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -226,53 +226,35 @@ fn validate_static_mode(protocol_name: &str, example: &serde_json::Value) -> Res
 fn test_all_startup_examples_are_valid() {
     let reg = registry();
     let mut errors = Vec::new();
-    let mut protocols_with_examples = 0;
-    let mut protocols_without_examples = Vec::new();
+    let mut protocol_count = 0;
 
     for (protocol_name, protocol) in reg.all_protocols() {
-        if let Some(examples) = protocol.get_startup_examples() {
-            protocols_with_examples += 1;
+        protocol_count += 1;
+        let examples = protocol.get_startup_examples();
 
-            // Validate LLM mode
-            if let Err(e) = validate_llm_mode(&protocol_name, &examples.llm_mode) {
-                errors.push(e);
-            }
+        // Validate LLM mode
+        if let Err(e) = validate_llm_mode(&protocol_name, &examples.llm_mode) {
+            errors.push(e);
+        }
 
-            // Validate Script mode
-            if let Err(e) = validate_script_mode(&protocol_name, &examples.script_mode) {
-                errors.push(e);
-            }
+        // Validate Script mode
+        if let Err(e) = validate_script_mode(&protocol_name, &examples.script_mode) {
+            errors.push(e);
+        }
 
-            // Validate Static mode
-            if let Err(e) = validate_static_mode(&protocol_name, &examples.static_mode) {
-                errors.push(e);
-            }
-        } else {
-            protocols_without_examples.push(protocol_name.clone());
+        // Validate Static mode
+        if let Err(e) = validate_static_mode(&protocol_name, &examples.static_mode) {
+            errors.push(e);
         }
     }
 
     // Print summary
     println!("\n=== StartupExamples Validation Summary ===");
-    println!(
-        "Protocols with examples: {}",
-        protocols_with_examples
-    );
-    println!(
-        "Protocols without examples: {}",
-        protocols_without_examples.len()
-    );
-
-    if !protocols_without_examples.is_empty() {
-        println!("\nProtocols without startup examples:");
-        for name in &protocols_without_examples {
-            println!("  - {}", name);
-        }
-    }
+    println!("Protocols validated: {}", protocol_count);
 
     // Report errors
     if !errors.is_empty() {
-        println!("\n=== Validation Errors ===");
+        println!("\n=== Validation Errors ({} total) ===", errors.len());
         for error in &errors {
             println!("  ERROR: {}", error);
         }
@@ -282,7 +264,7 @@ fn test_all_startup_examples_are_valid() {
         );
     }
 
-    println!("\n✓ All startup examples are valid!");
+    println!("\n✓ All {} protocols have valid startup examples!", protocol_count);
 }
 
 #[test]
@@ -349,37 +331,36 @@ fn test_startup_examples_base_stack_matches_protocol() {
     let mut errors = Vec::new();
 
     for (protocol_name, protocol) in reg.all_protocols() {
-        if let Some(examples) = protocol.get_startup_examples() {
-            // The base_stack in examples should match the protocol name (case insensitive)
-            // or be a valid variant for the protocol
-            for (mode_name, example) in [
-                ("llm_mode", &examples.llm_mode),
-                ("script_mode", &examples.script_mode),
-                ("static_mode", &examples.static_mode),
-            ] {
-                if let Some(base_stack) = example.get("base_stack").and_then(|v| v.as_str()) {
-                    // The base_stack should be related to the protocol
-                    // For example, TCP protocol should have base_stack "tcp"
-                    // This is a loose check - we just ensure it's not completely unrelated
-                    let protocol_name_lower = protocol_name.to_lowercase();
-                    let base_stack_lower = base_stack.to_lowercase();
+        let examples = protocol.get_startup_examples();
+        // The base_stack in examples should match the protocol name (case insensitive)
+        // or be a valid variant for the protocol
+        for (mode_name, example) in [
+            ("llm_mode", &examples.llm_mode),
+            ("script_mode", &examples.script_mode),
+            ("static_mode", &examples.static_mode),
+        ] {
+            if let Some(base_stack) = example.get("base_stack").and_then(|v| v.as_str()) {
+                // The base_stack should be related to the protocol
+                // For example, TCP protocol should have base_stack "tcp"
+                // This is a loose check - we just ensure it's not completely unrelated
+                let protocol_name_lower = protocol_name.to_lowercase();
+                let base_stack_lower = base_stack.to_lowercase();
 
-                    // Common mappings: http -> http, tcp -> tcp, dns -> dns
-                    // Some protocols might have different base stacks (e.g., ftp uses tcp)
-                    // So we just check that something reasonable is specified
-                    if base_stack_lower.is_empty() {
-                        errors.push(format!(
-                            "{}: {} has empty base_stack",
-                            protocol_name, mode_name
-                        ));
-                    }
-
-                    // Log the mapping for visibility
-                    println!(
-                        "  {}: {} base_stack='{}' (protocol='{}')",
-                        protocol_name, mode_name, base_stack, protocol_name_lower
-                    );
+                // Common mappings: http -> http, tcp -> tcp, dns -> dns
+                // Some protocols might have different base stacks (e.g., ftp uses tcp)
+                // So we just check that something reasonable is specified
+                if base_stack_lower.is_empty() {
+                    errors.push(format!(
+                        "{}: {} has empty base_stack",
+                        protocol_name, mode_name
+                    ));
                 }
+
+                // Log the mapping for visibility
+                println!(
+                    "  {}: {} base_stack='{}' (protocol='{}')",
+                    protocol_name, mode_name, base_stack, protocol_name_lower
+                );
             }
         }
     }

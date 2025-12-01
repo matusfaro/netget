@@ -227,6 +227,51 @@ impl Protocol for TlsClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles TLS client
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:443",
+                "base_stack": "tls",
+                "instruction": "Send an HTTPS GET request and display the response"
+            }),
+            // Script mode: Code-based TLS handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:443",
+                "base_stack": "tls",
+                "event_handlers": [{
+                    "event_pattern": "tls_client_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tls_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed TLS request
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:443",
+                "base_stack": "tls",
+                "event_handlers": [{
+                    "event_pattern": "tls_client_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_tls_data",
+                            "data": "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

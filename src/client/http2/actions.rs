@@ -222,6 +222,53 @@ impl Protocol for Http2ClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles HTTP/2 client
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://http2.golang.org",
+                "base_stack": "http2",
+                "instruction": "Fetch /reqinfo and display the HTTP/2 server information"
+            }),
+            // Script mode: Code-based HTTP/2 handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://httpbin.org",
+                "base_stack": "http2",
+                "event_handlers": [{
+                    "event_pattern": "http2_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http2_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed HTTP/2 request
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://httpbin.org",
+                "base_stack": "http2",
+                "event_handlers": [{
+                    "event_pattern": "http2_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_http2_request",
+                            "method": "GET",
+                            "path": "/get",
+                            "headers": {"Accept": "application/json"}
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

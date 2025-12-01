@@ -91,6 +91,54 @@ impl Protocol for RssProtocol {
     fn group_name(&self) -> &'static str {
         "Web"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all RSS feed requests intelligently
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "rss",
+                "instruction": "RSS feed server generating dynamic feeds"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "rss",
+                "event_handlers": [{
+                    "event_pattern": "rss_feed_requested",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<rss_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "rss",
+                "event_handlers": [{
+                    "event_pattern": "rss_feed_requested",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "generate_rss_feed",
+                            "title": "Default Feed",
+                            "link": "http://localhost:8080",
+                            "description": "Default RSS feed",
+                            "items": []
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

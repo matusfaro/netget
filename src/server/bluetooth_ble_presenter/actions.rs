@@ -64,6 +64,59 @@ impl Protocol for BluetoothBlePresenterProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BLE presenter device
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-presenter",
+                "instruction": "Act as a BLE presentation remote that controls slides",
+                "startup_params": {
+                    "device_name": "NetGet-Presenter"
+                }
+            }),
+            // Script mode: Code-based presenter handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-presenter",
+                "startup_params": {
+                    "device_name": "NetGet-Presenter"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_presenter_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<presenter_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed presenter action
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-presenter",
+                "startup_params": {
+                    "device_name": "NetGet-Presenter"
+                },
+                "event_handlers": [{
+                    "event_pattern": "ble_presenter_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBlePresenterProtocol {

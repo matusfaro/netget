@@ -195,6 +195,63 @@ impl Protocol for PostgresqlClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls PostgreSQL queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5432",
+                "base_stack": "postgresql",
+                "instruction": "Query all users from the users table and analyze the data structure"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5432",
+                "base_stack": "postgresql",
+                "event_handlers": [{
+                    "event_pattern": "postgresql_query_result",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<postgresql_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed PostgreSQL query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5432",
+                "base_stack": "postgresql",
+                "event_handlers": [
+                    {
+                        "event_pattern": "postgresql_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_query",
+                                "query": "SELECT * FROM users WHERE active = true"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "postgresql_query_result",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {

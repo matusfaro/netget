@@ -82,6 +82,46 @@ impl Protocol for IcmpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "icmp",
+                "instruction": "ICMP server that responds to ping requests"
+            }),
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "icmp",
+                "event_handlers": [{
+                    "event_pattern": "icmp_echo_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<icmp_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "icmp",
+                "event_handlers": [{
+                    "event_pattern": "icmp_echo_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "ignore_icmp"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

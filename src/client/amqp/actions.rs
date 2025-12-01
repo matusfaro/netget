@@ -133,6 +133,61 @@ impl Protocol for AmqpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls AMQP operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5672",
+                "base_stack": "amqp",
+                "instruction": "Open a channel and declare a queue named 'tasks' for message processing"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5672",
+                "base_stack": "amqp",
+                "event_handlers": [{
+                    "event_pattern": "amqp_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<amqp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed AMQP channel open on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5672",
+                "base_stack": "amqp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "amqp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "open_channel"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "amqp_channel_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

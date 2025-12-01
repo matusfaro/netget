@@ -267,6 +267,59 @@ impl Protocol for UsbMscProtocol {
     fn group_name(&self) -> &'static str {
         "USB Devices"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles USB mass storage device
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-msc",
+                "instruction": "Create a USB mass storage device with a 100MB disk image",
+                "startup_params": {
+                    "disk_image": "./tmp/netget_msc_disk.img"
+                }
+            }),
+            // Script mode: Code-based storage handling
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-msc",
+                "startup_params": {
+                    "disk_image": "./tmp/netget_msc_disk.img"
+                },
+                "event_handlers": [{
+                    "event_pattern": "usb_msc_attached",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<msc_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed storage action
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-msc",
+                "startup_params": {
+                    "disk_image": "./tmp/netget_msc_disk.img"
+                },
+                "event_handlers": [{
+                    "event_pattern": "usb_msc_attached",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "wait_for_more"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait

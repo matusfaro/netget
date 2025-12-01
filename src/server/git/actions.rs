@@ -201,6 +201,45 @@ impl Protocol for GitProtocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 9418,
+                "base_stack": "git",
+                "instruction": "Git HTTP server. Serve virtual repository 'hello-world' with main branch. README.md contains '# Hello World'. Allow clone/fetch operations."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 9418,
+                "base_stack": "git",
+                "event_handlers": [{
+                    "event": "git_info_refs",
+                    "script": "return {type='git_advertise_refs', refs={{name='refs/heads/main', sha='abc123def456abc123def456abc123def456abc1'}}, capabilities={'multi_ack', 'side-band-64k'}}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 9418,
+                "base_stack": "git",
+                "event_handlers": [{
+                    "event": "git_info_refs",
+                    "static_response": [{
+                        "type": "git_advertise_refs",
+                        "refs": [{"name": "refs/heads/main", "sha": "abc123def456abc123def456abc123def456abc1"}],
+                        "capabilities": ["multi_ack", "side-band-64k"]
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

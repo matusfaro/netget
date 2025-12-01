@@ -249,6 +249,53 @@ impl Protocol for Http3ClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles HTTP/3 client
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://cloudflare-quic.com",
+                "base_stack": "http3",
+                "instruction": "Fetch /cdn-cgi/trace and display QUIC connection info"
+            }),
+            // Script mode: Code-based HTTP/3 handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://cloudflare-quic.com",
+                "base_stack": "http3",
+                "event_handlers": [{
+                    "event_pattern": "http3_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http3_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed HTTP/3 request
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://cloudflare-quic.com",
+                "base_stack": "http3",
+                "event_handlers": [{
+                    "event_pattern": "http3_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_http3_request",
+                            "method": "GET",
+                            "path": "/cdn-cgi/trace",
+                            "priority": 5
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

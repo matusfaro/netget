@@ -141,6 +141,54 @@ impl Protocol for ZookeeperProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all ZooKeeper responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 2181,
+                "base_stack": "zookeeper",
+                "instruction": "ZooKeeper distributed coordination server handling znode operations"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 2181,
+                "base_stack": "zookeeper",
+                "event_handlers": [{
+                    "event_pattern": "zookeeper_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<zookeeper_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 2181,
+                "base_stack": "zookeeper",
+                "event_handlers": [{
+                    "event_pattern": "zookeeper_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "zookeeper_response",
+                            "xid": 1,
+                            "zxid": 1,
+                            "error_code": 0,
+                            "data_hex": ""
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

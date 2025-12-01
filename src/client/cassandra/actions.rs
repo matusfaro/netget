@@ -178,6 +178,64 @@ impl Protocol for CassandraClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Cassandra CQL queries
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9042",
+                "base_stack": "cassandra",
+                "instruction": "Query the system.local table and report the cluster information"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9042",
+                "base_stack": "cassandra",
+                "event_handlers": [{
+                    "event_pattern": "cassandra_result_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<cassandra_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed CQL query on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9042",
+                "base_stack": "cassandra",
+                "event_handlers": [
+                    {
+                        "event_pattern": "cassandra_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_cql_query",
+                                "query": "SELECT * FROM system.local",
+                                "consistency": "ONE"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "cassandra_result_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {

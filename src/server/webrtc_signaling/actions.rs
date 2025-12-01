@@ -182,6 +182,45 @@ impl Protocol for WebRtcSignalingProtocol {
     fn group_name(&self) -> &'static str {
         "Real-time"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "webrtc-signaling",
+                "instruction": "WebRTC signaling server. Relay SDP offers and answers between peers. Log all peer connections and signaling messages."
+            }),
+            // Script mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "webrtc-signaling",
+                "event_handlers": [{
+                    "event": "webrtc_signaling_peer_connected",
+                    "script": "return {type='no_action'}"
+                }, {
+                    "event": "webrtc_signaling_message_received",
+                    "script": "return {type='no_action'}"
+                }]
+            }),
+            // Static mode
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "webrtc-signaling",
+                "event_handlers": [{
+                    "event": "webrtc_signaling_peer_connected",
+                    "static_response": [{
+                        "type": "no_action"
+                    }]
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

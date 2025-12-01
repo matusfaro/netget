@@ -160,6 +160,52 @@ impl Protocol for UsbMouseProtocol {
     fn group_name(&self) -> &'static str {
         "USB Devices"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles USB mouse device
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-mouse",
+                "instruction": "Create a USB mouse and move it in a circle pattern when attached"
+            }),
+            // Script mode: Code-based mouse handling
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-mouse",
+                "event_handlers": [{
+                    "event_pattern": "usb_mouse_attached",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mouse_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed mouse action
+            json!({
+                "type": "open_server",
+                "port": 3240,
+                "base_stack": "usb-mouse",
+                "event_handlers": [{
+                    "event_pattern": "usb_mouse_attached",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "move_relative",
+                            "x": 100,
+                            "y": 50
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait

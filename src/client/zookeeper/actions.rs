@@ -244,6 +244,61 @@ impl Protocol for ZookeeperClientProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls ZooKeeper operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:2181",
+                "base_stack": "zookeeper",
+                "instruction": "Read configuration from /myapp/config and list its children"
+            }),
+            // Script mode: Code-based znode operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:2181",
+                "base_stack": "zookeeper",
+                "event_handlers": [{
+                    "event_pattern": "zookeeper_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<zookeeper_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed znode operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:2181",
+                "base_stack": "zookeeper",
+                "event_handlers": [
+                    {
+                        "event_pattern": "zookeeper_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "get_data",
+                                "path": "/myapp/config"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "zookeeper_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

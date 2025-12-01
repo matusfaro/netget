@@ -342,6 +342,61 @@ impl Protocol for WebRtcClientProtocol {
     fn group_name(&self) -> &'static str {
         "Real-time"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls WebRTC data channel messaging
+            json!({
+                "type": "open_client",
+                "remote_addr": "ws://localhost:8080/alice",
+                "base_stack": "webrtc",
+                "instruction": "Connect via signaling server and send hello message to peer bob"
+            }),
+            // Script mode: Code-based WebRTC message handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "ws://localhost:8080/alice",
+                "base_stack": "webrtc",
+                "event_handlers": [{
+                    "event_pattern": "webrtc_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<webrtc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed WebRTC message exchange
+            json!({
+                "type": "open_client",
+                "remote_addr": "ws://localhost:8080/alice",
+                "base_stack": "webrtc",
+                "event_handlers": [
+                    {
+                        "event_pattern": "webrtc_channel_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_message",
+                                "message": "Hello, peer!"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "webrtc_message_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

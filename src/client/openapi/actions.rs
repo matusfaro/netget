@@ -332,6 +332,72 @@ impl Protocol for OpenApiClientProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls OpenAPI operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.example.com",
+                "base_stack": "openapi",
+                "instruction": "List available operations and test the listUsers endpoint",
+                "startup_params": {
+                    "spec_file": "/path/to/openapi.yaml"
+                }
+            }),
+            // Script mode: Code-based operation response handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.example.com",
+                "base_stack": "openapi",
+                "startup_params": {
+                    "spec_file": "/path/to/openapi.yaml"
+                },
+                "event_handlers": [{
+                    "event_pattern": "openapi_operation_response",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<openapi_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed OpenAPI operation execution
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://api.example.com",
+                "base_stack": "openapi",
+                "startup_params": {
+                    "spec_file": "/path/to/openapi.yaml"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "openapi_client_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "execute_operation",
+                                "operation_id": "listUsers",
+                                "path_params": {},
+                                "query_params": {"page": "1", "limit": "10"}
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "openapi_operation_response",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

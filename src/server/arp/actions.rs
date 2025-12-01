@@ -71,6 +71,46 @@ impl Protocol for ArpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "arp",
+                "instruction": "ARP responder that handles address resolution requests"
+            }),
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "arp",
+                "event_handlers": [{
+                    "event_pattern": "arp_request_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<arp_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "interface": "eth0",
+                "base_stack": "arp",
+                "event_handlers": [{
+                    "event_pattern": "arp_request_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "ignore_arp"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

@@ -269,6 +269,73 @@ impl Protocol for SqsClientProtocol {
     fn group_name(&self) -> &'static str {
         "Cloud"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SQS operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9324",
+                "base_stack": "sqs",
+                "startup_params": {
+                    "queue_url": "http://localhost:9324/000000000000/MyQueue",
+                    "endpoint_url": "http://localhost:9324"
+                },
+                "instruction": "Send a test message and receive messages from the queue"
+            }),
+            // Script mode: Code-based message processing
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9324",
+                "base_stack": "sqs",
+                "startup_params": {
+                    "queue_url": "http://localhost:9324/000000000000/MyQueue",
+                    "endpoint_url": "http://localhost:9324"
+                },
+                "event_handlers": [{
+                    "event_pattern": "sqs_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<sqs_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed message operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:9324",
+                "base_stack": "sqs",
+                "startup_params": {
+                    "queue_url": "http://localhost:9324/000000000000/MyQueue",
+                    "endpoint_url": "http://localhost:9324"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "sqs_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_message",
+                                "message_body": "Test message from NetGet"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "sqs_message_sent",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

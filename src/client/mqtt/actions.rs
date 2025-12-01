@@ -315,6 +315,65 @@ impl Protocol for MqttClientProtocol {
             },
         ]
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls MQTT pub/sub
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1883",
+                "base_stack": "mqtt",
+                "instruction": "Subscribe to sensors/# and respond to temperature readings above 30"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1883",
+                "base_stack": "mqtt",
+                "event_handlers": [{
+                    "event_pattern": "mqtt_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<mqtt_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed MQTT subscription on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:1883",
+                "base_stack": "mqtt",
+                "event_handlers": [
+                    {
+                        "event_pattern": "mqtt_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "subscribe",
+                                "topics": ["sensors/#"],
+                                "qos": 1
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "mqtt_message_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "publish",
+                                "topic": "ack",
+                                "payload": "received"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

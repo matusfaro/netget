@@ -94,6 +94,50 @@ impl Protocol for OpenAiProtocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: instruction-based
+            json!({
+                "type": "open_server",
+                "port": 11434,
+                "base_stack": "openai",
+                "instruction": "OpenAI-compatible API server. Respond to chat completions with helpful responses and list available models on /v1/models"
+            }),
+            // Script mode: event_handlers with script handler
+            json!({
+                "type": "open_server",
+                "port": 11434,
+                "base_stack": "openai",
+                "event_handlers": [{
+                    "event_pattern": "openai_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "if event['path'] == '/v1/models':\n    action('openai_models_response', models=['gpt-4', 'gpt-3.5-turbo'])\nelse:\n    action('openai_chat_response', content='Hello from script!', model='gpt-4')"
+                    }
+                }]
+            }),
+            // Static mode: event_handlers with static actions
+            json!({
+                "type": "open_server",
+                "port": 11434,
+                "base_stack": "openai",
+                "event_handlers": [{
+                    "event_pattern": "openai_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "openai_chat_response",
+                            "content": "I am a static OpenAI response",
+                            "model": "gpt-3.5-turbo"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

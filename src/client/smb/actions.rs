@@ -346,6 +346,73 @@ impl Protocol for SmbClientProtocol {
     fn group_name(&self) -> &'static str {
         "File & Print"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SMB file operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:445",
+                "base_stack": "smb",
+                "startup_params": {
+                    "username": "guest",
+                    "password": ""
+                },
+                "instruction": "List the root directory and read any readme files"
+            }),
+            // Script mode: Code-based SMB file handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:445",
+                "base_stack": "smb",
+                "startup_params": {
+                    "username": "guest",
+                    "password": ""
+                },
+                "event_handlers": [{
+                    "event_pattern": "smb_dir_listed",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<smb_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed directory listing
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:445",
+                "base_stack": "smb",
+                "startup_params": {
+                    "username": "guest",
+                    "password": ""
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "smb_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "list_directory",
+                                "path": "smb://192.168.1.100/share"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "smb_dir_listed",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

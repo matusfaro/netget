@@ -209,6 +209,61 @@ impl Protocol for SamlClientProtocol {
     fn group_name(&self) -> &'static str {
         "Authentication"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles SAML SSO flow
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://idp.example.com/saml/sso",
+                "base_stack": "saml",
+                "instruction": "Initiate SAML SSO authentication with the Identity Provider",
+                "startup_params": {
+                    "entity_id": "https://myapp.example.com/saml/sp",
+                    "acs_url": "https://myapp.example.com/saml/acs"
+                }
+            }),
+            // Script mode: Code-based SAML handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://idp.example.com/saml/sso",
+                "base_stack": "saml",
+                "startup_params": {
+                    "entity_id": "https://myapp.example.com/saml/sp"
+                },
+                "event_handlers": [{
+                    "event_pattern": "saml_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<saml_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed SAML action
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://idp.example.com/saml/sso",
+                "base_stack": "saml",
+                "startup_params": {
+                    "entity_id": "https://myapp.example.com/saml/sp"
+                },
+                "event_handlers": [{
+                    "event_pattern": "saml_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "initiate_sso",
+                            "relay_state": "/dashboard",
+                            "force_authn": false
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

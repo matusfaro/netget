@@ -205,6 +205,61 @@ impl Protocol for RssClientProtocol {
     fn group_name(&self) -> &'static str {
         "Web"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls RSS feed fetching
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:80",
+                "base_stack": "rss",
+                "instruction": "Fetch the RSS feed at /news.xml and summarize recent articles"
+            }),
+            // Script mode: Code-based feed processing
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:80",
+                "base_stack": "rss",
+                "event_handlers": [{
+                    "event_pattern": "rss_feed_fetched",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<rss_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed feed fetch
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:80",
+                "base_stack": "rss",
+                "event_handlers": [
+                    {
+                        "event_pattern": "rss_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "fetch_rss_feed",
+                                "url": "http://example.com/news.xml"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "rss_feed_fetched",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

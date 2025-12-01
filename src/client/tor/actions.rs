@@ -245,6 +245,61 @@ impl Protocol for TorClientProtocol {
     fn group_name(&self) -> &'static str {
         "VPN & Tunneling"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Tor connection
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:80",
+                "base_stack": "tor",
+                "instruction": "Connect to the destination through Tor and send an HTTP GET request"
+            }),
+            // Script mode: Code-based Tor handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:80",
+                "base_stack": "tor",
+                "event_handlers": [{
+                    "event_pattern": "tor_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tor_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed Tor action
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:80",
+                "base_stack": "tor",
+                "event_handlers": [
+                    {
+                        "event_pattern": "tor_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_tor_data",
+                                "data_hex": "474554202f20485454502f312e310d0a486f73743a206578616d706c652e636f6d0d0a0d0a"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "tor_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

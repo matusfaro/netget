@@ -95,6 +95,51 @@ impl Protocol for MdnsProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        StartupExamples::new(
+            // LLM-driven example
+            json!({
+                "type": "open_server",
+                "port": 5353,
+                "base_stack": "mdns",
+                "instruction": "Advertise HTTP service 'My Web Server' on port 8080 via mDNS"
+            }),
+            // Script-based example
+            json!({
+                "type": "open_server",
+                "port": 5353,
+                "base_stack": "mdns",
+                "event_handlers": [{
+                    "event_pattern": "mdns_server_startup",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "# Register mDNS service\nrespond([{'type': 'register_mdns_service', 'service_type': '_http._tcp.local.', 'instance_name': 'My Web Server', 'port': 8080, 'properties': {'path': '/', 'version': '1.0'}}])"
+                    }
+                }]
+            }),
+            // Static handler example
+            json!({
+                "type": "open_server",
+                "port": 5353,
+                "base_stack": "mdns",
+                "event_handlers": [{
+                    "event_pattern": "mdns_server_startup",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "register_mdns_service",
+                            "service_type": "_http._tcp.local.",
+                            "instance_name": "My Web Server",
+                            "port": 8080,
+                            "properties": {"path": "/", "version": "1.0"}
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

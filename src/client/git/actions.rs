@@ -421,6 +421,69 @@ impl Protocol for GitClientProtocol {
     fn group_name(&self) -> &'static str {
         "Version Control"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls Git operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "github.com",
+                "base_stack": "git",
+                "startup_params": {
+                    "local_path": "./my-repo"
+                },
+                "instruction": "Clone the repository and show the last 5 commits"
+            }),
+            // Script mode: Code-based Git operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "github.com",
+                "base_stack": "git",
+                "startup_params": {
+                    "local_path": "./my-repo"
+                },
+                "event_handlers": [{
+                    "event_pattern": "git_operation_completed",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<git_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed git status check
+            json!({
+                "type": "open_client",
+                "remote_addr": "github.com",
+                "base_stack": "git",
+                "startup_params": {
+                    "local_path": "./my-repo"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "git_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "git_status"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "git_operation_completed",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

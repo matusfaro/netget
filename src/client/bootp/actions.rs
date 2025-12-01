@@ -172,6 +172,63 @@ impl Protocol for BootpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Network Services"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls BOOTP discovery
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:67",
+                "base_stack": "bootp",
+                "instruction": "Request boot information for MAC 00:11:22:33:44:55 and report the boot server and filename"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:67",
+                "base_stack": "bootp",
+                "event_handlers": [{
+                    "event_pattern": "bootp_reply_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<bootp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed BOOTP request on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.1:67",
+                "base_stack": "bootp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "bootp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_bootp_request",
+                                "client_mac": "00:11:22:33:44:55",
+                                "broadcast": true
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "bootp_reply_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

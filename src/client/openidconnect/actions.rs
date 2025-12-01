@@ -348,6 +348,81 @@ impl Protocol for OpenIdConnectClientProtocol {
     fn group_name(&self) -> &'static str {
         "Authentication"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls OIDC authentication flow
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://accounts.google.com",
+                "base_stack": "openidconnect",
+                "instruction": "Discover configuration and start device code authentication",
+                "startup_params": {
+                    "client_id": "my-application-id",
+                    "scopes": "openid profile email"
+                }
+            }),
+            // Script mode: Code-based OIDC token handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://accounts.google.com",
+                "base_stack": "openidconnect",
+                "startup_params": {
+                    "client_id": "my-application-id"
+                },
+                "event_handlers": [{
+                    "event_pattern": "oidc_token_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<oidc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed OIDC discovery and userinfo flow
+            json!({
+                "type": "open_client",
+                "remote_addr": "https://accounts.google.com",
+                "base_stack": "openidconnect",
+                "startup_params": {
+                    "client_id": "my-application-id",
+                    "scopes": "openid profile email"
+                },
+                "event_handlers": [
+                    {
+                        "event_pattern": "oidc_discovered",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "start_device_flow",
+                                "scopes": "openid profile email"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "oidc_token_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "fetch_userinfo"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "oidc_userinfo_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

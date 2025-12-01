@@ -139,6 +139,59 @@ impl Protocol for SocketFileProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "base_stack": "socket_file",
+                "socket_path": "./netget.sock",
+                "instruction": "Unix socket IPC server that echoes data"
+            }),
+            json!({
+                "type": "open_server",
+                "base_stack": "socket_file",
+                "socket_path": "./netget.sock",
+                "event_handlers": [{
+                    "event_pattern": "socket_file_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<socket_file_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "base_stack": "socket_file",
+                "socket_path": "./netget.sock",
+                "event_handlers": [
+                    {
+                        "event_pattern": "socket_file_connection_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_socket_data",
+                                "data": "READY\n"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "socket_file_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_socket_data",
+                                "data": "ACK\n"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

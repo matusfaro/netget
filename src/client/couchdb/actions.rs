@@ -477,6 +477,61 @@ impl Protocol for CouchDbClientProtocol {
         "Database"
     }
 
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls CouchDB operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5984",
+                "base_stack": "couchdb",
+                "instruction": "List all databases and then get documents from the 'users' database"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5984",
+                "base_stack": "couchdb",
+                "event_handlers": [{
+                    "event_pattern": "couchdb_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<couchdb_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed CouchDB list databases on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:5984",
+                "base_stack": "couchdb",
+                "event_handlers": [
+                    {
+                        "event_pattern": "couchdb_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "list_databases"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "couchdb_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         vec![
             crate::llm::actions::ParameterDefinition {

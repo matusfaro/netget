@@ -337,6 +337,51 @@ impl Protocol for SshAgentProtocol {
     fn group_name(&self) -> &'static str {
         "Security"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all SSH Agent responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ssh-agent",
+                "instruction": "SSH Agent managing keys and signing operations"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ssh-agent",
+                "event_handlers": [{
+                    "event_pattern": "ssh_agent_request_identities",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ssh_agent_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ssh-agent",
+                "event_handlers": [{
+                    "event_pattern": "ssh_agent_request_identities",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_identities_list",
+                            "identities": []
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

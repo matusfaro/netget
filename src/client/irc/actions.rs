@@ -286,6 +286,62 @@ impl Protocol for IrcClientProtocol {
             },
         ]
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls IRC chat
+            json!({
+                "type": "open_client",
+                "remote_addr": "irc.libera.chat:6667",
+                "base_stack": "irc",
+                "instruction": "Join #rust channel and say hello, respond to any messages mentioning 'help'"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "irc.libera.chat:6667",
+                "base_stack": "irc",
+                "event_handlers": [{
+                    "event_pattern": "irc_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<irc_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed IRC join on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "irc.libera.chat:6667",
+                "base_stack": "irc",
+                "event_handlers": [
+                    {
+                        "event_pattern": "irc_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "join_channel",
+                                "channel": "#test"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "irc_message_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

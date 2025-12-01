@@ -196,6 +196,56 @@ impl Protocol for SyslogClientProtocol {
             example: json!("tcp"),
         }]
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls syslog messages
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:514",
+                "base_stack": "syslog",
+                "instruction": "Send a user info log message about application startup"
+            }),
+            // Script mode: Code-based log generation
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:514",
+                "base_stack": "syslog",
+                "event_handlers": [{
+                    "event_pattern": "syslog_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<syslog_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed log messages
+            json!({
+                "type": "open_client",
+                "remote_addr": "localhost:514",
+                "base_stack": "syslog",
+                "event_handlers": [
+                    {
+                        "event_pattern": "syslog_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_syslog_message",
+                                "facility": "user",
+                                "severity": "info",
+                                "message": "NetGet client connected",
+                                "hostname": "netget-host",
+                                "app_name": "netget"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

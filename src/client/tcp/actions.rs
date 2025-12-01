@@ -166,6 +166,61 @@ impl Protocol for TcpClientProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls TCP client interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:9000",
+                "base_stack": "tcp",
+                "instruction": "Connect to the TCP server and send a greeting, then echo any responses"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:9000",
+                "base_stack": "tcp",
+                "event_handlers": [{
+                    "event_pattern": "tcp_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tcp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "example.com:9000",
+                "base_stack": "tcp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "tcp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_tcp_data",
+                                "data": "HELLO\r\n"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "tcp_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

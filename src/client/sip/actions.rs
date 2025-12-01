@@ -80,6 +80,65 @@ impl Protocol for SipClientProtocol {
     fn group_name(&self) -> &'static str {
         "VoIP & Multimedia"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls SIP registration and call flow
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:5060",
+                "base_stack": "sip",
+                "instruction": "Register as alice@example.com and query server capabilities with OPTIONS"
+            }),
+            // Script mode: Code-based SIP message handling
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:5060",
+                "base_stack": "sip",
+                "event_handlers": [{
+                    "event_pattern": "sip_client_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<sip_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed SIP registration flow
+            json!({
+                "type": "open_client",
+                "remote_addr": "192.168.1.100:5060",
+                "base_stack": "sip",
+                "event_handlers": [
+                    {
+                        "event_pattern": "sip_client_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "sip_register",
+                                "from": "sip:alice@example.com",
+                                "to": "sip:alice@example.com",
+                                "request_uri": "sip:example.com",
+                                "contact": "sip:alice@192.0.2.1:5060",
+                                "expires": 3600
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "sip_client_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

@@ -75,6 +75,52 @@ impl Protocol for IppProtocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all IPP responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 631,
+                "base_stack": "ipp",
+                "instruction": "IPP printer server handling print jobs"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 631,
+                "base_stack": "ipp",
+                "event_handlers": [{
+                    "event_pattern": "ipp_request_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ipp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 631,
+                "base_stack": "ipp",
+                "event_handlers": [{
+                    "event_pattern": "ipp_request_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "ipp_response",
+                            "status": 200,
+                            "body": ""
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

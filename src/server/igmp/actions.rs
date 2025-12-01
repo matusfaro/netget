@@ -66,6 +66,51 @@ impl Protocol for IgmpProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all IGMP messages intelligently
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "igmp",
+                "instruction": "IGMP multicast group management server"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "igmp",
+                "event_handlers": [{
+                    "event_pattern": "igmp_query_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<igmp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "igmp",
+                "event_handlers": [{
+                    "event_pattern": "igmp_query_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_membership_report",
+                            "group_address": "239.255.255.250"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

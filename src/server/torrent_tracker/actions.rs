@@ -68,6 +68,54 @@ impl Protocol for TorrentTrackerProtocol {
     fn group_name(&self) -> &'static str {
         "P2P"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles BitTorrent tracker
+            json!({
+                "type": "open_server",
+                "port": 6969,
+                "base_stack": "torrent-tracker",
+                "instruction": "Act as BitTorrent tracker. Track peers and respond to announce/scrape requests"
+            }),
+            // Script mode: Code-based tracker handling
+            json!({
+                "type": "open_server",
+                "port": 6969,
+                "base_stack": "torrent-tracker",
+                "event_handlers": [{
+                    "event_pattern": "tracker_announce_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tracker_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed tracker responses
+            json!({
+                "type": "open_server",
+                "port": 6969,
+                "base_stack": "torrent-tracker",
+                "event_handlers": [{
+                    "event_pattern": "tracker_announce_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_announce_response",
+                            "interval": 1800,
+                            "complete": 10,
+                            "incomplete": 5,
+                            "peers": []
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

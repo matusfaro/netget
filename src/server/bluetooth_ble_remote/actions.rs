@@ -104,6 +104,59 @@ impl Protocol for BluetoothBleRemoteProtocol {
     fn group_name(&self) -> &'static str {
         "Network"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles remote control
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-remote",
+                "instruction": "Act as a Bluetooth media remote. When connected, press play/pause then volume up.",
+                "startup_params": {
+                    "device_name": "NetGet-Remote"
+                }
+            }),
+            // Script mode: Code-based remote handling
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-remote",
+                "startup_params": {
+                    "device_name": "NetGet-Remote"
+                },
+                "event_handlers": [{
+                    "event_pattern": "remote_button_pressed",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<remote_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed remote actions
+            json!({
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "bluetooth-ble-remote",
+                "startup_params": {
+                    "device_name": "NetGet-Remote"
+                },
+                "event_handlers": [{
+                    "event_pattern": "remote_button_pressed",
+                    "handler": {
+                        "type": "static",
+                        "actions": [
+                            {"type": "play_pause"},
+                            {"type": "volume_up"}
+                        ]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for BluetoothBleRemoteProtocol {

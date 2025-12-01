@@ -270,6 +270,63 @@ impl Protocol for XmppClientProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls XMPP messaging
+            json!({
+                "type": "open_client",
+                "remote_addr": "xmpp.example.com:5222",
+                "base_stack": "xmpp",
+                "instruction": "Send presence and auto-reply to all incoming messages"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "xmpp.example.com:5222",
+                "base_stack": "xmpp",
+                "event_handlers": [{
+                    "event_pattern": "xmpp_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<xmpp_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed XMPP presence on connect
+            json!({
+                "type": "open_client",
+                "remote_addr": "xmpp.example.com:5222",
+                "base_stack": "xmpp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "xmpp_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_presence",
+                                "show": "chat",
+                                "status": "Available"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "xmpp_message_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "wait_for_more"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)

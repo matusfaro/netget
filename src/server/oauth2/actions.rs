@@ -70,6 +70,66 @@ impl Protocol for OAuth2Protocol {
     fn group_name(&self) -> &'static str {
         "AI & API"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles OAuth2 authorization
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "oauth2",
+                "instruction": "Act as OAuth2 authorization server. Accept client 'testapp' with secret 'secret123'. Issue tokens with 1-hour expiry."
+            }),
+            // Script mode: Code-based OAuth2 handling
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "oauth2",
+                "event_handlers": [{
+                    "event_pattern": "oauth2_authorize",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<oauth2_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed OAuth2 responses
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "oauth2",
+                "event_handlers": [
+                    {
+                        "event_pattern": "oauth2_authorize",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "oauth2_authorize_response",
+                                "code": "AUTH_CODE_xyz123",
+                                "state": "random_state"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "oauth2_token",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "oauth2_token_response",
+                                "access_token": "ACCESS_TOKEN_xyz123",
+                                "token_type": "Bearer",
+                                "expires_in": 3600
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

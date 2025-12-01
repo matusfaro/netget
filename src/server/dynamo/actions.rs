@@ -137,6 +137,52 @@ impl Protocol for DynamoProtocol {
     fn group_name(&self) -> &'static str {
         "Database"
     }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all DynamoDB responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "dynamo",
+                "instruction": "DynamoDB-compatible database handling API requests"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "dynamo",
+                "event_handlers": [{
+                    "event_pattern": "dynamo_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dynamo_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 8000,
+                "base_stack": "dynamo",
+                "event_handlers": [{
+                    "event_pattern": "dynamo_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 // Implement Server trait (server-specific functionality)

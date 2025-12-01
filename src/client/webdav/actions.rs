@@ -345,6 +345,62 @@ impl Protocol for WebdavClientProtocol {
     fn group_name(&self) -> &'static str {
         "File & Print"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls WebDAV operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "webdav.example.com:80",
+                "base_stack": "webdav",
+                "instruction": "List the contents of /dav/ and upload a test file"
+            }),
+            // Script mode: Code-based file operations
+            json!({
+                "type": "open_client",
+                "remote_addr": "webdav.example.com:80",
+                "base_stack": "webdav",
+                "event_handlers": [{
+                    "event_pattern": "webdav_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<webdav_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed directory listing
+            json!({
+                "type": "open_client",
+                "remote_addr": "webdav.example.com:80",
+                "base_stack": "webdav",
+                "event_handlers": [
+                    {
+                        "event_pattern": "webdav_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "propfind",
+                                "path": "/dav/",
+                                "depth": "1"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "webdav_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 // Implement Client trait (client-specific functionality)
