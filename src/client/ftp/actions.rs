@@ -15,19 +15,27 @@ use std::sync::LazyLock;
 
 /// FTP client connected event
 pub static FTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ftp_connected", "FTP client successfully connected to server").with_parameters(
-        vec![Parameter {
-            name: "remote_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Remote FTP server address".to_string(),
-            required: true,
-        }],
+    EventType::new(
+        "ftp_connected",
+        "FTP client successfully connected to server",
+        json!({"type": "wait_for_more"}),
     )
+    .with_parameters(vec![Parameter {
+        name: "remote_addr".to_string(),
+        type_hint: "string".to_string(),
+        description: "Remote FTP server address".to_string(),
+        required: true,
+    }])
 });
 
 /// FTP client response received event
 pub static FTP_CLIENT_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ftp_response", "Response received from FTP server").with_parameters(vec![
+    EventType::new(
+        "ftp_response",
+        "Response received from FTP server",
+        json!({"type": "send_ftp_command", "command": "USER anonymous"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "response".to_string(),
             type_hint: "string".to_string(),
@@ -120,14 +128,8 @@ impl Protocol for FtpClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new(
-                "ftp_connected",
-                "Triggered when FTP client connects to server",
-            ),
-            EventType::new(
-                "ftp_response",
-                "Triggered when FTP client receives response from server",
-            ),
+            FTP_CLIENT_CONNECTED_EVENT.clone(),
+            FTP_CLIENT_RESPONSE_EVENT.clone(),
         ]
     }
 

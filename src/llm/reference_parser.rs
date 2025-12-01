@@ -39,9 +39,12 @@ pub fn extract_references(text: &str) -> Result<(String, HashMap<String, String>
     let mut cleaned = text.to_string();
 
     // Find both opening <tag> and closing </tag> or <tag> patterns
-    let opening_regex = Regex::new(r"<([a-zA-Z0-9_]+)>")
+    // IMPORTANT: Only match tags that contain at least one digit to avoid matching
+    // HTML tags like <body>, <html>, <div> in response content. This feature is
+    // designed for tags like <script001>, <config1>, etc.
+    let opening_regex = Regex::new(r"<([a-zA-Z]+[0-9]+[a-zA-Z0-9_]*)>")
         .context("Failed to compile opening tag regex")?;
-    let closing_regex = Regex::new(r"</([a-zA-Z0-9_]+)>")
+    let closing_regex = Regex::new(r"</([a-zA-Z]+[0-9]+[a-zA-Z0-9_]*)>")
         .context("Failed to compile closing tag regex")?;
 
     // Collect blocks to extract and remove
@@ -164,8 +167,9 @@ fn escape_json_string(s: &str) -> String {
 }
 
 /// Check if a string contains XML reference placeholders
+/// Only matches tags containing at least one digit (like <script001>, <config1>)
 pub fn contains_references(text: &str) -> bool {
-    let re = Regex::new(r"<([a-zA-Z0-9_]+)>").unwrap();
+    let re = Regex::new(r"<([a-zA-Z]+[0-9]+[a-zA-Z0-9_]*)>").unwrap();
     re.is_match(text)
 }
 
@@ -246,6 +250,10 @@ config content
         assert!(contains_references("<script001>"));
         assert!(contains_references(r#"{"code": "<script001>"}"#));
         assert!(!contains_references(r#"{"code": "normal string"}"#));
+        // HTML tags should NOT be matched (no digits)
+        assert!(!contains_references("<body>"));
+        assert!(!contains_references("<html>"));
+        assert!(!contains_references(r#"{"body": "<html><body>Hello</body></html>"}"#));
     }
 
     #[test]
@@ -271,5 +279,19 @@ second content
 
         assert_eq!(refs.len(), 1);
         assert_eq!(refs.get("script001").unwrap(), "first content");
+    }
+
+    #[test]
+    fn test_html_in_json_not_extracted() {
+        // HTML tags in JSON values should NOT be extracted as references
+        let input = r#"{"actions":[{"body":"<html><body>Hello World</body></html>"}]}"#;
+        let (cleaned, refs) = extract_references(input).unwrap();
+
+        // No references should be extracted (no tags with digits)
+        assert_eq!(refs.len(), 0);
+        // The cleaned text should be unchanged
+        assert_eq!(cleaned, input);
+        // Verify HTML is preserved
+        assert!(cleaned.contains("<body>Hello World</body>"));
     }
 }

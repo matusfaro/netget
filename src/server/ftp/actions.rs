@@ -406,23 +406,26 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// FTP command event - triggered when client sends an FTP command
 pub static FTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ftp_command", "FTP command received from client")
-        .with_parameters(vec![Parameter {
-            name: "command".to_string(),
-            type_hint: "string".to_string(),
-            description:
-                "The FTP command received (e.g., 'USER anonymous', 'LIST', 'RETR file.txt')"
-                    .to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            SEND_FTP_RESPONSE_ACTION.clone(),
-            SEND_FTP_MULTILINE_ACTION.clone(),
-            SEND_FTP_DATA_ACTION.clone(),
-            SEND_FTP_LIST_ACTION.clone(),
-            WAIT_FOR_MORE_ACTION.clone(),
-            CLOSE_CONNECTION_ACTION.clone(),
-        ])
+    EventType::new(
+        "ftp_command",
+        "FTP command received from client",
+        json!({"type": "send_ftp_response", "code": 220, "message": "FTP Server Ready"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "command".to_string(),
+        type_hint: "string".to_string(),
+        description: "The FTP command received (e.g., 'USER anonymous', 'LIST', 'RETR file.txt')"
+            .to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        SEND_FTP_RESPONSE_ACTION.clone(),
+        SEND_FTP_MULTILINE_ACTION.clone(),
+        SEND_FTP_DATA_ACTION.clone(),
+        SEND_FTP_LIST_ACTION.clone(),
+        WAIT_FOR_MORE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
 });
 
 /// Get FTP event types

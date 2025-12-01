@@ -323,7 +323,24 @@ pub async fn start_server_from_action(
     let metadata = protocol.metadata();
     let system_caps = state.get_system_capabilities().await;
 
-    if !metadata.privilege_requirement.is_met_by(&system_caps) {
+    // Determine if the actual port being used requires privileges
+    let requires_privileges = match &metadata.privilege_requirement {
+        crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(_) => {
+            // Only require privileges if actually binding to a privileged port
+            // Port 0 means OS-assigned port, which will always be unprivileged (>1024)
+            // final_port has already been resolved to an actual port number
+            match final_port {
+                Some(p) => p > 0 && p < 1024,
+                None => false, // Interface-based protocols don't use ports
+            }
+        }
+        _ => {
+            // For other requirements (RawSockets, Root, etc.), check as normal
+            !metadata.privilege_requirement.is_met_by(&system_caps)
+        }
+    };
+
+    if requires_privileges && !system_caps.can_bind_privileged_ports {
         let error_msg = format!(
             "Cannot start {} server: {}",
             base_stack,
