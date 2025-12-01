@@ -133,11 +133,19 @@ impl Protocol for Socks5Protocol {
                 "port": 1080,
                 "base_stack": "socks5",
                 "event_handlers": [{
-                    "event": "socks5_connect_request",
-                    "script": "return {type='allow_socks5_connect', mitm=false}"
+                    "event_pattern": "socks5_connect_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }, {
-                    "event": "socks5_auth_request",
-                    "script": "return {type='allow_socks5_auth'}"
+                    "event_pattern": "socks5_auth_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -146,11 +154,14 @@ impl Protocol for Socks5Protocol {
                 "port": 1080,
                 "base_stack": "socks5",
                 "event_handlers": [{
-                    "event": "socks5_connect_request",
-                    "static_response": [{
-                        "type": "allow_socks5_connect",
-                        "mitm": false
-                    }]
+                    "event_pattern": "socks5_connect_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "allow_socks5_connect",
+                            "mitm": false
+                        }]
+                    }
                 }]
             }),
         )

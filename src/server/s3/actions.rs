@@ -294,6 +294,50 @@ impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all S3 responses
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "s3",
+                "instruction": "S3-compatible object storage server with test-bucket"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "s3",
+                "event_handlers": [{
+                    "event_pattern": "s3_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<s3_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "s3",
+                "event_handlers": [{
+                    "event_pattern": "s3_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_s3_bucket_list",
+                            "buckets": [{"name": "test-bucket", "creation_date": "2024-01-01T00:00:00Z"}]
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for S3Protocol {

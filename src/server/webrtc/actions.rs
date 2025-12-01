@@ -329,11 +329,12 @@ impl Protocol for WebRtcProtocol {
                 "port": 0,
                 "base_stack": "webrtc",
                 "event_handlers": [{
-                    "event": "webrtc_peer_connected",
-                    "script": "return {type='send_message', message='Welcome to NetGet WebRTC!'}"
-                }, {
-                    "event": "webrtc_message_received",
-                    "script": "return {type='send_message', message='Echo: '..event.message}"
+                    "event_pattern": "webrtc_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<webrtc_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -342,11 +343,14 @@ impl Protocol for WebRtcProtocol {
                 "port": 0,
                 "base_stack": "webrtc",
                 "event_handlers": [{
-                    "event": "webrtc_peer_connected",
-                    "static_response": [{
-                        "type": "send_message",
-                        "message": "Welcome to NetGet WebRTC server!"
-                    }]
+                    "event_pattern": "webrtc_peer_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_message",
+                            "message": "Welcome to NetGet WebRTC server!"
+                        }]
+                    }
                 }]
             }),
         )

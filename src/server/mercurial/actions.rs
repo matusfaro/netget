@@ -267,8 +267,12 @@ impl Protocol for MercurialProtocol {
                 "port": 8000,
                 "base_stack": "mercurial",
                 "event_handlers": [{
-                    "event": "hg_command",
-                    "script": "if event.command == 'capabilities' then return {type='hg_capabilities', capabilities={'batch', 'branchmap', 'getbundle', 'httpheader=1024', 'known', 'lookup'}} elseif event.command == 'heads' then return {type='hg_heads', heads={'abc123def456abc123def456abc123def456abc1'}} else return {type='hg_branchmap', branches={default={'abc123def456abc123def456abc123def456abc1'}}} end"
+                    "event_pattern": "hg_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -277,11 +281,14 @@ impl Protocol for MercurialProtocol {
                 "port": 8000,
                 "base_stack": "mercurial",
                 "event_handlers": [{
-                    "event": "hg_command",
-                    "static_response": [{
-                        "type": "hg_capabilities",
-                        "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup"]
-                    }]
+                    "event_pattern": "hg_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "hg_capabilities",
+                            "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup"]
+                        }]
+                    }
                 }]
             }),
         )

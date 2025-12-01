@@ -92,12 +92,20 @@ impl Protocol for AmqpProtocol {
                     }
                 }]
             }),
-            // Static handler example
+            // Static mode
             json!({
                 "type": "open_server",
                 "port": 5672,
                 "base_stack": "amqp",
-                "instruction": "Simple AMQP message broker"
+                "event_handlers": [{
+                    "event_pattern": "amqp_connection",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "accept_connection"
+                        }]
+                    }
+                }]
             }),
         )
     }

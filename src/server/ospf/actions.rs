@@ -840,8 +840,12 @@ impl Protocol for OspfProtocol {
                 "port": 0,
                 "base_stack": "ospf",
                 "event_handlers": [{
-                    "event": "ospf_hello",
-                    "script": "return {type='send_hello', router_id='192.168.1.1', area_id='0.0.0.0', network_mask='255.255.255.0', priority=100, dr='192.168.1.1', bdr='0.0.0.0', neighbors={event.neighbor_id}}"
+                    "event_pattern": "ospf_hello",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "return {type='send_hello', router_id='192.168.1.1', area_id='0.0.0.0', network_mask='255.255.255.0', priority=100, dr='192.168.1.1', bdr='0.0.0.0', neighbors={event.neighbor_id}}"
+                    }
                 }]
             }),
             // Static mode: Fixed OSPF Hello response
@@ -850,16 +854,19 @@ impl Protocol for OspfProtocol {
                 "port": 0,
                 "base_stack": "ospf",
                 "event_handlers": [{
-                    "event": "ospf_hello",
-                    "static_response": [{
-                        "type": "send_hello",
-                        "router_id": "192.168.1.1",
-                        "area_id": "0.0.0.0",
-                        "network_mask": "255.255.255.0",
-                        "priority": 1,
-                        "dr": "0.0.0.0",
-                        "bdr": "0.0.0.0"
-                    }]
+                    "event_pattern": "ospf_hello",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_hello",
+                            "router_id": "192.168.1.1",
+                            "area_id": "0.0.0.0",
+                            "network_mask": "255.255.255.0",
+                            "priority": 1,
+                            "dr": "0.0.0.0",
+                            "bdr": "0.0.0.0"
+                        }]
+                    }
                 }]
             }),
         )

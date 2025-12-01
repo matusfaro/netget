@@ -105,7 +105,18 @@ impl Protocol for BluetoothBleEnvironmentalProtocol {
                 "startup_params": {
                     "device_name": "NetGet-Environment"
                 },
-                "event_handlers": []
+                "event_handlers": [{
+                    "event_pattern": "environmental_update",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_environmental_data",
+                            "temperature": 22.5,
+                            "humidity": 45.0,
+                            "pressure": 1013.25
+                        }]
+                    }
+                }]
             }),
         )
     }

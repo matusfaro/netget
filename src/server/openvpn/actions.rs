@@ -123,8 +123,12 @@ impl Protocol for OpenvpnProtocol {
                 "port": 1194,
                 "base_stack": "openvpn",
                 "event_handlers": [{
-                    "event": "openvpn_peer_request",
-                    "script": "return {type='authorize_peer', peer_addr=event.peer_addr}"
+                    "event_pattern": "openvpn_peer_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "return {type='authorize_peer', peer_addr=event.peer_addr}"
+                    }
                 }]
             }),
             // Static mode: Fixed authorization response
@@ -133,8 +137,11 @@ impl Protocol for OpenvpnProtocol {
                 "port": 1194,
                 "base_stack": "openvpn",
                 "event_handlers": [{
-                    "event": "openvpn_peer_connected",
-                    "static_response": [{"type": "no_action"}]
+                    "event_pattern": "openvpn_peer_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{"type": "no_action"}]
+                    }
                 }]
             }),
         )

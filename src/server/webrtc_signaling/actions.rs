@@ -200,11 +200,19 @@ impl Protocol for WebRtcSignalingProtocol {
                 "port": 8080,
                 "base_stack": "webrtc-signaling",
                 "event_handlers": [{
-                    "event": "webrtc_signaling_peer_connected",
-                    "script": "return {type='no_action'}"
+                    "event_pattern": "webrtc_signaling_peer_connected",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }, {
-                    "event": "webrtc_signaling_message_received",
-                    "script": "return {type='no_action'}"
+                    "event_pattern": "webrtc_signaling_message_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -213,10 +221,13 @@ impl Protocol for WebRtcSignalingProtocol {
                 "port": 8080,
                 "base_stack": "webrtc-signaling",
                 "event_handlers": [{
-                    "event": "webrtc_signaling_peer_connected",
-                    "static_response": [{
-                        "type": "no_action"
-                    }]
+                    "event_pattern": "webrtc_signaling_peer_connected",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "no_action"
+                        }]
+                    }
                 }]
             }),
         )

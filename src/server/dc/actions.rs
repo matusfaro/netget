@@ -208,8 +208,12 @@ impl Protocol for DcProtocol {
                 "port": 411,
                 "base_stack": "dc",
                 "event_handlers": [{
-                    "event": "dc_command_received",
-                    "script": "if event.command_type == 'ValidateNick' then return {type='send_dc_lock'} elseif event.command_type == 'Key' then return {{type='send_dc_hello', nickname=event.client_nickname or 'user'}, {type='send_dc_hubname', name='NetGet DC Hub'}} else return {type='wait_for_more'} end"
+                    "event_pattern": "dc_command_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -218,12 +222,15 @@ impl Protocol for DcProtocol {
                 "port": 411,
                 "base_stack": "dc",
                 "event_handlers": [{
-                    "event": "dc_command_received",
-                    "static_response": [{
-                        "type": "send_dc_lock",
-                        "lock": "EXTENDEDPROTOCOLABCABCABCABCABCABC",
-                        "pk": "NetGetHub"
-                    }]
+                    "event_pattern": "dc_command_received",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_dc_lock",
+                            "lock": "EXTENDEDPROTOCOLABCABCABCABCABCABC",
+                            "pk": "NetGetHub"
+                        }]
+                    }
                 }]
             }),
         )

@@ -410,6 +410,60 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
     fn group_name(&self) -> &'static str {
         "Cloud"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls S3 client interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "s3.amazonaws.com:443",
+                "base_stack": "s3",
+                "instruction": "List all S3 buckets and report their contents"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "s3.amazonaws.com:443",
+                "base_stack": "s3",
+                "event_handlers": [{
+                    "event_pattern": "s3_response_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<s3_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "s3.amazonaws.com:443",
+                "base_stack": "s3",
+                "event_handlers": [
+                    {
+                        "event_pattern": "s3_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "list_buckets"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "s3_response_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 impl Client for S3ClientProtocol {

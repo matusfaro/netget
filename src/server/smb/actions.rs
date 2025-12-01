@@ -91,8 +91,12 @@ impl Protocol for SmbProtocol {
                 "port": 445,
                 "base_stack": "smb",
                 "event_handlers": [{
-                    "event": "smb_operation",
-                    "script": "if event.operation == 'session_setup' then return {type='smb_auth_success', username='guest'} elseif event.operation == 'query_directory' then return {type='smb_list_directory', files={{name='readme.txt', size=1024, is_directory=false}}} elseif event.operation == 'read' then return {type='smb_read_file', content='File content'} else return {type='smb_get_file_info', size=1024, is_directory=false} end"
+                    "event_pattern": "smb_operation",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -101,11 +105,14 @@ impl Protocol for SmbProtocol {
                 "port": 445,
                 "base_stack": "smb",
                 "event_handlers": [{
-                    "event": "smb_operation",
-                    "static_response": [{
-                        "type": "smb_auth_success",
-                        "username": "guest"
-                    }]
+                    "event_pattern": "smb_operation",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "smb_auth_success",
+                            "username": "guest"
+                        }]
+                    }
                 }]
             }),
         )

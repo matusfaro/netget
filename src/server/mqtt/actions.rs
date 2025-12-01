@@ -79,12 +79,20 @@ impl Protocol for MqttProtocol {
                     }
                 }]
             }),
-            // Static handler example
+            // Static mode
             json!({
                 "type": "open_server",
                 "port": 1883,
                 "base_stack": "mqtt",
-                "instruction": "Simple MQTT broker for IoT devices"
+                "event_handlers": [{
+                    "event_pattern": "mqtt_connect",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "accept_connection"
+                        }]
+                    }
+                }]
             }),
         )
     }

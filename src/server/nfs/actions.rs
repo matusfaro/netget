@@ -97,8 +97,12 @@ impl Protocol for NfsProtocol {
                 "port": 2049,
                 "base_stack": "nfs",
                 "event_handlers": [{
-                    "event": "nfs_operation",
-                    "script": "if event.operation == 'lookup' then return {type='nfs_lookup_response', fileid=42} elseif event.operation == 'read' then return {type='nfs_read_response', data='File content', eof=true} elseif event.operation == 'readdir' then return {type='nfs_readdir_response', entries={{name='file.txt', fileid=42}}, eof=true} else return {type='nfs_getattr_response', file_type='regular', mode=420, size=1024} end"
+                    "event_pattern": "nfs_operation",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -107,15 +111,18 @@ impl Protocol for NfsProtocol {
                 "port": 2049,
                 "base_stack": "nfs",
                 "event_handlers": [{
-                    "event": "nfs_operation",
-                    "static_response": [{
-                        "type": "nfs_getattr_response",
-                        "file_type": "regular",
-                        "mode": 420,
-                        "size": 1024,
-                        "uid": 1000,
-                        "gid": 1000
-                    }]
+                    "event_pattern": "nfs_operation",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "nfs_getattr_response",
+                            "file_type": "regular",
+                            "mode": 420,
+                            "size": 1024,
+                            "uid": 1000,
+                            "gid": 1000
+                        }]
+                    }
                 }]
             }),
         )

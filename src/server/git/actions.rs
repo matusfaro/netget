@@ -220,8 +220,12 @@ impl Protocol for GitProtocol {
                 "port": 9418,
                 "base_stack": "git",
                 "event_handlers": [{
-                    "event": "git_info_refs",
-                    "script": "return {type='git_advertise_refs', refs={{name='refs/heads/main', sha='abc123def456abc123def456abc123def456abc1'}}, capabilities={'multi_ack', 'side-band-64k'}}"
+                    "event_pattern": "git_info_refs",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -230,12 +234,15 @@ impl Protocol for GitProtocol {
                 "port": 9418,
                 "base_stack": "git",
                 "event_handlers": [{
-                    "event": "git_info_refs",
-                    "static_response": [{
-                        "type": "git_advertise_refs",
-                        "refs": [{"name": "refs/heads/main", "sha": "abc123def456abc123def456abc123def456abc1"}],
-                        "capabilities": ["multi_ack", "side-band-64k"]
-                    }]
+                    "event_pattern": "git_info_refs",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "git_advertise_refs",
+                            "refs": [{"name": "refs/heads/main", "sha": "abc123def456abc123def456abc123def456abc1"}],
+                            "capabilities": ["multi_ack", "side-band-64k"]
+                        }]
+                    }
                 }]
             }),
         )

@@ -182,6 +182,60 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
     fn group_name(&self) -> &'static str {
         "Network Infrastructure"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM controls STUN client interactions
+            json!({
+                "type": "open_client",
+                "remote_addr": "stun.l.google.com:19302",
+                "base_stack": "stun",
+                "instruction": "Discover external IP address via STUN binding request"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "stun.l.google.com:19302",
+                "base_stack": "stun",
+                "event_handlers": [{
+                    "event_pattern": "stun_binding_response",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<stun_client_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_client",
+                "remote_addr": "stun.l.google.com:19302",
+                "base_stack": "stun",
+                "event_handlers": [
+                    {
+                        "event_pattern": "stun_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_binding_request"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "stun_binding_response",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "disconnect"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
 }
 
 impl Client for StunClientProtocol {

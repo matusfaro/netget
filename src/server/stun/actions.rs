@@ -70,6 +70,53 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
     fn group_name(&self) -> &'static str {
         "Proxy & Network"
     }
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        StartupExamples::new(
+            // LLM mode: LLM handles all STUN responses
+            json!({
+                "type": "open_server",
+                "port": 3478,
+                "base_stack": "stun",
+                "instruction": "STUN server for NAT traversal - respond with client's external IP"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 3478,
+                "base_stack": "stun",
+                "event_handlers": [{
+                    "event_pattern": "stun_binding_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<stun_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 3478,
+                "base_stack": "stun",
+                "event_handlers": [{
+                    "event_pattern": "stun_binding_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_stun_binding_response",
+                            "transaction_id": "000000000000",
+                            "client_address": "0.0.0.0",
+                            "client_port": 0,
+                            "xor_mapped": true
+                        }]
+                    }
+                }]
+            }),
+        )
+    }
 }
 
 impl Server for StunProtocol {

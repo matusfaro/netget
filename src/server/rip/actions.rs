@@ -83,8 +83,12 @@ impl Protocol for RipProtocol {
                 "port": 520,
                 "base_stack": "rip",
                 "event_handlers": [{
-                    "event": "rip_request",
-                    "script": "if event.message_type == 'request' then return {type='send_rip_response', routes={{ip_address='192.168.1.0', subnet_mask='255.255.255.0', next_hop='0.0.0.0', metric=1}, {ip_address='10.0.0.0', subnet_mask='255.0.0.0', next_hop='0.0.0.0', metric=5}}} else return {type='ignore_request'} end"
+                    "event_pattern": "rip_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "if event.message_type == 'request' then return {type='send_rip_response', routes={{ip_address='192.168.1.0', subnet_mask='255.255.255.0', next_hop='0.0.0.0', metric=1}, {ip_address='10.0.0.0', subnet_mask='255.0.0.0', next_hop='0.0.0.0', metric=5}}} else return {type='ignore_request'} end"
+                    }
                 }]
             }),
             // Static mode
@@ -93,16 +97,19 @@ impl Protocol for RipProtocol {
                 "port": 520,
                 "base_stack": "rip",
                 "event_handlers": [{
-                    "event": "rip_request",
-                    "static_response": [{
-                        "type": "send_rip_response",
-                        "routes": [{
-                            "ip_address": "192.168.1.0",
-                            "subnet_mask": "255.255.255.0",
-                            "next_hop": "0.0.0.0",
-                            "metric": 1
+                    "event_pattern": "rip_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_rip_response",
+                            "routes": [{
+                                "ip_address": "192.168.1.0",
+                                "subnet_mask": "255.255.255.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 1
+                            }]
                         }]
-                    }]
+                    }
                 }]
             }),
         )

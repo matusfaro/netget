@@ -89,11 +89,22 @@ impl Protocol for WebDavProtocol {
                     }
                 }]
             }),
-            // Static mode: Library-driven (no static actions for WebDAV)
+            // Static mode: Fixed response
             json!({
                 "type": "open_server",
                 "port": 8080,
-                "base_stack": "webdav"
+                "base_stack": "webdav",
+                "event_handlers": [{
+                    "event_pattern": "webdav_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_webdav_response",
+                            "status": 200,
+                            "body": "WebDAV server ready"
+                        }]
+                    }
+                }]
             }),
         )
     }

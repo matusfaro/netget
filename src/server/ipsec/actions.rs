@@ -104,8 +104,12 @@ impl Protocol for IpsecProtocol {
                 "port": 500,
                 "base_stack": "ipsec",
                 "event_handlers": [{
-                    "event": "ipsec_handshake",
-                    "script": "return {type='log_handshake', details='IKE ' .. event.ike_version .. ' ' .. event.exchange_type .. ' from ' .. event.peer_addr}"
+                    "event_pattern": "ipsec_handshake",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode: Fixed logging response
@@ -114,8 +118,11 @@ impl Protocol for IpsecProtocol {
                 "port": 500,
                 "base_stack": "ipsec",
                 "event_handlers": [{
-                    "event": "ipsec_handshake",
-                    "static_response": [{"type": "log_handshake", "details": "IKE handshake detected"}]
+                    "event_pattern": "ipsec_handshake",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{"type": "log_handshake", "details": "IKE handshake detected"}]
+                    }
                 }]
             }),
         )

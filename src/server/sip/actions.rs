@@ -87,14 +87,26 @@ impl Protocol for SipProtocol {
                 "port": 5060,
                 "base_stack": "sip",
                 "event_handlers": [{
-                    "event": "sip_register",
-                    "script": "return {type='sip_register', status_code=200, expires=3600}"
+                    "event_pattern": "sip_register",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }, {
-                    "event": "sip_invite",
-                    "script": "return {type='sip_invite', status_code=200, sdp='v=0\\no=- 0 0 IN IP4 127.0.0.1\\ns=Call\\nc=IN IP4 127.0.0.1\\nt=0 0\\nm=audio 8000 RTP/AVP 0\\n'}"
+                    "event_pattern": "sip_invite",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }, {
-                    "event": "sip_options",
-                    "script": "return {type='sip_options', status_code=200, allow_methods={'INVITE', 'ACK', 'BYE', 'REGISTER', 'OPTIONS'}}"
+                    "event_pattern": "sip_options",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -103,12 +115,15 @@ impl Protocol for SipProtocol {
                 "port": 5060,
                 "base_stack": "sip",
                 "event_handlers": [{
-                    "event": "sip_register",
-                    "static_response": [{
-                        "type": "sip_register",
-                        "status_code": 200,
-                        "expires": 3600
-                    }]
+                    "event_pattern": "sip_register",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "sip_register",
+                            "status_code": 200,
+                            "expires": 3600
+                        }]
+                    }
                 }]
             }),
         )

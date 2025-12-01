@@ -324,6 +324,8 @@ async fn example_test_http_startup_static_mode() -> E2EResult<()> {
     println!("\n=== E2E Example Test: HTTP Startup (Static Mode) ===");
 
     // Static mode uses event_handlers with static responses
+    // Note: field is "event_pattern" not "event_type"
+    // Note: "instruction" is optional when using static/script handlers
     let config = NetGetConfig::new("Start an HTTP server on port 0 with static handler")
         .with_log_level("debug")
         .with_mock(|mock| {
@@ -333,7 +335,7 @@ async fn example_test_http_startup_static_mode() -> E2EResult<()> {
                     "port": 0,
                     "base_stack": "HTTP",
                     "event_handlers": [{
-                        "event_type": "http_request",
+                        "event_pattern": "http_request",
                         "handler": {
                             "type": "static",
                             "actions": [{

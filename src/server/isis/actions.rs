@@ -115,8 +115,12 @@ impl Protocol for IsisProtocol {
                 "port": 0,
                 "base_stack": "isis",
                 "event_handlers": [{
-                    "event": "isis_hello",
-                    "script": "return {type='send_isis_hello', pdu_type='lan_hello_l2', system_id='0000.0000.0001', area_id='49.0001', holding_time=30}"
+                    "event_pattern": "isis_hello",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode: Fixed IS-IS Hello response
@@ -125,14 +129,17 @@ impl Protocol for IsisProtocol {
                 "port": 0,
                 "base_stack": "isis",
                 "event_handlers": [{
-                    "event": "isis_hello",
-                    "static_response": [{
-                        "type": "send_isis_hello",
-                        "pdu_type": "lan_hello_l2",
-                        "system_id": "0000.0000.0001",
-                        "area_id": "49.0001",
-                        "holding_time": 30
-                    }]
+                    "event_pattern": "isis_hello",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_isis_hello",
+                            "pdu_type": "lan_hello_l2",
+                            "system_id": "0000.0000.0001",
+                            "area_id": "49.0001",
+                            "holding_time": 30
+                        }]
+                    }
                 }]
             }),
         )

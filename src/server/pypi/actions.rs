@@ -84,8 +84,12 @@ impl Protocol for PypiProtocol {
                 "port": 8080,
                 "base_stack": "pypi",
                 "event_handlers": [{
-                    "event": "pypi_request",
-                    "script": "if event.request_type == 'list_packages' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a></body></html>'} elseif event.request_type == 'list_files' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello_world-1.0.0-py3-none-any.whl\">hello_world-1.0.0-py3-none-any.whl</a></body></html>'} else return {type='send_pypi_response', status=404, body='Not found'} end"
+                    "event_pattern": "pypi_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "if event.request_type == 'list_packages' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a></body></html>'} elseif event.request_type == 'list_files' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello_world-1.0.0-py3-none-any.whl\">hello_world-1.0.0-py3-none-any.whl</a></body></html>'} else return {type='send_pypi_response', status=404, body='Not found'} end"
+                    }
                 }]
             }),
             // Static mode
@@ -94,13 +98,16 @@ impl Protocol for PypiProtocol {
                 "port": 8080,
                 "base_stack": "pypi",
                 "event_handlers": [{
-                    "event": "pypi_request",
-                    "static_response": [{
-                        "type": "send_pypi_response",
-                        "status": 200,
-                        "headers": {"Content-Type": "text/html"},
-                        "body": "<!DOCTYPE html>\n<html>\n<body>\n<a href=\"hello-world/\">hello-world</a>\n</body>\n</html>"
-                    }]
+                    "event_pattern": "pypi_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_pypi_response",
+                            "status": 200,
+                            "headers": {"Content-Type": "text/html"},
+                            "body": "<!DOCTYPE html>\n<html>\n<body>\n<a href=\"hello-world/\">hello-world</a>\n</body>\n</html>"
+                        }]
+                    }
                 }]
             }),
         )

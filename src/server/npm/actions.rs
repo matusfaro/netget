@@ -105,11 +105,19 @@ impl Protocol for NpmProtocol {
                 "port": 4873,
                 "base_stack": "npm",
                 "event_handlers": [{
-                    "event": "NPM_PACKAGE_REQUEST",
-                    "script": "return {type='npm_package_metadata', metadata={name='express', version='4.18.2', description='Fast web framework', versions={['4.18.2']={name='express', version='4.18.2'}}}}"
+                    "event_pattern": "NPM_PACKAGE_REQUEST",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "return {type='npm_package_metadata', metadata={name='express', version='4.18.2', description='Fast web framework', versions={['4.18.2']={name='express', version='4.18.2'}}}}"
+                    }
                 }, {
-                    "event": "NPM_SEARCH_REQUEST",
-                    "script": "return {type='npm_package_search', results={objects={{package={name='express', version='4.18.2'}}}, total=1}}"
+                    "event_pattern": "NPM_SEARCH_REQUEST",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "return {type='npm_package_search', results={objects={{package={name='express', version='4.18.2'}}}, total=1}}"
+                    }
                 }]
             }),
             // Static mode
@@ -118,15 +126,18 @@ impl Protocol for NpmProtocol {
                 "port": 4873,
                 "base_stack": "npm",
                 "event_handlers": [{
-                    "event": "NPM_PACKAGE_REQUEST",
-                    "static_response": [{
-                        "type": "npm_package_metadata",
-                        "metadata": {
-                            "name": "express",
-                            "version": "4.18.2",
-                            "description": "Fast, unopinionated, minimalist web framework"
-                        }
-                    }]
+                    "event_pattern": "NPM_PACKAGE_REQUEST",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "npm_package_metadata",
+                            "metadata": {
+                                "name": "express",
+                                "version": "4.18.2",
+                                "description": "Fast, unopinionated, minimalist web framework"
+                            }
+                        }]
+                    }
                 }]
             }),
         )

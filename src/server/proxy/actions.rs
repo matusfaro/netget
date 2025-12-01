@@ -154,11 +154,19 @@ impl Protocol for ProxyProtocol {
                 "port": 8080,
                 "base_stack": "proxy",
                 "event_handlers": [{
-                    "event": "proxy_http_request",
-                    "script": "return {type='handle_request_pass'}"
+                    "event_pattern": "proxy_http_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "return {type='handle_request_pass'}"
+                    }
                 }, {
-                    "event": "proxy_https_connect",
-                    "script": "return {type='handle_https_connection_allow'}"
+                    "event_pattern": "proxy_https_connect",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "return {type='handle_https_connection_allow'}"
+                    }
                 }]
             }),
             // Static mode
@@ -167,15 +175,21 @@ impl Protocol for ProxyProtocol {
                 "port": 8080,
                 "base_stack": "proxy",
                 "event_handlers": [{
-                    "event": "proxy_http_request",
-                    "static_response": [{
-                        "type": "handle_request_pass"
-                    }]
+                    "event_pattern": "proxy_http_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "handle_request_pass"
+                        }]
+                    }
                 }, {
-                    "event": "proxy_https_connect",
-                    "static_response": [{
-                        "type": "handle_https_connection_allow"
-                    }]
+                    "event_pattern": "proxy_https_connect",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "handle_https_connection_allow"
+                        }]
+                    }
                 }]
             }),
         )

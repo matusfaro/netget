@@ -87,12 +87,20 @@ impl Protocol for SvnProtocol {
                 "base_stack": "svn",
                 "event_handlers": [
                     {
-                        "event": "svn_greeting",
-                        "script": "return {type='send_svn_greeting', min_version=2, max_version=2, mechanisms={'ANONYMOUS'}}"
+                        "event_pattern": "svn_greeting",
+                        "handler": {
+                            "type": "script",
+                            "language": "python",
+                            "code": "<protocol_handler>"
+                        }
                     },
                     {
-                        "event": "svn_command",
-                        "script": "if event.command == 'get-latest-rev' then return {type='send_svn_success', data='42'} else return {type='send_svn_list', items={{name='trunk', kind='dir', revision=1}, {name='branches', kind='dir', revision=1}}} end"
+                        "event_pattern": "svn_command",
+                        "handler": {
+                            "type": "script",
+                            "language": "python",
+                            "code": "<protocol_handler>"
+                        }
                     }
                 ]
             }),
@@ -102,13 +110,16 @@ impl Protocol for SvnProtocol {
                 "port": 3690,
                 "base_stack": "svn",
                 "event_handlers": [{
-                    "event": "svn_greeting",
-                    "static_response": [{
-                        "type": "send_svn_greeting",
-                        "min_version": 2,
-                        "max_version": 2,
-                        "mechanisms": ["ANONYMOUS"]
-                    }]
+                    "event_pattern": "svn_greeting",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_svn_greeting",
+                            "min_version": 2,
+                            "max_version": 2,
+                            "mechanisms": ["ANONYMOUS"]
+                        }]
+                    }
                 }]
             }),
         )

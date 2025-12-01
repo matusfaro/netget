@@ -83,11 +83,19 @@ impl Protocol for TurnProtocol {
                 "port": 3478,
                 "base_stack": "turn",
                 "event_handlers": [{
-                    "event": "turn_allocate_request",
-                    "script": "return {type='send_turn_allocate_response', relay_address='203.0.113.100:55000', transaction_id=event.transaction_id, lifetime_seconds=600}"
+                    "event_pattern": "turn_allocate_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }, {
-                    "event": "turn_refresh_request",
-                    "script": "return {type='send_turn_refresh_response', transaction_id=event.transaction_id, lifetime_seconds=600}"
+                    "event_pattern": "turn_refresh_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<protocol_handler>"
+                    }
                 }]
             }),
             // Static mode
@@ -96,13 +104,16 @@ impl Protocol for TurnProtocol {
                 "port": 3478,
                 "base_stack": "turn",
                 "event_handlers": [{
-                    "event": "turn_allocate_request",
-                    "static_response": [{
-                        "type": "send_turn_allocate_response",
-                        "relay_address": "203.0.113.100:55000",
-                        "transaction_id": "0123456789abcdef01234567",
-                        "lifetime_seconds": 600
-                    }]
+                    "event_pattern": "turn_allocate_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_turn_allocate_response",
+                            "relay_address": "203.0.113.100:55000",
+                            "transaction_id": "0123456789abcdef01234567",
+                            "lifetime_seconds": 600
+                        }]
+                    }
                 }]
             }),
         )
