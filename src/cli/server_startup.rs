@@ -224,9 +224,13 @@ pub async fn start_server_from_action(
 ) -> Result<ServerId> {
     use crate::state::server::ServerStatus;
 
-    // Get protocol from registry
-    let protocol = crate::protocol::server_registry::registry()
-        .get(base_stack)
+    // Get protocol from registry (supports case-insensitive lookup via parse_from_str)
+    let registry = crate::protocol::server_registry::registry();
+    let protocol_name = registry
+        .parse_from_str(base_stack)
+        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", base_stack))?;
+    let protocol = registry
+        .get(&protocol_name)
         .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", base_stack))?;
 
     // === DUAL PATH LOGIC: Migrated vs Unmigrated Protocols ===

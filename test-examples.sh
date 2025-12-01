@@ -12,7 +12,7 @@
 #   ./test-examples.sh --e2e-only         # Run only E2E tests
 #   ./test-examples.sh tcp http dns       # Run specific protocol E2E tests
 
-set -e
+# Don't use set -e - we want to track failures and report at the end
 
 # Color output
 RED='\033[0;31m'
@@ -20,6 +20,10 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Track failures
+FAILED_TESTS=()
+PASSED_TESTS=()
 
 # Parse arguments
 STATIC_ONLY=false
@@ -65,14 +69,10 @@ echo -e "${BLUE}║              Protocol Examples Tests                        
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo
 
-# Determine features to use
+# Use all features by default
 FEATURE_FLAGS="--all-features"
-
-# Check if we're in Claude Code for Web environment
-if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
-    echo -e "${YELLOW}⚠ Running in Claude Code for Web - excluding system-dependent features${NC}"
-    FEATURE_FLAGS="--no-default-features --features tcp,http,dns,udp,ssh,telnet,smtp,imap,pop3,ntp,snmp"
-fi
+echo -e "${BLUE}Feature flags: ${FEATURE_FLAGS}${NC}"
+echo
 
 # Phase 1: Static Validation Tests
 if [ "$E2E_ONLY" = false ]; then
@@ -83,8 +83,13 @@ if [ "$E2E_ONLY" = false ]; then
 
     echo -e "${YELLOW}Running startup_examples_validation_test...${NC}"
     echo "─────────────────────────────────────────────────────────────────"
-    ./cargo-isolated.sh test $FEATURE_FLAGS --test startup_examples_validation_test -- --test-threads=100 --nocapture
-    echo -e "${GREEN}✓ Static validation tests passed${NC}"
+    if ./cargo-isolated.sh test $FEATURE_FLAGS --test startup_examples_validation_test -- --test-threads=100 --nocapture; then
+        echo -e "${GREEN}✓ Static validation tests passed${NC}"
+        PASSED_TESTS+=("Static validation")
+    else
+        echo -e "${RED}✗ Static validation tests FAILED${NC}"
+        FAILED_TESTS+=("Static validation")
+    fi
     echo
 fi
 
@@ -97,7 +102,13 @@ if [ "$E2E_ONLY" = false ]; then
 
     echo -e "${YELLOW}Running coverage tests...${NC}"
     echo "─────────────────────────────────────────────────────────────────"
-    ./cargo-isolated.sh test $FEATURE_FLAGS coverage_test -- --test-threads=100 --nocapture 2>/dev/null || true
+    if ./cargo-isolated.sh test $FEATURE_FLAGS coverage_test -- --test-threads=100 --nocapture 2>/dev/null; then
+        echo -e "${GREEN}✓ Coverage tests passed${NC}"
+        PASSED_TESTS+=("Coverage verification")
+    else
+        echo -e "${RED}✗ Coverage tests FAILED${NC}"
+        FAILED_TESTS+=("Coverage verification")
+    fi
     echo
 fi
 
@@ -115,28 +126,60 @@ if [ "$STATIC_ONLY" = false ]; then
 
         for protocol in "${PROTOCOLS[@]}"; do
             echo -e "${BLUE}Testing protocol: $protocol${NC}"
-            ./cargo-isolated.sh test --no-default-features --features "$protocol" \
-                example_test -- --test-threads=100 --nocapture || {
-                echo -e "${RED}✗ $protocol example tests failed${NC}"
-            }
+            if ./cargo-isolated.sh test --no-default-features --features "$protocol" \
+                example_test -- --test-threads=100 --nocapture; then
+                echo -e "${GREEN}✓ $protocol example tests passed${NC}"
+                PASSED_TESTS+=("$protocol E2E")
+            else
+                echo -e "${RED}✗ $protocol example tests FAILED${NC}"
+                FAILED_TESTS+=("$protocol E2E")
+            fi
             echo
         done
     else
         # Run all E2E example tests
-        echo -e "${YELLOW}Running all E2E example tests (tests matching '*example*')...${NC}"
+        echo -e "${YELLOW}Running all E2E example tests...${NC}"
         echo "─────────────────────────────────────────────────────────────────"
 
-        # Run tests that match 'example' pattern
-        # Note: We use a pattern that matches test function names like example_test_*
-        ./cargo-isolated.sh test $FEATURE_FLAGS example_test -- --test-threads=100 --nocapture || {
-            echo -e "${YELLOW}⚠ Some E2E tests may have failed or been skipped${NC}"
-        }
+        # Run all tests in the examples module (includes both example_test_* and test_all_protocols_*)
+        # Using --test examples runs all tests in tests/examples/
+        if ./cargo-isolated.sh test $FEATURE_FLAGS --test examples -- --test-threads=100 --nocapture; then
+            echo -e "${GREEN}✓ E2E example tests passed${NC}"
+            PASSED_TESTS+=("E2E examples")
+        else
+            echo -e "${RED}✗ E2E example tests FAILED${NC}"
+            FAILED_TESTS+=("E2E examples")
+        fi
     fi
-
-    echo -e "${GREEN}✓ E2E example tests completed${NC}"
     echo
 fi
 
+# Final Summary
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║                    All Tests Complete                          ║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
+if [ ${#FAILED_TESTS[@]} -eq 0 ]; then
+    echo -e "${BLUE}║${GREEN}                    All Tests Passed                            ${BLUE}║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${GREEN}Summary:${NC}"
+    echo -e "  Passed: ${#PASSED_TESTS[@]}"
+    for test in "${PASSED_TESTS[@]}"; do
+        echo -e "    ${GREEN}✓${NC} $test"
+    done
+    echo
+    exit 0
+else
+    echo -e "${BLUE}║${RED}                    Some Tests Failed                           ${BLUE}║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${RED}Summary:${NC}"
+    echo -e "  Passed: ${#PASSED_TESTS[@]}"
+    for test in "${PASSED_TESTS[@]}"; do
+        echo -e "    ${GREEN}✓${NC} $test"
+    done
+    echo -e "  ${RED}Failed: ${#FAILED_TESTS[@]}${NC}"
+    for test in "${FAILED_TESTS[@]}"; do
+        echo -e "    ${RED}✗${NC} $test"
+    done
+    echo
+    exit 1
+fi

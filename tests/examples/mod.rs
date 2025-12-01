@@ -40,6 +40,11 @@ pub mod dns_examples_test;
 #[cfg(all(test, feature = "http"))]
 pub mod http_examples_test;
 
+// Comprehensive tests that read ACTUAL protocol examples from protocol definitions
+// These tests use get_startup_examples() and response_example values directly
+#[cfg(test)]
+pub mod protocol_examples_test;
+
 // Coverage test runs with all features to verify all protocols have tests
 #[cfg(test)]
 pub mod coverage_test;
