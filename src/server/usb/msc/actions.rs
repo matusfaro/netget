@@ -356,22 +356,138 @@ impl Server for UsbMscProtocol {
 
         match action_type {
             "mount_disk" => {
-                let _disk_image = action["disk_image"]
+                let disk_image_path = action["disk_image"]
                     .as_str()
                     .context("mount_disk requires 'disk_image' field")?;
-                // TODO: Implement disk mounting via SCSI
-                Ok(ActionResult::NoAction)
+                let write_protect = action["write_protect"].as_bool().unwrap_or(false);
+                let connection_id_str = action["connection_id"]
+                    .as_str()
+                    .context("mount_disk requires 'connection_id' field")?;
+
+                // Parse connection ID
+                let conn_id_num: u32 = connection_id_str
+                    .parse()
+                    .context("Invalid connection_id format")?;
+                let connection_id = ConnectionId::new(conn_id_num);
+
+                // Get handler for this connection
+                let handlers = tokio::runtime::Handle::current().block_on(self.handlers.lock());
+                if let Some(handler_arc) = handlers.get(&connection_id) {
+                    let mut handler_guard = handler_arc
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("Failed to lock handler: {}", e))?;
+
+                    // Downcast to UsbMscHandler
+                    if let Some(msc_handler) = handler_guard
+                        .as_any()
+                        .downcast_mut::<super::handler::UsbMscHandler>()
+                    {
+                        // Create new disk image
+                        let path = std::path::Path::new(disk_image_path);
+                        let disk = tokio::runtime::Handle::current().block_on(async {
+                            super::disk::DiskImage::open_or_create(path, 10)
+                        })?;
+                        let disk_arc =
+                            std::sync::Arc::new(tokio::sync::RwLock::new(disk));
+
+                        // Mount the new disk
+                        msc_handler.mount_disk(disk_arc);
+                        msc_handler.set_write_protect(write_protect);
+
+                        tracing::info!(
+                            "USB MSC: Mounted disk '{}' (write_protect={})",
+                            disk_image_path,
+                            write_protect
+                        );
+                        Ok(ActionResult::NoAction)
+                    } else {
+                        Err(anyhow::anyhow!("Failed to downcast handler to UsbMscHandler"))
+                    }
+                } else {
+                    Err(anyhow::anyhow!(
+                        "No handler found for connection {}",
+                        connection_id
+                    ))
+                }
             }
             "eject_disk" => {
-                // TODO: Implement disk ejection via SCSI
-                Ok(ActionResult::NoAction)
+                let connection_id_str = action["connection_id"]
+                    .as_str()
+                    .context("eject_disk requires 'connection_id' field")?;
+
+                // Parse connection ID
+                let conn_id_num: u32 = connection_id_str
+                    .parse()
+                    .context("Invalid connection_id format")?;
+                let connection_id = ConnectionId::new(conn_id_num);
+
+                // Get handler for this connection
+                let handlers = tokio::runtime::Handle::current().block_on(self.handlers.lock());
+                if let Some(handler_arc) = handlers.get(&connection_id) {
+                    let mut handler_guard = handler_arc
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("Failed to lock handler: {}", e))?;
+
+                    // Downcast to UsbMscHandler
+                    if let Some(msc_handler) = handler_guard
+                        .as_any()
+                        .downcast_mut::<super::handler::UsbMscHandler>()
+                    {
+                        msc_handler.eject_disk();
+                        tracing::info!("USB MSC: Disk ejected for connection {}", connection_id);
+                        Ok(ActionResult::NoAction)
+                    } else {
+                        Err(anyhow::anyhow!("Failed to downcast handler to UsbMscHandler"))
+                    }
+                } else {
+                    Err(anyhow::anyhow!(
+                        "No handler found for connection {}",
+                        connection_id
+                    ))
+                }
             }
             "set_write_protect" => {
-                let _enabled = action["enabled"]
+                let enabled = action["enabled"]
                     .as_bool()
                     .context("set_write_protect requires 'enabled' boolean field")?;
-                // TODO: Implement write-protect flag
-                Ok(ActionResult::NoAction)
+                let connection_id_str = action["connection_id"]
+                    .as_str()
+                    .context("set_write_protect requires 'connection_id' field")?;
+
+                // Parse connection ID
+                let conn_id_num: u32 = connection_id_str
+                    .parse()
+                    .context("Invalid connection_id format")?;
+                let connection_id = ConnectionId::new(conn_id_num);
+
+                // Get handler for this connection
+                let handlers = tokio::runtime::Handle::current().block_on(self.handlers.lock());
+                if let Some(handler_arc) = handlers.get(&connection_id) {
+                    let mut handler_guard = handler_arc
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("Failed to lock handler: {}", e))?;
+
+                    // Downcast to UsbMscHandler
+                    if let Some(msc_handler) = handler_guard
+                        .as_any()
+                        .downcast_mut::<super::handler::UsbMscHandler>()
+                    {
+                        msc_handler.set_write_protect(enabled);
+                        tracing::info!(
+                            "USB MSC: Write protection {} for connection {}",
+                            if enabled { "enabled" } else { "disabled" },
+                            connection_id
+                        );
+                        Ok(ActionResult::NoAction)
+                    } else {
+                        Err(anyhow::anyhow!("Failed to downcast handler to UsbMscHandler"))
+                    }
+                } else {
+                    Err(anyhow::anyhow!(
+                        "No handler found for connection {}",
+                        connection_id
+                    ))
+                }
             }
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
@@ -388,6 +504,12 @@ fn mount_disk_action() -> ActionDefinition {
         description: "Mount a disk image file as the virtual mass storage device".to_string(),
         parameters: vec![
             Parameter {
+                name: "connection_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Connection ID from the event (e.g., '123')".to_string(),
+                required: true,
+            },
+            Parameter {
                 name: "disk_image".to_string(),
                 type_hint: "string".to_string(),
                 description: "Path to disk image file".to_string(),
@@ -402,6 +524,7 @@ fn mount_disk_action() -> ActionDefinition {
         ],
         example: json!({
             "type": "mount_disk",
+            "connection_id": "123",
             "disk_image": "/path/to/disk.img",
             "write_protect": false
         }),
@@ -412,10 +535,16 @@ fn mount_disk_action() -> ActionDefinition {
 fn eject_disk_action() -> ActionDefinition {
     ActionDefinition {
         name: "eject_disk".to_string(),
-        description: "Eject the currently mounted disk image".to_string(),
-        parameters: vec![],
+        description: "Eject the currently mounted disk image (device will report 'not ready')".to_string(),
+        parameters: vec![Parameter {
+            name: "connection_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Connection ID from the event".to_string(),
+            required: true,
+        }],
         example: json!({
-            "type": "eject_disk"
+            "type": "eject_disk",
+            "connection_id": "123"
         }),
     }
 }
@@ -425,14 +554,23 @@ fn set_write_protect_action() -> ActionDefinition {
     ActionDefinition {
         name: "set_write_protect".to_string(),
         description: "Enable or disable write protection on the virtual disk".to_string(),
-        parameters: vec![Parameter {
-            name: "enabled".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "true to enable write protection, false to disable".to_string(),
-            required: true,
-        }],
+        parameters: vec![
+            Parameter {
+                name: "connection_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Connection ID from the event".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "enabled".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "true to enable write protection, false to disable".to_string(),
+                required: true,
+            },
+        ],
         example: json!({
             "type": "set_write_protect",
+            "connection_id": "123",
             "enabled": true
         }),
     }

@@ -73,7 +73,10 @@ allows an LLM to control a virtual disk device that appears as a real storage de
 - ✅ Event generation (usb_msc_attached, read, write)
 - ✅ Connection state tracking
 - ✅ Handler storage per connection
-- ⚠️ LLM actions (mount_disk, eject_disk, set_write_protect) - Framework ready, not yet implemented
+- ✅ LLM actions fully implemented:
+  - **mount_disk**: Mount a new disk image file at runtime
+  - **eject_disk**: Simulate media ejection (device reports "not ready")
+  - **set_write_protect**: Enable/disable write protection dynamically
 
 #### Phase 5: Testing ⚠️ NOT YET TESTED
 
@@ -86,10 +89,7 @@ allows an LLM to control a virtual disk device that appears as a real storage de
 
 #### Not Yet Implemented
 
-- **LLM Actions**: The framework exists in `actions.rs` but `execute_action()` doesn't handle mount_disk, eject_disk,
-  set_write_protect yet
 - **E2E Testing**: No automated E2E tests exist (see `tests/server/usb_msc/CLAUDE.md`)
-- **Dynamic Disk Switching**: Cannot swap disk images at runtime
 - **Multiple LUNs**: Only single LUN (logical unit) supported
 
 #### Implementation Notes

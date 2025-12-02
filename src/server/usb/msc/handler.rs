@@ -78,6 +78,47 @@ impl UsbMscHandler {
         self.sense_ascq = 0;
     }
 
+    /// Set write-protect flag
+    ///
+    /// When enabled, WRITE(10) commands will fail with DATA_PROTECT sense.
+    pub fn set_write_protect(&mut self, enabled: bool) {
+        info!(
+            "USB MSC: Write protection {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
+        self.write_protect = enabled;
+    }
+
+    /// Get current write-protect status
+    pub fn is_write_protected(&self) -> bool {
+        self.write_protect
+    }
+
+    /// Replace the disk image with a new one
+    ///
+    /// This allows mounting a different disk image at runtime.
+    pub fn mount_disk(&mut self, new_disk: Arc<RwLock<DiskImage>>) {
+        info!("USB MSC: Mounting new disk image");
+        self.disk_image = new_disk;
+        self.reset_bot_state();
+    }
+
+    /// Eject the current disk (simulates media removal)
+    ///
+    /// After ejection, the device will report "not ready" until a new disk is mounted.
+    pub fn eject_disk(&mut self) {
+        info!("USB MSC: Ejecting disk");
+        self.set_sense(scsi_sense_key::NOT_READY, 0x3A, 0x00); // Medium not present
+    }
+
+    /// Get disk capacity info
+    pub fn get_disk_info(&self) -> Option<(u32, u32)> {
+        // Use tokio runtime to get disk info
+        let disk = self.disk_image.clone();
+        tokio::runtime::Handle::current()
+            .block_on(async { Some((disk.read().await.total_sectors(), disk.read().await.bytes_per_sector())) })
+    }
+
     /// Reset BOT state
     fn reset_bot_state(&mut self) {
         debug!("Resetting BOT state");
