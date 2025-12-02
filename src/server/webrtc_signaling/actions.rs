@@ -191,14 +191,14 @@ impl Protocol for WebRtcSignalingProtocol {
             json!({
                 "type": "open_server",
                 "port": 8080,
-                "base_stack": "webrtc-signaling",
+                "base_stack": "WebRTC Signaling",
                 "instruction": "WebRTC signaling server. Relay SDP offers and answers between peers. Log all peer connections and signaling messages."
             }),
             // Script mode
             json!({
                 "type": "open_server",
                 "port": 8080,
-                "base_stack": "webrtc-signaling",
+                "base_stack": "WebRTC Signaling",
                 "event_handlers": [{
                     "event_pattern": "webrtc_signaling_peer_connected",
                     "handler": {
@@ -219,7 +219,7 @@ impl Protocol for WebRtcSignalingProtocol {
             json!({
                 "type": "open_server",
                 "port": 8080,
-                "base_stack": "webrtc-signaling",
+                "base_stack": "WebRTC Signaling",
                 "event_handlers": [{
                     "event_pattern": "webrtc_signaling_peer_connected",
                     "handler": {

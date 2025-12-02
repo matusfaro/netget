@@ -277,7 +277,7 @@ impl Protocol for UsbMscProtocol {
             json!({
                 "type": "open_server",
                 "port": 3240,
-                "base_stack": "usb-msc",
+                "base_stack": "USB-MassStorage",
                 "instruction": "Create a USB mass storage device with a 100MB disk image",
                 "startup_params": {
                     "disk_image": "./tmp/netget_msc_disk.img"
@@ -287,7 +287,7 @@ impl Protocol for UsbMscProtocol {
             json!({
                 "type": "open_server",
                 "port": 3240,
-                "base_stack": "usb-msc",
+                "base_stack": "USB-MassStorage",
                 "startup_params": {
                     "disk_image": "./tmp/netget_msc_disk.img"
                 },
@@ -304,7 +304,7 @@ impl Protocol for UsbMscProtocol {
             json!({
                 "type": "open_server",
                 "port": 3240,
-                "base_stack": "usb-msc",
+                "base_stack": "USB-MassStorage",
                 "startup_params": {
                     "disk_image": "./tmp/netget_msc_disk.img"
                 },

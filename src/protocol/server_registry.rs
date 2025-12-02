@@ -563,17 +563,30 @@ impl ServerRegistry {
     /// Returns protocol name if match found, None otherwise.
     pub fn parse_from_str(&self, input: &str) -> Option<String> {
         let input_lower = input.to_lowercase();
+        // Normalize hyphens and spaces to underscores for consistent matching
+        // e.g., "bluetooth-ble" -> "bluetooth_ble", "WebRTC Signaling" -> "webrtc_signaling"
+        let input_normalized = input_lower.replace(['-', ' '], "_");
 
         // First, try exact match with stack names (for LLM-generated responses)
         for (protocol_name, protocol) in &self.protocols {
-            if input_lower == protocol.stack_name().to_lowercase() {
+            let stack_lower = protocol.stack_name().to_lowercase();
+            let stack_normalized = stack_lower.replace(['-', ' '], "_");
+            if input_lower == stack_lower
+                || input_normalized == stack_lower
+                || input_normalized == stack_normalized
+            {
                 return Some(protocol_name.clone());
             }
         }
 
         // Second, try exact match with protocol names (for startup messages)
         for (protocol_name, protocol) in &self.protocols {
-            if input_lower == protocol.protocol_name().to_lowercase() {
+            let proto_lower = protocol.protocol_name().to_lowercase();
+            let proto_normalized = proto_lower.replace(['-', ' '], "_");
+            if input_lower == proto_lower
+                || input_normalized == proto_lower
+                || input_normalized == proto_normalized
+            {
                 return Some(protocol_name.clone());
             }
         }

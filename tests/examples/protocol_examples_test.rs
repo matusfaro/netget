@@ -308,11 +308,13 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
     // but fail if more than 20% fail
     let failure_threshold = all_protocols.len() / 5;
     if failed > failure_threshold {
+        let failed_list: Vec<String> = errors.iter().map(|(name, err)| format!("{}: {}", name, err)).collect();
         panic!(
-            "Too many protocol startup failures: {}/{} (threshold: {})",
+            "Too many LLM mode startup failures: {}/{} (threshold: {})\n\nFailed protocols:\n  - {}",
             failed,
             all_protocols.len(),
-            failure_threshold
+            failure_threshold,
+            failed_list.join("\n  - ")
         );
     }
 
@@ -386,11 +388,13 @@ async fn test_all_protocols_static_mode_startup() -> E2EResult<()> {
 
     let failure_threshold = all_protocols.len() / 5;
     if failed > failure_threshold {
+        let failed_list: Vec<String> = errors.iter().map(|(name, err)| format!("{}: {}", name, err)).collect();
         panic!(
-            "Too many protocol startup failures: {}/{} (threshold: {})",
+            "Too many static mode startup failures: {}/{} (threshold: {})\n\nFailed protocols:\n  - {}",
             failed,
             all_protocols.len(),
-            failure_threshold
+            failure_threshold,
+            failed_list.join("\n  - ")
         );
     }
 

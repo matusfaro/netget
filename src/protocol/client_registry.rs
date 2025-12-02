@@ -449,10 +449,18 @@ impl ClientRegistry {
     /// Returns protocol name if match found, None otherwise.
     pub fn parse_from_str(&self, input: &str) -> Option<String> {
         let input_lower = input.to_lowercase();
+        // Normalize hyphens and spaces to underscores for consistent matching
+        // e.g., "bluetooth-ble" -> "bluetooth_ble", "WebRTC Signaling" -> "webrtc_signaling"
+        let input_normalized = input_lower.replace(['-', ' '], "_");
 
         // First, try exact match with stack names (for LLM-generated responses)
         for (protocol_name, protocol) in &self.protocols {
-            if input_lower == protocol.stack_name().to_lowercase() {
+            let stack_lower = protocol.stack_name().to_lowercase();
+            let stack_normalized = stack_lower.replace(['-', ' '], "_");
+            if input_lower == stack_lower
+                || input_normalized == stack_lower
+                || input_normalized == stack_normalized
+            {
                 return Some(protocol_name.clone());
             }
         }
@@ -460,7 +468,7 @@ impl ClientRegistry {
         // Then try keyword matching (case-insensitive substring search)
         // This is a little greedy but works well in practice
         for (keyword, protocol_name) in &self.keyword_map {
-            if input_lower.contains(keyword) {
+            if input_lower.contains(keyword) || input_normalized.contains(keyword) {
                 return Some(protocol_name.clone());
             }
         }
