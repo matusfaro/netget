@@ -135,6 +135,7 @@ impl Protocol for TorrentTrackerClientProtocol {
                     "left": 1024000,
                     "event": "started"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "tracker_scrape".to_string(),
@@ -149,6 +150,7 @@ impl Protocol for TorrentTrackerClientProtocol {
                     "type": "tracker_scrape",
                     "info_hash": "%12%34%56%78%90%AB%CD%EF%12%34%56%78%90%AB%CD%EF%12%34%56%78"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -157,6 +159,7 @@ impl Protocol for TorrentTrackerClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

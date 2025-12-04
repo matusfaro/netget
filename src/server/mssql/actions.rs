@@ -155,7 +155,7 @@ impl Server for MssqlProtocol {
                 .unwrap_or(false);
 
             MssqlServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -305,6 +305,7 @@ pub fn mssql_query_response_action() -> ActionDefinition {
             "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "NVARCHAR"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+        log_template: None,
     }
 }
 
@@ -340,6 +341,7 @@ pub fn mssql_error_response_action() -> ActionDefinition {
             "message": "Invalid object name 'table_name'",
             "severity": 16
         }),
+        log_template: None,
     }
 }
 
@@ -360,6 +362,7 @@ pub fn mssql_ok_response_action() -> ActionDefinition {
             "type": "mssql_ok_response",
             "rows_affected": 1
         }),
+        log_template: None,
     }
 }
 
@@ -370,6 +373,7 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current MSSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     }
 }
 
@@ -380,6 +384,7 @@ pub fn list_mssql_connections_action() -> ActionDefinition {
         description: "List all active MSSQL connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_mssql_connections"}),
+        log_template: None,
     }
 }
 
@@ -411,6 +416,7 @@ pub static MSSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "NVARCHAR"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+    log_template: None,
     }
 });
 
@@ -444,6 +450,7 @@ pub static MSSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             "error_number": 208,
             "message": "Invalid object name"
         }),
+    log_template: None,
     }
 });
 
@@ -462,6 +469,7 @@ pub static MSSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(
             "type": "mssql_ok_response",
             "rows_affected": 1
         }),
+    log_template: None,
     }
 });
 
@@ -472,6 +480,7 @@ pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
         description: "Close the current MSSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+    log_template: None,
     }
 });
 

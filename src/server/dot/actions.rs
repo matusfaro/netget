@@ -164,14 +164,14 @@ impl Server for DotProtocol {
             // DoT spawn returns JoinHandle, but we need to return the socket address
             // The server binds before spawning, so we can return listen_addr
             let _ = DotServer::spawn(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.server_id,
                 ctx.status_tx,
             )
             .await?;
-            Ok(ctx.listen_addr)
+            Ok(ctx.legacy_listen_addr())
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {

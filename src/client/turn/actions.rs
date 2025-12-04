@@ -149,6 +149,7 @@ impl Protocol for TurnClientProtocol {
                     "type": "allocate_turn_relay",
                     "lifetime_seconds": 600
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "create_permission".to_string(),
@@ -165,6 +166,7 @@ impl Protocol for TurnClientProtocol {
                     "type": "create_permission",
                     "peer_address": "192.168.1.100:5000"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_turn_data".to_string(),
@@ -188,6 +190,7 @@ impl Protocol for TurnClientProtocol {
                     "peer_address": "192.168.1.100:5000",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "refresh_allocation".to_string(),
@@ -202,6 +205,7 @@ impl Protocol for TurnClientProtocol {
                     "type": "refresh_allocation",
                     "lifetime_seconds": 600
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -210,6 +214,7 @@ impl Protocol for TurnClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -238,6 +243,7 @@ impl Protocol for TurnClientProtocol {
                     "peer_address": "192.168.1.100:5000",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -246,6 +252,7 @@ impl Protocol for TurnClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

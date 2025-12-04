@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -179,7 +180,7 @@ impl Server for Socks5Protocol {
         Box::pin(async move {
             use crate::server::socks5::Socks5Server;
             Socks5Server::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -298,6 +299,7 @@ fn allow_socks5_connect_action() -> ActionDefinition {
             "type": "allow_socks5_connect",
             "mitm": false
         }),
+        log_template: None,
     }
 }
 
@@ -315,6 +317,7 @@ fn deny_socks5_connect_action() -> ActionDefinition {
             "type": "deny_socks5_connect",
             "reason": "Blocked by security policy"
         }),
+        log_template: None,
     }
 }
 
@@ -326,6 +329,7 @@ fn allow_socks5_auth_action() -> ActionDefinition {
         example: json!({
             "type": "allow_socks5_auth"
         }),
+        log_template: None,
     }
 }
 
@@ -343,6 +347,7 @@ fn deny_socks5_auth_action() -> ActionDefinition {
             "type": "deny_socks5_auth",
             "reason": "Invalid credentials"
         }),
+        log_template: None,
     }
 }
 
@@ -354,6 +359,7 @@ fn forward_socks5_data_action() -> ActionDefinition {
         example: json!({
             "type": "forward_socks5_data"
         }),
+        log_template: None,
     }
 }
 
@@ -371,6 +377,7 @@ fn modify_socks5_data_action() -> ActionDefinition {
             "type": "modify_socks5_data",
             "data": "Modified payload"
         }),
+        log_template: None,
     }
 }
 
@@ -388,6 +395,7 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "reason": "Suspicious data detected"
         }),
+        log_template: None,
     }
 }
 
@@ -447,6 +455,12 @@ pub static SOCKS5_CONNECT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         allow_socks5_connect_action(),
         deny_socks5_connect_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SOCKS5 {client_ip} -> {target}")
+            .with_debug("SOCKS5 connection from {client_ip}:{client_port} to {target}")
+            .with_trace("SOCKS5: {json_pretty(.)}"),
+    )
 });
 
 pub static SOCKS5_DATA_TO_TARGET_EVENT: LazyLock<EventType> = LazyLock::new(|| {

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -131,7 +132,7 @@ impl Server for UdpProtocol {
         Box::pin(async move {
             use crate::server::udp::UdpServer;
             UdpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -217,6 +218,7 @@ fn send_to_address_action() -> ActionDefinition {
             "address": "127.0.0.1:8080",
             "data": "Hello from UDP"
         }),
+        log_template: None,
     }
 }
 
@@ -236,6 +238,7 @@ fn send_udp_response_action() -> ActionDefinition {
             "type": "send_udp_response",
             "data": "Response data"
         }),
+        log_template: None,
     }
 }
 
@@ -248,6 +251,7 @@ fn ignore_datagram_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_datagram"
         }),
+        log_template: None,
     }
 }
 
@@ -278,6 +282,12 @@ pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![send_udp_response_action(), ignore_datagram_action()])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("UDP {data_length}B from {peer_address}")
+                .with_debug("UDP datagram: {data_length}B from {peer_address}")
+                .with_trace("UDP data: {preview(data_preview,200)}"),
+        )
 });
 
 pub fn get_udp_event_types() -> Vec<EventType> {

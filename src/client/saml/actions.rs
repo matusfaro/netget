@@ -128,6 +128,7 @@ impl Protocol for SamlClientProtocol {
                     "relay_state": "/protected/resource",
                     "force_authn": false
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "validate_assertion".to_string(),
@@ -142,6 +143,7 @@ impl Protocol for SamlClientProtocol {
                     "type": "validate_assertion",
                     "saml_response": "PHNhbWxwOlJlc3BvbnNlLi4uPg=="
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -150,6 +152,7 @@ impl Protocol for SamlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

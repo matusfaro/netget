@@ -127,7 +127,7 @@ impl Server for MavenProtocol {
         Box::pin(async move {
             use crate::server::maven::MavenServer;
             MavenServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -317,6 +317,7 @@ fn send_maven_artifact_action() -> ActionDefinition {
             "content_type": "application/java-archive",
             "body": "UEsDBBQACAgIAAAAIQAAAAAAAAAAAAAAAAA..." // base64-encoded JAR
         }),
+        log_template: None,
     }
 }
 
@@ -365,6 +366,7 @@ fn send_maven_metadata_action() -> ActionDefinition {
             "latest": "1.1.0",
             "release": "1.1.0"
         }),
+        log_template: None,
     }
 }
 
@@ -392,6 +394,7 @@ fn send_maven_error_action() -> ActionDefinition {
             "status": 404,
             "message": "Artifact not found"
         }),
+        log_template: None,
     }
 }
 

@@ -135,6 +135,7 @@ impl Protocol for TlsClientProtocol {
                     "type": "send_tls_data",
                     "data": "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -143,6 +144,7 @@ impl Protocol for TlsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -173,6 +175,7 @@ impl Protocol for TlsClientProtocol {
                     "type": "send_tls_data",
                     "data": "Response data"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -181,6 +184,7 @@ impl Protocol for TlsClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

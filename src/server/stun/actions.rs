@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -129,7 +130,7 @@ impl Server for StunProtocol {
         Box::pin(async move {
             use crate::server::stun::StunServer;
             StunServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -530,6 +531,7 @@ fn send_stun_binding_response_action() -> ActionDefinition {
             "xor_mapped_address": true,
             "software": "NetGet STUN/1.0"
         }),
+        log_template: None,
     }
 }
 
@@ -563,6 +565,7 @@ fn send_stun_error_response_action() -> ActionDefinition {
             "reason": "Unauthorized",
             "transaction_id": "0123456789abcdef01234567"
         }),
+        log_template: None,
     }
 }
 
@@ -574,6 +577,7 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }
 
@@ -621,6 +625,12 @@ pub static STUN_BINDING_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("STUN {client_ip} binding request")
+            .with_debug("STUN binding request from {client_ip}:{client_port}")
+            .with_trace("STUN: {json_pretty(.)}"),
+    )
 });
 
 fn get_stun_event_types() -> Vec<EventType> {

@@ -126,6 +126,7 @@ fn send_couchdb_response_action() -> ActionDefinition {
             "body": "{\"ok\": true}",
             "etag": "\"1-abc123\""
         }),
+        log_template: None,
     }
 }
 
@@ -145,6 +146,7 @@ fn send_server_info_action() -> ActionDefinition {
             "type": "send_server_info",
             "version": "3.5.1"
         }),
+        log_template: None,
     }
 }
 
@@ -178,6 +180,7 @@ fn send_db_info_action() -> ActionDefinition {
             "doc_count": 42,
             "update_seq": "42-abc"
         }),
+        log_template: None,
     }
 }
 
@@ -230,6 +233,7 @@ fn send_doc_response_action() -> ActionDefinition {
             "rev": "1-abc123",
             "document": {"name": "Alice", "age": 30}
         }),
+        log_template: None,
     }
 }
 
@@ -249,6 +253,7 @@ fn send_all_dbs_action() -> ActionDefinition {
             "type": "send_all_dbs",
             "databases": ["_replicator", "_users", "mydb", "testdb"]
         }),
+        log_template: None,
     }
 }
 
@@ -278,6 +283,7 @@ fn send_all_docs_action() -> ActionDefinition {
                 {"id": "doc2", "key": "doc2", "value": {"rev": "1-def"}}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -300,6 +306,7 @@ fn send_bulk_docs_response_action() -> ActionDefinition {
                 {"ok": true, "id": "doc2", "rev": "1-def"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -336,6 +343,7 @@ fn send_view_response_action() -> ActionDefinition {
                 {"id": "user2", "key": 30, "value": "Bob"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -372,6 +380,7 @@ fn send_changes_response_action() -> ActionDefinition {
             "last_seq": "2-def",
             "pending": 0
         }),
+        log_template: None,
     }
 }
 
@@ -404,6 +413,7 @@ fn send_replication_response_action() -> ActionDefinition {
             "session_id": "abc123",
             "source_last_seq": "10-xyz"
         }),
+        log_template: None,
     }
 }
 
@@ -423,6 +433,7 @@ fn send_auth_required_action() -> ActionDefinition {
             "type": "send_auth_required",
             "realm": "CouchDB"
         }),
+        log_template: None,
     }
 }
 
@@ -595,7 +606,7 @@ impl Server for CouchDbProtocol {
                 .unwrap_or_else(|| "password".to_string());
 
             CouchDbServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

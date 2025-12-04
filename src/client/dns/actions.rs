@@ -118,6 +118,7 @@ impl Protocol for DnsClientProtocol {
                     "query_type": "A",
                     "recursion_desired": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -126,6 +127,7 @@ impl Protocol for DnsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -159,6 +161,7 @@ impl Protocol for DnsClientProtocol {
                     "domain": "mail.example.com",
                     "query_type": "A"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -167,6 +170,7 @@ impl Protocol for DnsClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

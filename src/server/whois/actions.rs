@@ -124,7 +124,7 @@ impl Server for WhoisProtocol {
         Box::pin(async move {
             use crate::server::whois::WhoisServer;
             WhoisServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -231,6 +231,7 @@ fn send_whois_response_action() -> ActionDefinition {
             "type": "send_whois_response",
             "response": "Domain Name: example.com\nRegistrar: Example Inc.\n"
         }),
+        log_template: None,
     }
 }
 
@@ -277,6 +278,7 @@ fn send_whois_record_action() -> ActionDefinition {
             "registrant": "Example Inc.",
             "name_servers": ["ns1.example.com", "ns2.example.com"]
         }),
+        log_template: None,
     }
 }
 
@@ -294,6 +296,7 @@ fn send_error_action() -> ActionDefinition {
             "type": "send_error",
             "message": "Domain not found in database"
         }),
+        log_template: None,
     }
 }
 
@@ -303,6 +306,7 @@ fn close_connection_action() -> ActionDefinition {
         description: "Close the WHOIS connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_connection"}),
+        log_template: None,
     }
 }
 

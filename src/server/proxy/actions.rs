@@ -15,6 +15,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -207,7 +208,7 @@ impl Server for ProxyProtocol {
         Box::pin(async move {
             use crate::server::proxy::ProxyServer;
             ProxyServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -604,6 +605,7 @@ fn configure_certificate_action() -> ActionDefinition {
             "type": "configure_certificate",
             "mode": "generate"
         }),
+        log_template: None,
     }
 }
 
@@ -629,6 +631,7 @@ fn configure_request_filters_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -653,6 +656,7 @@ fn configure_response_filters_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -678,6 +682,7 @@ fn configure_https_connection_filters_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -711,6 +716,7 @@ fn set_filter_mode_action() -> ActionDefinition {
             "response_filter_mode": "all",
             "https_connection_filter_mode": "match_only"
         }),
+        log_template: None,
     }
 }
 
@@ -737,6 +743,7 @@ fn export_ca_certificate_action() -> ActionDefinition {
             "output_path": "./netget-ca.crt",
             "format": "pem"
         }),
+        log_template: None,
     }
 }
 
@@ -751,6 +758,7 @@ fn handle_request_pass_action() -> ActionDefinition {
         example: json!({
             "type": "handle_request_pass"
         }),
+        log_template: None,
     }
 }
 
@@ -778,6 +786,7 @@ fn handle_request_block_action() -> ActionDefinition {
             "status": 403,
             "body": "Access denied by security policy"
         }),
+        log_template: None,
     }
 }
 
@@ -839,6 +848,7 @@ fn handle_request_modify_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -852,6 +862,7 @@ fn handle_response_pass_action() -> ActionDefinition {
         example: json!({
             "type": "handle_response_pass"
         }),
+        log_template: None,
     }
 }
 
@@ -879,6 +890,7 @@ fn handle_response_block_action() -> ActionDefinition {
             "status": 502,
             "body": "Response blocked by content policy"
         }),
+        log_template: None,
     }
 }
 
@@ -932,6 +944,7 @@ fn handle_response_modify_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -946,6 +959,7 @@ fn handle_https_connection_allow_action() -> ActionDefinition {
         example: json!({
             "type": "handle_https_connection_allow"
         }),
+        log_template: None,
     }
 }
 
@@ -963,6 +977,7 @@ fn handle_https_connection_block_action() -> ActionDefinition {
             "type": "handle_https_connection_block",
             "reason": "Destination blocked by security policy"
         }),
+        log_template: None,
     }
 }
 
@@ -1005,14 +1020,22 @@ pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Pass HTTP request through to destination".to_string(),
                 parameters: vec![],
                 example: json!({"type": "handle_request_pass"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "handle_request_block".to_string(),
                 description: "Block HTTP request and return error to client".to_string(),
                 parameters: vec![],
                 example: json!({"type": "handle_request_block"}),
+            log_template: None,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("Proxy {client_ip} {method} {host}")
+                .with_debug("HTTP proxy {method} to {host} from {client_ip}:{client_port}")
+                .with_trace("Proxy: {json_pretty(.)}"),
+        )
 });
 
 /// HTTP response event - triggered when proxy receives HTTP response from upstream server
@@ -1050,6 +1073,7 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Pass HTTP response through to client unchanged".to_string(),
                 parameters: vec![],
                 example: json!({"type": "handle_response_pass"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "handle_response_block".to_string(),
@@ -1069,6 +1093,7 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                     },
                 ],
                 example: json!({"type": "handle_response_block", "status": 403, "body": "Blocked"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "handle_response_modify".to_string(),
@@ -1100,8 +1125,15 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                     },
                 ],
                 example: json!({"type": "handle_response_modify", "status": 200, "headers": {"X-Modified": "true"}}),
+            log_template: None,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("Proxy {client_ip} response {status_code}")
+                .with_debug("HTTP proxy response {status_code} from {url}")
+                .with_trace("Proxy: {json_pretty(.)}"),
+        )
 });
 
 /// HTTPS connection event - triggered when proxy receives CONNECT request
@@ -1137,14 +1169,22 @@ pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Allow HTTPS connection to proceed".to_string(),
             parameters: vec![],
             example: json!({"type": "handle_https_connection_allow"}),
+        log_template: None,
         },
         ActionDefinition {
             name: "handle_https_connection_block".to_string(),
             description: "Block HTTPS connection".to_string(),
             parameters: vec![],
             example: json!({"type": "handle_https_connection_block"}),
+        log_template: None,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Proxy {client_ip} CONNECT {destination_host}:{destination_port}")
+            .with_debug("HTTPS CONNECT to {destination_host}:{destination_port} from {client_ip}:{client_port}")
+            .with_trace("Proxy: {json_pretty(.)}"),
+    )
 });
 
 /// Get Proxy event types

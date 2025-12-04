@@ -184,6 +184,7 @@ impl Protocol for KafkaClientProtocol {
                     "payload": "Hello Kafka",
                     "key": "user-123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "subscribe_topics".to_string(),
@@ -198,6 +199,7 @@ impl Protocol for KafkaClientProtocol {
                     "type": "subscribe_topics",
                     "topics": ["topic1", "topic2"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "commit_offset".to_string(),
@@ -206,6 +208,7 @@ impl Protocol for KafkaClientProtocol {
                 example: json!({
                     "type": "commit_offset"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -214,6 +217,7 @@ impl Protocol for KafkaClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -248,6 +252,7 @@ impl Protocol for KafkaClientProtocol {
                     "topic": "response-topic",
                     "payload": "Processed data"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "commit_offset".to_string(),
@@ -256,6 +261,7 @@ impl Protocol for KafkaClientProtocol {
                 example: json!({
                     "type": "commit_offset"
                 }),
+            log_template: None,
             },
         ]
     }

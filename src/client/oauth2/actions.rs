@@ -215,6 +215,7 @@ impl Protocol for OAuth2ClientProtocol {
                         "password": "secret123",
                         "scopes": "read write"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "exchange_client_credentials".to_string(),
@@ -231,6 +232,7 @@ impl Protocol for OAuth2ClientProtocol {
                         "type": "exchange_client_credentials",
                         "scopes": "api.read api.write"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "start_device_code_flow".to_string(),
@@ -247,6 +249,7 @@ impl Protocol for OAuth2ClientProtocol {
                         "type": "start_device_code_flow",
                         "scopes": "read"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "poll_device_code".to_string(),
@@ -255,6 +258,7 @@ impl Protocol for OAuth2ClientProtocol {
                     example: json!({
                         "type": "poll_device_code"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "refresh_token".to_string(),
@@ -263,6 +267,7 @@ impl Protocol for OAuth2ClientProtocol {
                     example: json!({
                         "type": "refresh_token"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "generate_auth_url".to_string(),
@@ -286,6 +291,7 @@ impl Protocol for OAuth2ClientProtocol {
                         "scopes": "read write",
                         "redirect_uri": "http://localhost:8080/callback"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "exchange_code".to_string(),
@@ -302,6 +308,7 @@ impl Protocol for OAuth2ClientProtocol {
                         "type": "exchange_code",
                         "code": "auth-code-here"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -310,6 +317,7 @@ impl Protocol for OAuth2ClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -322,6 +330,7 @@ impl Protocol for OAuth2ClientProtocol {
             example: json!({
                 "type": "refresh_token"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

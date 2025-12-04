@@ -295,7 +295,7 @@ impl Server for NntpProtocol {
             use crate::server::nntp::NntpServer;
 
             NntpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -363,6 +363,7 @@ fn send_nntp_message_action() -> ActionDefinition {
             "type": "send_nntp_message",
             "message": "200 NetGet NNTP Service Ready"
         }),
+        log_template: None,
     }
 }
 
@@ -389,6 +390,7 @@ fn send_nntp_response_action() -> ActionDefinition {
             "code": 200,
             "text": "NetGet NNTP Service Ready"
         }),
+        log_template: None,
     }
 }
 
@@ -429,6 +431,7 @@ fn send_nntp_article_action() -> ActionDefinition {
             "headers": "Subject: Test\r\nFrom: user@example.com",
             "body": "This is a test article."
         }),
+        log_template: None,
     }
 }
 
@@ -448,6 +451,7 @@ fn send_nntp_list_action() -> ActionDefinition {
                 {"name": "comp.lang.rust", "high": 100, "low": 1, "status": "y"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -488,6 +492,7 @@ fn send_nntp_group_action() -> ActionDefinition {
             "low": 1,
             "high": 100
         }),
+        log_template: None,
     }
 }
 
@@ -516,6 +521,7 @@ fn send_nntp_overview_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -525,6 +531,7 @@ fn wait_for_more_action() -> ActionDefinition {
         description: "Wait for more data before responding".to_string(),
         parameters: vec![],
         example: json!({"type": "wait_for_more"}),
+        log_template: None,
     }
 }
 
@@ -534,5 +541,6 @@ fn close_connection_action() -> ActionDefinition {
         description: "Close the NNTP connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_connection"}),
+        log_template: None,
     }
 }

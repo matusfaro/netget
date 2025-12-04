@@ -319,6 +319,7 @@ fn send_to_connection_action() -> ActionDefinition {
             "connection_id": "conn_12345",
             "data": "Hello from socket file"
         }),
+        log_template: None,
     }
 }
 
@@ -337,6 +338,7 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "connection_id": "conn_12345"
         }),
+        log_template: None,
     }
 }
 
@@ -349,6 +351,7 @@ fn list_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_connections"
         }),
+        log_template: None,
     }
 }
 
@@ -367,6 +370,7 @@ fn send_socket_data_action() -> ActionDefinition {
             "type": "send_socket_data",
             "data": "ACK\n"
         }),
+        log_template: None,
     }
 }
 
@@ -380,6 +384,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -392,6 +397,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
+        log_template: None,
     }
 }
 

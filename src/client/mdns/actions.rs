@@ -126,6 +126,7 @@ impl Protocol for MdnsClientProtocol {
                         "type": "browse_service",
                         "service_type": "_http._tcp.local"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "resolve_hostname".to_string(),
@@ -142,6 +143,7 @@ impl Protocol for MdnsClientProtocol {
                         "type": "resolve_hostname",
                         "hostname": "myserver.local"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -150,6 +152,7 @@ impl Protocol for MdnsClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }

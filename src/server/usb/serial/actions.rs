@@ -100,6 +100,7 @@ impl Protocol for UsbSerialProtocol {
                     required: true,
                 }],
                 example: json!({"type": "send_data", "data": "Hello\n"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_line_coding".to_string(),
@@ -131,12 +132,14 @@ impl Protocol for UsbSerialProtocol {
                     },
                 ],
                 example: json!({"type": "set_line_coding", "baud_rate": 9600}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
                 description: "Wait for more data".to_string(),
                 parameters: vec![],
                 example: json!({"type": "wait_for_more"}),
+            log_template: None,
             },
         ]
     }
@@ -231,7 +234,7 @@ impl Server for UsbSerialProtocol {
     {
         Box::pin(async move {
             crate::server::usb::serial::UsbSerialServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

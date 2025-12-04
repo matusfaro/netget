@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -131,7 +132,7 @@ impl Server for TurnProtocol {
         Box::pin(async move {
             use crate::server::turn::TurnServer;
             TurnServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -604,6 +605,7 @@ fn send_turn_allocate_response_action() -> ActionDefinition {
             "lifetime_seconds": 600,
             "allocation_id": "alloc-123"
         }),
+        log_template: None,
     }
 }
 
@@ -630,6 +632,7 @@ fn send_turn_refresh_response_action() -> ActionDefinition {
             "transaction_id": "0123456789abcdef01234567",
             "lifetime_seconds": 600
         }),
+        log_template: None,
     }
 }
 
@@ -647,6 +650,7 @@ fn send_turn_create_permission_response_action() -> ActionDefinition {
             "type": "send_turn_create_permission_response",
             "transaction_id": "0123456789abcdef01234567"
         }),
+        log_template: None,
     }
 }
 
@@ -673,6 +677,7 @@ fn relay_data_to_peer_action() -> ActionDefinition {
             "peer_address": "203.0.113.50:12345",
             "data": "SGVsbG8gV29ybGQ="
         }),
+        log_template: None,
     }
 }
 
@@ -706,6 +711,7 @@ fn send_turn_error_response_action() -> ActionDefinition {
             "reason": "Insufficient Capacity",
             "transaction_id": "0123456789abcdef01234567"
         }),
+        log_template: None,
     }
 }
 
@@ -732,6 +738,7 @@ fn allocate_relay_address_action() -> ActionDefinition {
             "client_address": "192.168.1.100:54321",
             "relay_address": "203.0.113.100:55000"
         }),
+        log_template: None,
     }
 }
 
@@ -749,6 +756,7 @@ fn revoke_allocation_action() -> ActionDefinition {
             "type": "revoke_allocation",
             "allocation_id": "alloc-123"
         }),
+        log_template: None,
     }
 }
 
@@ -760,6 +768,7 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }
 
@@ -776,6 +785,12 @@ pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "lifetime_seconds": 600
         }),
     )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("TURN allocate request")
+            .with_debug("TURN allocate request")
+            .with_trace("TURN allocate: {json_pretty(.)}"),
+    )
 });
 
 pub static TURN_REFRESH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -788,6 +803,12 @@ pub static TURN_REFRESH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "lifetime_seconds": 600
         }),
     )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("TURN refresh request")
+            .with_debug("TURN refresh request")
+            .with_trace("TURN refresh: {json_pretty(.)}"),
+    )
 });
 
 pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -798,6 +819,12 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
             "type": "send_turn_create_permission_response",
             "transaction_id": "0123456789abcdef01234567"
         }),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("TURN create permission")
+            .with_debug("TURN create permission")
+            .with_trace("TURN create permission: {json_pretty(.)}"),
     )
 });
 
@@ -810,6 +837,12 @@ pub static TURN_SEND_INDICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "peer_address": "203.0.113.50:12345",
             "data": "SGVsbG8gV29ybGQ="
         }),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("TURN send indication")
+            .with_debug("TURN send indication")
+            .with_trace("TURN send indication: {json_pretty(.)}"),
     )
 });
 

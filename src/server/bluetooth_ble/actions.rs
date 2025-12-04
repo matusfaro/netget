@@ -405,6 +405,7 @@ fn add_service_action() -> ActionDefinition {
                 "initial_value": "0048"
             }]
         }),
+        log_template: None,
     }
 }
 
@@ -423,6 +424,7 @@ fn start_advertising_action() -> ActionDefinition {
         example: json!({
             "type": "start_advertising"
         }),
+        log_template: None,
     }
 }
 
@@ -434,6 +436,7 @@ fn stop_advertising_action() -> ActionDefinition {
         example: json!({
             "type": "stop_advertising"
         }),
+        log_template: None,
     }
 }
 
@@ -461,6 +464,7 @@ fn send_notification_action() -> ActionDefinition {
             "characteristic_uuid": "example_characteristic_uuid",
             "value": "example_value"
         }),
+        log_template: None,
     }
 }
 
@@ -480,6 +484,7 @@ fn respond_to_read_action() -> ActionDefinition {
             "type": "respond_to_read",
             "value": "example_value"
         }),
+        log_template: None,
     }
 }
 
@@ -498,5 +503,6 @@ fn respond_to_write_action() -> ActionDefinition {
     example: json!({
             "type": "respond_to_write"
         }),
+        log_template: None,
     }
 }

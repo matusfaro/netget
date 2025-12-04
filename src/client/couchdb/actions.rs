@@ -165,6 +165,7 @@ impl Protocol for CouchDbClientProtocol {
                     "type": "create_database",
                     "database": "mydb"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_database".to_string(),
@@ -179,6 +180,7 @@ impl Protocol for CouchDbClientProtocol {
                     "type": "delete_database",
                     "database": "mydb"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_databases".to_string(),
@@ -187,6 +189,7 @@ impl Protocol for CouchDbClientProtocol {
                 example: json!({
                     "type": "list_databases"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "create_document".to_string(),
@@ -217,6 +220,7 @@ impl Protocol for CouchDbClientProtocol {
                     "doc_id": "user1",
                     "document": {"name": "Alice", "age": 30}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_document".to_string(),
@@ -240,6 +244,7 @@ impl Protocol for CouchDbClientProtocol {
                     "database": "mydb",
                     "doc_id": "user1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "update_document".to_string(),
@@ -270,6 +275,7 @@ impl Protocol for CouchDbClientProtocol {
                     "doc_id": "user1",
                     "document": {"_rev": "1-abc", "name": "Alice", "age": 31}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_document".to_string(),
@@ -300,6 +306,7 @@ impl Protocol for CouchDbClientProtocol {
                     "doc_id": "user1",
                     "rev": "2-abc"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "bulk_docs".to_string(),
@@ -326,6 +333,7 @@ impl Protocol for CouchDbClientProtocol {
                         {"_id": "doc2", "name": "Bob"}
                     ]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_documents".to_string(),
@@ -349,6 +357,7 @@ impl Protocol for CouchDbClientProtocol {
                     "database": "mydb",
                     "include_docs": false
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "query_view".to_string(),
@@ -386,6 +395,7 @@ impl Protocol for CouchDbClientProtocol {
                     "view_name": "by_age",
                     "params": {"limit": 10}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "watch_changes".to_string(),
@@ -416,6 +426,7 @@ impl Protocol for CouchDbClientProtocol {
                     "since": "now",
                     "feed": "longpoll"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -424,6 +435,7 @@ impl Protocol for CouchDbClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

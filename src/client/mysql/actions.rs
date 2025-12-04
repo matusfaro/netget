@@ -81,6 +81,7 @@ impl Protocol for MysqlClientProtocol {
                     "type": "execute_query",
                     "query": "SELECT * FROM users WHERE id = 1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "begin_transaction".to_string(),
@@ -89,6 +90,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "begin_transaction"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "commit_transaction".to_string(),
@@ -97,6 +99,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "commit_transaction"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "rollback_transaction".to_string(),
@@ -105,6 +108,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "rollback_transaction"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -113,6 +117,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -131,6 +136,7 @@ impl Protocol for MysqlClientProtocol {
                     "type": "execute_query",
                     "query": "INSERT INTO logs (message) VALUES ('processed')"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -139,6 +145,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

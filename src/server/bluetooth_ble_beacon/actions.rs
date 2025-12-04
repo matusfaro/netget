@@ -232,6 +232,7 @@ fn advertise_ibeacon_action() -> ActionDefinition {
             "major": 42,
             "minor": 42
         }),
+        log_template: None,
     }
 }
 
@@ -264,6 +265,7 @@ fn advertise_eddystone_uid_action() -> ActionDefinition {
             "namespace": "example_namespace",
             "instance": "example_instance"
         }),
+        log_template: None,
     }
 }
 
@@ -289,6 +291,7 @@ fn advertise_eddystone_url_action() -> ActionDefinition {
             "type": "advertise_eddystone_url",
             "url": "example_url"
         }),
+        log_template: None,
     }
 }
 
@@ -325,6 +328,7 @@ fn advertise_eddystone_tlm_action() -> ActionDefinition {
         example: json!({
             "type": "advertise_eddystone_tlm"
         }),
+        log_template: None,
     }
 }
 
@@ -336,5 +340,6 @@ fn stop_beacon_action() -> ActionDefinition {
         example: json!({
             "type": "stop_beacon"
         }),
+        log_template: None,
     }
 }

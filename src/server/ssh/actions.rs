@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -210,7 +211,7 @@ impl Server for SshProtocol {
                 .unwrap_or(false);
 
             SshServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -326,6 +327,7 @@ fn send_ssh_data_action() -> ActionDefinition {
             "type": "send_ssh_data",
             "data": "SSH-2.0-OpenSSH_8.0\r\n"
         }),
+        log_template: None,
     }
 }
 
@@ -337,6 +339,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -348,6 +351,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -366,6 +370,7 @@ fn close_ssh_connection_action() -> ActionDefinition {
             "type": "close_ssh_connection",
             "connection_id": "conn_12345"
         }),
+        log_template: None,
     }
 }
 
@@ -378,6 +383,7 @@ fn list_ssh_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_ssh_connections"
         }),
+        log_template: None,
     }
 }
 
@@ -403,6 +409,7 @@ pub static SSH_SEND_BANNER_ACTION: LazyLock<ActionDefinition> =
             "type": "ssh_send_banner",
             "banner": "Welcome to NetGet SSH Server!\nType 'help' for available commands.\n"
         }),
+        log_template: None,
     });
 
 /// SSH authentication decision action constant
@@ -423,6 +430,7 @@ pub static SSH_AUTH_DECISION_ACTION: LazyLock<ActionDefinition> =
             "type": "ssh_auth_decision",
             "allowed": true
         }),
+        log_template: None,
     });
 
 /// SSH shell response action constant
@@ -443,6 +451,7 @@ pub static SSH_SHELL_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new
             "type": "ssh_shell_response",
             "response": "/home/user\n"
         }),
+    log_template: None,
     }
 });
 
@@ -456,6 +465,7 @@ pub static SSH_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::n
         example: json!({
             "type": "close_this_connection"
         }),
+    log_template: None,
     }
 });
 
@@ -489,6 +499,12 @@ pub static SSH_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_action(SSH_AUTH_DECISION_ACTION.clone())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH auth: {username} ({auth_type}) from {client_ip}")
+            .with_debug("SSH auth: user={username}, type={auth_type}")
+            .with_trace("SSH auth: {json_pretty(.)}"),
+    )
 });
 
 /// SSH banner event - triggered when a shell session opens
@@ -503,6 +519,12 @@ pub static SSH_BANNER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
     // No parameters - banner is shown before any data is available
     .with_action(SSH_SEND_BANNER_ACTION.clone())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH session opened from {client_ip}")
+            .with_debug("SSH banner request from {client_ip}")
+            .with_trace("SSH banner: {json_pretty(.)}"),
+    )
 });
 
 /// SSH shell command event - triggered when user enters a command
@@ -525,6 +547,12 @@ pub static SSH_SHELL_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         SSH_SHELL_RESPONSE_ACTION.clone(),
         SSH_CLOSE_CONNECTION_ACTION.clone(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH cmd: {command}")
+            .with_debug("SSH shell command: '{command}'")
+            .with_trace("SSH command: {json_pretty(.)}"),
+    )
 });
 
 /// SFTP operation event - triggered when SFTP client performs a filesystem operation
@@ -547,6 +575,12 @@ pub static SFTP_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_actions(vec![
         // SFTP uses raw_actions for manual response construction
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SFTP {operation}")
+            .with_debug("SFTP op={operation}, params={params}")
+            .with_trace("SFTP operation: {json_pretty(.)}"),
+    )
 });
 
 /// Get SSH event types

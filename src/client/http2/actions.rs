@@ -133,6 +133,7 @@ impl Protocol for Http2ClientProtocol {
                         "Accept": "application/json"
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -141,6 +142,7 @@ impl Protocol for Http2ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -172,6 +174,7 @@ impl Protocol for Http2ClientProtocol {
                     type_hint: "string".to_string(),
                     description: "Request body".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

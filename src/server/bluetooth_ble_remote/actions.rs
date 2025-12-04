@@ -218,6 +218,7 @@ fn play_pause_action() -> ActionDefinition {
         example: json!({
             "type": "play_pause"
         }),
+        log_template: None,
     }
 }
 
@@ -229,6 +230,7 @@ fn next_track_action() -> ActionDefinition {
         example: json!({
             "type": "next_track"
         }),
+        log_template: None,
     }
 }
 
@@ -240,6 +242,7 @@ fn previous_track_action() -> ActionDefinition {
         example: json!({
             "type": "previous_track"
         }),
+        log_template: None,
     }
 }
 
@@ -251,6 +254,7 @@ fn volume_up_action() -> ActionDefinition {
         example: json!({
             "type": "volume_up"
         }),
+        log_template: None,
     }
 }
 
@@ -262,6 +266,7 @@ fn volume_down_action() -> ActionDefinition {
         example: json!({
             "type": "volume_down"
         }),
+        log_template: None,
     }
 }
 
@@ -273,6 +278,7 @@ fn mute_action() -> ActionDefinition {
         example: json!({
             "type": "mute"
         }),
+        log_template: None,
     }
 }
 
@@ -284,6 +290,7 @@ fn fast_forward_action() -> ActionDefinition {
         example: json!({
             "type": "fast_forward"
         }),
+        log_template: None,
     }
 }
 
@@ -295,6 +302,7 @@ fn rewind_action() -> ActionDefinition {
         example: json!({
             "type": "rewind"
         }),
+        log_template: None,
     }
 }
 
@@ -306,5 +314,6 @@ fn stop_action() -> ActionDefinition {
         example: json!({
             "type": "stop"
         }),
+        log_template: None,
     }
 }

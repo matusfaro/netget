@@ -7,6 +7,7 @@ use super::{
     common::CommonAction,
     protocol_trait::{ActionResult, Server},
 };
+use crate::protocol::log_action_result;
 use crate::state::app_state::AppState;
 use anyhow::{Context as AnyhowContext, Result};
 use tracing::{debug, warn};
@@ -87,10 +88,27 @@ pub async fn execute_actions(
         if let Some(proto) = protocol {
             match proto.execute_action(action.clone()) {
                 Ok(action_result) => {
-                    debug!(
-                        "Protocol action executed successfully: {:?}",
-                        proto.protocol_name()
+                    let action_name = action
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+
+                    // Find action definition to get log template
+                    let action_def = proto
+                        .get_sync_actions()
+                        .into_iter()
+                        .chain(proto.get_async_actions(state).into_iter())
+                        .find(|a| a.name == action_name);
+
+                    // Log action result with template if available
+                    log_action_result(
+                        action_name,
+                        action,
+                        &action_result,
+                        action_def.as_ref().and_then(|def| def.log_template.as_ref()),
+                        None, // No TUI output from executor (event-level logging handles TUI)
                     );
+
                     result.add_protocol_result(action_result);
                     continue;
                 }

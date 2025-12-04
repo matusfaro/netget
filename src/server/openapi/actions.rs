@@ -118,12 +118,14 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "reload_spec", "spec": "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths:\n  /users:\n    get:\n      responses:\n        '200':\n          description: List users"}),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "get_spec_info".to_string(),
                     description: "Get summary information about the loaded OpenAPI specification".to_string(),
                     parameters: vec![],
                     example: serde_json::json!({"type": "get_spec_info"}),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "configure_error_handling".to_string(),
@@ -137,6 +139,7 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "configure_error_handling", "llm_on_invalid": false}),
+                log_template: None,
                 },
             ]
     }
@@ -154,6 +157,7 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "provide_openapi_spec", "spec": "openapi: 3.1.0\ninfo:\n  title: TODO API\n  version: 1.0.0\npaths:\n  /todos:\n    get:\n      operationId: listTodos\n      responses:\n        '200':\n          description: List of todos\n          content:\n            application/json:\n              schema:\n                type: array\n                items:\n                  type: object\n                  properties:\n                    id:\n                      type: integer\n                    title:\n                      type: string\n                    done:\n                      type: boolean"}),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_openapi_response".to_string(),
@@ -179,6 +183,7 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_openapi_response", "status_code": 200, "headers": {"content-type": "application/json"}, "body": "[{\"id\": 1, \"title\": \"Buy milk\", \"done\": false}]"}),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_validation_error".to_string(),
@@ -198,6 +203,7 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_validation_error", "status_code": 405, "message": "Method GET not allowed for path /users, expected POST"}),
+                log_template: None,
                 },
             ]
     }
@@ -293,7 +299,7 @@ impl Server for OpenApiProtocol {
         Box::pin(async move {
             use crate::server::openapi::OpenApiServer;
             OpenApiServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

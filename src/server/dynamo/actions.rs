@@ -72,6 +72,7 @@ fn send_dynamo_response_action() -> ActionDefinition {
             "status_code": 200,
             "body": "{\"Item\": {\"id\": {\"S\": \"user-123\"}, \"name\": {\"S\": \"Alice\"}}}"
         }),
+        log_template: None,
     }
 }
 
@@ -89,6 +90,7 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Stored item in Users table"
         }),
+        log_template: None,
     }
 }
 
@@ -196,7 +198,7 @@ impl Server for DynamoProtocol {
         Box::pin(async move {
             use crate::server::dynamo::DynamoServer;
             DynamoServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

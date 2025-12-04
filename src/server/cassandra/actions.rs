@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -158,7 +159,7 @@ impl Server for CassandraProtocol {
                 .unwrap_or(false);
 
             CassandraServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -346,6 +347,7 @@ fn list_cassandra_connections_action() -> ActionDefinition {
         description: "List all active Cassandra connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_cassandra_connections"}),
+        log_template: None,
     }
 }
 
@@ -355,6 +357,7 @@ fn cassandra_ready_action() -> ActionDefinition {
         description: "Send READY response after successful STARTUP".to_string(),
         parameters: vec![],
         example: json!({"type": "cassandra_ready"}),
+        log_template: None,
     }
 }
 
@@ -375,6 +378,7 @@ fn cassandra_supported_action() -> ActionDefinition {
                 "COMPRESSION": []
             }
         }),
+        log_template: None,
     }
 }
 
@@ -404,6 +408,7 @@ fn cassandra_result_rows_action() -> ActionDefinition {
             ],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+        log_template: None,
     }
 }
 
@@ -439,6 +444,7 @@ fn cassandra_prepared_action() -> ActionDefinition {
                 {"name": "name", "type": "varchar"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -448,6 +454,7 @@ fn cassandra_auth_success_action() -> ActionDefinition {
         description: "Accept authentication and send AUTH_SUCCESS".to_string(),
         parameters: vec![],
         example: json!({"type": "cassandra_auth_success"}),
+        log_template: None,
     }
 }
 
@@ -474,6 +481,7 @@ fn cassandra_error_action() -> ActionDefinition {
             "error_code": 0x2200,
             "message": "Syntax error in CQL query"
         }),
+        log_template: None,
     }
 }
 
@@ -483,6 +491,7 @@ fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current Cassandra connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     }
 }
 
@@ -549,6 +558,12 @@ pub static CASSANDRA_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             cassandra_error_action(),
             close_this_connection_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("Cassandra {client_ip}: {preview(query,80)}")
+                .with_debug("Cassandra query from {client_ip}:{client_port}")
+                .with_trace("Cassandra: {json_pretty(.)}"),
+        )
 });
 
 pub static CASSANDRA_PREPARE_EVENT: LazyLock<EventType> = LazyLock::new(|| {

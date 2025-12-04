@@ -27,6 +27,7 @@ pub use tools::{
     execute_tool, get_all_tool_actions, get_network_event_tool_actions, ToolAction, ToolResult,
 };
 
+use crate::protocol::log_template::LogTemplate;
 use serde::{Deserialize, Serialize};
 
 /// Examples showing how to start a protocol with different handler modes
@@ -226,6 +227,10 @@ pub struct ActionDefinition {
 
     /// JSON example showing how to use this action
     pub example: serde_json::Value,
+
+    /// Log template for action execution logging
+    /// Defines protocol-specific log formats at INFO/DEBUG/TRACE levels
+    pub log_template: Option<LogTemplate>,
 }
 
 impl ActionDefinition {
@@ -266,6 +271,29 @@ impl ActionDefinition {
         text.push_str(&serde_json::to_string_pretty(&self.example).unwrap_or_default());
         text.push_str("\n```");
         text
+    }
+
+    /// Add a log template to this action definition
+    ///
+    /// The log template defines protocol-specific log formats at INFO/DEBUG/TRACE levels.
+    /// This enables standardized, centralized logging without per-action logging code.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// ActionDefinition {
+    ///     name: "send_http_response".to_string(),
+    ///     // ...other fields...
+    ///     log_template: None,
+    /// }
+    /// .with_log_template(
+    ///     LogTemplate::new()
+    ///         .with_info("HTTP {status}, {output_bytes}B")
+    ///         .with_debug("Response: status={status}, body_len={output_bytes}")
+    /// )
+    /// ```
+    pub fn with_log_template(mut self, template: LogTemplate) -> Self {
+        self.log_template = Some(template);
+        self
     }
 }
 

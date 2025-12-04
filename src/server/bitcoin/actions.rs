@@ -160,7 +160,7 @@ impl Server for BitcoinProtocol {
 
             use crate::server::bitcoin::BitcoinServer;
             BitcoinServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -404,6 +404,7 @@ fn send_bitcoin_message_action() -> ActionDefinition {
             "type": "send_bitcoin_message",
             "hex_data": "f9beb4d976657261636b000000000000000000005df6e0e2"
         }),
+        log_template: None,
     }
 }
 
@@ -458,6 +459,7 @@ fn send_version_action() -> ActionDefinition {
             "start_height": 0,
             "relay": false
         }),
+        log_template: None,
     }
 }
 
@@ -476,6 +478,7 @@ fn send_verack_action() -> ActionDefinition {
             "type": "send_verack",
             "network": "mainnet"
         }),
+        log_template: None,
     }
 }
 
@@ -503,6 +506,7 @@ fn send_ping_action() -> ActionDefinition {
             "network": "mainnet",
             "nonce": 123456789
         }),
+        log_template: None,
     }
 }
 
@@ -530,6 +534,7 @@ fn send_pong_action() -> ActionDefinition {
             "network": "mainnet",
             "nonce": 123456789
         }),
+        log_template: None,
     }
 }
 
@@ -548,6 +553,7 @@ fn send_getaddr_action() -> ActionDefinition {
             "type": "send_getaddr",
             "network": "mainnet"
         }),
+        log_template: None,
     }
 }
 
@@ -560,6 +566,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
+        log_template: None,
     }
 }
 

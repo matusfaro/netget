@@ -101,6 +101,7 @@ impl Protocol for IrcClientProtocol {
                     "type": "join_channel",
                     "channel": "#rust"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "part_channel".to_string(),
@@ -124,6 +125,7 @@ impl Protocol for IrcClientProtocol {
                     "channel": "#rust",
                     "message": "Goodbye!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "change_nick".to_string(),
@@ -138,6 +140,7 @@ impl Protocol for IrcClientProtocol {
                     "type": "change_nick",
                     "new_nick": "newname"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -152,6 +155,7 @@ impl Protocol for IrcClientProtocol {
                     "type": "disconnect",
                     "quit_message": "Leaving"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -179,6 +183,7 @@ impl Protocol for IrcClientProtocol {
                     "target": "#rust",
                     "message": "Hello, channel!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_notice".to_string(),
@@ -202,6 +207,7 @@ impl Protocol for IrcClientProtocol {
                     "target": "#rust",
                     "message": "Bot notification"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_raw".to_string(),
@@ -216,6 +222,7 @@ impl Protocol for IrcClientProtocol {
                     "type": "send_raw",
                     "command": "MODE #rust +m"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -224,6 +231,7 @@ impl Protocol for IrcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

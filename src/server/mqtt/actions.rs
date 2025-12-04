@@ -109,7 +109,7 @@ impl Server for MqttProtocol {
         Box::pin(async move {
             use crate::server::mqtt::MqttServer;
             MqttServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

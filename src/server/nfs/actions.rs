@@ -139,7 +139,7 @@ impl Server for NfsProtocol {
         Box::pin(async move {
             use crate::server::nfs::NfsServer;
             NfsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -316,6 +316,7 @@ fn mount_filesystem_action() -> ActionDefinition {
             "type": "mount_filesystem",
             "path": "/export/data"
         }),
+        log_template: None,
     }
 }
 
@@ -333,6 +334,7 @@ fn unmount_filesystem_action() -> ActionDefinition {
             "type": "unmount_filesystem",
             "path": "/export/data"
         }),
+        log_template: None,
     }
 }
 
@@ -360,6 +362,7 @@ fn nfs_lookup_response_action() -> ActionDefinition {
             "type": "nfs_lookup_response",
             "fileid": 42
         }),
+        log_template: None,
     }
 }
 
@@ -392,6 +395,7 @@ fn nfs_read_response_action() -> ActionDefinition {
             "data": "Hello from NFS!",
             "eof": false
         }),
+        log_template: None,
     }
 }
 
@@ -430,6 +434,7 @@ fn nfs_write_response_action() -> ActionDefinition {
             "size": 1024,
             "mode": 0o644
         }),
+        log_template: None,
     }
 }
 
@@ -501,6 +506,7 @@ fn nfs_getattr_response_action() -> ActionDefinition {
             "uid": 1000,
             "gid": 1000
         }),
+        log_template: None,
     }
 }
 
@@ -540,6 +546,7 @@ fn nfs_create_response_action() -> ActionDefinition {
             "size": 0,
             "mode": 0o644
         }),
+        log_template: None,
     }
 }
 
@@ -565,6 +572,7 @@ fn nfs_remove_response_action() -> ActionDefinition {
             "type": "nfs_remove_response",
             "success": true
         }),
+        log_template: None,
     }
 }
 
@@ -597,6 +605,7 @@ fn nfs_mkdir_response_action() -> ActionDefinition {
             "fileid": 456,
             "mode": 0o755
         }),
+        log_template: None,
     }
 }
 
@@ -634,6 +643,7 @@ fn nfs_readdir_response_action() -> ActionDefinition {
             ],
             "eof": true
         }),
+        log_template: None,
     }
 }
 
@@ -659,6 +669,7 @@ fn nfs_rename_response_action() -> ActionDefinition {
             "type": "nfs_rename_response",
             "success": true
         }),
+        log_template: None,
     }
 }
 
@@ -696,6 +707,7 @@ fn nfs_setattr_response_action() -> ActionDefinition {
             "type": "nfs_setattr_response",
             "mode": 0o600
         }),
+        log_template: None,
     }
 }
 

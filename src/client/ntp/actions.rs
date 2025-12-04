@@ -90,6 +90,7 @@ impl Protocol for NtpClientProtocol {
                 example: json!({
                     "type": "query_time"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -98,6 +99,7 @@ impl Protocol for NtpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -110,6 +112,7 @@ impl Protocol for NtpClientProtocol {
             example: json!({
                 "type": "analyze_response"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

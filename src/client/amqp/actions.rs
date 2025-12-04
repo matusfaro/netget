@@ -74,6 +74,7 @@ impl Protocol for AmqpClientProtocol {
                 example: json!({
                     "type": "open_channel"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -82,6 +83,7 @@ impl Protocol for AmqpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -90,6 +90,7 @@ impl UsbMscHandler {
     }
 
     /// Get current write-protect status
+    #[allow(dead_code)]
     pub fn is_write_protected(&self) -> bool {
         self.write_protect
     }
@@ -112,6 +113,7 @@ impl UsbMscHandler {
     }
 
     /// Get disk capacity info
+    #[allow(dead_code)]
     pub fn get_disk_info(&self) -> Option<(u32, u32)> {
         // Use tokio runtime to get disk info
         let disk = self.disk_image.clone();

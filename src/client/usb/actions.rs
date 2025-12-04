@@ -162,6 +162,7 @@ impl Protocol for UsbClientProtocol {
                 example: json!({
                     "type": "list_usb_devices"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "detach_device".to_string(),
@@ -170,6 +171,7 @@ impl Protocol for UsbClientProtocol {
                 example: json!({
                     "type": "detach_device"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -226,6 +228,7 @@ impl Protocol for UsbClientProtocol {
                     "index": 0,
                     "length": 18
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "bulk_transfer_out".to_string(),
@@ -249,6 +252,7 @@ impl Protocol for UsbClientProtocol {
                     "endpoint": 0x02,
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "bulk_transfer_in".to_string(),
@@ -272,6 +276,7 @@ impl Protocol for UsbClientProtocol {
                     "endpoint": 0x81,
                     "length": 64
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "interrupt_transfer_in".to_string(),
@@ -295,6 +300,7 @@ impl Protocol for UsbClientProtocol {
                     "endpoint": 0x83,
                     "length": 8
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "claim_interface".to_string(),
@@ -309,6 +315,7 @@ impl Protocol for UsbClientProtocol {
                     "type": "claim_interface",
                     "interface_number": 0
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -317,6 +324,7 @@ impl Protocol for UsbClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

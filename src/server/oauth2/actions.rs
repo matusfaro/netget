@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -143,7 +144,7 @@ impl Server for OAuth2Protocol {
         Box::pin(async move {
             use crate::server::oauth2::OAuth2Server;
             OAuth2Server::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -302,6 +303,7 @@ fn oauth2_authorize_response_action() -> ActionDefinition {
             "code": "AUTH_CODE_xyz123",
             "state": "random_state"
         }),
+        log_template: None,
     }
 }
 
@@ -349,6 +351,7 @@ fn oauth2_token_response_action() -> ActionDefinition {
             "refresh_token": "REFRESH_xyz123",
             "scope": "read write"
         }),
+        log_template: None,
     }
 }
 
@@ -389,6 +392,7 @@ fn oauth2_introspect_response_action() -> ActionDefinition {
             "client_id": "client123",
             "exp": 1234567890
         }),
+        log_template: None,
     }
 }
 
@@ -422,6 +426,7 @@ fn oauth2_error_response_action() -> ActionDefinition {
             "error": "invalid_client",
             "error_description": "Client authentication failed"
         }),
+        log_template: None,
     }
 }
 
@@ -470,14 +475,22 @@ pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Approve authorization and return code".to_string(),
                 parameters: vec![],
                 example: json!({}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "oauth2_error_response".to_string(),
                 description: "Deny authorization with error".to_string(),
                 parameters: vec![],
                 example: json!({}),
+            log_template: None,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OAuth2 authorize {response_type} from {client_id}")
+                .with_debug("OAuth2 authorize {response_type} from {client_id}, scope={scope}")
+                .with_trace("OAuth2 authorize: {json_pretty(.)}"),
+        )
 });
 
 /// OAuth2 token event - triggered when client requests access token
@@ -547,14 +560,22 @@ pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Issue access token".to_string(),
                 parameters: vec![],
                 example: json!({}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "oauth2_error_response".to_string(),
                 description: "Deny token request with error".to_string(),
                 parameters: vec![],
                 example: json!({}),
+            log_template: None,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OAuth2 token {grant_type}")
+                .with_debug("OAuth2 token {grant_type}, client={client_id}")
+                .with_trace("OAuth2 token: {json_pretty(.)}"),
+        )
 });
 
 /// OAuth2 introspect event - triggered when token introspection is requested
@@ -579,7 +600,14 @@ pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Return token introspection result".to_string(),
             parameters: vec![],
             example: json!({}),
+            log_template: None,
         }])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OAuth2 introspect")
+                .with_debug("OAuth2 introspect, token_type={token_type_hint}")
+                .with_trace("OAuth2 introspect: {json_pretty(.)}"),
+        )
 });
 
 /// OAuth2 revoke event - triggered when token revocation is requested
@@ -598,6 +626,12 @@ pub static OAUTH2_REVOKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OAuth2 revoke")
+            .with_debug("OAuth2 revoke, token_type={token_type_hint}")
+            .with_trace("OAuth2 revoke: {json_pretty(.)}"),
+    )
 });
 
 /// Get OAuth2 event types

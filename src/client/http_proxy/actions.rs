@@ -144,6 +144,7 @@ impl Protocol for HttpProxyClientProtocol {
                     "target_host": "example.com",
                     "target_port": 443
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_http_request".to_string(),
@@ -183,6 +184,7 @@ impl Protocol for HttpProxyClientProtocol {
                         "User-Agent": "NetGet/1.0"
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_data".to_string(),
@@ -197,6 +199,7 @@ impl Protocol for HttpProxyClientProtocol {
                     "type": "send_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -205,6 +208,7 @@ impl Protocol for HttpProxyClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -245,6 +249,7 @@ impl Protocol for HttpProxyClientProtocol {
                     "path": "/api/data",
                     "body": "{\"key\": \"value\"}"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_data".to_string(),
@@ -259,6 +264,7 @@ impl Protocol for HttpProxyClientProtocol {
                     "type": "send_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -267,6 +273,7 @@ impl Protocol for HttpProxyClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

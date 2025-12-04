@@ -110,6 +110,7 @@ impl Protocol for JsonRpcClientProtocol {
                     "params": [5, 3],
                     "id": 1
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_jsonrpc_batch".to_string(),
@@ -127,6 +128,7 @@ impl Protocol for JsonRpcClientProtocol {
                         {"method": "multiply", "params": [3, 4], "id": 2}
                     ]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -135,6 +137,7 @@ impl Protocol for JsonRpcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -160,6 +163,7 @@ impl Protocol for JsonRpcClientProtocol {
                     type_hint: "number | string".to_string(),
                     description: "Request ID".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

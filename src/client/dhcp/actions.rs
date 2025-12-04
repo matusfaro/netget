@@ -94,6 +94,7 @@ impl Protocol for DhcpClientProtocol {
                         "mac_address": "00:11:22:33:44:55",
                         "broadcast": true
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "dhcp_request".to_string(),
@@ -131,6 +132,7 @@ impl Protocol for DhcpClientProtocol {
                         "mac_address": "00:11:22:33:44:55",
                         "broadcast": true
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "dhcp_inform".to_string(),
@@ -154,6 +156,7 @@ impl Protocol for DhcpClientProtocol {
                         "current_ip": "192.168.1.50",
                         "mac_address": "00:11:22:33:44:55"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -162,6 +165,7 @@ impl Protocol for DhcpClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -173,6 +177,7 @@ impl Protocol for DhcpClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

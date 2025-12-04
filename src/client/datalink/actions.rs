@@ -99,6 +99,7 @@ impl Protocol for DataLinkClientProtocol {
                         "type": "inject_frame",
                         "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -107,6 +108,7 @@ impl Protocol for DataLinkClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -125,6 +127,7 @@ impl Protocol for DataLinkClientProtocol {
                     "type": "inject_frame",
                     "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -133,6 +136,7 @@ impl Protocol for DataLinkClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

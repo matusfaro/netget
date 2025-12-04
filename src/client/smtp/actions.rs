@@ -150,6 +150,7 @@ impl Protocol for SmtpClientProtocol {
                     "body": "Hello, this is a test email from NetGet SMTP client.",
                     "use_tls": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -158,6 +159,7 @@ impl Protocol for SmtpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -198,6 +200,7 @@ impl Protocol for SmtpClientProtocol {
                 "subject": "Follow-up Email",
                 "body": "This is a follow-up email."
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

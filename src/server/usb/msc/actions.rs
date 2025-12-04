@@ -338,7 +338,7 @@ impl Server for UsbMscProtocol {
 
         Box::pin(async move {
             crate::server::usb::msc::UsbMscServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -528,6 +528,7 @@ fn mount_disk_action() -> ActionDefinition {
             "disk_image": "/path/to/disk.img",
             "write_protect": false
         }),
+        log_template: None,
     }
 }
 
@@ -546,6 +547,7 @@ fn eject_disk_action() -> ActionDefinition {
             "type": "eject_disk",
             "connection_id": "123"
         }),
+        log_template: None,
     }
 }
 
@@ -573,6 +575,7 @@ fn set_write_protect_action() -> ActionDefinition {
             "connection_id": "123",
             "enabled": true
         }),
+        log_template: None,
     }
 }
 
@@ -585,5 +588,6 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }

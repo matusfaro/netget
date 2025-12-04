@@ -190,6 +190,7 @@ impl Protocol for MavenClientProtocol {
                     "version": "3.12.0",
                     "packaging": "jar"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "download_pom".to_string(),
@@ -220,6 +221,7 @@ impl Protocol for MavenClientProtocol {
                     "artifact_id": "spring-boot-starter",
                     "version": "2.7.0"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "search_versions".to_string(),
@@ -243,6 +245,7 @@ impl Protocol for MavenClientProtocol {
                     "group_id": "junit",
                     "artifact_id": "junit"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -251,6 +254,7 @@ impl Protocol for MavenClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -292,6 +296,7 @@ impl Protocol for MavenClientProtocol {
                     "artifact_id": "guava",
                     "version": "31.1-jre"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "download_pom".to_string(),
@@ -322,6 +327,7 @@ impl Protocol for MavenClientProtocol {
                     "artifact_id": "commons-collections4",
                     "version": "4.4"
                 }),
+            log_template: None,
             },
         ]
     }

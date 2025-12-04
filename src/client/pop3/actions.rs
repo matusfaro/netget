@@ -87,6 +87,7 @@ impl Protocol for Pop3ClientProtocol {
                     "type": "modify_pop3_instruction",
                     "instruction": "Retrieve all messages from the mailbox"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -95,6 +96,7 @@ impl Protocol for Pop3ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -116,6 +118,7 @@ impl Protocol for Pop3ClientProtocol {
                     "type": "send_pop3_command",
                     "command": "USER alice"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -124,6 +127,7 @@ impl Protocol for Pop3ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -132,6 +136,7 @@ impl Protocol for Pop3ClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

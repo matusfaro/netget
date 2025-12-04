@@ -101,6 +101,7 @@ impl Protocol for IgmpClientProtocol {
                     "multicast_addr": "239.1.2.3",
                     "interface_addr": "0.0.0.0"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "leave_multicast_group".to_string(),
@@ -126,6 +127,7 @@ impl Protocol for IgmpClientProtocol {
                     "multicast_addr": "239.1.2.3",
                     "interface_addr": "0.0.0.0"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_multicast".to_string(),
@@ -156,6 +158,7 @@ impl Protocol for IgmpClientProtocol {
                     "port": 5000,
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
         ]
     }

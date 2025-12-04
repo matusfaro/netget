@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -228,7 +229,7 @@ impl Server for IrcProtocol {
                 .unwrap_or(false);
 
             IrcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -467,6 +468,7 @@ fn send_irc_message_action() -> ActionDefinition {
             "type": "send_irc_message",
             "message": ":server NOTICE * :Looking up your hostname"
         }),
+        log_template: None,
     }
 }
 
@@ -500,6 +502,7 @@ fn send_irc_welcome_action() -> ActionDefinition {
             "server": "irc.example.com",
             "message": "Welcome to the IRC Network, alice!"
         }),
+        log_template: None,
     }
 }
 
@@ -517,6 +520,7 @@ fn send_irc_pong_action() -> ActionDefinition {
             "type": "send_irc_pong",
             "token": "1234567890"
         }),
+        log_template: None,
     }
 }
 
@@ -555,6 +559,7 @@ fn send_irc_join_action() -> ActionDefinition {
             "nickname": "alice",
             "channel": "#general"
         }),
+        log_template: None,
     }
 }
 
@@ -600,6 +605,7 @@ fn send_irc_part_action() -> ActionDefinition {
             "channel": "#general",
             "reason": "Goodbye!"
         }),
+        log_template: None,
     }
 }
 
@@ -633,6 +639,7 @@ fn send_irc_privmsg_action() -> ActionDefinition {
             "target": "alice",
             "message": "Hello, alice!"
         }),
+        log_template: None,
     }
 }
 
@@ -666,6 +673,7 @@ fn send_irc_notice_action() -> ActionDefinition {
             "target": "alice",
             "message": "Server maintenance in 5 minutes"
         }),
+        log_template: None,
     }
 }
 
@@ -705,6 +713,7 @@ fn send_irc_numeric_action() -> ActionDefinition {
             "target": "alice",
             "message": "#general Welcome to our channel!"
         }),
+        log_template: None,
     }
 }
 
@@ -716,6 +725,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -727,6 +737,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -754,6 +765,12 @@ pub static IRC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             wait_for_more_action(),
             close_connection_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("IRC {client_ip}: {preview(message,80)}")
+                .with_debug("IRC message from {client_ip}:{client_port}")
+                .with_trace("IRC: {json_pretty(.)}"),
+        )
 });
 
 pub fn get_irc_event_types() -> Vec<EventType> {

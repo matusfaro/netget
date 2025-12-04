@@ -110,6 +110,7 @@ impl Protocol for ArpClientProtocol {
                     "sender_ip": "192.168.1.100",
                     "target_ip": "192.168.1.1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_arp_reply".to_string(),
@@ -147,6 +148,7 @@ impl Protocol for ArpClientProtocol {
                     "target_mac": "11:22:33:44:55:66",
                     "target_ip": "192.168.1.1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "stop_capture".to_string(),
@@ -155,6 +157,7 @@ impl Protocol for ArpClientProtocol {
                 example: json!({
                     "type": "stop_capture"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -189,6 +192,7 @@ impl Protocol for ArpClientProtocol {
                     "sender_ip": "192.168.1.100",
                     "target_ip": "192.168.1.1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_arp_reply".to_string(),
@@ -226,6 +230,7 @@ impl Protocol for ArpClientProtocol {
                     "target_mac": "11:22:33:44:55:66",
                     "target_ip": "192.168.1.1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -234,6 +239,7 @@ impl Protocol for ArpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

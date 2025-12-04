@@ -78,6 +78,7 @@ impl Protocol for IsisClientProtocol {
                 example: json!({
                     "type": "analyze_topology"
                 }),
+                log_template: None,
             },
             ActionDefinition {
                 name: "stop_capture".to_string(),
@@ -86,6 +87,7 @@ impl Protocol for IsisClientProtocol {
                 example: json!({
                     "type": "stop_capture"
                 }),
+                log_template: None,
             },
         ]
     }
@@ -97,6 +99,7 @@ impl Protocol for IsisClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

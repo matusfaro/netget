@@ -231,6 +231,7 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "modify_instruction", "instruction": "..."}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "close_connection".to_string(),
@@ -242,6 +243,7 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "close_connection", "connection_id": "conn-123"}),
+            log_template: None,
             },
         ]
     }
@@ -258,6 +260,7 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "send_identities_list", "identities": [{"key_type": "ssh-ed25519", "public_key_blob_hex": "...", "comment": "my-key"}]}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_sign_response".to_string(),
@@ -269,24 +272,28 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "send_sign_response", "signature_hex": "..."}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_success".to_string(),
                 description: "Send SSH_AGENT_SUCCESS response".to_string(),
                 parameters: vec![],
                 example: json!({"type": "send_success"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_failure".to_string(),
                 description: "Send SSH_AGENT_FAILURE response".to_string(),
                 parameters: vec![],
                 example: json!({"type": "send_failure"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
                 description: "Wait for more data before making a decision".to_string(),
                 parameters: vec![],
                 example: json!({"type": "wait_for_more"}),
+            log_template: None,
             },
         ]
     }

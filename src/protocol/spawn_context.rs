@@ -435,4 +435,28 @@ impl SpawnContext {
     pub fn mac_address(&self) -> Option<&str> {
         self.mac_address.as_deref()
     }
+
+    /// Get the legacy listen address (for unmigrated protocols)
+    ///
+    /// This method provides access to the deprecated `listen_addr` field without
+    /// triggering deprecation warnings. Use this during migration or for protocols
+    /// that haven't been migrated to the flexible binding system yet.
+    ///
+    /// Once a protocol is migrated to use `socket_addr()`, `interface()`, or
+    /// `mac_address()`, it should no longer use this method.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Unmigrated protocol:
+    /// let addr = ctx.legacy_listen_addr();
+    /// TcpListener::bind(addr).await?;
+    ///
+    /// // After migration:
+    /// let addr = ctx.socket_addr().context("requires host and port")?;
+    /// TcpListener::bind(addr).await?;
+    /// ```
+    #[allow(deprecated)]
+    pub fn legacy_listen_addr(&self) -> SocketAddr {
+        self.listen_addr
+    }
 }

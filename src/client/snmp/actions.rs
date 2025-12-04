@@ -89,6 +89,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_get",
                     "oids": ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_getnext".to_string(),
@@ -103,6 +104,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_getnext",
                     "oids": ["1.3.6.1.2.1.1"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_getbulk".to_string(),
@@ -137,6 +139,7 @@ impl Protocol for SnmpClientProtocol {
                     "non_repeaters": 0,
                     "max_repetitions": 10
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_set".to_string(),
@@ -153,6 +156,7 @@ impl Protocol for SnmpClientProtocol {
                         {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "new-hostname"}
                     ]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -161,6 +165,7 @@ impl Protocol for SnmpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -179,6 +184,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_get",
                     "oids": ["1.3.6.1.2.1.1.3.0"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_getnext".to_string(),
@@ -193,6 +199,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_getnext",
                     "oids": ["1.3.6.1.2.1.1.1.0"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -201,6 +208,7 @@ impl Protocol for SnmpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -151,7 +151,7 @@ impl Server for RssProtocol {
             use crate::server::rss::RssServer;
 
             RssServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -268,5 +268,6 @@ fn generate_rss_feed_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }

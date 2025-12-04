@@ -118,6 +118,7 @@ impl Protocol for OpenIdProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "configure_provider", "issuer": "http://localhost:8080", "supported_scopes": ["openid", "profile", "email"]}),
+                log_template: None,
                 },
             ]
     }
@@ -180,6 +181,7 @@ impl Protocol for OpenIdProtocol {
                         "supported_scopes": ["openid", "profile", "email"],
                         "supported_response_types": ["code", "id_token", "token id_token"]
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_authorization_response".to_string(),
@@ -217,6 +219,7 @@ impl Protocol for OpenIdProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_authorization_response", "redirect_uri": "https://client.example.com/callback", "code": "AUTH_CODE_123", "state": "xyz"}),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_token_response".to_string(),
@@ -267,6 +270,7 @@ impl Protocol for OpenIdProtocol {
                         "expires_in": 3600,
                         "scope": "openid profile email"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_userinfo_response".to_string(),
@@ -316,6 +320,7 @@ impl Protocol for OpenIdProtocol {
                         "email": "john@example.com",
                         "email_verified": true
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_jwks_response".to_string(),
@@ -339,6 +344,7 @@ impl Protocol for OpenIdProtocol {
                             "e": "AQAB"
                         }]
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_error_response".to_string(),
@@ -364,6 +370,7 @@ impl Protocol for OpenIdProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_error_response", "error": "invalid_client", "error_description": "Client authentication failed", "status_code": 401}),
+                log_template: None,
                 },
             ]
     }
@@ -452,7 +459,7 @@ impl Server for OpenIdProtocol {
         Box::pin(async move {
             use crate::server::openid::OpenIdServer;
             OpenIdServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

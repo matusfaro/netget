@@ -82,6 +82,7 @@ impl Protocol for EtcdClientProtocol {
                     "type": "etcd_get",
                     "key": "/config/database"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "etcd_put".to_string(),
@@ -105,6 +106,7 @@ impl Protocol for EtcdClientProtocol {
                     "key": "/config/database",
                     "value": "postgresql://localhost:5432/mydb"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "etcd_delete".to_string(),
@@ -119,6 +121,7 @@ impl Protocol for EtcdClientProtocol {
                     "type": "etcd_delete",
                     "key": "/config/database"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -127,6 +130,7 @@ impl Protocol for EtcdClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -145,6 +149,7 @@ impl Protocol for EtcdClientProtocol {
                     "type": "etcd_get",
                     "key": "/config/database"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "etcd_put".to_string(),
@@ -168,6 +173,7 @@ impl Protocol for EtcdClientProtocol {
                     "key": "/config/database",
                     "value": "postgresql://localhost:5432/mydb"
                 }),
+            log_template: None,
             },
         ]
     }

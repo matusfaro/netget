@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -142,7 +143,7 @@ impl Server for DnsProtocol {
         Box::pin(async move {
             use crate::server::dns::DnsServer;
             DnsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -482,6 +483,12 @@ fn send_dns_a_response_action() -> ActionDefinition {
             "ip": "192.0.2.1",
             "ttl": 300
         }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS A {domain} -> {ip}")
+                .with_debug("DNS A response: {domain} -> {ip} (TTL={ttl})")
+                .with_trace("DNS A response: {json_pretty(.)}"),
+        ),
     }
 }
 
@@ -522,6 +529,7 @@ fn send_dns_aaaa_response_action() -> ActionDefinition {
             "ip": "2001:db8::1",
             "ttl": 300
         }),
+        log_template: None,
     }
 }
 
@@ -562,6 +570,7 @@ fn send_dns_cname_response_action() -> ActionDefinition {
             "target": "example.com",
             "ttl": 300
         }),
+        log_template: None,
     }
 }
 
@@ -610,6 +619,7 @@ fn send_dns_mx_response_action() -> ActionDefinition {
             "preference": 10,
             "ttl": 300
         }),
+        log_template: None,
     }
 }
 
@@ -650,6 +660,7 @@ fn send_dns_txt_response_action() -> ActionDefinition {
             "text": "v=spf1 include:_spf.example.com ~all",
             "ttl": 300
         }),
+        log_template: None,
     }
 }
 
@@ -676,6 +687,7 @@ fn send_dns_nxdomain_action() -> ActionDefinition {
             "query_id": 12345,
             "domain": "nonexistent.example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -693,6 +705,7 @@ fn send_dns_response_action() -> ActionDefinition {
             "type": "send_dns_response",
             "data": "81800001000100000000076578616d706c6503636f6d0000010001c00c00010001..."
         }),
+        log_template: None,
     }
 }
 
@@ -704,6 +717,7 @@ fn ignore_query_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_query"
         }),
+        log_template: None,
     }
 }
 
@@ -766,6 +780,12 @@ pub static DNS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "ip": "2606:2800:220:1:248:1893:25c8:1946",
         "ttl": 300
     }))
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("DNS {query_type} {domain} from {client_ip}")
+            .with_debug("DNS query ID={query_id}, type={query_type}, domain={domain}")
+            .with_trace("DNS query: {json_pretty(.)}"),
+    )
 });
 
 /// Get DNS event types

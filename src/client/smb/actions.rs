@@ -173,6 +173,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "list_directory",
                     "path": "smb://server/share/mydir"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "read_file".to_string(),
@@ -187,6 +188,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "read_file",
                     "path": "smb://server/share/readme.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "write_file".to_string(),
@@ -210,6 +212,7 @@ impl Protocol for SmbClientProtocol {
                     "path": "smb://server/share/output.txt",
                     "content": "Hello from NetGet"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "create_directory".to_string(),
@@ -224,6 +227,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "create_directory",
                     "path": "smb://server/share/newdir"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_file".to_string(),
@@ -238,6 +242,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "delete_file",
                     "path": "smb://server/share/oldfile.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_directory".to_string(),
@@ -252,6 +257,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "delete_directory",
                     "path": "smb://server/share/olddir"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -260,6 +266,7 @@ impl Protocol for SmbClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -278,6 +285,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "list_directory",
                     "path": "smb://server/share"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "read_file".to_string(),
@@ -292,6 +300,7 @@ impl Protocol for SmbClientProtocol {
                     "type": "read_file",
                     "path": "smb://server/share/file.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -300,6 +309,7 @@ impl Protocol for SmbClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

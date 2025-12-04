@@ -149,7 +149,7 @@ impl Server for BootpProtocol {
         Box::pin(async move {
             use crate::server::bootp::BootpServer;
             BootpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -310,6 +310,7 @@ fn send_bootp_reply_action() -> ActionDefinition {
             "boot_file": "boot/pxeboot.n12",
             "server_hostname": "bootserver.local"
         }),
+        log_template: None,
     }
 }
 
@@ -327,6 +328,7 @@ fn send_bootp_response_action() -> ActionDefinition {
             "type": "send_bootp_response",
             "data": "020106006395a3e3000080000000000000000000c0a8016400000000..."
         }),
+        log_template: None,
     }
 }
 
@@ -338,6 +340,7 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }
 

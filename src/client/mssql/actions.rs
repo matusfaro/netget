@@ -104,6 +104,7 @@ impl Protocol for MssqlClientProtocol {
                     "type": "execute_query",
                     "query": "SELECT @@VERSION"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -112,6 +113,7 @@ impl Protocol for MssqlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -130,6 +132,7 @@ impl Protocol for MssqlClientProtocol {
                     "type": "execute_query",
                     "query": "INSERT INTO log VALUES ('event')"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -138,6 +141,7 @@ impl Protocol for MssqlClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

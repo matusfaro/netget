@@ -216,6 +216,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "list_readers"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "connect_card".to_string(),
@@ -234,6 +235,7 @@ impl Protocol for NfcClientProtocol {
                     "type": "connect_card",
                     "timeout_ms": 30000
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect_card".to_string(),
@@ -242,6 +244,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "disconnect_card"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -298,6 +301,7 @@ impl Protocol for NfcClientProtocol {
                     "data": "D2760000850101",
                     "le": "00"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_apdu_raw".to_string(),
@@ -312,6 +316,7 @@ impl Protocol for NfcClientProtocol {
                     "type": "send_apdu_raw",
                     "apdu_hex": "00A4040007D276000085010100"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "read_ndef".to_string(),
@@ -320,6 +325,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "read_ndef"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "write_ndef".to_string(),
@@ -344,6 +350,7 @@ impl Protocol for NfcClientProtocol {
                         }
                     ]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -352,6 +359,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

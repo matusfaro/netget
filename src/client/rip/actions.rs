@@ -89,6 +89,7 @@ impl Protocol for RipClientProtocol {
                     "type": "send_rip_request",
                     "version": 2
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -97,6 +98,7 @@ impl Protocol for RipClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -115,6 +117,7 @@ impl Protocol for RipClientProtocol {
                     "type": "send_rip_request",
                     "version": 2
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -123,6 +126,7 @@ impl Protocol for RipClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

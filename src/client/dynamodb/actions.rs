@@ -141,6 +141,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "age": {"N": "30"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_item".to_string(),
@@ -168,6 +169,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "id": {"S": "user123"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "query".to_string(),
@@ -200,6 +202,7 @@ impl Protocol for DynamoDbClientProtocol {
                         ":id": {"S": "user123"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "scan".to_string(),
@@ -232,6 +235,7 @@ impl Protocol for DynamoDbClientProtocol {
                         ":min_age": {"N": "21"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "update_item".to_string(),
@@ -273,6 +277,7 @@ impl Protocol for DynamoDbClientProtocol {
                         ":age": {"N": "31"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_item".to_string(),
@@ -298,6 +303,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "id": {"S": "user123"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -306,6 +312,7 @@ impl Protocol for DynamoDbClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -336,6 +343,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "name": {"S": "Bob"}
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "query".to_string(),
@@ -359,6 +367,7 @@ impl Protocol for DynamoDbClientProtocol {
                     "table_name": "Users",
                     "key_condition_expression": "id = :id"
                 }),
+            log_template: None,
             },
         ]
     }

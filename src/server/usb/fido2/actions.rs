@@ -249,6 +249,7 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "approve_request", "approval_id": 1}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "deny_request".to_string(),
@@ -262,12 +263,14 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "deny_request", "approval_id": 1}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_credentials".to_string(),
                 description: "List all stored FIDO2 credentials".to_string(),
                 parameters: vec![],
                 example: serde_json::json!({"type": "list_credentials"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_credential".to_string(),
@@ -279,6 +282,7 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "delete_credential", "rp_id": "example.com"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "save_credentials".to_string(),
@@ -286,6 +290,7 @@ impl Protocol for UsbFido2Protocol {
                     .to_string(),
                 parameters: vec![],
                 example: serde_json::json!({"type": "save_credentials"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "load_credentials".to_string(),
@@ -298,12 +303,14 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "load_credentials", "credentials_json": "[]"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_pending_approvals".to_string(),
                 description: "List all pending approval requests awaiting LLM decision".to_string(),
                 parameters: vec![],
                 example: serde_json::json!({"type": "list_pending_approvals"}),
+            log_template: None,
             },
         ]
     }
@@ -437,7 +444,7 @@ impl Server for UsbFido2Protocol {
 
             // Call the actual spawn function
             crate::server::usb::fido2::UsbFido2Server::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

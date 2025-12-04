@@ -155,7 +155,7 @@ impl Server for NpmProtocol {
         Box::pin(async move {
             use crate::server::npm::NpmServer;
             NpmServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -281,6 +281,7 @@ fn package_metadata_action() -> ActionDefinition {
                 "description": "Fast, unopinionated, minimalist web framework"
             }
         }),
+        log_template: None,
     }
 }
 
@@ -298,6 +299,7 @@ fn package_tarball_action() -> ActionDefinition {
             "type": "npm_package_tarball",
             "tarball_data": "H4sIAAAAAAAAA..."
         }),
+        log_template: None,
     }
 }
 
@@ -318,6 +320,7 @@ fn package_list_action() -> ActionDefinition {
                 "lodash": {"version": "4.17.21"}
             }
         }),
+        log_template: None,
     }
 }
 
@@ -341,6 +344,7 @@ fn package_search_action() -> ActionDefinition {
                 "total": 1
             }
         }),
+        log_template: None,
     }
 }
 
@@ -367,6 +371,7 @@ fn npm_error_action() -> ActionDefinition {
             "error": "Package not found",
             "status_code": 404
         }),
+        log_template: None,
     }
 }
 

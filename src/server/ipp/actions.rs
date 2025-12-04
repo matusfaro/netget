@@ -140,7 +140,7 @@ impl Server for IppProtocol {
                 .unwrap_or(false);
 
             IppServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -258,6 +258,7 @@ pub fn ipp_response_action() -> ActionDefinition {
             "status": 200,
             "body": ""
         }),
+        log_template: None,
     }
 }
 
@@ -282,6 +283,7 @@ pub fn ipp_printer_attributes_action() -> ActionDefinition {
                 "printer-uri-supported": ["ipp://localhost:631/printers/my-printer"]
             }
         }),
+        log_template: None,
     }
 }
 
@@ -306,6 +308,7 @@ pub fn ipp_job_attributes_action() -> ActionDefinition {
                 "job-name": "document.pdf"
             }
         }),
+        log_template: None,
     }
 }
 
@@ -316,6 +319,7 @@ pub fn list_print_jobs_action() -> ActionDefinition {
         description: "List all active and completed print jobs".to_string(),
         parameters: vec![],
         example: json!({"type": "list_print_jobs"}),
+        log_template: None,
     }
 }
 

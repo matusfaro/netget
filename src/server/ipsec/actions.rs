@@ -141,7 +141,7 @@ impl Server for IpsecProtocol {
             use crate::server::ipsec::IpsecServer;
             use std::sync::Arc;
             IpsecServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 Arc::new(ctx.llm_client),
                 ctx.state,
                 ctx.server_id,
@@ -243,6 +243,7 @@ fn accept_connection_action() -> ActionDefinition {
             "type": "accept_connection",
             "message": "Legitimate VPN connection accepted"
         }),
+        log_template: None,
     }
 }
 
@@ -261,6 +262,7 @@ fn reject_connection_action() -> ActionDefinition {
             "type": "reject_connection",
             "reason": "Suspicious reconnaissance attempt"
         }),
+        log_template: None,
     }
 }
 
@@ -279,6 +281,7 @@ fn log_handshake_action() -> ActionDefinition {
             "type": "log_handshake",
             "details": "VPN scan attempt detected"
         }),
+        log_template: None,
     }
 }
 
@@ -299,6 +302,7 @@ fn send_notify_action() -> ActionDefinition {
             "type": "send_notify",
             "notify_type": "NO_PROPOSAL_CHOSEN"
         }),
+        log_template: None,
     }
 }
 
@@ -317,6 +321,7 @@ fn inspect_traffic_action() -> ActionDefinition {
             "type": "inspect_traffic",
             "inspect": true
         }),
+        log_template: None,
     }
 }
 
@@ -329,6 +334,7 @@ fn list_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_connections"
         }),
+        log_template: None,
     }
 }
 
@@ -347,5 +353,6 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "peer_addr": "192.168.1.100:500"
         }),
+        log_template: None,
     }
 }

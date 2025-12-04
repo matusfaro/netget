@@ -113,6 +113,7 @@ impl Protocol for WebRtcSignalingProtocol {
                 example: json!({
                     "type": "list_signaling_peers"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "broadcast_message".to_string(),
@@ -127,6 +128,7 @@ impl Protocol for WebRtcSignalingProtocol {
                     "type": "broadcast_message",
                     "message": {"type": "announcement", "text": "Server restarting in 5 minutes"}
                 }),
+            log_template: None,
             },
         ]
     }
@@ -245,7 +247,7 @@ impl Server for WebRtcSignalingProtocol {
         Box::pin(async move {
             use crate::server::webrtc_signaling::WebRtcSignalingServer;
             WebRtcSignalingServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

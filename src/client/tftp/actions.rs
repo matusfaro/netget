@@ -307,6 +307,7 @@ fn tftp_read_file_action() -> ActionDefinition {
             "filename": "pxelinux.0",
             "mode": "octet"
         }),
+        log_template: None,
     }
 }
 
@@ -339,6 +340,7 @@ fn tftp_write_file_action() -> ActionDefinition {
             "data_hex": "48656c6c6f20574f524c4421",
             "mode": "octet"
         }),
+        log_template: None,
     }
 }
 
@@ -355,6 +357,7 @@ fn send_ack_action() -> ActionDefinition {
             "type": "send_ack",
             "block_number": 5
         }),
+        log_template: None,
     }
 }
 
@@ -381,6 +384,7 @@ fn send_data_block_action() -> ActionDefinition {
             "block_number": 1,
             "data_hex": "48656c6c6f"
         }),
+        log_template: None,
     }
 }
 
@@ -392,5 +396,6 @@ fn disconnect_action() -> ActionDefinition {
         example: json!({
             "type": "disconnect"
         }),
+        log_template: None,
     }
 }

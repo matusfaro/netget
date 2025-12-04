@@ -143,7 +143,7 @@ impl Server for TorrentPeerProtocol {
         Box::pin(async move {
             use crate::server::torrent_peer::TorrentPeerServer;
             TorrentPeerServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -287,6 +287,7 @@ pub static SEND_HANDSHAKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| 
             type_hint: "string".to_string(),
             description: "Peer ID (20 characters)".to_string(),
             required: false,
+        log_template: None,
         },
     ],
     example: json!({"type": "send_handshake", "info_hash": "0123456789abcdef0123456789abcdef01234567", "peer_id": "-NT0001-xxxxxxxxxxxx"}),
@@ -351,6 +352,7 @@ pub static SEND_PIECE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| Acti
             type_hint: "string".to_string(),
             description: "Block data (hex)".to_string(),
             required: true,
+        log_template: None,
         },
     ],
     example: json!({"type": "send_piece", "index": 0, "begin": 0, "block_hex": "00112233"}),

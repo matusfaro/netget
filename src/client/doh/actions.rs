@@ -112,6 +112,7 @@ impl Protocol for DohClientProtocol {
                     "record_type": "A",
                     "use_get": false
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -120,6 +121,7 @@ impl Protocol for DohClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -147,6 +149,7 @@ impl Protocol for DohClientProtocol {
                     "domain": "mail.example.com",
                     "record_type": "A"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -155,6 +158,7 @@ impl Protocol for DohClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

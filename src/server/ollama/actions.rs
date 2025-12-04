@@ -184,7 +184,7 @@ impl Server for OllamaProtocol {
         Box::pin(async move {
             use crate::server::ollama::OllamaServer;
             OllamaServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -260,6 +260,7 @@ fn ollama_generate_response_action() -> ActionDefinition {
             "type": "ollama_generate_response",
             "response_text": "The capital of France is Paris."
         }),
+        log_template: None,
     }
 }
 
@@ -277,6 +278,7 @@ fn ollama_chat_response_action() -> ActionDefinition {
             "type": "ollama_chat_response",
             "message_content": "Hello! How can I help you today?"
         }),
+        log_template: None,
     }
 }
 
@@ -294,6 +296,7 @@ fn ollama_models_response_action() -> ActionDefinition {
             "type": "ollama_models_response",
             "models": ["llama2", "codellama", "mistral"]
         }),
+        log_template: None,
     }
 }
 
@@ -311,6 +314,7 @@ fn ollama_error_response_action() -> ActionDefinition {
             "type": "ollama_error_response",
             "error_message": "Model not found"
         }),
+        log_template: None,
     }
 }
 

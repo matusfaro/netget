@@ -131,6 +131,7 @@ impl Protocol for WebdavClientProtocol {
                         "path": "/dav/documents/",
                         "depth": "1"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "mkcol".to_string(),
@@ -147,6 +148,7 @@ impl Protocol for WebdavClientProtocol {
                         "type": "mkcol",
                         "path": "/dav/newfolder/"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "copy".to_string(),
@@ -183,6 +185,7 @@ impl Protocol for WebdavClientProtocol {
                         "destination": "/dav/backup/file.txt",
                         "overwrite": true
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "move".to_string(),
@@ -212,6 +215,7 @@ impl Protocol for WebdavClientProtocol {
                         "source": "/dav/old/file.txt",
                         "destination": "/dav/new/file.txt"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "delete".to_string(),
@@ -228,6 +232,7 @@ impl Protocol for WebdavClientProtocol {
                         "type": "delete",
                         "path": "/dav/file.txt"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "put".to_string(),
@@ -258,6 +263,7 @@ impl Protocol for WebdavClientProtocol {
                         "content": "Hello, WebDAV!",
                         "content_type": "text/plain"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "get".to_string(),
@@ -274,6 +280,7 @@ impl Protocol for WebdavClientProtocol {
                         "type": "get",
                         "path": "/dav/file.txt"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -282,6 +289,7 @@ impl Protocol for WebdavClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -302,6 +310,7 @@ impl Protocol for WebdavClientProtocol {
                     type_hint: "string".to_string(),
                     description: "Depth header".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

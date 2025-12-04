@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -243,7 +244,7 @@ impl Server for FtpProtocol {
         Box::pin(async move {
             use crate::server::ftp::FtpServer;
             #[allow(deprecated)]
-            let listen_addr = ctx.socket_addr().unwrap_or(ctx.listen_addr);
+            let listen_addr = ctx.socket_addr().unwrap_or(ctx.legacy_listen_addr());
             FtpServer::spawn_with_llm_actions(
                 listen_addr,
                 ctx.llm_client,
@@ -298,6 +299,7 @@ fn send_ftp_response_action() -> ActionDefinition {
             "code": 220,
             "message": "FTP Server Ready"
         }),
+        log_template: None,
     }
 }
 
@@ -324,6 +326,7 @@ fn send_ftp_multiline_action() -> ActionDefinition {
             "code": 211,
             "lines": ["Features:", "UTF8", "End"]
         }),
+        log_template: None,
     }
 }
 
@@ -341,6 +344,7 @@ fn send_ftp_data_action() -> ActionDefinition {
             "type": "send_ftp_data",
             "data": "Hello from FTP"
         }),
+        log_template: None,
     }
 }
 
@@ -361,6 +365,7 @@ fn send_ftp_list_action() -> ActionDefinition {
                 "drwxr-xr-x 2 ftp ftp 4096 Jan 01 00:00 subdir"
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -372,6 +377,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -383,6 +389,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -426,6 +433,12 @@ pub static FTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         WAIT_FOR_MORE_ACTION.clone(),
         CLOSE_CONNECTION_ACTION.clone(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("FTP {client_ip}: {command}")
+            .with_debug("FTP command from {client_ip}:{client_port}: {command}")
+            .with_trace("FTP: {json_pretty(.)}"),
+    )
 });
 
 /// Get FTP event types

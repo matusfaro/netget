@@ -143,7 +143,7 @@ impl Server for ArpProtocol {
 
             // ARP doesn't bind to a socket, so return a dummy address
             // The listen_addr from context is just a placeholder
-            Ok(ctx.listen_addr)
+            Ok(ctx.legacy_listen_addr())
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -266,6 +266,7 @@ fn send_arp_reply_action() -> ActionDefinition {
             "target_mac": "11:22:33:44:55:66",
             "target_ip": "192.168.1.1"
         }),
+        log_template: None,
     }
 }
 
@@ -278,6 +279,7 @@ fn ignore_arp_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_arp"
         }),
+        log_template: None,
     }
 }
 

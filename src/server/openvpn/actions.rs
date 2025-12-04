@@ -160,7 +160,7 @@ impl Server for OpenvpnProtocol {
             use crate::server::openvpn::OpenvpnServer;
             use std::sync::Arc;
             OpenvpnServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 Arc::new(ctx.llm_client),
                 ctx.state,
                 ctx.server_id,
@@ -268,6 +268,7 @@ fn authorize_peer_action() -> ActionDefinition {
             "peer_addr": "203.0.113.45:1194",
             "vpn_ip": "10.8.0.5"
         }),
+        log_template: None,
     }
 }
 
@@ -295,6 +296,7 @@ fn reject_peer_action() -> ActionDefinition {
             "peer_addr": "203.0.113.45:1194",
             "reason": "Unauthorized"
         }),
+        log_template: None,
     }
 }
 
@@ -322,6 +324,7 @@ fn set_peer_limit_action() -> ActionDefinition {
             "peer_addr": "203.0.113.45:1194",
             "limit_mbps": 10
         }),
+        log_template: None,
     }
 }
 
@@ -340,6 +343,7 @@ fn inspect_traffic_action() -> ActionDefinition {
             "type": "inspect_traffic",
             "inspect": true
         }),
+        log_template: None,
     }
 }
 
@@ -352,6 +356,7 @@ fn list_peers_action() -> ActionDefinition {
         example: json!({
             "type": "list_peers"
         }),
+        log_template: None,
     }
 }
 
@@ -370,6 +375,7 @@ fn remove_peer_action() -> ActionDefinition {
             "type": "remove_peer",
             "peer_addr": "203.0.113.45:1194"
         }),
+        log_template: None,
     }
 }
 
@@ -382,5 +388,6 @@ fn get_server_info_action() -> ActionDefinition {
         example: json!({
             "type": "get_server_info"
         }),
+        log_template: None,
     }
 }

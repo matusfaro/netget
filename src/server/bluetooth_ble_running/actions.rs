@@ -60,6 +60,7 @@ impl Protocol for BluetoothBleRunningProtocol {
                     "type": "set_pace",
                     "min_per_km": 42
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_cadence".to_string(),
@@ -74,6 +75,7 @@ impl Protocol for BluetoothBleRunningProtocol {
                     "type": "set_cadence",
                     "spm": 42
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "simulate_run".to_string(),
@@ -88,6 +90,7 @@ impl Protocol for BluetoothBleRunningProtocol {
                     "type": "simulate_run",
                     "profile": "example_profile"
                 }),
+            log_template: None,
             },
         ]
     }

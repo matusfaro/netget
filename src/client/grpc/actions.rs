@@ -178,6 +178,7 @@ impl Protocol for GrpcClientProtocol {
                     "request": {"a": 5, "b": 3},
                     "metadata": {"auth-token": "secret"}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -186,6 +187,7 @@ impl Protocol for GrpcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -226,6 +228,7 @@ impl Protocol for GrpcClientProtocol {
                     "method": "Multiply",
                     "request": {"a": 2, "b": 3}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -234,6 +237,7 @@ impl Protocol for GrpcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

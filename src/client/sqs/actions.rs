@@ -124,6 +124,7 @@ impl Protocol for SqsClientProtocol {
                         "source": "netget"
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "receive_messages".to_string(),
@@ -154,6 +155,7 @@ impl Protocol for SqsClientProtocol {
                     "max_messages": 5,
                     "wait_time_seconds": 10
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_message".to_string(),
@@ -168,6 +170,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "delete_message",
                     "receipt_handle": "AQEBwJnKyrHigUMZj6rY..."
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "purge_queue".to_string(),
@@ -176,6 +179,7 @@ impl Protocol for SqsClientProtocol {
                 example: json!({
                     "type": "purge_queue"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_queue_attributes".to_string(),
@@ -190,6 +194,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "get_queue_attributes",
                     "attribute_names": ["ApproximateNumberOfMessages", "QueueArn"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -198,6 +203,7 @@ impl Protocol for SqsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -217,6 +223,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "send_message",
                     "message_body": "Processed successfully"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_message".to_string(),
@@ -231,6 +238,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "delete_message",
                     "receipt_handle": "AQEBwJnKyrHigUMZj6rY..."
                 }),
+            log_template: None,
             },
         ]
     }

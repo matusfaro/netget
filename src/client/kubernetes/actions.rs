@@ -124,6 +124,7 @@ impl Protocol for KubernetesClientProtocol {
                     "namespace": "default",
                     "label_selector": "app=nginx"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "k8s_get_pod".to_string(),
@@ -147,6 +148,7 @@ impl Protocol for KubernetesClientProtocol {
                     "name": "nginx-abc123",
                     "namespace": "default"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "k8s_get_logs".to_string(),
@@ -170,6 +172,7 @@ impl Protocol for KubernetesClientProtocol {
                     "name": "nginx-abc123",
                     "namespace": "default"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "k8s_create_pod".to_string(),
@@ -205,6 +208,7 @@ impl Protocol for KubernetesClientProtocol {
                         }
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "k8s_delete_pod".to_string(),
@@ -228,6 +232,7 @@ impl Protocol for KubernetesClientProtocol {
                     "name": "nginx",
                     "namespace": "default"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "k8s_list_deployments".to_string(),
@@ -250,6 +255,7 @@ impl Protocol for KubernetesClientProtocol {
                     "type": "k8s_list_deployments",
                     "namespace": "default"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "k8s_list_services".to_string(),
@@ -272,6 +278,7 @@ impl Protocol for KubernetesClientProtocol {
                     "type": "k8s_list_services",
                     "namespace": "kube-system"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -280,6 +287,7 @@ impl Protocol for KubernetesClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

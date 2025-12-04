@@ -105,6 +105,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_command",
                     "command": "ls -la"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_text".to_string(),
@@ -119,6 +120,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_text",
                     "text": "yes"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -127,6 +129,7 @@ impl Protocol for TelnetClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -145,6 +148,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_command",
                     "command": "whoami"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_text".to_string(),
@@ -159,6 +163,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_text",
                     "text": "password123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -167,6 +172,7 @@ impl Protocol for TelnetClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -141,7 +142,7 @@ impl Server for HttpProtocol {
             };
 
             HttpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -205,6 +206,12 @@ fn send_http_response_action() -> ActionDefinition {
             },
             "body": "<html><body>Hello World</body></html>"
         }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {status} ({output_bytes}B)")
+                .with_debug("HTTP response: status={status}, body={output_bytes}B")
+                .with_trace("HTTP response: {json_pretty(.)}"),
+        ),
     }
 }
 
@@ -288,6 +295,12 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
         "body": "{\"status\": \"created\"}"
     }))
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} {method} {path} -> {status} ({response_bytes}B, {duration_ms}ms)")
+            .with_debug("HTTP {method} {path} from {client_ip}:{client_port}")
+            .with_trace("HTTP request: {json_pretty(.)}"),
+    )
 });
 
 /// Get HTTP event types

@@ -129,7 +129,7 @@ impl Server for TorrentTrackerProtocol {
         Box::pin(async move {
             use crate::server::torrent_tracker::TorrentTrackerServer;
             TorrentTrackerServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -328,6 +328,7 @@ pub static SEND_ANNOUNCE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock:
             },
         ],
         example: json!({"type": "send_announce_response", "interval": 1800, "complete": 10, "incomplete": 5, "peers": [{"peer_id": "-TR0001-xxxxxxxxxxxx", "ip": "192.168.1.100", "port": 51413}]}),
+    log_template: None,
     }
 });
 
@@ -342,6 +343,7 @@ pub static SEND_SCRAPE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             required: false,
         }],
         example: json!({"type": "send_scrape_response", "files": {"aabbccdd": {"complete": 10, "downloaded": 100, "incomplete": 5}}}),
+    log_template: None,
     }
 });
 

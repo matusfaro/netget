@@ -1,0 +1,388 @@
+//! Event lifecycle logging
+//!
+//! Provides centralized logging for event processing lifecycle:
+//! - Event start (when event is received)
+//! - Event completion (when actions are executed)
+//! - Action execution logging
+//!
+//! Uses LogTemplate for protocol-specific log formatting.
+
+use crate::llm::actions::protocol_trait::ActionResult;
+use crate::protocol::log_template::{LogLevel, LogTemplate};
+use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
+use crate::state::ServerId;
+use serde_json::Value;
+use std::net::SocketAddr;
+use std::time::Instant;
+use tokio::sync::mpsc::UnboundedSender;
+use tracing::{debug, info, trace};
+
+/// Context for logging an event's lifecycle
+///
+/// Tracks timing and context information from event start to completion.
+/// Provides methods to log at appropriate levels using the event's LogTemplate.
+///
+/// # Example
+/// ```rust,ignore
+/// let ctx = EventLogContext::new(
+///     &event,
+///     server_id,
+///     Some(connection_id),
+///     Some(client_addr),
+///     "HTTP",
+/// );
+///
+/// ctx.log_start(Some(&status_tx));
+///
+/// // ... process event, get action results ...
+///
+/// ctx.log_complete(Some(&status_tx), &action_results);
+/// ```
+pub struct EventLogContext<'a> {
+    /// Reference to the event being logged
+    pub event: &'a Event,
+    /// When event processing started
+    pub start_time: Instant,
+    /// Server ID processing this event
+    pub server_id: ServerId,
+    /// Connection ID if applicable
+    pub connection_id: Option<ConnectionId>,
+    /// Client address if known
+    pub client_addr: Option<SocketAddr>,
+    /// Protocol name for fallback logging
+    pub protocol_name: String,
+}
+
+impl<'a> EventLogContext<'a> {
+    /// Create a new event log context
+    ///
+    /// Automatically records the start time for duration tracking.
+    pub fn new(
+        event: &'a Event,
+        server_id: ServerId,
+        connection_id: Option<ConnectionId>,
+        client_addr: Option<SocketAddr>,
+        protocol_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            event,
+            start_time: Instant::now(),
+            server_id,
+            connection_id,
+            client_addr,
+            protocol_name: protocol_name.into(),
+        }
+    }
+
+    /// Build enriched data with context fields
+    ///
+    /// Adds client_ip, client_port, server_id, connection_id to the event data.
+    fn build_enriched_data(&self) -> Value {
+        let mut data = self.event.data.clone();
+        if let Some(obj) = data.as_object_mut() {
+            if let Some(addr) = self.client_addr {
+                obj.insert("client_ip".to_string(), serde_json::json!(addr.ip().to_string()));
+                obj.insert(
+                    "client_port".to_string(),
+                    serde_json::json!(addr.port()),
+                );
+            }
+            obj.insert(
+                "server_id".to_string(),
+                serde_json::json!(self.server_id.as_u32()),
+            );
+            if let Some(conn_id) = self.connection_id {
+                obj.insert("connection_id".to_string(), serde_json::json!(conn_id.as_u32()));
+            }
+            obj.insert(
+                "protocol".to_string(),
+                serde_json::json!(self.protocol_name.clone()),
+            );
+            obj.insert(
+                "event_id".to_string(),
+                serde_json::json!(self.event.id()),
+            );
+        }
+        data
+    }
+
+    /// Log event start (DEBUG level)
+    ///
+    /// Called when an event is received and about to be processed.
+    /// Uses the event's debug template if available, otherwise falls back
+    /// to a generic message.
+    pub fn log_start(&self, status_tx: Option<&UnboundedSender<String>>) {
+        let data = self.build_enriched_data();
+
+        if let Some(ref template) = self.event.event_type.log_template {
+            if let Some(msg) = template.render(LogLevel::Debug, &data) {
+                debug!("{}", msg);
+                if let Some(tx) = status_tx {
+                    let _ = tx.send(format!("[DEBUG] {}", msg));
+                }
+                return;
+            }
+        }
+
+        // Fallback: log event ID and basic info
+        let fallback_msg = format!(
+            "{} event '{}' from {}",
+            self.protocol_name,
+            self.event.id(),
+            self.client_addr
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        );
+        debug!("{}", fallback_msg);
+        if let Some(tx) = status_tx {
+            let _ = tx.send(format!("[DEBUG] {}", fallback_msg));
+        }
+    }
+
+    /// Log event completion (INFO/DEBUG/TRACE levels)
+    ///
+    /// Called after actions have been executed.
+    /// Enriches data with timing and response information.
+    ///
+    /// Logs at:
+    /// - INFO: One-liner access log style
+    /// - DEBUG: With timing information
+    /// - TRACE: Full details
+    pub fn log_complete(
+        &self,
+        status_tx: Option<&UnboundedSender<String>>,
+        action_results: &[ActionResult],
+    ) {
+        let duration = self.start_time.elapsed();
+        let mut data = self.build_enriched_data();
+
+        // Add timing and result info
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert(
+                "duration_ms".to_string(),
+                serde_json::json!(duration.as_millis() as u64),
+            );
+            obj.insert(
+                "action_count".to_string(),
+                serde_json::json!(action_results.len()),
+            );
+
+            // Calculate total response bytes
+            let response_bytes: usize = action_results
+                .iter()
+                .flat_map(|r| r.get_all_output())
+                .map(|o| o.len())
+                .sum();
+            obj.insert("response_bytes".to_string(), serde_json::json!(response_bytes));
+
+            // Add status from first Custom result if present
+            for result in action_results {
+                if let ActionResult::Custom { name, data: custom_data } = result {
+                    if let Some(status) = custom_data.get("status") {
+                        obj.insert("status".to_string(), status.clone());
+                    }
+                    obj.insert("action_name".to_string(), serde_json::json!(name));
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref template) = self.event.event_type.log_template {
+            // TRACE: Full details
+            if let Some(msg) = template.render(LogLevel::Trace, &data) {
+                trace!("{}", msg);
+                if let Some(tx) = status_tx {
+                    let _ = tx.send(format!("[TRACE] {}", msg));
+                }
+            }
+
+            // INFO: Access log style (one-liner)
+            if let Some(msg) = template.render(LogLevel::Info, &data) {
+                info!("{}", msg);
+                if let Some(tx) = status_tx {
+                    let _ = tx.send(format!("[INFO] {}", msg));
+                }
+            }
+
+            // DEBUG: With timing (always log at debug for event completion)
+            if let Some(msg) = template.render(LogLevel::Debug, &data) {
+                let msg_with_timing = format!("{} ({}ms)", msg, duration.as_millis());
+                debug!("{}", msg_with_timing);
+                if let Some(tx) = status_tx {
+                    let _ = tx.send(format!("[DEBUG] {}", msg_with_timing));
+                }
+            } else {
+                // Fallback debug with timing
+                let fallback_msg = format!(
+                    "{} '{}' completed in {}ms, {} action(s), {} bytes",
+                    self.protocol_name,
+                    self.event.id(),
+                    duration.as_millis(),
+                    action_results.len(),
+                    data.get("response_bytes").and_then(|v| v.as_u64()).unwrap_or(0)
+                );
+                debug!("{}", fallback_msg);
+                if let Some(tx) = status_tx {
+                    let _ = tx.send(format!("[DEBUG] {}", fallback_msg));
+                }
+            }
+        } else {
+            // No template: fallback logging
+            let fallback_msg = format!(
+                "{} '{}' completed in {}ms, {} action(s)",
+                self.protocol_name,
+                self.event.id(),
+                duration.as_millis(),
+                action_results.len()
+            );
+            debug!("{}", fallback_msg);
+            if let Some(tx) = status_tx {
+                let _ = tx.send(format!("[DEBUG] {}", fallback_msg));
+            }
+        }
+    }
+}
+
+/// Log action execution result
+///
+/// Called after a protocol action has been executed.
+/// Uses the action's log template if available.
+///
+/// # Arguments
+/// * `action_name` - The action type name (e.g., "send_http_response")
+/// * `action_data` - The action JSON data
+/// * `result` - The ActionResult from execution
+/// * `template` - Optional LogTemplate from the ActionDefinition
+/// * `status_tx` - Optional channel for TUI updates
+pub fn log_action_result(
+    action_name: &str,
+    action_data: &Value,
+    result: &ActionResult,
+    template: Option<&LogTemplate>,
+    status_tx: Option<&UnboundedSender<String>>,
+) {
+    // Enrich action data with result info
+    let mut enriched_data = action_data.clone();
+    if let Some(obj) = enriched_data.as_object_mut() {
+        // Add output info
+        let output_bytes: usize = result.get_all_output().iter().map(|o| o.len()).sum();
+        obj.insert("output_bytes".to_string(), serde_json::json!(output_bytes));
+        obj.insert(
+            "closes_connection".to_string(),
+            serde_json::json!(result.closes_connection()),
+        );
+        obj.insert(
+            "waits_for_more".to_string(),
+            serde_json::json!(result.waits_for_more()),
+        );
+        obj.insert("action_name".to_string(), serde_json::json!(action_name));
+    }
+
+    if let Some(template) = template {
+        // Use template if available
+        if let Some(msg) = template.render(LogLevel::Trace, &enriched_data) {
+            trace!("Action {}: {}", action_name, msg);
+            if let Some(tx) = status_tx {
+                let _ = tx.send(format!("[TRACE] Action {}: {}", action_name, msg));
+            }
+        }
+
+        if let Some(msg) = template.render(LogLevel::Debug, &enriched_data) {
+            debug!("Action {}: {}", action_name, msg);
+            if let Some(tx) = status_tx {
+                let _ = tx.send(format!("[DEBUG] Action {}: {}", action_name, msg));
+            }
+        }
+
+        if let Some(msg) = template.render(LogLevel::Info, &enriched_data) {
+            info!("Action {}: {}", action_name, msg);
+            if let Some(tx) = status_tx {
+                let _ = tx.send(format!("[INFO] Action {}: {}", action_name, msg));
+            }
+        }
+    } else {
+        // Fallback to summarize_action
+        let summary = crate::llm::actions::summarize_action(action_data);
+        debug!("Action executed: {}", summary);
+        if let Some(tx) = status_tx {
+            let _ = tx.send(format!("[DEBUG] Action: {}", summary));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::event_type::EventType;
+    use serde_json::json;
+    use std::sync::LazyLock;
+
+    static TEST_EVENT_TYPE: LazyLock<EventType> = LazyLock::new(|| {
+        EventType::new(
+            "test_event",
+            "Test event for unit tests",
+            json!({"type": "test_action"}),
+        )
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} {method} {path} -> {status}")
+                .with_debug("Test {method} {path} from {client_ip}")
+                .with_trace("Full data: {json_pretty(.)}"),
+        )
+    });
+
+    #[test]
+    fn test_event_log_context_creation() {
+        let event = Event::new(
+            &TEST_EVENT_TYPE,
+            json!({
+                "method": "GET",
+                "path": "/api",
+                "status": 200
+            }),
+        );
+
+        let ctx = EventLogContext::new(
+            &event,
+            ServerId::new(1),
+            Some(42),
+            Some("192.168.1.1:12345".parse().unwrap()),
+            "HTTP",
+        );
+
+        assert_eq!(ctx.protocol_name, "HTTP");
+        assert_eq!(ctx.server_id.as_u32(), 1);
+        assert_eq!(ctx.connection_id, Some(42));
+    }
+
+    #[test]
+    fn test_enriched_data() {
+        let event = Event::new(
+            &TEST_EVENT_TYPE,
+            json!({
+                "method": "GET",
+                "path": "/test"
+            }),
+        );
+
+        let ctx = EventLogContext::new(
+            &event,
+            ServerId::new(5),
+            Some(10),
+            Some("10.0.0.1:8080".parse().unwrap()),
+            "TEST",
+        );
+
+        let enriched = ctx.build_enriched_data();
+        assert_eq!(enriched["client_ip"], "10.0.0.1");
+        assert_eq!(enriched["client_port"], 8080);
+        assert_eq!(enriched["server_id"], 5);
+        assert_eq!(enriched["connection_id"], 10);
+        assert_eq!(enriched["protocol"], "TEST");
+        assert_eq!(enriched["event_id"], "test_event");
+        // Original data is preserved
+        assert_eq!(enriched["method"], "GET");
+        assert_eq!(enriched["path"], "/test");
+    }
+}

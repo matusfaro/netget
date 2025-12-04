@@ -361,7 +361,6 @@ impl MssqlClient {
     ) -> Result<QueryResult> {
         let mut columns = Vec::new();
         let mut rows = Vec::new();
-        let mut rows_affected = 0u64;
 
         // Collect column metadata
         if let Some(cols) = stream.columns().await? {
@@ -392,7 +391,7 @@ impl MssqlClient {
         // For SELECT queries, rows_affected is typically 0 or the row count
         // For INSERT/UPDATE/DELETE, tiberius would return this in metadata
         // For simplicity, we'll use the row count as a proxy
-        rows_affected = rows.len() as u64;
+        let rows_affected = rows.len() as u64;
 
         Ok(QueryResult {
             columns,

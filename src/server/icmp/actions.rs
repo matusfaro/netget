@@ -2,7 +2,7 @@
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
-    ActionDefinition, Parameter, ParameterDefinition,
+    ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -154,7 +154,7 @@ impl Server for IcmpProtocol {
 
             // ICMP doesn't bind to a socket, so return a dummy address
             // The listen_addr from context is just a placeholder
-            Ok(ctx.listen_addr)
+            Ok(ctx.legacy_listen_addr())
         })
     }
 
@@ -407,6 +407,7 @@ fn send_echo_reply_action() -> ActionDefinition {
             "sequence": 1,
             "payload_hex": "48656c6c6f"
         }),
+        log_template: None,
     }
 }
 
@@ -449,6 +450,7 @@ fn send_destination_unreachable_action() -> ActionDefinition {
             "code": 1,
             "original_packet_hex": "4500003c..."
         }),
+        log_template: None,
     }
 }
 
@@ -491,6 +493,7 @@ fn send_time_exceeded_action() -> ActionDefinition {
             "code": 0,
             "original_packet_hex": "4500003c..."
         }),
+        log_template: None,
     }
 }
 
@@ -541,6 +544,7 @@ fn send_timestamp_reply_action() -> ActionDefinition {
             "sequence": 1,
             "originate_timestamp": 12345678
         }),
+        log_template: None,
     }
 }
 */
@@ -554,6 +558,7 @@ fn ignore_icmp_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_icmp"
         }),
+        log_template: None,
     }
 }
 

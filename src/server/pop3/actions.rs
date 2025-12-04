@@ -276,6 +276,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_ok",
                     "message": "1 octets"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_err".to_string(),
@@ -290,6 +291,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_err",
                     "message": "Invalid credentials"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_greeting".to_string(),
@@ -304,6 +306,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_greeting",
                     "message": "POP3 server ready"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_stat".to_string(),
@@ -327,6 +330,7 @@ impl Protocol for Pop3Protocol {
                     "message_count": 3,
                     "total_size": 1024
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_list".to_string(),
@@ -342,6 +346,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_list",
                     "messages": [{"id": 1, "size": 512}, {"id": 2, "size": 256}]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_uidl".to_string(),
@@ -356,6 +361,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_uidl",
                     "messages": [{"id": 1, "uidl": "msg-abc123"}, {"id": 2, "uidl": "msg-def456"}]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_retr".to_string(),
@@ -379,6 +385,7 @@ impl Protocol for Pop3Protocol {
                     "size": 512,
                     "content": "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nHello"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_top".to_string(),
@@ -394,6 +401,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_top",
                     "content": "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nFirst line"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pop3_message".to_string(),
@@ -408,6 +416,7 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_message",
                     "message": "+OK Custom response"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -417,6 +426,7 @@ impl Protocol for Pop3Protocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "close_connection".to_string(),
@@ -425,6 +435,7 @@ impl Protocol for Pop3Protocol {
                 example: json!({
                     "type": "close_connection"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -531,7 +542,7 @@ impl Server for Pop3Protocol {
             let tls_config = None;
 
             Pop3Server::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

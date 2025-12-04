@@ -251,6 +251,7 @@ fn type_text_action() -> ActionDefinition {
             "type": "type_text",
             "text": "Hello, World!"
         }),
+        log_template: None,
     }
 }
 
@@ -276,6 +277,7 @@ fn press_key_action() -> ActionDefinition {
             "type": "press_key",
             "key": "enter"
         }),
+        log_template: None,
     }
 }
 
@@ -308,6 +310,7 @@ fn key_combo_action() -> ActionDefinition {
             "modifiers": ["ctrl"],
             "key": "c"
         }),
+        log_template: None,
     }
 }
 
@@ -334,6 +337,7 @@ fn send_to_client_action() -> ActionDefinition {
             "client_id": 1,
             "report": "0000040000000000"
         }),
+        log_template: None,
     }
 }
 
@@ -345,5 +349,6 @@ fn list_clients_action() -> ActionDefinition {
         example: json!({
             "type": "list_clients"
         }),
+        log_template: None,
     }
 }

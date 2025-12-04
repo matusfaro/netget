@@ -4,6 +4,7 @@
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
 use crate::llm::actions::{ActionDefinition, Parameter};
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -84,6 +85,12 @@ pub static ELASTICSEARCH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_cluster_info_action(),
         show_message_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Elasticsearch {client_ip} {method} {path}")
+            .with_debug("Elasticsearch {method} {path} from {client_ip}:{client_port}")
+            .with_trace("Elasticsearch: {json_pretty(.)}"),
+    )
 });
 
 fn send_elasticsearch_response_action() -> ActionDefinition {
@@ -109,6 +116,7 @@ fn send_elasticsearch_response_action() -> ActionDefinition {
             "status_code": 200,
             "body": "{\"acknowledged\": true}"
         }),
+        log_template: None,
     }
 }
 
@@ -146,6 +154,7 @@ fn send_search_response_action() -> ActionDefinition {
             "total": 2,
             "took": 15
         }),
+        log_template: None,
     }
 }
 
@@ -179,6 +188,7 @@ fn send_index_response_action() -> ActionDefinition {
             "id": "abc123",
             "result": "created"
         }),
+        log_template: None,
     }
 }
 
@@ -219,6 +229,7 @@ fn send_get_response_action() -> ActionDefinition {
             "id": "abc123",
             "source": {"name": "Widget", "price": 19.99}
         }),
+        log_template: None,
     }
 }
 
@@ -248,6 +259,7 @@ fn send_bulk_response_action() -> ActionDefinition {
             ],
             "errors": false
         }),
+        log_template: None,
     }
 }
 
@@ -281,6 +293,7 @@ fn send_cluster_info_action() -> ActionDefinition {
             "status": "green",
             "version": "8.0.0"
         }),
+        log_template: None,
     }
 }
 
@@ -298,6 +311,7 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Indexed document in products index"
         }),
+        log_template: None,
     }
 }
 
@@ -430,7 +444,7 @@ impl Server for ElasticsearchProtocol {
                 .unwrap_or(false);
 
             ElasticsearchServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

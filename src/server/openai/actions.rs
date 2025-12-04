@@ -151,7 +151,7 @@ impl Server for OpenAiProtocol {
         Box::pin(async move {
             use crate::server::openai::OpenAiServer;
             OpenAiServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -337,6 +337,7 @@ pub fn openai_chat_response_action() -> ActionDefinition {
             "content": "Hello! How can I help you today?",
             "model": "gpt-3.5-turbo"
         }),
+        log_template: None,
     }
 }
 
@@ -355,6 +356,7 @@ pub fn openai_models_response_action() -> ActionDefinition {
             "type": "openai_models_response",
             "models": ["gpt-3.5-turbo", "gpt-4"]
         }),
+        log_template: None,
     }
 }
 
@@ -390,6 +392,7 @@ pub fn openai_error_response_action() -> ActionDefinition {
             "error_type": "invalid_request_error",
             "status": 401
         }),
+        log_template: None,
     }
 }
 
@@ -402,6 +405,7 @@ pub fn list_active_chats_action() -> ActionDefinition {
         example: json!({
             "type": "list_active_chats"
         }),
+        log_template: None,
     }
 }
 

@@ -121,7 +121,7 @@ impl Server for WebDavProtocol {
         Box::pin(async move {
             use crate::server::webdav::WebDavServer;
             WebDavServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -228,6 +228,7 @@ fn read_file_action() -> ActionDefinition {
             "type": "read_file",
             "path": "/documents/readme.txt"
         }),
+        log_template: None,
     }
 }
 
@@ -254,6 +255,7 @@ fn create_file_action() -> ActionDefinition {
             "path": "/documents/hello.txt",
             "content": "Hello World!"
         }),
+        log_template: None,
     }
 }
 
@@ -271,6 +273,7 @@ fn create_directory_action() -> ActionDefinition {
             "type": "create_directory",
             "path": "/documents/new_folder"
         }),
+        log_template: None,
     }
 }
 
@@ -288,6 +291,7 @@ fn delete_resource_action() -> ActionDefinition {
             "type": "delete_resource",
             "path": "/documents/old_file.txt"
         }),
+        log_template: None,
     }
 }
 
@@ -305,6 +309,7 @@ fn list_directory_action() -> ActionDefinition {
             "type": "list_directory",
             "path": "/documents"
         }),
+        log_template: None,
     }
 }
 
@@ -322,5 +327,6 @@ fn get_properties_action() -> ActionDefinition {
             "type": "get_properties",
             "path": "/documents/readme.txt"
         }),
+        log_template: None,
     }
 }

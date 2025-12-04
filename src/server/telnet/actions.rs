@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -184,7 +185,7 @@ impl Server for TelnetProtocol {
                 .unwrap_or(false);
 
             TelnetServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -226,6 +227,7 @@ fn send_telnet_message_action() -> ActionDefinition {
             "type": "send_telnet_message",
             "message": "Hello\r\n"
         }),
+        log_template: None,
     }
 }
 
@@ -243,6 +245,7 @@ fn send_telnet_line_action() -> ActionDefinition {
             "type": "send_telnet_line",
             "line": "Welcome to the Telnet server!"
         }),
+        log_template: None,
     }
 }
 
@@ -260,6 +263,7 @@ fn send_telnet_prompt_action() -> ActionDefinition {
             "type": "send_telnet_prompt",
             "prompt": "$ "
         }),
+        log_template: None,
     }
 }
 
@@ -271,6 +275,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -282,6 +287,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -311,6 +317,12 @@ pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
         wait_for_more_action(),
         close_connection_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Telnet {client_ip}: {preview(message,80)}")
+            .with_debug("Telnet message from {client_ip}:{client_port}")
+            .with_trace("Telnet: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_telnet_event_types() -> Vec<EventType> {

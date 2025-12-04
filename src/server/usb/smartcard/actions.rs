@@ -213,6 +213,7 @@ impl Protocol for UsbSmartCardProtocol {
                     "type": "insert_card",
                     "connection_id": "conn_1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "remove_card".to_string(),
@@ -227,6 +228,7 @@ impl Protocol for UsbSmartCardProtocol {
                     "type": "remove_card",
                     "connection_id": "conn_1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_pin".to_string(),
@@ -250,6 +252,7 @@ impl Protocol for UsbSmartCardProtocol {
                     "connection_id": "conn_1",
                     "new_pin": "123456"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "verify_pin".to_string(),
@@ -273,6 +276,7 @@ impl Protocol for UsbSmartCardProtocol {
                     "connection_id": "conn_1",
                     "pin": "123456"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_files".to_string(),
@@ -287,6 +291,7 @@ impl Protocol for UsbSmartCardProtocol {
                     "type": "list_files",
                     "connection_id": "conn_1"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -153,7 +154,7 @@ impl Server for MdnsProtocol {
         Box::pin(async move {
             use crate::server::mdns::MdnsServer;
             MdnsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -224,6 +225,7 @@ fn register_mdns_service_action() -> ActionDefinition {
                 "version": "1.0"
             }
         }),
+        log_template: None,
     }
 }
 

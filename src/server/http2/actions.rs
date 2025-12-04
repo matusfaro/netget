@@ -142,7 +142,7 @@ impl Server for Http2Protocol {
 
             // Use h2-based server for full server push support
             H2Server::spawn_with_push_support(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -249,6 +249,7 @@ fn send_http2_response_action() -> ActionDefinition {
             },
             "body": "{\"message\": \"Hello from HTTP/2!\"}"
         }),
+        log_template: None,
     }
 }
 
@@ -292,6 +293,7 @@ fn push_resource_action() -> ActionDefinition {
             },
             "body": "body { margin: 0; }"
         }),
+        log_template: None,
     }
 }
 

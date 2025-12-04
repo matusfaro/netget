@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -123,7 +124,7 @@ impl Server for SnmpProtocol {
         Box::pin(async move {
             use crate::server::snmp::SnmpServer;
             SnmpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -236,6 +237,7 @@ fn send_trap_action() -> ActionDefinition {
                 {"oid": "1.3.6.1.2.1.1.3.0", "type": "timeticks", "value": 12345}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -257,6 +259,7 @@ fn send_snmp_response_action() -> ActionDefinition {
                 {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "hostname"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -275,6 +278,7 @@ fn send_snmp_error_action() -> ActionDefinition {
             "type": "send_snmp_error",
             "error_message": "No such object"
         }),
+        log_template: None,
     }
 }
 
@@ -287,6 +291,7 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }
 
@@ -330,6 +335,12 @@ pub static SNMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_snmp_error_action(),
         ignore_request_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SNMP {client_ip} {oid}")
+            .with_debug("SNMP request from {client_ip}:{client_port}, OID={oid}")
+            .with_trace("SNMP: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_snmp_event_types() -> Vec<EventType> {

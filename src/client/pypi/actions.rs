@@ -137,6 +137,7 @@ impl Protocol for PypiClientProtocol {
                     "type": "get_package_info",
                     "package_name": "requests"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "search_packages".to_string(),
@@ -160,6 +161,7 @@ impl Protocol for PypiClientProtocol {
                     "query": "web framework",
                     "limit": 10
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "download_package".to_string(),
@@ -189,6 +191,7 @@ impl Protocol for PypiClientProtocol {
                     "package_name": "requests",
                     "version": "2.31.0"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_package_files".to_string(),
@@ -212,6 +215,7 @@ impl Protocol for PypiClientProtocol {
                     "package_name": "requests",
                     "version": "2.31.0"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -220,6 +224,7 @@ impl Protocol for PypiClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

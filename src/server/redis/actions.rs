@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -159,7 +160,7 @@ impl Server for RedisProtocol {
                 .unwrap_or(false);
 
             RedisServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -332,6 +333,7 @@ pub fn redis_simple_string_action() -> ActionDefinition {
             "type": "redis_simple_string",
             "value": "OK"
         }),
+        log_template: None,
     }
 }
 
@@ -350,6 +352,7 @@ pub fn redis_bulk_string_action() -> ActionDefinition {
             "type": "redis_bulk_string",
             "value": "hello world"
         }),
+        log_template: None,
     }
 }
 
@@ -369,6 +372,7 @@ pub fn redis_array_action() -> ActionDefinition {
             "type": "redis_array",
             "values": ["value1", "value2", "value3"]
         }),
+        log_template: None,
     }
 }
 
@@ -387,6 +391,7 @@ pub fn redis_integer_action() -> ActionDefinition {
             "type": "redis_integer",
             "value": 42
         }),
+        log_template: None,
     }
 }
 
@@ -405,6 +410,7 @@ pub fn redis_error_action() -> ActionDefinition {
             "type": "redis_error",
             "message": "ERR unknown command 'foobar'"
         }),
+        log_template: None,
     }
 }
 
@@ -417,6 +423,7 @@ pub fn redis_null_action() -> ActionDefinition {
         example: json!({
             "type": "redis_null"
         }),
+        log_template: None,
     }
 }
 
@@ -427,6 +434,7 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current Redis connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     }
 }
 
@@ -437,6 +445,7 @@ pub fn list_redis_connections_action() -> ActionDefinition {
         description: "List all active Redis connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_redis_connections"}),
+        log_template: None,
     }
 }
 
@@ -478,6 +487,12 @@ pub static REDIS_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             REDIS_NULL_ACTION.clone(),
             REDIS_CLOSE_CONNECTION_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("Redis: {command}")
+                .with_debug("Redis command: {command}")
+                .with_trace("Redis: {json_pretty(.)}"),
+        )
 });
 
 /// Get Redis event types

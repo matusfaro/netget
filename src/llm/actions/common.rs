@@ -50,6 +50,7 @@ mod flexible_deserializers {
     }
 
     /// Deserialize u64 from either a number or a string
+    #[allow(dead_code)]
     pub fn deserialize_u64_flexible<'de, D>(deserializer: D) -> Result<u64, D::Error>
     where
         D: Deserializer<'de>,
@@ -87,6 +88,7 @@ mod flexible_deserializers {
     }
 
     /// Deserialize u16 from either a number or a string
+    #[allow(dead_code)]
     pub fn deserialize_u16_flexible<'de, D>(deserializer: D) -> Result<u16, D::Error>
     where
         D: Deserializer<'de>,
@@ -399,6 +401,7 @@ pub fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Server started successfully on port 8080"
         }),
+        log_template: None,
     }
 }
 
@@ -436,6 +439,7 @@ pub fn open_server_action(
             description,
             parameters: vec![],
             example: json!({}),
+            log_template: None,
         };
     }
 
@@ -631,6 +635,7 @@ Example LLM handler:\\n\
         description,
         parameters,
         example,
+        log_template: None,
     }
 }
 
@@ -649,6 +654,7 @@ pub fn close_server_action() -> ActionDefinition {
             "type": "close_server",
             "server_id": 1
         }),
+        log_template: None,
     }
 }
 
@@ -661,6 +667,7 @@ pub fn close_all_servers_action() -> ActionDefinition {
         example: json!({
             "type": "close_all_servers"
         }),
+        log_template: None,
     }
 }
 
@@ -680,6 +687,7 @@ pub fn open_client_action(
             description,
             parameters: vec![],
             example: serde_json::Value::Null,
+            log_template: None,
         };
     }
 
@@ -768,6 +776,7 @@ Example static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\
         description,
         parameters,
         example,
+        log_template: None,
     }
 }
 
@@ -786,6 +795,7 @@ pub fn close_client_action() -> ActionDefinition {
             "type": "close_client",
             "client_id": 1
         }),
+        log_template: None,
     }
 }
 
@@ -798,6 +808,7 @@ pub fn close_all_clients_action() -> ActionDefinition {
         example: json!({
             "type": "close_all_clients"
         }),
+        log_template: None,
     }
 }
 
@@ -816,6 +827,7 @@ pub fn close_connection_by_id_action() -> ActionDefinition {
             "type": "close_connection_by_id",
             "connection_id": 3
         }),
+        log_template: None,
     }
 }
 
@@ -834,6 +846,7 @@ pub fn reconnect_client_action() -> ActionDefinition {
             "type": "reconnect_client",
             "client_id": 1
         }),
+        log_template: None,
     }
 }
 
@@ -863,6 +876,7 @@ pub fn update_client_instruction_action() -> ActionDefinition {
             "client_id": 1,
             "instruction": "Switch to POST requests with JSON payload"
         }),
+        log_template: None,
     }
 }
 
@@ -882,6 +896,7 @@ pub fn update_instruction_action() -> ActionDefinition {
             "type": "update_instruction",
             "instruction": "For all HTTP requests, return status 404 with 'Not Found' message."
         }),
+        log_template: None,
     }
 }
 
@@ -900,6 +915,7 @@ pub fn change_model_action() -> ActionDefinition {
             "type": "change_model",
             "model": "llama3.2:latest"
         }),
+        log_template: None,
     }
 }
 
@@ -920,6 +936,7 @@ pub fn set_memory_action() -> ActionDefinition {
             "type": "set_memory",
             "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"
         }),
+        log_template: None,
     }
 }
 
@@ -940,6 +957,7 @@ pub fn append_memory_action() -> ActionDefinition {
             "type": "append_memory",
             "value": "connection_count: 5\nlast_file_requested: readme.md"
         }),
+        log_template: None,
     }
 }
 
@@ -967,6 +985,7 @@ pub fn append_to_log_action() -> ActionDefinition {
             "output_name": "access_logs",
             "content": "127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"
         }),
+        log_template: None,
     }
 }
 
@@ -992,6 +1011,7 @@ pub fn provide_feedback_action() -> ActionDefinition {
                 "suggestion": "Consider blocking IP after multiple failures"
             }
         }),
+        log_template: None,
     }
 }
 
@@ -1132,6 +1152,7 @@ pub fn schedule_task_action(
             "server_id": 1,
             "instruction": "Send SSE heartbeat to all active connections"
         }),
+        log_template: None,
     }
 }
 
@@ -1150,6 +1171,7 @@ pub fn cancel_task_action() -> ActionDefinition {
             "type": "cancel_task",
             "task_id": "cleanup_logs"
         }),
+        log_template: None,
     }
 }
 
@@ -1162,6 +1184,7 @@ pub fn list_tasks_action() -> ActionDefinition {
         example: json!({
             "type": "list_tasks"
         }),
+        log_template: None,
     }
 }
 
@@ -1204,6 +1227,7 @@ pub fn create_database_action() -> ActionDefinition {
             "owner": "server-1",
             "schema_ddl": "CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"
         }),
+        log_template: None,
     }
 }
 
@@ -1232,6 +1256,7 @@ pub fn execute_sql_action() -> ActionDefinition {
             "database_id": 1,
             "query": "SELECT * FROM files WHERE path LIKE '/home/%'"
         }),
+        log_template: None,
     }
 }
 
@@ -1245,6 +1270,7 @@ pub fn list_databases_action() -> ActionDefinition {
         example: json!({
             "type": "list_databases"
         }),
+        log_template: None,
     }
 }
 
@@ -1266,6 +1292,7 @@ pub fn delete_database_action() -> ActionDefinition {
             "type": "delete_database",
             "database_id": 1
         }),
+        log_template: None,
     }
 }
 

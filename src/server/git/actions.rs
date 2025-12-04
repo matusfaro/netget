@@ -78,6 +78,7 @@ impl Protocol for GitProtocol {
                     "description": "My project",
                     "default_branch": "main"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_git_repository".to_string(),
@@ -92,12 +93,14 @@ impl Protocol for GitProtocol {
                     "type": "delete_git_repository",
                     "name": "old-project"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_git_repositories".to_string(),
                 description: "List all virtual Git repositories".to_string(),
                 parameters: vec![],
                 example: json!({"type": "list_git_repositories"}),
+            log_template: None,
             },
         ]
     }
@@ -127,6 +130,7 @@ impl Protocol for GitProtocol {
                     "refs": [{"name": "refs/heads/main", "sha": "abc123"}],
                     "capabilities": ["multi_ack"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "git_send_pack".to_string(),
@@ -141,6 +145,7 @@ impl Protocol for GitProtocol {
                     "type": "git_send_pack",
                     "pack_data": "PACK..."
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "git_error".to_string(),
@@ -164,6 +169,7 @@ impl Protocol for GitProtocol {
                     "message": "Repository not found",
                     "code": 404
                 }),
+            log_template: None,
             },
         ]
     }
@@ -254,7 +260,7 @@ impl Server for GitProtocol {
     fn spawn(&self, ctx: SpawnContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::git::GitServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

@@ -85,6 +85,7 @@ impl Protocol for CassandraClientProtocol {
                     "query": "SELECT * FROM system.local",
                     "consistency": "ONE"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -93,6 +94,7 @@ impl Protocol for CassandraClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -101,6 +103,7 @@ impl Protocol for CassandraClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -127,6 +130,7 @@ impl Protocol for CassandraClientProtocol {
                     "type": "execute_cql_query",
                     "query": "SELECT * FROM users WHERE id = 1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -135,6 +139,7 @@ impl Protocol for CassandraClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

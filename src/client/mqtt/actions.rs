@@ -120,6 +120,7 @@ impl Protocol for MqttClientProtocol {
                         "topics": ["sensors/temperature", "sensors/+/status", "devices/#"],
                         "qos": 1
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "publish".to_string(),
@@ -157,6 +158,7 @@ impl Protocol for MqttClientProtocol {
                         "qos": 1,
                         "retain": false
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "unsubscribe".to_string(),
@@ -173,6 +175,7 @@ impl Protocol for MqttClientProtocol {
                         "type": "unsubscribe",
                         "topics": ["sensors/temperature"]
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -181,6 +184,7 @@ impl Protocol for MqttClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -215,6 +219,7 @@ impl Protocol for MqttClientProtocol {
                     "payload": "acknowledged",
                     "qos": 0
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "subscribe".to_string(),
@@ -238,6 +243,7 @@ impl Protocol for MqttClientProtocol {
                     "topics": ["responses/#"],
                     "qos": 1
                 }),
+            log_template: None,
             },
         ]
     }

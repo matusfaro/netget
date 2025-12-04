@@ -115,6 +115,7 @@ impl Protocol for Socks5ClientProtocol {
                     "type": "send_socks5_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -123,6 +124,7 @@ impl Protocol for Socks5ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -141,6 +143,7 @@ impl Protocol for Socks5ClientProtocol {
                     "type": "send_socks5_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -149,6 +152,7 @@ impl Protocol for Socks5ClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

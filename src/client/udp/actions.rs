@@ -105,6 +105,7 @@ impl Protocol for UdpClientProtocol {
                     "data_hex": "48656c6c6f",
                     "target_addr": "127.0.0.1:8080"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "change_target".to_string(),
@@ -119,6 +120,7 @@ impl Protocol for UdpClientProtocol {
                     "type": "change_target",
                     "new_target": "127.0.0.1:9090"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "close_socket".to_string(),
@@ -127,6 +129,7 @@ impl Protocol for UdpClientProtocol {
                 example: json!({
                     "type": "close_socket"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -155,6 +158,7 @@ impl Protocol for UdpClientProtocol {
                     "type": "send_udp_datagram",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -163,6 +167,7 @@ impl Protocol for UdpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -103,6 +103,7 @@ impl Protocol for PostgresqlClientProtocol {
                     "type": "execute_query",
                     "query": "SELECT * FROM users WHERE id = 1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "begin_transaction".to_string(),
@@ -111,6 +112,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "begin_transaction"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "commit_transaction".to_string(),
@@ -119,6 +121,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "commit_transaction"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "rollback_transaction".to_string(),
@@ -127,6 +130,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "rollback_transaction"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -135,6 +139,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -152,6 +157,7 @@ impl Protocol for PostgresqlClientProtocol {
                 "type": "execute_query",
                 "query": "INSERT INTO logs VALUES ('result processed')"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

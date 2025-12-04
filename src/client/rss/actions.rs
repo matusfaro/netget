@@ -116,6 +116,7 @@ impl Protocol for RssClientProtocol {
                     "url": "http://example.com/tech-news.xml",
                     "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -124,6 +125,7 @@ impl Protocol for RssClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -152,6 +154,7 @@ impl Protocol for RssClientProtocol {
                     "url": "http://example.com/related-feed.xml",
                     "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -160,6 +163,7 @@ impl Protocol for RssClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

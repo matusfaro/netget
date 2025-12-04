@@ -218,7 +218,7 @@ impl Server for UsbMouseProtocol {
     {
         Box::pin(async move {
             crate::server::usb::mouse::UsbMouseServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -335,6 +335,7 @@ fn move_relative_action() -> ActionDefinition {
             "x": 10,
             "y": -5
         }),
+        log_template: None,
     }
 }
 
@@ -376,6 +377,7 @@ fn move_absolute_action() -> ActionDefinition {
             "screen_width": 1920,
             "screen_height": 1080
         }),
+        log_template: None,
     }
 }
 
@@ -394,6 +396,7 @@ fn click_action() -> ActionDefinition {
             "type": "click",
             "button": "left"
         }),
+        log_template: None,
     }
 }
 
@@ -421,6 +424,7 @@ fn scroll_action() -> ActionDefinition {
             "direction": "up",
             "amount": 3
         }),
+        log_template: None,
     }
 }
 
@@ -469,6 +473,7 @@ fn drag_action() -> ActionDefinition {
             "end_y": 200,
             "duration_ms": 500
         }),
+        log_template: None,
     }
 }
 
@@ -481,5 +486,6 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }

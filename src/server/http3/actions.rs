@@ -213,7 +213,7 @@ impl Server for Http3Protocol {
             };
 
             Http3Server::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -310,6 +310,7 @@ fn send_to_stream_action() -> ActionDefinition {
             "stream_id": "conn_12345",
             "data": "Hello from HTTP3"
         }),
+        log_template: None,
     }
 }
 
@@ -328,6 +329,7 @@ fn close_stream_action() -> ActionDefinition {
             "type": "close_stream",
             "stream_id": "conn_12345"
         }),
+        log_template: None,
     }
 }
 
@@ -340,6 +342,7 @@ fn list_streams_action() -> ActionDefinition {
         example: json!({
             "type": "list_streams"
         }),
+        log_template: None,
     }
 }
 
@@ -358,6 +361,7 @@ fn send_http3_data_action() -> ActionDefinition {
             "type": "send_http3_data",
             "data": "Hello from HTTP3\n"
         }),
+        log_template: None,
     }
 }
 
@@ -371,6 +375,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -383,6 +388,7 @@ fn close_this_stream_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_stream"
         }),
+        log_template: None,
     }
 }
 

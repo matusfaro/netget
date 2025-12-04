@@ -133,7 +133,7 @@ impl Server for JsonRpcProtocol {
                 .unwrap_or(false);
 
             JsonRpcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -268,6 +268,7 @@ pub fn jsonrpc_success_action() -> ActionDefinition {
             "type": "jsonrpc_success",
             "result": {"status": "ok", "data": [1, 2, 3]}
         }),
+        log_template: None,
     }
 }
 
@@ -307,6 +308,7 @@ pub fn jsonrpc_error_action() -> ActionDefinition {
             "code": -32601,
             "message": "Method not found"
         }),
+        log_template: None,
     }
 }
 
@@ -320,6 +322,7 @@ pub fn list_rpc_methods_action() -> ActionDefinition {
         example: json!({
             "type": "list_rpc_methods"
         }),
+        log_template: None,
     }
 }
 

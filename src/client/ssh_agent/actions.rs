@@ -86,12 +86,14 @@ impl Protocol for SshAgentClientProtocol {
                     required: true,
                 }],
                 example: json!({"type": "modify_instruction", "instruction": "..."}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
                 description: "Disconnect from SSH Agent".to_string(),
                 parameters: vec![],
                 example: json!({"type": "disconnect"}),
+            log_template: None,
             },
         ]
     }
@@ -103,6 +105,7 @@ impl Protocol for SshAgentClientProtocol {
                 description: "Request list of identities from agent".to_string(),
                 parameters: vec![],
                 example: json!({"type": "request_identities"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "sign_request".to_string(),
@@ -128,6 +131,7 @@ impl Protocol for SshAgentClientProtocol {
                     },
                 ],
                 example: json!({"type": "sign_request", "public_key_blob_hex": "...", "data_hex": "...", "flags": 0}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "add_identity".to_string(),
@@ -159,6 +163,7 @@ impl Protocol for SshAgentClientProtocol {
                     },
                 ],
                 example: json!({"type": "add_identity", "key_type": "ssh-ed25519", "public_key_blob_hex": "...", "private_key_blob_hex": "...", "comment": "my-key"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "remove_identity".to_string(),
@@ -170,18 +175,21 @@ impl Protocol for SshAgentClientProtocol {
                     required: true,
                 }],
                 example: json!({"type": "remove_identity", "public_key_blob_hex": "..."}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "remove_all_identities".to_string(),
                 description: "Remove all identities from the agent".to_string(),
                 parameters: vec![],
                 example: json!({"type": "remove_all_identities"}),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
                 description: "Wait for more data".to_string(),
                 parameters: vec![],
                 example: json!({"type": "wait_for_more"}),
+            log_template: None,
             },
         ]
     }

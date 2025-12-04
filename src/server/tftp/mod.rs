@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -38,6 +38,7 @@ enum TftpOperation {
 }
 
 /// Transfer state
+#[allow(dead_code)]
 struct TftpTransfer {
     transfer_id: TransferId,
     operation: TftpOperation,
@@ -594,7 +595,7 @@ impl TftpServer {
     /// Wait for final ACK and close transfer
     async fn wait_for_final_ack(
         socket: Arc<UdpSocket>,
-        peer_addr: SocketAddr,
+        _peer_addr: SocketAddr,
         transfer_id: TransferId,
         expected_block: u16,
         server_id: crate::state::ServerId,

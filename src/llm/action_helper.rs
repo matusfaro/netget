@@ -17,7 +17,7 @@ use crate::llm::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::prompt::PromptBuilder;
-use crate::protocol::Event;
+use crate::protocol::{Event, EventLogContext};
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
@@ -308,6 +308,30 @@ pub async fn call_llm(
     event: &Event,
     protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
+    // Create event log context for lifecycle logging
+    // Get client address from connection state if available
+    let client_addr = if let Some(conn_id) = connection_id {
+        state
+            .with_server_mut(server_id, |server| {
+                server.connections.get(&conn_id).map(|c| c.remote_addr)
+            })
+            .await
+            .flatten()
+    } else {
+        None
+    };
+
+    let log_ctx = EventLogContext::new(
+        event,
+        server_id,
+        connection_id,
+        client_addr,
+        protocol.protocol_name(),
+    );
+
+    // Log event start (DEBUG level)
+    log_ctx.log_start(None);
+
     // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
     if let Some(easy_id) = state.get_easy_for_server(server_id).await {
         use crate::protocol::EASY_REGISTRY;
@@ -334,6 +358,8 @@ pub async fn call_llm(
                 )
                 .await?;
 
+                // Log event completion
+                log_ctx.log_complete(None, &result.protocol_results);
                 return Ok(result);
             }
         }
@@ -353,6 +379,7 @@ pub async fn call_llm(
     {
         crate::llm::event_handler_executor::EventHandlerResult::Handled(result) => {
             // Handler executed successfully (script or static)
+            log_ctx.log_complete(None, &result.protocol_results);
             return Ok(result);
         }
         crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm => {
@@ -461,8 +488,12 @@ pub async fn call_llm(
         result.protocol_results.len()
     );
 
+    // Log event completion with timing and results
+    log_ctx.log_complete(None, &result.protocol_results);
+
     Ok(result)
 }
+
 /// Call LLM for client protocol events (simplified version for MVP)
 /// Result from client LLM call
 #[derive(Debug, Clone)]

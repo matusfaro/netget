@@ -87,6 +87,7 @@ impl Protocol for IppClientProtocol {
                 example: json!({
                     "type": "get_printer_attributes"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "print_job".to_string(),
@@ -119,6 +120,7 @@ impl Protocol for IppClientProtocol {
                     "document_format": "text/plain",
                     "document_data": "Hello, Printer!\n"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_job_attributes".to_string(),
@@ -133,6 +135,7 @@ impl Protocol for IppClientProtocol {
                     "type": "get_job_attributes",
                     "job_id": 123
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -141,6 +144,7 @@ impl Protocol for IppClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -154,6 +158,7 @@ impl Protocol for IppClientProtocol {
                 example: json!({
                     "type": "get_printer_attributes"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_job_attributes".to_string(),
@@ -168,6 +173,7 @@ impl Protocol for IppClientProtocol {
                     "type": "get_job_attributes",
                     "job_id": 123
                 }),
+            log_template: None,
             },
         ]
     }

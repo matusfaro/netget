@@ -445,6 +445,7 @@ fn sip_register_action() -> ActionDefinition {
             "contact": "sip:alice@192.0.2.1:5060",
             "expires": 3600
         }),
+        log_template: None,
     }
 }
 
@@ -491,6 +492,7 @@ fn sip_invite_action() -> ActionDefinition {
             "request_uri": "sip:bob@example.com",
             "sdp": "v=0\no=alice 2890844526 2890844526 IN IP4 192.0.2.1\ns=Call\nc=IN IP4 192.0.2.1\nt=0 0\nm=audio 49170 RTP/AVP 0\na=rtpmap:0 PCMU/8000\n"
         }),
+        log_template: None,
     }
 }
 
@@ -525,6 +527,7 @@ fn sip_ack_action() -> ActionDefinition {
             "to": "sip:bob@example.com",
             "request_uri": "sip:bob@example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -558,6 +561,7 @@ fn sip_bye_action() -> ActionDefinition {
             "to": "sip:bob@example.com",
             "request_uri": "sip:bob@example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -591,6 +595,7 @@ fn sip_options_action() -> ActionDefinition {
             "to": "sip:bob@example.com",
             "request_uri": "sip:bob@example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -624,6 +629,7 @@ fn sip_cancel_action() -> ActionDefinition {
             "to": "sip:bob@example.com",
             "request_uri": "sip:bob@example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -635,6 +641,7 @@ fn disconnect_action() -> ActionDefinition {
         example: json!({
             "type": "disconnect"
         }),
+        log_template: None,
     }
 }
 
@@ -646,5 +653,6 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }

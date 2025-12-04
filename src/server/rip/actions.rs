@@ -127,7 +127,7 @@ impl Server for RipProtocol {
         Box::pin(async move {
             use crate::server::rip::RipServer;
             RipServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -353,6 +353,7 @@ fn send_rip_response_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -371,6 +372,7 @@ fn send_rip_request_action() -> ActionDefinition {
         example: json!({
             "type": "send_rip_request"
         }),
+        log_template: None,
     }
 }
 
@@ -382,5 +384,6 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }

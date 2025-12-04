@@ -154,6 +154,7 @@ impl Protocol for ImapClientProtocol {
                         "type": "select_mailbox",
                         "mailbox": "INBOX"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "search_messages".to_string(),
@@ -170,6 +171,7 @@ impl Protocol for ImapClientProtocol {
                         "type": "search_messages",
                         "criteria": "UNSEEN"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "fetch_message".to_string(),
@@ -193,6 +195,7 @@ impl Protocol for ImapClientProtocol {
                         "message_id": "1",
                         "parts": "BODY[]"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "mark_as_read".to_string(),
@@ -209,6 +212,7 @@ impl Protocol for ImapClientProtocol {
                         "type": "mark_as_read",
                         "message_id": "1"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "mark_as_unread".to_string(),
@@ -225,6 +229,7 @@ impl Protocol for ImapClientProtocol {
                         "type": "mark_as_unread",
                         "message_id": "1"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "delete_message".to_string(),
@@ -241,6 +246,7 @@ impl Protocol for ImapClientProtocol {
                         "type": "delete_message",
                         "message_id": "1"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "list_mailboxes".to_string(),
@@ -249,6 +255,7 @@ impl Protocol for ImapClientProtocol {
                     example: json!({
                         "type": "list_mailboxes"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -257,6 +264,7 @@ impl Protocol for ImapClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -275,6 +283,7 @@ impl Protocol for ImapClientProtocol {
                     "type": "fetch_message",
                     "message_id": "1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -283,6 +292,7 @@ impl Protocol for ImapClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

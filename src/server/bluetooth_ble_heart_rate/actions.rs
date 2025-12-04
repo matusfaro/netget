@@ -55,6 +55,7 @@ impl Protocol for BluetoothBleHeartRateProtocol {
                     "type": "set_bpm",
                     "bpm": 42
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "simulate_activity".to_string(),
@@ -69,6 +70,7 @@ impl Protocol for BluetoothBleHeartRateProtocol {
                     "type": "simulate_activity",
                     "activity": "example_activity"
                 }),
+            log_template: None,
             },
         ]
     }

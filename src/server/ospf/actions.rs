@@ -491,6 +491,7 @@ impl Protocol for OspfProtocol {
                 example: json!({
                     "type": "list_neighbors"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_lsdb".to_string(),
@@ -499,6 +500,7 @@ impl Protocol for OspfProtocol {
                 example: json!({
                     "type": "list_lsdb"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -577,6 +579,7 @@ impl Protocol for OspfProtocol {
                         "neighbors": ["2.2.2.2"],
                         "destination": "multicast"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_database_description".to_string(),
@@ -634,6 +637,7 @@ impl Protocol for OspfProtocol {
                         "master": true,
                         "destination": "192.168.1.2"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_link_state_request".to_string(),
@@ -664,6 +668,7 @@ impl Protocol for OspfProtocol {
                         "area_id": "0.0.0.0",
                         "destination": "192.168.1.2"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_link_state_update".to_string(),
@@ -694,6 +699,7 @@ impl Protocol for OspfProtocol {
                         "area_id": "0.0.0.0",
                         "destination": "multicast"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "send_link_state_ack".to_string(),
@@ -724,6 +730,7 @@ impl Protocol for OspfProtocol {
                         "area_id": "0.0.0.0",
                         "destination": "192.168.1.2"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "wait_for_more".to_string(),
@@ -732,6 +739,7 @@ impl Protocol for OspfProtocol {
                     example: json!({
                         "type": "wait_for_more"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -884,7 +892,7 @@ impl Server for OspfProtocol {
         Box::pin(async move {
             use crate::server::ospf::OspfServer;
             OspfServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

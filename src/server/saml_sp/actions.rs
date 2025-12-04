@@ -130,7 +130,7 @@ impl Server for SamlSpProtocol {
         Box::pin(async move {
             use crate::server::saml_sp::SamlSpServer;
             SamlSpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -399,6 +399,7 @@ fn send_authn_request_action() -> ActionDefinition {
             "idp_sso_url": "https://idp.example.com/sso",
             "binding": "HTTP-Redirect"
         }),
+        log_template: None,
     }
 }
 
@@ -428,6 +429,7 @@ fn process_assertion_action() -> ActionDefinition {
                 "role": "admin"
             }
         }),
+        log_template: None,
     }
 }
 
@@ -446,6 +448,7 @@ fn send_metadata_action() -> ActionDefinition {
             "type": "send_metadata",
             "metadata_xml": "<EntityDescriptor>...</EntityDescriptor>"
         }),
+        log_template: None,
     }
 }
 
@@ -472,6 +475,7 @@ fn send_error_response_action() -> ActionDefinition {
             "error_message": "Invalid assertion signature",
             "status_code": 403
         }),
+        log_template: None,
     }
 }
 

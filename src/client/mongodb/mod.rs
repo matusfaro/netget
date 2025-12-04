@@ -11,7 +11,7 @@ use tracing::{error, info, trace};
 
 #[cfg(feature = "mongodb")]
 use mongodb::{
-    bson::{doc, Document},
+    bson::Document,
     options::{ClientOptions, FindOptions},
     Client as MongoClient, Database,
 };

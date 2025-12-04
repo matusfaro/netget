@@ -591,6 +591,7 @@ fn send_dc_chat_action() -> ActionDefinition {
             "type": "send_dc_chat",
             "message": "Hello everyone!"
         }),
+        log_template: None,
     }
 }
 
@@ -617,6 +618,7 @@ fn send_dc_private_message_action() -> ActionDefinition {
             "target": "bob",
             "message": "Hey Bob!"
         }),
+        log_template: None,
     }
 }
 
@@ -648,6 +650,7 @@ fn send_dc_search_action() -> ActionDefinition {
             "type": "send_dc_search",
             "query": "ubuntu iso"
         }),
+        log_template: None,
     }
 }
 
@@ -681,6 +684,7 @@ fn send_dc_myinfo_action() -> ActionDefinition {
             "email": "user@example.com",
             "share_size": 10737418240u64
         }),
+        log_template: None,
     }
 }
 
@@ -692,6 +696,7 @@ fn send_dc_get_nicklist_action() -> ActionDefinition {
         example: json!({
             "type": "send_dc_get_nicklist"
         }),
+        log_template: None,
     }
 }
 
@@ -717,6 +722,7 @@ fn send_dc_filelist_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -734,6 +740,7 @@ fn send_dc_raw_command_action() -> ActionDefinition {
             "type": "send_dc_raw_command",
             "command": "$Version 1,0091"
         }),
+        log_template: None,
     }
 }
 
@@ -745,6 +752,7 @@ fn disconnect_action() -> ActionDefinition {
         example: json!({
             "type": "disconnect"
         }),
+        log_template: None,
     }
 }
 
@@ -756,5 +764,6 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }

@@ -204,6 +204,7 @@ impl Protocol for OpenApiClientProtocol {
                     "headers": {"Authorization": "Bearer token123"},
                     "body": null
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_operations".to_string(),
@@ -212,6 +213,7 @@ impl Protocol for OpenApiClientProtocol {
                 example: json!({
                     "type": "list_operations"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_operation_details".to_string(),
@@ -226,6 +228,7 @@ impl Protocol for OpenApiClientProtocol {
                     "type": "get_operation_details",
                     "operation_id": "listUsers"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -234,6 +237,7 @@ impl Protocol for OpenApiClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -273,6 +277,7 @@ impl Protocol for OpenApiClientProtocol {
                     type_hint: "object".to_string(),
                     description: "Request body".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

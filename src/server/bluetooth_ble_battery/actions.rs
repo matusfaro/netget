@@ -224,6 +224,7 @@ fn set_battery_level_action() -> ActionDefinition {
             "type": "set_battery_level",
             "level": 75
         }),
+        log_template: None,
     }
 }
 
@@ -250,6 +251,7 @@ fn simulate_drain_action() -> ActionDefinition {
             "amount": 10,
             "interval_ms": 5000
         }),
+        log_template: None,
     }
 }
 
@@ -276,5 +278,6 @@ fn simulate_charge_action() -> ActionDefinition {
             "amount": 20,
             "interval_ms": 2000
         }),
+        log_template: None,
     }
 }

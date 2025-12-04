@@ -136,6 +136,7 @@ impl Protocol for ElasticsearchClientProtocol {
                         "age": 30
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "search".to_string(),
@@ -163,6 +164,7 @@ impl Protocol for ElasticsearchClientProtocol {
                         }
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_document".to_string(),
@@ -186,6 +188,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "users",
                     "id": "1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_document".to_string(),
@@ -209,6 +212,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "users",
                     "id": "1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "bulk_operation".to_string(),
@@ -237,6 +241,7 @@ impl Protocol for ElasticsearchClientProtocol {
                         }
                     ]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -245,6 +250,7 @@ impl Protocol for ElasticsearchClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -272,6 +278,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "logs",
                     "document": {"level": "info", "message": "Search executed"}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "search".to_string(),
@@ -295,6 +302,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "users",
                     "query": {"match_all": {}}
                 }),
+            log_template: None,
             },
         ]
     }

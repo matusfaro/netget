@@ -233,7 +233,7 @@ impl Server for TftpProtocol {
         Box::pin(async move {
             use crate::server::tftp::TftpServer;
             TftpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -366,6 +366,7 @@ fn send_tftp_data_action() -> ActionDefinition {
             "data_hex": "48656c6c6f20544654502100",
             "is_final": true
         }),
+        log_template: None,
     }
 }
 
@@ -385,6 +386,7 @@ fn send_tftp_ack_action() -> ActionDefinition {
             "type": "send_tftp_ack",
             "block_number": 5
         }),
+        log_template: None,
     }
 }
 
@@ -411,5 +413,6 @@ fn send_tftp_error_action() -> ActionDefinition {
             "error_code": 1,
             "error_message": "File not found"
         }),
+        log_template: None,
     }
 }

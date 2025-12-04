@@ -79,6 +79,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_lookup",
                     "path": "/documents/readme.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_read_file".to_string(),
@@ -109,6 +110,7 @@ impl Protocol for NfsClientProtocol {
                     "offset": 0,
                     "count": 4096
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_write_file".to_string(),
@@ -139,6 +141,7 @@ impl Protocol for NfsClientProtocol {
                     "data": "Hello, World!",
                     "offset": 0
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_list_dir".to_string(),
@@ -153,6 +156,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_list_dir",
                     "path": "/documents"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_get_attr".to_string(),
@@ -167,6 +171,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_get_attr",
                     "path": "/readme.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_create_file".to_string(),
@@ -190,6 +195,7 @@ impl Protocol for NfsClientProtocol {
                     "path": "/newfile.txt",
                     "mode": 0o644
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_mkdir".to_string(),
@@ -213,6 +219,7 @@ impl Protocol for NfsClientProtocol {
                     "path": "/newdir",
                     "mode": 0o755
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_remove".to_string(),
@@ -227,6 +234,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_remove",
                     "path": "/oldfile.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nfs_rmdir".to_string(),
@@ -241,6 +249,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_rmdir",
                     "path": "/olddir"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -249,6 +258,7 @@ impl Protocol for NfsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

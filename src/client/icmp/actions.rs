@@ -258,6 +258,7 @@ fn send_echo_request_action() -> ActionDefinition {
             "payload_hex": "48656c6c6f",
             "ttl": 64
         }),
+        log_template: None,
     }
 }
 
@@ -293,6 +294,7 @@ fn send_timestamp_request_action() -> ActionDefinition {
             "identifier": 5678,
             "sequence": 1
         }),
+        log_template: None,
     }
 }
 */
@@ -304,6 +306,7 @@ fn wait_for_more_action() -> ActionDefinition {
         description: "Wait for more ICMP responses".to_string(),
         parameters: vec![],
         example: json!({"type": "wait_for_more"}),
+        log_template: None,
     }
 }
 
@@ -314,6 +317,7 @@ fn disconnect_action() -> ActionDefinition {
         description: "Close the ICMP client".to_string(),
         parameters: vec![],
         example: json!({"type": "disconnect"}),
+        log_template: None,
     }
 }
 

@@ -117,6 +117,7 @@ impl Protocol for MongodbClientProtocol {
                     "filter": {"age": {"$gte": 18}},
                     "limit": 10
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "insert_document".to_string(),
@@ -140,6 +141,7 @@ impl Protocol for MongodbClientProtocol {
                     "collection": "users",
                     "document": {"name": "Alice", "age": 30}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "update_documents".to_string(),
@@ -170,6 +172,7 @@ impl Protocol for MongodbClientProtocol {
                     "filter": {"name": "Alice"},
                     "update": {"$set": {"age": 31}}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_documents".to_string(),
@@ -193,6 +196,7 @@ impl Protocol for MongodbClientProtocol {
                     "collection": "users",
                     "filter": {"age": {"$lt": 18}}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -201,6 +205,7 @@ impl Protocol for MongodbClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -229,6 +234,7 @@ impl Protocol for MongodbClientProtocol {
                     "collection": "logs",
                     "filter": {}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -237,6 +243,7 @@ impl Protocol for MongodbClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

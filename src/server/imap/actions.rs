@@ -13,6 +13,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -587,7 +588,7 @@ impl Server for ImapProtocol {
         Box::pin(async move {
             use crate::server::imap::ImapServer;
             ImapServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -650,6 +651,7 @@ fn send_imap_greeting_action() -> ActionDefinition {
             "hostname": "mail.example.com",
             "capabilities": ["IMAP4rev1", "IDLE", "NAMESPACE"]
         }),
+        log_template: None,
     }
 }
 
@@ -691,6 +693,7 @@ fn send_imap_response_action() -> ActionDefinition {
             "code": "READ-WRITE",
             "message": "SELECT completed"
         }),
+        log_template: None,
     }
 }
 
@@ -718,6 +721,7 @@ fn send_imap_untagged_action() -> ActionDefinition {
             "response_type": "OK",
             "data": "[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited"
         }),
+        log_template: None,
     }
 }
 
@@ -735,6 +739,7 @@ fn send_imap_capability_action() -> ActionDefinition {
             "type": "send_imap_capability",
             "capabilities": ["IMAP4rev1", "IDLE", "NAMESPACE", "UIDPLUS"]
         }),
+        log_template: None,
     }
 }
 
@@ -763,6 +768,7 @@ fn send_imap_list_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -796,6 +802,7 @@ fn send_imap_status_action() -> ActionDefinition {
                 "UNSEEN": 3
             }
         }),
+        log_template: None,
     }
 }
 
@@ -828,6 +835,7 @@ fn send_imap_fetch_action() -> ActionDefinition {
                 "BODY[]": "From: sender@example.com\r\nSubject: Test\r\n\r\nHello World"
             }
         }),
+        log_template: None,
     }
 }
 
@@ -845,6 +853,7 @@ fn send_imap_search_action() -> ActionDefinition {
             "type": "send_imap_search",
             "results": [1, 3, 5]
         }),
+        log_template: None,
     }
 }
 
@@ -863,6 +872,7 @@ fn send_imap_exists_action() -> ActionDefinition {
             "type": "send_imap_exists",
             "count": 5
         }),
+        log_template: None,
     }
 }
 
@@ -880,6 +890,7 @@ fn send_imap_recent_action() -> ActionDefinition {
             "type": "send_imap_recent",
             "count": 2
         }),
+        log_template: None,
     }
 }
 
@@ -897,6 +908,7 @@ fn send_imap_flags_action() -> ActionDefinition {
             "type": "send_imap_flags",
             "flags": ["\\Seen", "\\Answered", "\\Flagged", "\\Deleted", "\\Draft"]
         }),
+        log_template: None,
     }
 }
 
@@ -915,6 +927,7 @@ fn send_imap_expunge_action() -> ActionDefinition {
             "type": "send_imap_expunge",
             "sequence": 3
         }),
+        log_template: None,
     }
 }
 
@@ -983,6 +996,7 @@ fn send_imap_select_action() -> ActionDefinition {
             "permanent_flags": ["\\Deleted", "\\Seen", "\\*"],
             "read_write": true
         }),
+        log_template: None,
     }
 }
 
@@ -994,6 +1008,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -1005,6 +1020,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -1024,6 +1040,12 @@ pub static IMAP_CONNECTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
     .with_parameters(vec![])
     .with_actions(vec![send_imap_greeting_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("IMAP connection from {client_ip}")
+            .with_debug("IMAP connection from {client_ip}:{client_port}")
+            .with_trace("IMAP connection: {json_pretty(.)}"),
+    )
 });
 
 pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -1058,6 +1080,12 @@ pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![send_imap_response_action(), close_connection_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("IMAP LOGIN {client_ip} user={username}")
+            .with_debug("IMAP auth from {client_ip}:{client_port}, user={username}")
+            .with_trace("IMAP auth: {json_pretty(.)}"),
+    )
 });
 
 pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -1117,6 +1145,12 @@ pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             wait_for_more_action(),
             close_connection_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("IMAP {client_ip} {tag} {command}")
+                .with_debug("IMAP command from {client_ip}:{client_port}: {tag} {command} {args}")
+                .with_trace("IMAP command: {json_pretty(.)}"),
+        )
 });
 
 pub fn get_imap_event_types() -> Vec<EventType> {

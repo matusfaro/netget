@@ -176,7 +176,7 @@ impl Server for IsisProtocol {
             .await?;
 
             // IS-IS doesn't bind to a socket, so return a dummy address
-            Ok(ctx.listen_addr)
+            Ok(ctx.legacy_listen_addr())
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -490,6 +490,7 @@ fn send_isis_hello_action() -> ActionDefinition {
             "system_id": "0000.0000.0001",
             "area_id": "49.0001"
         }),
+        log_template: None,
     }
 }
 
@@ -516,6 +517,7 @@ fn send_isis_lsp_action() -> ActionDefinition {
             "level": "level-2",
             "system_id": "0000.0000.0001"
         }),
+        log_template: None,
     }
 }
 
@@ -533,6 +535,7 @@ fn send_isis_pdu_action() -> ActionDefinition {
             "type": "send_isis_pdu",
             "data": "831b01001001060000..."
         }),
+        log_template: None,
     }
 }
 
@@ -544,5 +547,6 @@ fn ignore_pdu_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_pdu"
         }),
+        log_template: None,
     }
 }

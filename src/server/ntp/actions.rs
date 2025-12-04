@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -122,7 +123,7 @@ impl Server for NtpProtocol {
         Box::pin(async move {
             use crate::server::ntp::NtpServer;
             NtpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -423,6 +424,7 @@ fn send_ntp_time_response_action() -> ActionDefinition {
             "type": "send_ntp_time_response",
             "stratum": 2
         }),
+        log_template: None,
     }
 }
 
@@ -441,6 +443,7 @@ fn send_ntp_response_action() -> ActionDefinition {
             "type": "send_ntp_response",
             "data": "240201e900000000000000000000000000000000000000000000000000000000eca56dd14ae94680eca56dd14ae94680eca56dd14ae94680"
         }),
+        log_template: None,
     }
 }
 
@@ -452,6 +455,7 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }
 
@@ -487,6 +491,12 @@ pub static NTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_ntp_response_action(),
         ignore_request_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("NTP request from {client_ip}")
+            .with_debug("NTP time sync request: {bytes_received}B from {client_ip}")
+            .with_trace("NTP request: {json_pretty(.)}"),
+    )
 });
 
 /// Get NTP event types

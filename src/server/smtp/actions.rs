@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -315,7 +316,7 @@ impl Server for SmtpProtocol {
             };
 
             SmtpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -371,6 +372,7 @@ fn send_smtp_greeting_action() -> ActionDefinition {
             "hostname": "mail.example.com",
             "message": "ESMTP Service Ready"
         }),
+        log_template: None,
     }
 }
 
@@ -388,6 +390,7 @@ fn send_smtp_ok_action() -> ActionDefinition {
             "type": "send_smtp_ok",
             "message": "Requested mail action okay, completed"
         }),
+        log_template: None,
     }
 }
 
@@ -414,6 +417,7 @@ fn send_smtp_ehlo_action() -> ActionDefinition {
             "hostname": "mail.example.com",
             "extensions": ["8BITMIME", "SIZE 10240000", "STARTTLS"]
         }),
+        log_template: None,
     }
 }
 
@@ -425,6 +429,7 @@ fn send_smtp_start_data_action() -> ActionDefinition {
         example: json!({
             "type": "send_smtp_start_data"
         }),
+        log_template: None,
     }
 }
 
@@ -451,6 +456,7 @@ fn send_smtp_error_action() -> ActionDefinition {
             "code": 550,
             "message": "Mailbox unavailable"
         }),
+        log_template: None,
     }
 }
 
@@ -468,6 +474,7 @@ fn send_smtp_quit_action() -> ActionDefinition {
             "type": "send_smtp_quit",
             "hostname": "mail.example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -485,6 +492,7 @@ fn send_smtp_message_action() -> ActionDefinition {
             "type": "send_smtp_message",
             "message": "250 2.1.0 Sender OK"
         }),
+        log_template: None,
     }
 }
 
@@ -496,6 +504,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -507,6 +516,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -559,6 +569,12 @@ pub static SMTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         WAIT_FOR_MORE_ACTION.clone(),
         CLOSE_CONNECTION_ACTION.clone(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SMTP: {command}")
+            .with_debug("SMTP command: {command}")
+            .with_trace("SMTP: {json_pretty(.)}"),
+    )
 });
 
 /// Get SMTP event types

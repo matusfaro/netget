@@ -269,7 +269,7 @@ impl Server for UsbKeyboardProtocol {
     {
         Box::pin(async move {
             crate::server::usb::keyboard::UsbKeyboardServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -432,6 +432,7 @@ fn type_text_action() -> ActionDefinition {
             "text": "Hello, World!",
             "typing_speed_ms": 50
         }),
+        log_template: None,
     }
 }
 
@@ -461,6 +462,7 @@ fn press_key_action() -> ActionDefinition {
             "key": "c",
             "modifiers": ["ctrl"]
         }),
+        log_template: None,
     }
 }
 
@@ -479,6 +481,7 @@ fn press_key_combo_action() -> ActionDefinition {
             "type": "press_key_combo",
             "keys": ["ctrl", "alt", "delete"]
         }),
+        log_template: None,
     }
 }
 
@@ -491,6 +494,7 @@ fn release_all_keys_action() -> ActionDefinition {
         example: json!({
             "type": "release_all_keys"
         }),
+        log_template: None,
     }
 }
 
@@ -503,5 +507,6 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }

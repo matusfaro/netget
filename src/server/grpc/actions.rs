@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -236,7 +237,7 @@ impl Server for GrpcProtocol {
         Box::pin(async move {
             use crate::server::grpc::GrpcServer;
             GrpcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -285,6 +286,7 @@ fn grpc_unary_response_action() -> ActionDefinition {
                 "email": "alice@example.com"
             }
         }),
+        log_template: None,
     }
 }
 
@@ -313,6 +315,7 @@ fn grpc_error_action() -> ActionDefinition {
             "code": "NOT_FOUND",
             "message": "User not found"
         }),
+        log_template: None,
     }
 }
 
@@ -330,6 +333,7 @@ fn reload_schema_action() -> ActionDefinition {
             "type": "reload_schema",
             "proto_schema": "service UserService { rpc GetUser(UserId) returns (User); }"
         }),
+        log_template: None,
     }
 }
 
@@ -341,6 +345,7 @@ fn list_services_action() -> ActionDefinition {
         example: json!({
             "type": "list_services"
         }),
+        log_template: None,
     }
 }
 
@@ -367,6 +372,7 @@ fn describe_method_action() -> ActionDefinition {
             "service": "UserService",
             "method": "GetUser"
         }),
+        log_template: None,
     }
 }
 
@@ -432,6 +438,12 @@ pub static GRPC_UNARY_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         GRPC_UNARY_RESPONSE_ACTION.clone(),
         GRPC_ERROR_ACTION.clone(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("gRPC {client_ip} {service}/{method}")
+            .with_debug("gRPC method {service}/{method} from {client_ip}:{client_port}")
+            .with_trace("gRPC: {json_pretty(.)}"),
+    )
 });
 
 /// Get gRPC event types

@@ -130,7 +130,7 @@ impl Server for SmbProtocol {
         Box::pin(async move {
             use crate::server::smb::SmbServer;
             SmbServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -196,6 +196,7 @@ fn disconnect_client_action() -> ActionDefinition {
             "type": "disconnect_client",
             "client": "192.168.1.100:54321"
         }),
+        log_template: None,
     }
 }
 
@@ -230,6 +231,7 @@ fn smb_list_directory_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -256,6 +258,7 @@ fn smb_read_file_action() -> ActionDefinition {
             "path": "/documents/file.txt",
             "content": "Hello, World!"
         }),
+        log_template: None,
     }
 }
 
@@ -282,6 +285,7 @@ fn smb_write_file_action() -> ActionDefinition {
             "path": "/documents/file.txt",
             "data": "New content"
         }),
+        log_template: None,
     }
 }
 
@@ -322,6 +326,7 @@ fn smb_get_file_info_action() -> ActionDefinition {
             "is_directory": false,
             "modified_time": "2025-01-15T10:30:00Z"
         }),
+        log_template: None,
     }
 }
 
@@ -339,6 +344,7 @@ fn smb_create_file_action() -> ActionDefinition {
             "type": "smb_create_file",
             "path": "/documents/newfile.txt"
         }),
+        log_template: None,
     }
 }
 
@@ -356,6 +362,7 @@ fn smb_delete_file_action() -> ActionDefinition {
             "type": "smb_delete_file",
             "path": "/documents/oldfile.txt"
         }),
+        log_template: None,
     }
 }
 
@@ -373,6 +380,7 @@ fn smb_create_directory_action() -> ActionDefinition {
             "type": "smb_create_directory",
             "path": "/documents/newdir"
         }),
+        log_template: None,
     }
 }
 
@@ -390,6 +398,7 @@ fn smb_delete_directory_action() -> ActionDefinition {
             "type": "smb_delete_directory",
             "path": "/documents/olddir"
         }),
+        log_template: None,
     }
 }
 
@@ -417,6 +426,7 @@ fn smb_auth_success_action() -> ActionDefinition {
             "username": "alice",
             "message": "User alice authenticated successfully"
         }),
+        log_template: None,
     }
 }
 
@@ -444,5 +454,6 @@ fn smb_auth_deny_action() -> ActionDefinition {
             "username": "hacker",
             "reason": "User not authorized"
         }),
+        log_template: None,
     }
 }

@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -24,6 +25,12 @@ pub static WIREGUARD_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             "message": "Peer authorized"
         }),
     )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WireGuard {client_ip} handshake")
+            .with_debug("WireGuard from {client_ip}:{client_port}")
+            .with_trace("WireGuard: {json_pretty(.)}"),
+    )
 });
 
 /// WireGuard peer connected event
@@ -34,6 +41,12 @@ pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
         json!({
             "type": "no_action"
         }),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WireGuard {client_ip} connected")
+            .with_debug("WireGuard peer connected from {client_ip}:{client_port}")
+            .with_trace("WireGuard: {json_pretty(.)}"),
     )
 });
 
@@ -180,7 +193,7 @@ impl Server for WireguardProtocol {
             use crate::server::wireguard::WireguardServer;
             use std::sync::Arc;
             WireguardServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 Arc::new(ctx.llm_client),
                 ctx.state,
                 ctx.server_id,
@@ -343,6 +356,7 @@ fn authorize_peer_action() -> ActionDefinition {
             "endpoint": "203.0.113.45:51820",
             "message": "Legitimate VPN client authorized"
         }),
+        log_template: None,
     }
 }
 
@@ -370,6 +384,7 @@ fn reject_peer_action() -> ActionDefinition {
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
             "reason": "Unauthorized client - unknown public key"
         }),
+        log_template: None,
     }
 }
 
@@ -404,6 +419,7 @@ fn set_peer_traffic_limit_action() -> ActionDefinition {
             "limit_mbps": 100,
             "limit_total_mb": 10000
         }),
+        log_template: None,
     }
 }
 
@@ -431,6 +447,7 @@ fn disconnect_peer_action() -> ActionDefinition {
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
             "reason": "Suspicious traffic detected"
         }),
+        log_template: None,
     }
 }
 
@@ -443,6 +460,7 @@ fn list_peers_action() -> ActionDefinition {
         example: json!({
             "type": "list_peers"
         }),
+        log_template: None,
     }
 }
 
@@ -461,6 +479,7 @@ fn remove_peer_action() -> ActionDefinition {
             "type": "remove_peer",
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
         }),
+        log_template: None,
     }
 }
 
@@ -473,5 +492,6 @@ fn get_server_info_action() -> ActionDefinition {
         example: json!({
             "type": "get_server_info"
         }),
+        log_template: None,
     }
 }

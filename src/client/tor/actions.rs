@@ -118,6 +118,7 @@ impl Protocol for TorClientProtocol {
                     "type": "send_tor_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -126,6 +127,7 @@ impl Protocol for TorClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
             #[cfg(feature = "tor")]
             ActionDefinition {
@@ -135,6 +137,7 @@ impl Protocol for TorClientProtocol {
                 example: json!({
                     "type": "get_consensus_info"
                 }),
+            log_template: None,
             },
             #[cfg(feature = "tor")]
             ActionDefinition {
@@ -152,6 +155,7 @@ impl Protocol for TorClientProtocol {
                     "type": "list_relays",
                     "limit": 50
                 }),
+            log_template: None,
             },
             #[cfg(feature = "tor")]
             ActionDefinition {
@@ -182,6 +186,7 @@ impl Protocol for TorClientProtocol {
                     "flags": ["Exit", "Fast"],
                     "limit": 20
                 }),
+            log_template: None,
             },
         ]
     }
@@ -200,6 +205,7 @@ impl Protocol for TorClientProtocol {
                     "type": "send_tor_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -208,6 +214,7 @@ impl Protocol for TorClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -137,7 +137,7 @@ impl Server for SvnProtocol {
         Box::pin(async move {
             use crate::server::svn::SvnServer;
             SvnServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -350,6 +350,7 @@ fn send_greeting_action() -> ActionDefinition {
             "mechanisms": ["ANONYMOUS"],
             "realm": "svn"
         }),
+        log_template: None,
     }
 }
 
@@ -376,6 +377,7 @@ fn send_success_action() -> ActionDefinition {
             "message": "success",
             "data": "123"
         }),
+        log_template: None,
     }
 }
 
@@ -402,6 +404,7 @@ fn send_failure_action() -> ActionDefinition {
             "error_code": 210000,
             "message": "Repository not found"
         }),
+        log_template: None,
     }
 }
 
@@ -423,6 +426,7 @@ fn send_list_action() -> ActionDefinition {
                 {"name": "tags", "kind": "dir", "revision": 1}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -440,6 +444,7 @@ fn send_response_action() -> ActionDefinition {
             "type": "send_svn_response",
             "response": "( success ( 42 ) )"
         }),
+        log_template: None,
     }
 }
 
@@ -449,6 +454,7 @@ fn close_connection_action() -> ActionDefinition {
         description: "Close the SVN connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_connection"}),
+        log_template: None,
     }
 }
 

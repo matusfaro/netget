@@ -128,7 +128,7 @@ impl Server for TorrentDhtProtocol {
         Box::pin(async move {
             use crate::server::torrent_dht::TorrentDhtServer;
             TorrentDhtServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -330,6 +330,7 @@ pub static SEND_PING_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new
             required: true,
         }],
         example: json!({"type": "send_ping_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567"}),
+    log_template: None,
     }
 });
 
@@ -352,6 +353,7 @@ pub static SEND_FIND_NODE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock
             },
         ],
         example: json!({"type": "send_find_node_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567", "nodes": [{"id": "0123456789abcdef0123456789abcdef01234567", "ip": "192.168.1.100", "port": 6881}]}),
+    log_template: None,
     }
 });
 
@@ -374,5 +376,6 @@ pub static SEND_GET_PEERS_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock
             },
         ],
         example: json!({"type": "send_get_peers_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567", "token": "aoeusnth", "peers": [{"ip": "192.168.1.100", "port": 51413}]}),
+    log_template: None,
     }
 });

@@ -159,6 +159,7 @@ impl Protocol for Http3ClientProtocol {
                     },
                     "priority": 5
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -167,6 +168,7 @@ impl Protocol for Http3ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -204,6 +206,7 @@ impl Protocol for Http3ClientProtocol {
                     type_hint: "number".to_string(),
                     description: "Stream priority (0-7)".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

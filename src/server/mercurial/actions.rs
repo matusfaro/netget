@@ -78,6 +78,7 @@ impl Protocol for MercurialProtocol {
                     "description": "My Mercurial project",
                     "default_branch": "default"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_hg_repository".to_string(),
@@ -92,12 +93,14 @@ impl Protocol for MercurialProtocol {
                     "type": "delete_hg_repository",
                     "name": "old-project"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_hg_repositories".to_string(),
                 description: "List all virtual Mercurial repositories".to_string(),
                 parameters: vec![],
                 example: json!({"type": "list_hg_repositories"}),
+            log_template: None,
             },
         ]
     }
@@ -116,6 +119,7 @@ impl Protocol for MercurialProtocol {
                     "type": "hg_capabilities",
                     "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup", "pushkey", "unbundle=HG10GZ,HG10BZ,HG10UN"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "hg_heads".to_string(),
@@ -130,6 +134,7 @@ impl Protocol for MercurialProtocol {
                     "type": "hg_heads",
                     "heads": ["abc123...", "def456..."]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "hg_branchmap".to_string(),
@@ -147,6 +152,7 @@ impl Protocol for MercurialProtocol {
                         "stable": ["def456..."]
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "hg_listkeys".to_string(),
@@ -165,6 +171,7 @@ impl Protocol for MercurialProtocol {
                         "develop": "def456..."
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "hg_send_bundle".to_string(),
@@ -189,6 +196,7 @@ impl Protocol for MercurialProtocol {
                     "bundle_type": "HG10UN",
                     "bundle_data": ""
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "hg_error".to_string(),
@@ -212,6 +220,7 @@ impl Protocol for MercurialProtocol {
                     "message": "Repository not found",
                     "code": 404
                 }),
+            log_template: None,
             },
         ]
     }
@@ -300,7 +309,7 @@ impl Server for MercurialProtocol {
     fn spawn(&self, ctx: SpawnContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::mercurial::MercurialServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

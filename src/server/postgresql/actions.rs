@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -157,7 +158,7 @@ impl Server for PostgresqlProtocol {
                 .unwrap_or(false);
 
             PostgresqlServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -312,6 +313,7 @@ pub fn postgresql_query_response_action() -> ActionDefinition {
             "columns": [{"name": "id", "type": "int4"}, {"name": "name", "type": "text"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+        log_template: None,
     }
 }
 
@@ -346,6 +348,7 @@ pub fn postgresql_error_response_action() -> ActionDefinition {
             "code": "42P01",
             "message": "relation \"table_name\" does not exist"
         }),
+        log_template: None,
     }
 }
 
@@ -366,6 +369,7 @@ pub fn postgresql_ok_response_action() -> ActionDefinition {
             "type": "postgresql_ok_response",
             "tag": "INSERT 0 1"
         }),
+        log_template: None,
     }
 }
 
@@ -376,6 +380,7 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current PostgreSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     }
 }
 
@@ -386,6 +391,7 @@ pub fn list_postgresql_connections_action() -> ActionDefinition {
         description: "List all active PostgreSQL connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_postgresql_connections"}),
+        log_template: None,
     }
 }
 
@@ -417,6 +423,7 @@ pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
             "columns": [{"name": "id", "type": "int4"}, {"name": "name", "type": "text"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+    log_template: None,
     }
 });
 
@@ -451,6 +458,7 @@ pub static POSTGRESQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
             "code": "42P01",
             "message": "relation \"table_name\" does not exist"
         }),
+    log_template: None,
     }
 });
 
@@ -471,6 +479,7 @@ pub static POSTGRESQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock:
             "type": "postgresql_ok_response",
             "tag": "INSERT 0 1"
         }),
+    log_template: None,
     }
 });
 
@@ -481,6 +490,7 @@ pub static POSTGRESQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
         description: "Close the current PostgreSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     });
 
 // ============================================================================
@@ -502,6 +512,12 @@ pub static POSTGRESQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             POSTGRESQL_OK_RESPONSE_ACTION.clone(),
             POSTGRESQL_CLOSE_CONNECTION_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("PostgreSQL {client_ip}: {preview(query,80)}")
+                .with_debug("PostgreSQL query from {client_ip}:{client_port}")
+                .with_trace("PostgreSQL: {json_pretty(.)}"),
+        )
 });
 
 /// Get PostgreSQL event types

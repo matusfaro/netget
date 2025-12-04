@@ -118,6 +118,7 @@ impl Protocol for BgpClientProtocol {
                 example: json!({
                     "type": "send_keepalive"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_notification".to_string(),
@@ -141,6 +142,7 @@ impl Protocol for BgpClientProtocol {
                     "error_code": 6,
                     "error_subcode": 0
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -149,6 +151,7 @@ impl Protocol for BgpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -162,6 +165,7 @@ impl Protocol for BgpClientProtocol {
                 example: json!({
                     "type": "send_keepalive"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -170,6 +174,7 @@ impl Protocol for BgpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

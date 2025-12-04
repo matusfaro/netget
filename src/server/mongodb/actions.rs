@@ -221,7 +221,7 @@ impl Server for MongodbProtocol {
                 .unwrap_or(false);
 
             MongodbServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -398,6 +398,7 @@ fn find_response_action() -> ActionDefinition {
                 {"_id": {"$oid": "507f191e810c19729de860ea"}, "name": "Bob", "age": 25}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -415,6 +416,7 @@ fn insert_response_action() -> ActionDefinition {
             "type": "insert_response",
             "inserted_count": 1
         }),
+        log_template: None,
     }
 }
 
@@ -441,6 +443,7 @@ fn update_response_action() -> ActionDefinition {
             "matched_count": 1,
             "modified_count": 1
         }),
+        log_template: None,
     }
 }
 
@@ -458,6 +461,7 @@ fn delete_response_action() -> ActionDefinition {
             "type": "delete_response",
             "deleted_count": 2
         }),
+        log_template: None,
     }
 }
 
@@ -484,6 +488,7 @@ fn error_response_action() -> ActionDefinition {
             "code": 26,
             "message": "Namespace not found"
         }),
+        log_template: None,
     }
 }
 
@@ -495,6 +500,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -506,5 +512,6 @@ fn list_mongodb_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_mongodb_connections"
         }),
+        log_template: None,
     }
 }

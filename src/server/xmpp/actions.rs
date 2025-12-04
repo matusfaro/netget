@@ -198,7 +198,7 @@ impl Server for XmppProtocol {
         Box::pin(async move {
             use crate::server::xmpp::XmppServer;
             XmppServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -451,6 +451,7 @@ fn send_stream_header_action() -> ActionDefinition {
             "from": "localhost",
             "stream_id": "stream-123"
         }),
+        log_template: None,
     }
 }
 
@@ -468,6 +469,7 @@ fn send_stream_features_action() -> ActionDefinition {
             "type": "send_stream_features",
             "mechanisms": ["PLAIN"]
         }),
+        log_template: None,
     }
 }
 
@@ -508,6 +510,7 @@ fn send_message_action() -> ActionDefinition {
             "body": "Hello, world!",
             "message_type": "chat"
         }),
+        log_template: None,
     }
 }
 
@@ -547,6 +550,7 @@ fn send_presence_action() -> ActionDefinition {
             "show": "chat",
             "status": "Available for chat"
         }),
+        log_template: None,
     }
 }
 
@@ -580,6 +584,7 @@ fn send_iq_result_action() -> ActionDefinition {
             "to": "user@localhost",
             "payload": "<query xmlns='jabber:iq:roster'/>"
         }),
+        log_template: None,
     }
 }
 
@@ -613,6 +618,7 @@ fn send_iq_error_action() -> ActionDefinition {
             "error_type": "cancel",
             "condition": "feature-not-implemented"
         }),
+        log_template: None,
     }
 }
 
@@ -624,6 +630,7 @@ fn send_auth_success_action() -> ActionDefinition {
         example: json!({
             "type": "send_auth_success"
         }),
+        log_template: None,
     }
 }
 
@@ -641,6 +648,7 @@ fn send_auth_failure_action() -> ActionDefinition {
             "type": "send_auth_failure",
             "reason": "not-authorized"
         }),
+        log_template: None,
     }
 }
 
@@ -658,6 +666,7 @@ fn send_raw_xml_action() -> ActionDefinition {
             "type": "send_raw_xml",
             "xml": "<custom xmlns='example:custom'/>"
         }),
+        log_template: None,
     }
 }
 
@@ -669,6 +678,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -680,6 +690,7 @@ fn close_stream_action() -> ActionDefinition {
         example: json!({
             "type": "close_stream"
         }),
+        log_template: None,
     }
 }
 

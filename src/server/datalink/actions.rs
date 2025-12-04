@@ -169,7 +169,7 @@ impl Server for DataLinkProtocol {
 
             // DataLink doesn't bind to a socket, so return a dummy address
             // The listen_addr from context is just a placeholder
-            Ok(ctx.listen_addr)
+            Ok(ctx.legacy_listen_addr())
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -205,6 +205,7 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "ARP request detected for 192.168.1.1"
         }),
+        log_template: None,
     }
 }
 
@@ -217,6 +218,7 @@ fn ignore_packet_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_packet"
         }),
+        log_template: None,
     }
 }
 

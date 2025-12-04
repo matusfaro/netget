@@ -4,6 +4,7 @@
 //! Event types have unique IDs and associated actions that can be used to respond to the event.
 
 use crate::llm::actions::{ActionDefinition, Parameter};
+use crate::protocol::log_template::LogTemplate;
 use serde_json::Value as JsonValue;
 
 /// Represents a type of event that a protocol can emit
@@ -39,6 +40,10 @@ pub struct EventType {
     /// Shows other valid ways to respond to this event
     /// Displayed after the primary response_example
     pub alternative_examples: Vec<JsonValue>,
+
+    /// Log template for this event type
+    /// Defines protocol-specific log formats at INFO/DEBUG/TRACE levels
+    pub log_template: Option<LogTemplate>,
 }
 
 impl EventType {
@@ -72,6 +77,7 @@ impl EventType {
             parameters: Vec::new(),
             response_example,
             alternative_examples: Vec::new(),
+            log_template: None,
         }
     }
 
@@ -113,6 +119,26 @@ impl EventType {
     /// ```
     pub fn with_alternative_example(mut self, example: JsonValue) -> Self {
         self.alternative_examples.push(example);
+        self
+    }
+
+    /// Add a log template for this event type
+    ///
+    /// The log template defines protocol-specific log formats at INFO/DEBUG/TRACE levels.
+    /// This enables standardized, centralized logging without per-protocol logging code.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// EventType::new("http_request", "HTTP request received", json!({...}))
+    ///     .with_log_template(
+    ///         LogTemplate::new()
+    ///             .with_info("{client_ip} {method} {path} -> {status}")
+    ///             .with_debug("HTTP {method} {path} from {client_ip}:{client_port}")
+    ///             .with_trace("HTTP request: {json_pretty(.)}")
+    ///     )
+    /// ```
+    pub fn with_log_template(mut self, template: LogTemplate) -> Self {
+        self.log_template = Some(template);
         self
     }
 

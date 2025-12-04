@@ -130,6 +130,7 @@ impl Protocol for DotClientProtocol {
                     "query_type": "A",
                     "recursive": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -138,6 +139,7 @@ impl Protocol for DotClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -171,6 +173,7 @@ impl Protocol for DotClientProtocol {
                     "domain": "example.org",
                     "query_type": "AAAA"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -179,6 +182,7 @@ impl Protocol for DotClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -141,7 +141,7 @@ impl Server for SipProtocol {
         Box::pin(async move {
             use crate::server::sip::SipServer;
             SipServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -295,6 +295,7 @@ fn sip_register_action() -> ActionDefinition {
             "status_code": 200,
             "expires": 3600
         }),
+        log_template: None,
     }
 }
 
@@ -328,6 +329,7 @@ fn sip_invite_action() -> ActionDefinition {
             "status_code": 200,
             "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\ns=Call\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio 8000 RTP/AVP 0\n"
         }),
+        log_template: None,
     }
 }
 
@@ -345,6 +347,7 @@ fn sip_bye_action() -> ActionDefinition {
             "type": "sip_bye",
             "status_code": 200
         }),
+        log_template: None,
     }
 }
 
@@ -356,6 +359,7 @@ fn sip_ack_action() -> ActionDefinition {
         example: json!({
             "type": "sip_ack"
         }),
+        log_template: None,
     }
 }
 
@@ -382,6 +386,7 @@ fn sip_options_action() -> ActionDefinition {
             "status_code": 200,
             "allow_methods": ["INVITE", "ACK", "BYE", "REGISTER", "OPTIONS"]
         }),
+        log_template: None,
     }
 }
 
@@ -399,6 +404,7 @@ fn sip_cancel_action() -> ActionDefinition {
             "type": "sip_cancel",
             "status_code": 200
         }),
+        log_template: None,
     }
 }
 
@@ -433,6 +439,7 @@ fn send_sip_invite_action() -> ActionDefinition {
             "from": "sip:alice@example.com",
             "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\n..."
         }),
+        log_template: None,
     }
 }
 
@@ -450,6 +457,7 @@ fn send_sip_bye_action() -> ActionDefinition {
             "type": "send_sip_bye",
             "call_id": "call-123@example.com"
         }),
+        log_template: None,
     }
 }
 
@@ -470,5 +478,6 @@ fn update_registration_action() -> ActionDefinition {
                 "bob@localhost": "sip:bob@192.168.1.11:5060"
             }
         }),
+        log_template: None,
     }
 }

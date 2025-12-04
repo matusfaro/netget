@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -59,6 +60,12 @@ pub static S3_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             send_s3_error_action(),
             show_message_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("S3 {operation} {bucket}/{key}")
+                .with_debug("S3 {operation} bucket={bucket}, key={key}")
+                .with_trace("S3: {json_pretty(.)}"),
+        )
 });
 
 fn send_s3_object_action() -> ActionDefinition {
@@ -92,6 +99,7 @@ fn send_s3_object_action() -> ActionDefinition {
             "content_type": "text/plain",
             "etag": "\"d41d8cd98f00b204e9800998ecf8427e\""
         }),
+        log_template: None,
     }
 }
 
@@ -122,6 +130,7 @@ fn send_s3_object_list_action() -> ActionDefinition {
             ],
             "is_truncated": false
         }),
+        log_template: None,
     }
 }
 
@@ -142,6 +151,7 @@ fn send_s3_bucket_list_action() -> ActionDefinition {
                 {"name": "test-bucket", "creation_date": "2024-01-02T00:00:00Z"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -176,6 +186,7 @@ fn send_s3_error_action() -> ActionDefinition {
             "message": "The specified key does not exist",
             "status_code": 404
         }),
+        log_template: None,
     }
 }
 
@@ -193,6 +204,7 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Stored object in bucket"
         }),
+        log_template: None,
     }
 }
 
@@ -350,7 +362,7 @@ impl Server for S3Protocol {
         Box::pin(async move {
             use crate::server::s3::S3Server;
             S3Server::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

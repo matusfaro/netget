@@ -101,6 +101,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "send_binding_request"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -109,6 +110,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -123,6 +125,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "send_binding_request"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -131,6 +134,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

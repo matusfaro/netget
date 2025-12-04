@@ -159,6 +159,7 @@ impl Protocol for OpenAiClientProtocol {
                     ],
                     "model": "gpt-3.5-turbo"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_embedding_request".to_string(),
@@ -183,6 +184,7 @@ impl Protocol for OpenAiClientProtocol {
                     "input": "The quick brown fox",
                     "model": "text-embedding-ada-002"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -191,6 +193,7 @@ impl Protocol for OpenAiClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -210,6 +213,7 @@ impl Protocol for OpenAiClientProtocol {
                     type_hint: "string".to_string(),
                     description: "Model to use".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

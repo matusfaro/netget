@@ -164,6 +164,7 @@ impl Protocol for WebRtcClientProtocol {
                     "channel": "netget",
                     "message": "Hello, WebRTC peer!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_binary".to_string(),
@@ -187,6 +188,7 @@ impl Protocol for WebRtcClientProtocol {
                     "channel": "netget",
                     "hex_data": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "apply_answer".to_string(),
@@ -202,6 +204,7 @@ impl Protocol for WebRtcClientProtocol {
                     "type": "apply_answer",
                     "answer_json": "{\"type\":\"answer\",\"sdp\":\"...\"}"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "create_channel".to_string(),
@@ -216,6 +219,7 @@ impl Protocol for WebRtcClientProtocol {
                     "type": "create_channel",
                     "channel_label": "file-transfer"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_offer".to_string(),
@@ -231,6 +235,7 @@ impl Protocol for WebRtcClientProtocol {
                     "type": "send_offer",
                     "target_peer": "peer-bob"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -239,6 +244,7 @@ impl Protocol for WebRtcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -268,6 +274,7 @@ impl Protocol for WebRtcClientProtocol {
                     "type": "send_message",
                     "message": "Reply message"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -276,6 +283,7 @@ impl Protocol for WebRtcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -284,6 +292,7 @@ impl Protocol for WebRtcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

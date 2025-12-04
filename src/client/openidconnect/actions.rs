@@ -181,6 +181,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                     example: json!({
                         "type": "discover_configuration"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "start_device_flow".to_string(),
@@ -197,6 +198,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                         "type": "start_device_flow",
                         "scopes": "openid profile email"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "start_authorization_code_flow".to_string(),
@@ -220,6 +222,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                         "scopes": "openid profile email",
                         "port": 8080
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "exchange_password".to_string(),
@@ -250,6 +253,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                         "password": "secret123",
                         "scopes": "openid profile"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "exchange_client_credentials".to_string(),
@@ -266,6 +270,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                         "type": "exchange_client_credentials",
                         "scopes": "api.read api.write"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "refresh_token".to_string(),
@@ -274,6 +279,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                     example: json!({
                         "type": "refresh_token"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "fetch_userinfo".to_string(),
@@ -282,6 +288,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                     example: json!({
                         "type": "fetch_userinfo"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -290,6 +297,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -302,6 +310,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                 example: json!({
                     "type": "fetch_userinfo"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "refresh_token".to_string(),
@@ -310,6 +319,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                 example: json!({
                     "type": "refresh_token"
                 }),
+            log_template: None,
             },
         ]
     }

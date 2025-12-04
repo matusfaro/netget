@@ -107,6 +107,7 @@ impl Protocol for McpClientProtocol {
                 example: json!({
                     "type": "list_resources"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "read_resource".to_string(),
@@ -121,6 +122,7 @@ impl Protocol for McpClientProtocol {
                     "type": "read_resource",
                     "uri": "file:///README.md"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_tools".to_string(),
@@ -129,6 +131,7 @@ impl Protocol for McpClientProtocol {
                 example: json!({
                     "type": "list_tools"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "call_tool".to_string(),
@@ -154,6 +157,7 @@ impl Protocol for McpClientProtocol {
                         "expression": "2+2"
                     }
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_prompts".to_string(),
@@ -162,6 +166,7 @@ impl Protocol for McpClientProtocol {
                 example: json!({
                     "type": "list_prompts"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_prompt".to_string(),
@@ -185,6 +190,7 @@ impl Protocol for McpClientProtocol {
                     "name": "code-review",
                     "arguments": {}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -193,6 +199,7 @@ impl Protocol for McpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -205,6 +212,7 @@ impl Protocol for McpClientProtocol {
                 example: json!({
                     "type": "list_resources"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "call_tool".to_string(),
@@ -230,6 +238,7 @@ impl Protocol for McpClientProtocol {
                         "query": "test"
                     }
                 }),
+            log_template: None,
             },
         ]
     }

@@ -125,7 +125,7 @@ impl Server for SamlIdpProtocol {
         Box::pin(async move {
             use crate::server::saml_idp::SamlIdpServer;
             SamlIdpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -289,6 +289,7 @@ fn send_saml_response_action() -> ActionDefinition {
             "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
             "relay_state": "original-sp-url"
         }),
+        log_template: None,
     }
 }
 
@@ -308,6 +309,7 @@ fn send_metadata_action() -> ActionDefinition {
             "type": "send_metadata",
             "metadata_xml": "<EntityDescriptor>...</EntityDescriptor>"
         }),
+        log_template: None,
     }
 }
 
@@ -335,6 +337,7 @@ fn send_error_response_action() -> ActionDefinition {
             "error_message": "Invalid credentials",
             "status_code": 403
         }),
+        log_template: None,
     }
 }
 

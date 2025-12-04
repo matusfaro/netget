@@ -97,6 +97,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "info_hash": "0123456789abcdef0123456789abcdef01234567",
                     "peer_id": "abcdef0123456789abcdef0123456789abcdef01"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "peer_interested".to_string(),
@@ -107,6 +108,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 2,
                     "payload": ""
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "peer_not_interested".to_string(),
@@ -117,6 +119,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 3,
                     "payload": ""
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "peer_request_piece".to_string(),
@@ -146,6 +149,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 6,
                     "payload": "00000000000000000000400"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "peer_send_piece".to_string(),
@@ -175,6 +179,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 7,
                     "payload": "0000000000000000abcdef..."
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -183,6 +188,7 @@ impl Protocol for TorrentPeerClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

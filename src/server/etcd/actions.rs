@@ -128,6 +128,7 @@ fn etcd_range_response_action() -> ActionDefinition {
             "more": false,
             "count": 1
         }),
+        log_template: None,
     }
 }
 
@@ -154,6 +155,7 @@ fn etcd_error_action() -> ActionDefinition {
             "code": "KEY_NOT_FOUND",
             "message": "etcdserver: key not found"
         }),
+        log_template: None,
     }
 }
 
@@ -301,7 +303,7 @@ impl Server for EtcdProtocol {
         Box::pin(async move {
             use crate::server::etcd::EtcdServer;
             EtcdServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

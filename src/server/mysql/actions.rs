@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -160,7 +161,7 @@ impl Server for MysqlProtocol {
                 .unwrap_or(false);
 
             MysqlServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -313,6 +314,7 @@ pub fn mysql_query_response_action() -> ActionDefinition {
             "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "VARCHAR"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+        log_template: None,
     }
 }
 
@@ -342,6 +344,7 @@ pub fn mysql_error_response_action() -> ActionDefinition {
             "error_code": 1146,
             "message": "Table 'database.table_name' doesn't exist"
         }),
+        log_template: None,
     }
 }
 
@@ -370,6 +373,7 @@ pub fn mysql_ok_response_action() -> ActionDefinition {
             "affected_rows": 1,
             "last_insert_id": 42
         }),
+        log_template: None,
     }
 }
 
@@ -380,6 +384,7 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current MySQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     }
 }
 
@@ -390,6 +395,7 @@ pub fn list_mysql_connections_action() -> ActionDefinition {
         description: "List all active MySQL connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_mysql_connections"}),
+        log_template: None,
     }
 }
 
@@ -408,6 +414,7 @@ pub fn mysql_close_connection_action() -> ActionDefinition {
             "type": "mysql_close_connection",
             "connection_id": "conn-123"
         }),
+        log_template: None,
     }
 }
 
@@ -439,6 +446,7 @@ pub static MYSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "VARCHAR"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
+    log_template: None,
     }
 });
 
@@ -468,6 +476,7 @@ pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> =
             "error_code": 1146,
             "message": "Table 'database.table_name' doesn't exist"
         }),
+        log_template: None,
     });
 
 /// MySQL OK response action constant
@@ -495,6 +504,7 @@ pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> =
             "affected_rows": 1,
             "last_insert_id": 42
         }),
+        log_template: None,
     });
 
 /// MySQL close connection action constant
@@ -504,6 +514,7 @@ pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
         description: "Close the current MySQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
+        log_template: None,
     });
 
 // ============================================================================
@@ -525,6 +536,12 @@ pub static MYSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             MYSQL_OK_RESPONSE_ACTION.clone(),
             MYSQL_CLOSE_CONNECTION_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("MySQL: {preview(query,80)}")
+                .with_debug("MySQL query: {query}")
+                .with_trace("MySQL: {json_pretty(.)}"),
+        )
 });
 
 /// Get MySQL event types

@@ -287,6 +287,7 @@ impl Protocol for BgpProtocol {
                     "prefix": "10.0.0.0/24",
                     "next_hop": "192.168.1.1"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "withdraw_route".to_string(),
@@ -301,6 +302,7 @@ impl Protocol for BgpProtocol {
                     "type": "withdraw_route",
                     "prefix": "10.0.0.0/24"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "reset_peer".to_string(),
@@ -310,6 +312,7 @@ impl Protocol for BgpProtocol {
                 example: json!({
                     "type": "reset_peer"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -344,6 +347,7 @@ impl Protocol for BgpProtocol {
                     "hold_time": 180,
                     "router_id": "192.168.1.100"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_bgp_keepalive".to_string(),
@@ -352,6 +356,7 @@ impl Protocol for BgpProtocol {
                 example: json!({
                     "type": "send_bgp_keepalive"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_bgp_update".to_string(),
@@ -375,6 +380,7 @@ impl Protocol for BgpProtocol {
                     "type": "send_bgp_update",
                     "nlri": ["10.0.0.0/24"]
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_bgp_notification".to_string(),
@@ -405,6 +411,7 @@ impl Protocol for BgpProtocol {
                     "error_code": 6,
                     "error_subcode": 0
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "transition_state".to_string(),
@@ -421,6 +428,7 @@ impl Protocol for BgpProtocol {
                     "type": "transition_state",
                     "new_state": "Established"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -429,6 +437,7 @@ impl Protocol for BgpProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -574,7 +583,7 @@ impl Server for BgpProtocol {
         Box::pin(async move {
             use crate::server::bgp::BgpServer;
             BgpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

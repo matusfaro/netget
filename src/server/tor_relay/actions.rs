@@ -190,7 +190,7 @@ impl Server for TorRelayProtocol {
         Box::pin(async move {
             use crate::server::tor_relay::TorRelayServer;
             TorRelayServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -249,6 +249,7 @@ fn detect_create_cell_action() -> ActionDefinition {
             "type": "detect_create_cell",
             "response_type": "reject"
         }),
+        log_template: None,
     }
 }
 
@@ -266,6 +267,7 @@ fn detect_relay_cell_action() -> ActionDefinition {
             "type": "detect_relay_cell",
             "message": "RELAY cell detected from circuit 0x12345"
         }),
+        log_template: None,
     }
 }
 
@@ -277,6 +279,7 @@ fn send_destroy_action() -> ActionDefinition {
         example: json!({
             "type": "send_destroy"
         }),
+        log_template: None,
     }
 }
 
@@ -288,6 +291,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -309,6 +313,7 @@ fn set_relay_type_action() -> ActionDefinition {
             "type": "set_relay_type",
             "relay_type": "guard"
         }),
+        log_template: None,
     }
 }
 
@@ -326,6 +331,7 @@ fn configure_exit_policy_action() -> ActionDefinition {
             "type": "configure_exit_policy",
             "allowed_ports": [80, 443, 22]
         }),
+        log_template: None,
     }
 }
 
@@ -337,6 +343,7 @@ fn list_active_circuits_action() -> ActionDefinition {
         example: json!({
             "type": "list_active_circuits"
         }),
+        log_template: None,
     }
 }
 
@@ -354,6 +361,7 @@ fn disconnect_circuit_action() -> ActionDefinition {
             "type": "disconnect_circuit",
             "circuit_id": "0x12345678"
         }),
+        log_template: None,
     }
 }
 
@@ -365,6 +373,7 @@ fn list_active_streams_action() -> ActionDefinition {
         example: json!({
             "type": "list_active_streams"
         }),
+        log_template: None,
     }
 }
 
@@ -391,6 +400,7 @@ fn close_stream_action() -> ActionDefinition {
             "circuit_id": "0x12345678",
             "stream_id": 42
         }),
+        log_template: None,
     }
 }
 
@@ -402,6 +412,7 @@ fn get_relay_statistics_action() -> ActionDefinition {
         example: json!({
             "type": "get_relay_statistics"
         }),
+        log_template: None,
     }
 }
 

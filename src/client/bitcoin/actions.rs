@@ -101,6 +101,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_blockchain_info"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_block_hash".to_string(),
@@ -115,6 +116,7 @@ impl Protocol for BitcoinClientProtocol {
                     "type": "get_block_hash",
                     "height": 700000
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_block".to_string(),
@@ -139,6 +141,7 @@ impl Protocol for BitcoinClientProtocol {
                     "block_hash": "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048",
                     "verbosity": 1
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_transaction".to_string(),
@@ -153,6 +156,7 @@ impl Protocol for BitcoinClientProtocol {
                     "type": "get_transaction",
                     "txid": "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_mempool_info".to_string(),
@@ -161,6 +165,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_mempool_info"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_raw_mempool".to_string(),
@@ -175,6 +180,7 @@ impl Protocol for BitcoinClientProtocol {
                     "type": "get_raw_mempool",
                     "verbose": false
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_mining_info".to_string(),
@@ -184,6 +190,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_mining_info"
                 }),
+            log_template: None,
             },
             // Network queries
             ActionDefinition {
@@ -194,6 +201,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_network_info"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_peer_info".to_string(),
@@ -202,6 +210,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_peer_info"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_connection_count".to_string(),
@@ -210,6 +219,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_connection_count"
                 }),
+            log_template: None,
             },
             // Wallet operations
             ActionDefinition {
@@ -219,6 +229,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_wallet_info"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_balance".to_string(),
@@ -227,6 +238,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "get_balance"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_transactions".to_string(),
@@ -241,6 +253,7 @@ impl Protocol for BitcoinClientProtocol {
                     "type": "list_transactions",
                     "count": 10
                 }),
+            log_template: None,
             },
             // Generic RPC call
             ActionDefinition {
@@ -265,6 +278,7 @@ impl Protocol for BitcoinClientProtocol {
                     "method": "getbestblockhash",
                     "params": []
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -273,6 +287,7 @@ impl Protocol for BitcoinClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -292,6 +307,7 @@ impl Protocol for BitcoinClientProtocol {
                     type_hint: "array".to_string(),
                     description: "RPC parameters".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

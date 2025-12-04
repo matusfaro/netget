@@ -303,7 +303,7 @@ impl Server for XmlRpcProtocol {
         Box::pin(async move {
             use crate::server::xmlrpc::XmlRpcServer;
             XmlRpcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -354,6 +354,7 @@ fn success_response_action() -> ActionDefinition {
             "value_type": "int",
             "value": 42
         }),
+        log_template: None,
     }
 }
 
@@ -380,6 +381,7 @@ fn fault_response_action() -> ActionDefinition {
             "fault_code": -32601,
             "fault_string": "Method not found"
         }),
+        log_template: None,
     }
 }
 
@@ -398,6 +400,7 @@ fn list_methods_response_action() -> ActionDefinition {
             "type": "xmlrpc_list_methods_response",
             "methods": ["add", "subtract", "system.listMethods", "system.methodHelp"]
         }),
+        log_template: None,
     }
 }
 
@@ -416,6 +419,7 @@ fn method_help_response_action() -> ActionDefinition {
             "type": "xmlrpc_method_help_response",
             "help_text": "add(a, b) - Returns the sum of two numbers"
         }),
+        log_template: None,
     }
 }
 
@@ -433,6 +437,7 @@ fn method_signature_response_action() -> ActionDefinition {
             "type": "xmlrpc_method_signature_response",
             "signatures": [["int", "int", "int"]]
         }),
+        log_template: None,
     }
 }
 

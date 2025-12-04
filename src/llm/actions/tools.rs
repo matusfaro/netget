@@ -1291,6 +1291,7 @@ pub fn read_file_action() -> ActionDefinition {
             "path": "schema.json",
             "mode": "full"
         }),
+        log_template: None,
     }
 }
 
@@ -1309,6 +1310,7 @@ pub fn web_search_action() -> ActionDefinition {
             "type": "web_search",
             "query": "https://datatracker.ietf.org/doc/html/rfc7168"
         }),
+        log_template: None,
     }
 }
 
@@ -1327,6 +1329,7 @@ pub fn read_base_stack_docs_action() -> ActionDefinition {
             "type": "read_base_stack_docs",
             "protocol": "tor"
         }),
+        log_template: None,
     }
 }
 
@@ -1371,6 +1374,7 @@ pub fn read_server_documentation_action() -> ActionDefinition {
             "type": "read_server_documentation",
             "protocol": "HTTP"
         }),
+        log_template: None,
     }
 }
 
@@ -1405,6 +1409,7 @@ pub fn read_client_documentation_action() -> ActionDefinition {
             "type": "read_client_documentation",
             "protocol": "http"
         }),
+        log_template: None,
     }
 }
 
@@ -1417,6 +1422,7 @@ pub fn list_network_interfaces_action() -> ActionDefinition {
         example: json!({
             "type": "list_network_interfaces"
         }),
+        log_template: None,
     }
 }
 
@@ -1429,6 +1435,7 @@ pub fn list_models_action() -> ActionDefinition {
         example: json!({
             "type": "list_models"
         }),
+        log_template: None,
     }
 }
 
@@ -1485,6 +1492,7 @@ pub fn generate_random_action() -> ActionDefinition {
             "type": "generate_random",
             "data_type": "uuid"
         }),
+        log_template: None,
     }
 }
 

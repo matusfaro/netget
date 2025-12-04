@@ -98,6 +98,7 @@ impl Protocol for ZookeeperProtocol {
                     "error_code": 0,
                     "data_hex": "0000000000000064"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -208,7 +209,7 @@ impl Server for ZookeeperProtocol {
                 .unwrap_or(false);
 
             ZookeeperServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

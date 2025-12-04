@@ -5,6 +5,7 @@
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, Server};
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -57,6 +58,12 @@ pub static PRODUCE_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Kafka produce {topic}")
+            .with_debug("Kafka produce topic={topic}, partition={partition}, records={record_count}")
+            .with_trace("Kafka produce: {json_pretty(.)}"),
+    )
 });
 
 /// Event: Kafka fetch request received
@@ -101,6 +108,12 @@ pub static FETCH_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Kafka fetch {topic}")
+            .with_debug("Kafka fetch topic={topic}, partition={partition}, offset={fetch_offset}")
+            .with_trace("Kafka fetch: {json_pretty(.)}"),
+    )
 });
 
 /// Event: Kafka metadata request received
@@ -126,6 +139,12 @@ pub static METADATA_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
         description: "Topics client wants metadata for (empty = all topics)".to_string(),
         required: false,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Kafka metadata request")
+            .with_debug("Kafka metadata request, topics={requested_topics}")
+            .with_trace("Kafka metadata: {json_pretty(.)}"),
+    )
 });
 
 /// Event: Kafka offset commit request received
@@ -170,6 +189,12 @@ pub static OFFSET_COMMIT_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Kafka offset commit {topic}")
+            .with_debug("Kafka offset commit group={group_id}, topic={topic}, partition={partition}, offset={offset}")
+            .with_trace("Kafka offset commit: {json_pretty(.)}"),
+    )
 });
 
 /// Kafka protocol implementation
@@ -221,6 +246,7 @@ fn publish_message_action() -> ActionDefinition {
             "value": "{\"item\": \"laptop\", \"price\": 999}",
             "partition": 0
         }),
+        log_template: None,
     }
 }
 
@@ -254,6 +280,7 @@ fn create_topic_action() -> ActionDefinition {
             "partitions": 3,
             "replication_factor": 1
         }),
+        log_template: None,
     }
 }
 
@@ -271,6 +298,7 @@ fn delete_topic_action() -> ActionDefinition {
             "type": "delete_topic",
             "topic": "orders"
         }),
+        log_template: None,
     }
 }
 
@@ -297,6 +325,7 @@ fn set_retention_action() -> ActionDefinition {
             "topic": "orders",
             "retention_hours": 72
         }),
+        log_template: None,
     }
 }
 
@@ -337,6 +366,7 @@ fn produce_response_action() -> ActionDefinition {
             "offset": 42,
             "error_code": 0
         }),
+        log_template: None,
     }
 }
 
@@ -373,6 +403,7 @@ fn fetch_response_action() -> ActionDefinition {
                 {"offset": 41, "key": "order124", "value": "{\"item\": \"mouse\"}"}
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -406,6 +437,7 @@ fn metadata_response_action() -> ActionDefinition {
                 }
             ]
         }),
+        log_template: None,
     }
 }
 
@@ -439,6 +471,7 @@ fn offset_commit_response_action() -> ActionDefinition {
             "partition": 0,
             "error_code": 0
         }),
+        log_template: None,
     }
 }
 
@@ -465,6 +498,7 @@ fn error_response_action() -> ActionDefinition {
             "error_code": 3,
             "error_message": "Unknown topic or partition"
         }),
+        log_template: None,
     }
 }
 
@@ -622,7 +656,7 @@ impl Server for KafkaProtocol {
         Box::pin(async move {
             use crate::server::kafka::KafkaServer;
             KafkaServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

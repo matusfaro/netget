@@ -92,6 +92,7 @@ impl Protocol for BootpClientProtocol {
                     "client_mac": "00:11:22:33:44:55",
                     "broadcast": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -100,6 +101,7 @@ impl Protocol for BootpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -127,6 +129,7 @@ impl Protocol for BootpClientProtocol {
                     "client_mac": "00:11:22:33:44:55",
                     "broadcast": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -135,6 +138,7 @@ impl Protocol for BootpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

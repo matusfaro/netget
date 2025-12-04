@@ -81,6 +81,7 @@ impl Protocol for SocketFileClientProtocol {
                     "type": "send_socket_file_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -89,6 +90,7 @@ impl Protocol for SocketFileClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -107,6 +109,7 @@ impl Protocol for SocketFileClientProtocol {
                     "type": "send_socket_file_data",
                     "data_hex": "48656c6c6f"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -115,6 +118,7 @@ impl Protocol for SocketFileClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

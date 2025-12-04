@@ -259,6 +259,7 @@ fn move_cursor_action() -> ActionDefinition {
             "dx": 42,
             "dy": 42
         }),
+        log_template: None,
     }
 }
 
@@ -284,6 +285,7 @@ fn click_action() -> ActionDefinition {
             "type": "click",
             "button": "example_button"
         }),
+        log_template: None,
     }
 }
 
@@ -309,6 +311,7 @@ fn scroll_action() -> ActionDefinition {
             "type": "scroll",
             "amount": 42
         }),
+        log_template: None,
     }
 }
 
@@ -348,6 +351,7 @@ fn drag_action() -> ActionDefinition {
             "dx": 42,
             "dy": 42
         }),
+        log_template: None,
     }
 }
 
@@ -374,6 +378,7 @@ fn send_to_client_action() -> ActionDefinition {
             "client_id": 42,
             "report": "example_report"
         }),
+        log_template: None,
     }
 }
 
@@ -385,5 +390,6 @@ fn list_clients_action() -> ActionDefinition {
         example: json!({
             "type": "list_clients"
         }),
+        log_template: None,
     }
 }

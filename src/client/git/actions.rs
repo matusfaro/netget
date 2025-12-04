@@ -142,6 +142,7 @@ impl Protocol for GitClientProtocol {
                         "url": "https://github.com/user/repo.git",
                         "path": "./repo"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_fetch".to_string(),
@@ -158,6 +159,7 @@ impl Protocol for GitClientProtocol {
                         "type": "git_fetch",
                         "remote": "origin"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_pull".to_string(),
@@ -181,6 +183,7 @@ impl Protocol for GitClientProtocol {
                         "remote": "origin",
                         "branch": "main"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_push".to_string(),
@@ -204,6 +207,7 @@ impl Protocol for GitClientProtocol {
                         "remote": "origin",
                         "branch": "main"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_checkout".to_string(),
@@ -227,6 +231,7 @@ impl Protocol for GitClientProtocol {
                         "target": "feature-branch",
                         "create": false
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_list_branches".to_string(),
@@ -243,6 +248,7 @@ impl Protocol for GitClientProtocol {
                         "type": "git_list_branches",
                         "remote": true
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_log".to_string(),
@@ -259,6 +265,7 @@ impl Protocol for GitClientProtocol {
                         "type": "git_log",
                         "max_count": 10
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_status".to_string(),
@@ -267,6 +274,7 @@ impl Protocol for GitClientProtocol {
                     example: json!({
                         "type": "git_status"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_delete_branch".to_string(),
@@ -297,6 +305,7 @@ impl Protocol for GitClientProtocol {
                         "force": false,
                         "remote": "origin"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_list_tags".to_string(),
@@ -305,6 +314,7 @@ impl Protocol for GitClientProtocol {
                     example: json!({
                         "type": "git_list_tags"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_create_tag".to_string(),
@@ -335,6 +345,7 @@ impl Protocol for GitClientProtocol {
                         "target": "HEAD",
                         "message": "Release version 1.0.0"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "git_diff".to_string(),
@@ -357,6 +368,7 @@ impl Protocol for GitClientProtocol {
                         "type": "git_diff",
                         "staged": true
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -365,6 +377,7 @@ impl Protocol for GitClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }

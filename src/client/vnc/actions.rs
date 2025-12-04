@@ -141,6 +141,7 @@ impl Protocol for VncClientProtocol {
                     "type": "request_framebuffer_update",
                     "incremental": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pointer_event".to_string(),
@@ -172,6 +173,7 @@ impl Protocol for VncClientProtocol {
                     "y": 200,
                     "button_mask": 1
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_key_event".to_string(),
@@ -195,6 +197,7 @@ impl Protocol for VncClientProtocol {
                     "key": 65,
                     "down": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_client_cut_text".to_string(),
@@ -209,6 +212,7 @@ impl Protocol for VncClientProtocol {
                     "type": "send_client_cut_text",
                     "text": "Hello, VNC!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -217,6 +221,7 @@ impl Protocol for VncClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -235,6 +240,7 @@ impl Protocol for VncClientProtocol {
                     "type": "request_framebuffer_update",
                     "incremental": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_pointer_event".to_string(),
@@ -265,6 +271,7 @@ impl Protocol for VncClientProtocol {
                     "y": 200,
                     "button_mask": 1
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -273,6 +280,7 @@ impl Protocol for VncClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

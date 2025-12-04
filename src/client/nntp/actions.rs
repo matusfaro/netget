@@ -95,6 +95,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_group",
                     "group_name": "comp.lang.rust"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_article".to_string(),
@@ -111,6 +112,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_article",
                     "article_id": "123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_head".to_string(),
@@ -125,6 +127,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_head",
                     "article_id": "123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_body".to_string(),
@@ -139,6 +142,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_body",
                     "article_id": "123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_list".to_string(),
@@ -153,6 +157,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_list",
                     "keyword": "ACTIVE"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_xover".to_string(),
@@ -167,6 +172,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_xover",
                     "range": "1-100"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_post".to_string(),
@@ -195,6 +201,7 @@ impl Protocol for NntpClientProtocol {
                     },
                     "body": "This is a test post."
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_stat".to_string(),
@@ -210,6 +217,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_stat",
                     "article_id": "123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "nntp_quit".to_string(),
@@ -218,6 +226,7 @@ impl Protocol for NntpClientProtocol {
                 example: json!({
                     "type": "nntp_quit"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -236,6 +245,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_group",
                     "group_name": "comp.lang.rust"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -244,6 +254,7 @@ impl Protocol for NntpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

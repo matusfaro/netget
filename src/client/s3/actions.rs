@@ -162,6 +162,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "body": "Hello, S3!",
                     "content_type": "text/plain"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_object".to_string(),
@@ -185,6 +186,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "bucket": "my-bucket",
                     "key": "data/file.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_buckets".to_string(),
@@ -193,6 +195,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                 example: json!({
                     "type": "list_buckets"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_objects".to_string(),
@@ -223,6 +226,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "prefix": "data/",
                     "max_keys": 100
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_object".to_string(),
@@ -246,6 +250,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "bucket": "my-bucket",
                     "key": "data/file.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "head_object".to_string(),
@@ -269,6 +274,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "bucket": "my-bucket",
                     "key": "data/file.txt"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "create_bucket".to_string(),
@@ -283,6 +289,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "type": "create_bucket",
                     "bucket": "my-new-bucket"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_bucket".to_string(),
@@ -297,6 +304,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "type": "delete_bucket",
                     "bucket": "my-old-bucket"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -305,6 +313,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -341,6 +350,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "key": "result.json",
                     "body": "{\"status\": \"processed\"}"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_object".to_string(),
@@ -365,6 +375,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "bucket": "my-bucket",
                     "key": "next-file.txt"
                 }),
+            log_template: None,
             },
         ]
     }

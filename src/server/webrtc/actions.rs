@@ -178,6 +178,7 @@ impl Protocol for WebRtcProtocol {
                     "peer_id": "peer-abc123",
                     "sdp_offer": "{\"type\":\"offer\",\"sdp\":\"...\"}"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_to_peer".to_string(),
@@ -201,6 +202,7 @@ impl Protocol for WebRtcProtocol {
                     "peer_id": "peer-abc123",
                     "message": "Hello from NetGet server!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "close_peer".to_string(),
@@ -215,6 +217,7 @@ impl Protocol for WebRtcProtocol {
                     "type": "close_peer",
                     "peer_id": "peer-abc123"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "list_peers".to_string(),
@@ -223,6 +226,7 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "list_peers"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -242,6 +246,7 @@ impl Protocol for WebRtcProtocol {
                     "type": "send_message",
                     "message": "Reply message"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -250,6 +255,7 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -258,6 +264,7 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -368,7 +375,7 @@ impl Server for WebRtcProtocol {
         Box::pin(async move {
             use crate::server::webrtc::WebRtcServer;
             WebRtcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

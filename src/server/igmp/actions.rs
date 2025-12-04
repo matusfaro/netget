@@ -124,7 +124,7 @@ impl Server for IgmpProtocol {
         Box::pin(async move {
             use crate::server::igmp::IgmpServer;
             IgmpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -305,6 +305,7 @@ fn join_group_action() -> ActionDefinition {
             "type": "join_group",
             "group_address": "239.255.255.250"
         }),
+        log_template: None,
     }
 }
 
@@ -322,6 +323,7 @@ fn leave_group_action() -> ActionDefinition {
             "type": "leave_group",
             "group_address": "239.255.255.250"
         }),
+        log_template: None,
     }
 }
 
@@ -339,6 +341,7 @@ fn send_membership_report_action() -> ActionDefinition {
             "type": "send_membership_report",
             "group_address": "239.255.255.250"
         }),
+        log_template: None,
     }
 }
 
@@ -356,6 +359,7 @@ fn send_leave_group_action() -> ActionDefinition {
             "type": "send_leave_group",
             "group_address": "239.255.255.250"
         }),
+        log_template: None,
     }
 }
 
@@ -367,6 +371,7 @@ fn ignore_message_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_message"
         }),
+        log_template: None,
     }
 }
 

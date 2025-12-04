@@ -60,6 +60,7 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                     "type": "set_weight",
                     "kg": 70.5
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_bmi".to_string(),
@@ -74,6 +75,7 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                     "type": "set_bmi",
                     "bmi": 22.5
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "multi_user".to_string(),
@@ -97,6 +99,7 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                     "user_id": 1,
                     "weight_kg": 70.5
                 }),
+            log_template: None,
             },
         ]
     }

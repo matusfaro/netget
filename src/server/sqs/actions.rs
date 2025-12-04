@@ -73,6 +73,7 @@ fn send_sqs_response_action() -> ActionDefinition {
             "status_code": 200,
             "body": "{\"MessageId\": \"msg-123\", \"MD5OfMessageBody\": \"d41d8cd98f00b204e9800998ecf8427e\"}"
         }),
+        log_template: None,
     }
 }
 
@@ -90,6 +91,7 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Message sent to orders-queue"
         }),
+        log_template: None,
     }
 }
 
@@ -221,7 +223,7 @@ impl Server for SqsProtocol {
         Box::pin(async move {
             use crate::server::sqs::SqsServer;
             SqsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

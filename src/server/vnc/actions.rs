@@ -138,6 +138,7 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "send_framebuffer_update", "connection_id": "conn123", "width": 800, "height": 600, "commands": [{"SetBackground": {"color": {"r": 50, "g": 50, "b": 50, "a": 255}}}, {"DrawText": {"x": 100, "y": 100, "text": "Welcome to VNC", "font_size": 24, "color": {"r": 255, "g": 255, "b": 255, "a": 255}}}]}"#).unwrap(),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect_vnc_client".to_string(),
@@ -151,6 +152,7 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "disconnect_vnc_client", "connection_id": "conn123"}"#).unwrap(),
+                log_template: None,
                 },
             ]
     }
@@ -168,6 +170,7 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "vnc_auth_success", "username": "guest"}"#).unwrap(),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "vnc_auth_deny".to_string(),
@@ -181,6 +184,7 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "vnc_auth_deny", "reason": "Access denied"}"#).unwrap(),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "vnc_render_display".to_string(),
@@ -194,6 +198,7 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "vnc_render_display", "commands": [{"RenderAsciiArt": {"text": "+----------+\n| Login:   |\n| User: __ |\n+----------+", "font_size": 16, "fg_color": {"r": 255, "g": 255, "b": 255, "a": 255}, "bg_color": {"r": 0, "g": 0, "b": 0, "a": 255}}}]}"#).unwrap(),
+                log_template: None,
                 },
             ]
     }
@@ -210,7 +215,7 @@ impl Server for VncProtocol {
         Box::pin(async move {
             use crate::server::vnc::VncServer;
             VncServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

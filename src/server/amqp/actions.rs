@@ -119,7 +119,7 @@ impl Server for AmqpProtocol {
     ) -> Pin<Box<dyn Future<Output = Result<std::net::SocketAddr>> + Send>> {
         Box::pin(async move {
             crate::server::amqp::AmqpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

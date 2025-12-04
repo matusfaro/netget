@@ -169,6 +169,7 @@ impl Protocol for BluetoothClientProtocol {
                     "type": "scan_devices",
                     "duration_secs": 5
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "connect_device".to_string(),
@@ -192,6 +193,7 @@ impl Protocol for BluetoothClientProtocol {
                     "type": "connect_device",
                     "device_address": "AA:BB:CC:DD:EE:FF"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "discover_services".to_string(),
@@ -201,6 +203,7 @@ impl Protocol for BluetoothClientProtocol {
                 example: json!({
                     "type": "discover_services"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -209,6 +212,7 @@ impl Protocol for BluetoothClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -239,6 +243,7 @@ impl Protocol for BluetoothClientProtocol {
                     "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
                     "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "write_characteristic".to_string(),
@@ -277,6 +282,7 @@ impl Protocol for BluetoothClientProtocol {
                     "value_hex": "01",
                     "with_response": true
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "subscribe_notifications".to_string(),
@@ -300,6 +306,7 @@ impl Protocol for BluetoothClientProtocol {
                     "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
                     "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "unsubscribe_notifications".to_string(),
@@ -323,6 +330,7 @@ impl Protocol for BluetoothClientProtocol {
                     "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
                     "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
                 }),
+            log_template: None,
             },
         ]
     }

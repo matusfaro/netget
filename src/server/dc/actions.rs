@@ -249,7 +249,7 @@ impl Server for DcProtocol {
             use crate::server::dc::DcServer;
 
             DcServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -458,6 +458,7 @@ fn send_dc_lock_action() -> ActionDefinition {
             "lock": "EXTENDEDPROTOCOLABCABCABCABCABCABC",
             "pk": "NetGetHub"
         }),
+        log_template: None,
     }
 }
 
@@ -475,6 +476,7 @@ fn send_dc_hello_action() -> ActionDefinition {
             "type": "send_dc_hello",
             "nickname": "alice"
         }),
+        log_template: None,
     }
 }
 
@@ -492,6 +494,7 @@ fn send_dc_hubname_action() -> ActionDefinition {
             "type": "send_dc_hubname",
             "name": "NetGet DC Hub"
         }),
+        log_template: None,
     }
 }
 
@@ -525,6 +528,7 @@ fn send_dc_message_action() -> ActionDefinition {
             "source": "HubBot",
             "message": "Welcome to the hub!"
         }),
+        log_template: None,
     }
 }
 
@@ -551,6 +555,7 @@ fn send_dc_broadcast_action() -> ActionDefinition {
             "source": "Hub",
             "message": "Server maintenance in 5 minutes"
         }),
+        log_template: None,
     }
 }
 
@@ -568,6 +573,7 @@ fn send_dc_userlist_action() -> ActionDefinition {
             "type": "send_dc_userlist",
             "users": ["alice", "bob", "charlie"]
         }),
+        log_template: None,
     }
 }
 
@@ -615,6 +621,7 @@ fn send_dc_search_result_action() -> ActionDefinition {
             "slots": 2,
             "hub_name": "NetGetHub"
         }),
+        log_template: None,
     }
 }
 
@@ -632,6 +639,7 @@ fn send_dc_kick_action() -> ActionDefinition {
             "type": "send_dc_kick",
             "nickname": "alice"
         }),
+        log_template: None,
     }
 }
 
@@ -649,6 +657,7 @@ fn send_dc_redirect_action() -> ActionDefinition {
             "type": "send_dc_redirect",
             "address": "hub.example.com:411"
         }),
+        log_template: None,
     }
 }
 
@@ -666,5 +675,6 @@ fn send_dc_raw_action() -> ActionDefinition {
             "type": "send_dc_raw",
             "command": "$HubTopic Welcome to NetGet!"
         }),
+        log_template: None,
     }
 }

@@ -125,7 +125,7 @@ impl Server for PypiProtocol {
         Box::pin(async move {
             use crate::server::pypi::PypiServer;
             PypiServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -216,6 +216,7 @@ fn send_pypi_response_action() -> ActionDefinition {
             },
             "body": "<!DOCTYPE html>\n<html>\n<body>\n<a href=\"hello-world/\">hello-world</a>\n</body>\n</html>"
         }),
+        log_template: None,
     }
 }
 

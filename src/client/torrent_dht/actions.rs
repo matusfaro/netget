@@ -83,6 +83,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "node_id": "abcdefghij0123456789",
                     "transaction_id": "aa"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "dht_find_node".to_string(),
@@ -114,6 +115,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "target": "mnopqrstuv0123456789",
                     "transaction_id": "aa"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "dht_get_peers".to_string(),
@@ -145,6 +147,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "info_hash": "0123456789abcdefghij",
                     "transaction_id": "aa"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "dht_announce_peer".to_string(),
@@ -176,6 +179,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "info_hash": "0123456789abcdefghij",
                     "transaction_id": "aa"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -184,6 +188,7 @@ impl Protocol for TorrentDhtClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

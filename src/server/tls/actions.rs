@@ -185,7 +185,7 @@ impl Server for TlsProtocol {
 
             use crate::server::tls::TlsServer;
             TlsServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -238,6 +238,7 @@ fn send_tls_data_action() -> ActionDefinition {
             "type": "send_tls_data",
             "data": "Hello over TLS\r\n"
         }),
+        log_template: None,
     }
 }
 
@@ -251,6 +252,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -263,6 +265,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
+        log_template: None,
     }
 }
 

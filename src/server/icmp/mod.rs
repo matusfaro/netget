@@ -6,9 +6,7 @@
 pub mod actions;
 
 use anyhow::{Context, Result};
-use pnet::packet::icmp::echo_reply::EchoReplyPacket;
 use pnet::packet::icmp::echo_request::EchoRequestPacket;
-use pnet::packet::icmp::time_exceeded::TimeExceededPacket;
 // Note: pnet doesn't provide timestamp packet types
 use pnet::packet::icmp::{
     IcmpCode, IcmpPacket, IcmpTypes, MutableIcmpPacket,

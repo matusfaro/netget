@@ -125,6 +125,7 @@ impl Protocol for LdapClientProtocol {
                         "dn": "cn=admin,dc=example,dc=com",
                         "password": "secret"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "search".to_string(),
@@ -162,6 +163,7 @@ impl Protocol for LdapClientProtocol {
                         "attributes": ["cn", "mail", "uid"],
                         "scope": "subtree"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "add".to_string(),
@@ -190,6 +192,7 @@ impl Protocol for LdapClientProtocol {
                             "mail": ["newuser@example.com"]
                         }
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "modify".to_string(),
@@ -227,6 +230,7 @@ impl Protocol for LdapClientProtocol {
                         "attribute": "mail",
                         "values": ["newemail@example.com"]
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "delete".to_string(),
@@ -243,6 +247,7 @@ impl Protocol for LdapClientProtocol {
                         "type": "delete",
                         "dn": "cn=olduser,dc=example,dc=com"
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -251,6 +256,7 @@ impl Protocol for LdapClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -262,6 +268,7 @@ impl Protocol for LdapClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

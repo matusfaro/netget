@@ -83,6 +83,7 @@ impl Protocol for WhoisClientProtocol {
                     "type": "query_whois",
                     "query": "example.com"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -91,6 +92,7 @@ impl Protocol for WhoisClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

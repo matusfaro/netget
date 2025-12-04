@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -131,7 +132,7 @@ impl Server for McpProtocol {
         Box::pin(async move {
             use crate::server::mcp::McpServer;
             McpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -335,6 +336,7 @@ fn mcp_initialize_response_action() -> ActionDefinition {
                 }
             }
         }),
+        log_template: None,
     }
 }
 
@@ -353,6 +355,7 @@ fn mcp_resources_list_response_action() -> ActionDefinition {
             "type": "mcp_resources_list_response",
             "response": {"resources": []}
         }),
+        log_template: None,
     }
 }
 
@@ -371,6 +374,7 @@ fn mcp_resources_read_response_action() -> ActionDefinition {
             "type": "mcp_resources_read_response",
             "response": {"contents": [{"uri": "file:///example", "text": "content"}]}
         }),
+        log_template: None,
     }
 }
 
@@ -389,6 +393,7 @@ fn mcp_resources_subscribe_response_action() -> ActionDefinition {
             "type": "mcp_resources_subscribe_response",
             "response": {}
         }),
+        log_template: None,
     }
 }
 
@@ -409,6 +414,7 @@ fn mcp_tools_list_response_action() -> ActionDefinition {
             "type": "mcp_tools_list_response",
             "response": {"tools": []}
         }),
+        log_template: None,
     }
 }
 
@@ -428,6 +434,7 @@ fn mcp_tools_call_response_action() -> ActionDefinition {
             "type": "mcp_tools_call_response",
             "response": {"content": [{"type": "text", "text": "result"}]}
         }),
+        log_template: None,
     }
 }
 
@@ -446,6 +453,7 @@ fn mcp_prompts_list_response_action() -> ActionDefinition {
             "type": "mcp_prompts_list_response",
             "response": {"prompts": []}
         }),
+        log_template: None,
     }
 }
 
@@ -464,6 +472,7 @@ fn mcp_prompts_get_response_action() -> ActionDefinition {
             "type": "mcp_prompts_get_response",
             "response": {"messages": []}
         }),
+        log_template: None,
     }
 }
 
@@ -482,6 +491,7 @@ fn mcp_completion_response_action() -> ActionDefinition {
             "type": "mcp_completion_response",
             "response": {"completion": {"values": [], "total": 0, "hasMore": false}}
         }),
+        log_template: None,
     }
 }
 
@@ -516,6 +526,7 @@ fn mcp_error_response_action() -> ActionDefinition {
             "code": -32601,
             "message": "Method not found"
         }),
+        log_template: None,
     }
 }
 
@@ -527,6 +538,12 @@ pub static MCP_INITIALIZE_EVENT: std::sync::LazyLock<EventType> =
                 mcp_initialize_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP initialize")
+                    .with_debug("MCP initialize")
+                    .with_trace("MCP initialize: {json_pretty(.)}"),
+            )
     });
 
 /// MCP resources list event
@@ -537,6 +554,12 @@ pub static MCP_RESOURCES_LIST_EVENT: std::sync::LazyLock<EventType> =
                 mcp_resources_list_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP resources list")
+                    .with_debug("MCP resources list")
+                    .with_trace("MCP resources list: {json_pretty(.)}"),
+            )
     });
 
 /// MCP resources read event
@@ -547,6 +570,12 @@ pub static MCP_RESOURCES_READ_EVENT: std::sync::LazyLock<EventType> =
                 mcp_resources_read_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP resources read")
+                    .with_debug("MCP resources read")
+                    .with_trace("MCP resources read: {json_pretty(.)}"),
+            )
     });
 
 /// MCP tools list event
@@ -557,6 +586,12 @@ pub static MCP_TOOLS_LIST_EVENT: std::sync::LazyLock<EventType> =
                 mcp_tools_list_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP tools list")
+                    .with_debug("MCP tools list")
+                    .with_trace("MCP tools list: {json_pretty(.)}"),
+            )
     });
 
 /// MCP tools call event
@@ -567,6 +602,12 @@ pub static MCP_TOOLS_CALL_EVENT: std::sync::LazyLock<EventType> =
                 mcp_tools_call_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP tools call")
+                    .with_debug("MCP tools call")
+                    .with_trace("MCP tools call: {json_pretty(.)}"),
+            )
     });
 
 /// MCP prompts list event
@@ -577,6 +618,12 @@ pub static MCP_PROMPTS_LIST_EVENT: std::sync::LazyLock<EventType> =
                 mcp_prompts_list_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP prompts list")
+                    .with_debug("MCP prompts list")
+                    .with_trace("MCP prompts list: {json_pretty(.)}"),
+            )
     });
 
 /// MCP prompts get event
@@ -587,6 +634,12 @@ pub static MCP_PROMPTS_GET_EVENT: std::sync::LazyLock<EventType> =
                 mcp_prompts_get_response_action(),
                 mcp_error_response_action(),
             ])
+            .with_log_template(
+                LogTemplate::new()
+                    .with_info("MCP prompts get")
+                    .with_debug("MCP prompts get")
+                    .with_trace("MCP prompts get: {json_pretty(.)}"),
+            )
     });
 
 /// Get MCP event types

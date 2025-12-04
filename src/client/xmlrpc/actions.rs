@@ -108,6 +108,7 @@ impl Protocol for XmlRpcClientProtocol {
                         "method_name": "examples.getStateName",
                         "params": [41]
                     }),
+                log_template: None,
                 },
                 ActionDefinition {
                     name: "disconnect".to_string(),
@@ -116,6 +117,7 @@ impl Protocol for XmlRpcClientProtocol {
                     example: json!({
                         "type": "disconnect"
                     }),
+                log_template: None,
                 },
             ]
     }
@@ -135,6 +137,7 @@ impl Protocol for XmlRpcClientProtocol {
                     type_hint: "array".to_string(),
                     description: "Array of parameters for the method call".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({

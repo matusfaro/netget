@@ -60,6 +60,7 @@ impl Protocol for BluetoothBleCyclingProtocol {
                     "type": "set_speed",
                     "kmh": 42
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_cadence".to_string(),
@@ -74,6 +75,7 @@ impl Protocol for BluetoothBleCyclingProtocol {
                     "type": "set_cadence",
                     "rpm": 42
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "simulate_ride".to_string(),
@@ -88,6 +90,7 @@ impl Protocol for BluetoothBleCyclingProtocol {
                     "type": "simulate_ride",
                     "profile": "example_profile"
                 }),
+            log_template: None,
             },
         ]
     }

@@ -111,6 +111,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "path": "/myapp/config",
                     "data": "configuration_data"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_data".to_string(),
@@ -125,6 +126,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "type": "get_data",
                     "path": "/myapp/config"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_data".to_string(),
@@ -148,6 +150,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "path": "/myapp/config",
                     "data": "new_configuration_data"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "delete_znode".to_string(),
@@ -162,6 +165,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "type": "delete_znode",
                     "path": "/myapp/config"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "get_children".to_string(),
@@ -176,6 +180,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "type": "get_children",
                     "path": "/myapp"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -189,6 +194,7 @@ impl Protocol for ZookeeperClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -197,6 +203,7 @@ impl Protocol for ZookeeperClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }

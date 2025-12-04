@@ -121,7 +121,7 @@ impl Server for SyslogProtocol {
         Box::pin(async move {
             use crate::server::syslog::SyslogServer;
             SyslogServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -206,6 +206,7 @@ fn forward_syslog_action() -> ActionDefinition {
             "target": "192.168.1.100:514",
             "message": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for user on /dev/pts/8"
         }),
+        log_template: None,
     }
 }
 
@@ -224,6 +225,7 @@ fn store_syslog_message_action() -> ActionDefinition {
             "type": "store_syslog_message",
             "message": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for user on /dev/pts/8"
         }),
+        log_template: None,
     }
 }
 
@@ -236,6 +238,7 @@ fn ignore_syslog_message_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_syslog_message"
         }),
+        log_template: None,
     }
 }
 

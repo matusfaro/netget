@@ -159,6 +159,7 @@ impl Protocol for XmppClientProtocol {
                     "to": "friend@example.com",
                     "body": "Hello from NetGet!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_presence".to_string(),
@@ -182,6 +183,7 @@ impl Protocol for XmppClientProtocol {
                     "show": "away",
                     "status": "Out for lunch"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -190,6 +192,7 @@ impl Protocol for XmppClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -218,6 +221,7 @@ impl Protocol for XmppClientProtocol {
                     "to": "friend@example.com",
                     "body": "Thanks for your message!"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -226,6 +230,7 @@ impl Protocol for XmppClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
+            log_template: None,
             },
         ]
     }

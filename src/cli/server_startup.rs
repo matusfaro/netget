@@ -125,6 +125,7 @@ pub async fn start_server_by_id(
     // Build spawn context
     // NOTE: This is the legacy path for unmigrated protocols
     // Migrated protocols should be started via start_server_from_action
+    #[allow(deprecated)]
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
         mac_address: None,
@@ -238,7 +239,7 @@ pub async fn start_server_from_action(
     // Migrated protocols return Some(...) from default_binding()
     // Unmigrated protocols return None and use legacy listen_addr
     //
-    let (final_mac, final_interface, final_host, final_port, use_new_path, listen_addr) =
+    let (final_mac, final_interface, final_host, final_port, _use_new_path, listen_addr) =
         if let Some(defaults) = protocol.default_binding() {
             // NEW PATH: Protocol has been migrated, use flexible binding
             let (mac, iface, host_str, port_num) = defaults.apply(
@@ -468,6 +469,7 @@ pub async fn start_server_from_action(
         OllamaClient::new(ollama_url)
     };
 
+    #[allow(deprecated)]
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
         mac_address: final_mac,

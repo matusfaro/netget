@@ -20,7 +20,7 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::collections::HashMap;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 /// Extract XML-style references from LLM response
 ///
@@ -44,8 +44,6 @@ pub fn extract_references(text: &str) -> Result<(String, HashMap<String, String>
     // designed for tags like <script001>, <config1>, etc.
     let opening_regex = Regex::new(r"<([a-zA-Z]+[0-9]+[a-zA-Z0-9_]*)>")
         .context("Failed to compile opening tag regex")?;
-    let closing_regex = Regex::new(r"</([a-zA-Z]+[0-9]+[a-zA-Z0-9_]*)>")
-        .context("Failed to compile closing tag regex")?;
 
     // Collect blocks to extract and remove
     let mut blocks_to_remove: Vec<(usize, usize)> = Vec::new();

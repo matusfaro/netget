@@ -7,7 +7,6 @@ pub mod actions;
 
 use anyhow::{Context, Result};
 use pnet::packet::icmp::echo_reply::EchoReplyPacket;
-use pnet::packet::icmp::echo_request::MutableEchoRequestPacket;
 use pnet::packet::icmp::time_exceeded::TimeExceededPacket;
 // Note: pnet doesn't provide timestamp_reply packet types
 use pnet::packet::icmp::{destination_unreachable::DestinationUnreachablePacket, IcmpPacket};
@@ -21,7 +20,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error};
 
 use crate::state::ClientId;
 use crate::llm::action_helper::call_llm_for_client;
@@ -29,24 +28,27 @@ use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_info, console_trace};
+use crate::{console_debug, console_info};
 
 pub use actions::IcmpClientProtocol;
 use actions::{
     ICMP_CLIENT_CONNECTED_EVENT, ICMP_DEST_UNREACHABLE_EVENT, ICMP_ECHO_REPLY_EVENT,
-    ICMP_TIME_EXCEEDED_EVENT, ICMP_TIMEOUT_EVENT,
+    ICMP_TIME_EXCEEDED_EVENT,
 };
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionState {
     Idle,
+    #[allow(dead_code)]
     Processing,
+    #[allow(dead_code)]
     Accumulating,
 }
 
 /// Per-client data for LLM handling
 struct ClientData {
+    #[allow(dead_code)]
     state: ConnectionState,
     memory: String,
 }
@@ -58,8 +60,11 @@ pub struct IcmpClient;
 #[derive(Clone)]
 struct PendingRequest {
     sent_at: Instant,
+    #[allow(dead_code)]
     identifier: u16,
+    #[allow(dead_code)]
     sequence: u16,
+    #[allow(dead_code)]
     destination_ip: Ipv4Addr,
 }
 

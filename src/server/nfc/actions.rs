@@ -143,6 +143,7 @@ impl Protocol for NfcServerProtocol {
                     "type": "set_atr",
                     "atr_hex": "3B8F8001804F0CA0000003060300030000000068"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "set_ndef_message".to_string(),
@@ -167,6 +168,7 @@ impl Protocol for NfcServerProtocol {
                         }
                     ]
                 }),
+            log_template: None,
             },
         ]
     }
@@ -193,6 +195,7 @@ impl Protocol for NfcServerProtocol {
                     type_hint: "string".to_string(),
                     description: "Status byte 2 (hex, default: '00' for success)".to_string(),
                     required: false,
+                log_template: None,
                 },
             ],
             example: json!({
@@ -330,7 +333,7 @@ impl Server for NfcServerProtocol {
             };
 
             NfcServer::start(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,

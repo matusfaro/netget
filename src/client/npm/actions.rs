@@ -150,6 +150,7 @@ impl Protocol for NpmClientProtocol {
                     "package_name": "express",
                     "version": "latest"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "search_packages".to_string(),
@@ -173,6 +174,7 @@ impl Protocol for NpmClientProtocol {
                     "query": "http server",
                     "limit": 10
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "download_tarball".to_string(),
@@ -203,6 +205,7 @@ impl Protocol for NpmClientProtocol {
                     "version": "4.17.21",
                     "output_path": "./lodash.tgz"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -211,6 +214,7 @@ impl Protocol for NpmClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -238,6 +242,7 @@ impl Protocol for NpmClientProtocol {
                     "type": "get_package_info",
                     "package_name": "express"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "search_packages".to_string(),
@@ -252,6 +257,7 @@ impl Protocol for NpmClientProtocol {
                     "type": "search_packages",
                     "query": "express middleware"
                 }),
+            log_template: None,
             },
         ]
     }

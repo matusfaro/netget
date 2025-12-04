@@ -73,6 +73,7 @@ impl Protocol for RedisClientProtocol {
                     "type": "execute_redis_command",
                     "command": "GET mykey"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -81,6 +82,7 @@ impl Protocol for RedisClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
+            log_template: None,
             },
         ]
     }
@@ -98,6 +100,7 @@ impl Protocol for RedisClientProtocol {
                 "type": "execute_redis_command",
                 "command": "SET result OK"
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

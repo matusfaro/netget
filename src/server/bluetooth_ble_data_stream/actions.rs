@@ -92,6 +92,7 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                     "sample_rate": 42,
                     "data_type": "example_data_type"
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "send_stream_data".to_string(),
@@ -115,6 +116,7 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                     "stream_id": "imu_sensor",
                     "data": {"x": 1.2, "y": 2.3, "z": -0.8}
                 }),
+            log_template: None,
             },
             ActionDefinition {
                 name: "stop_stream".to_string(),
@@ -129,6 +131,7 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                     "type": "stop_stream",
                     "stream_id": "example_stream_id"
                 }),
+            log_template: None,
             },
         ]
     }

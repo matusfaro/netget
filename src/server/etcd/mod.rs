@@ -461,7 +461,6 @@ impl EtcdServer {
         // If LLM didn't provide revision, increment it ourselves
         if revision == 0 {
             store_lock.increment_revision();
-            revision = store_lock.revision;
         }
 
         let response = PutResponse {

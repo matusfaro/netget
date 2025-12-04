@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -295,7 +296,7 @@ impl Server for LdapProtocol {
                 .unwrap_or(false);
 
             LdapServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -357,6 +358,7 @@ fn ldap_bind_response_action() -> ActionDefinition {
             "success": true,
             "message": "Bind successful"
         }),
+        log_template: None,
     }
 }
 
@@ -399,6 +401,7 @@ fn ldap_search_response_action() -> ActionDefinition {
             ],
             "result_code": 0
         }),
+        log_template: None,
     }
 }
 
@@ -439,6 +442,7 @@ fn ldap_add_response_action() -> ActionDefinition {
             "result_code": 0,
             "message": "Entry added successfully"
         }),
+        log_template: None,
     }
 }
 
@@ -479,6 +483,7 @@ fn ldap_modify_response_action() -> ActionDefinition {
             "result_code": 0,
             "message": "Entry modified successfully"
         }),
+        log_template: None,
     }
 }
 
@@ -519,6 +524,7 @@ fn ldap_delete_response_action() -> ActionDefinition {
             "result_code": 0,
             "message": "Entry deleted successfully"
         }),
+        log_template: None,
     }
 }
 
@@ -530,6 +536,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
+        log_template: None,
     }
 }
 
@@ -541,6 +548,7 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
+        log_template: None,
     }
 }
 
@@ -600,6 +608,12 @@ pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             LDAP_BIND_RESPONSE_ACTION.clone(),
             CLOSE_CONNECTION_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("LDAP BIND {client_ip} dn={dn}")
+                .with_debug("LDAP bind v{version} from {client_ip}:{client_port}, dn={dn}")
+                .with_trace("LDAP bind: {json_pretty(.)}"),
+        )
 });
 
 /// LDAP search event - triggered when client performs a directory search
@@ -635,6 +649,12 @@ pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             LDAP_SEARCH_RESPONSE_ACTION.clone(),
             CLOSE_CONNECTION_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("LDAP SEARCH {client_ip} base={base_dn}")
+                .with_debug("LDAP search from {client_ip}:{client_port}, base_dn={base_dn}, authenticated={authenticated}")
+                .with_trace("LDAP search: {json_pretty(.)}"),
+        )
 });
 
 /// LDAP unbind event - triggered when client closes connection
@@ -647,6 +667,12 @@ pub static LDAP_UNBIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         }])
         .with_actions(vec![])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("LDAP UNBIND {client_ip}")
+                .with_debug("LDAP unbind from {client_ip}:{client_port}, bind_dn={bind_dn}")
+                .with_trace("LDAP unbind: {json_pretty(.)}"),
+        )
 });
 
 /// Get LDAP event types

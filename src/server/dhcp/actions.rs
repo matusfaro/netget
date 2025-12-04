@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Context, Result};
@@ -151,7 +152,7 @@ impl Server for DhcpProtocol {
         Box::pin(async move {
             use crate::server::dhcp::DhcpServer;
             DhcpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
@@ -483,6 +484,7 @@ fn send_dhcp_offer_action() -> ActionDefinition {
             "dns_servers": ["8.8.8.8", "8.8.4.4"],
             "lease_time": 86400
         }),
+        log_template: None,
     }
 }
 
@@ -539,6 +541,7 @@ fn send_dhcp_ack_action() -> ActionDefinition {
             "dns_servers": ["8.8.8.8"],
             "lease_time": 86400
         }),
+        log_template: None,
     }
 }
 
@@ -564,6 +567,7 @@ fn send_dhcp_nak_action() -> ActionDefinition {
             "type": "send_dhcp_nak",
             "message": "Requested IP address not available"
         }),
+        log_template: None,
     }
 }
 
@@ -581,6 +585,7 @@ fn send_dhcp_response_action() -> ActionDefinition {
             "type": "send_dhcp_response",
             "data": "020106006395a3e3000080000000000000000000c0a8016400000000..."
         }),
+        log_template: None,
     }
 }
 
@@ -592,6 +597,7 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
+        log_template: None,
     }
 }
 
@@ -639,6 +645,12 @@ pub static DHCP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_dhcp_response_action(),
         ignore_request_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("DHCP {message_type} from {client_mac}")
+            .with_debug("DHCP {message_type}: MAC={client_mac}, requested_ip={requested_ip}")
+            .with_trace("DHCP request: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_dhcp_event_types() -> Vec<EventType> {
