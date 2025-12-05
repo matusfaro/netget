@@ -303,7 +303,11 @@ fn oauth2_authorize_response_action() -> ActionDefinition {
             "code": "AUTH_CODE_xyz123",
             "state": "random_state"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OAuth2 authorize code issued")
+                .with_debug("OAuth2 oauth2_authorize_response: code issued"),
+        ),
     }
 }
 
@@ -351,7 +355,11 @@ fn oauth2_token_response_action() -> ActionDefinition {
             "refresh_token": "REFRESH_xyz123",
             "scope": "read write"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OAuth2 token issued type={token_type} expires={expires_in}s")
+                .with_debug("OAuth2 oauth2_token_response: type={token_type}, expires_in={expires_in}, scope={scope}"),
+        ),
     }
 }
 
@@ -392,7 +400,11 @@ fn oauth2_introspect_response_action() -> ActionDefinition {
             "client_id": "client123",
             "exp": 1234567890
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OAuth2 introspect active={active}")
+                .with_debug("OAuth2 oauth2_introspect_response: active={active}, client_id={client_id}, scope={scope}"),
+        ),
     }
 }
 
@@ -426,7 +438,11 @@ fn oauth2_error_response_action() -> ActionDefinition {
             "error": "invalid_client",
             "error_description": "Client authentication failed"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OAuth2 error {error}")
+                .with_debug("OAuth2 oauth2_error_response: error={error}, description={error_description}"),
+        ),
     }
 }
 
@@ -475,14 +491,22 @@ pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Approve authorization and return code".to_string(),
                 parameters: vec![],
                 example: json!({}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OAuth2 authorize approved")
+                        .with_debug("OAuth2 oauth2_authorize_response"),
+                ),
             },
             ActionDefinition {
                 name: "oauth2_error_response".to_string(),
                 description: "Deny authorization with error".to_string(),
                 parameters: vec![],
                 example: json!({}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OAuth2 error")
+                        .with_debug("OAuth2 oauth2_error_response"),
+                ),
             },
         ])
         .with_log_template(
@@ -560,14 +584,22 @@ pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Issue access token".to_string(),
                 parameters: vec![],
                 example: json!({}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OAuth2 token issued")
+                        .with_debug("OAuth2 oauth2_token_response"),
+                ),
             },
             ActionDefinition {
                 name: "oauth2_error_response".to_string(),
                 description: "Deny token request with error".to_string(),
                 parameters: vec![],
                 example: json!({}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OAuth2 token error")
+                        .with_debug("OAuth2 oauth2_error_response"),
+                ),
             },
         ])
         .with_log_template(
@@ -600,7 +632,11 @@ pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Return token introspection result".to_string(),
             parameters: vec![],
             example: json!({}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> OAuth2 introspect result")
+                    .with_debug("OAuth2 oauth2_introspect_response"),
+            ),
         }])
         .with_log_template(
             LogTemplate::new()

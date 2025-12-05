@@ -3,6 +3,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -24,6 +25,12 @@ pub static RUNNING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE running: {pace_min_km} min/km, {cadence_spm} SPM")
+            .with_debug("BLE running measurement: pace={pace_min_km} min/km, cadence={cadence_spm} SPM")
+            .with_trace("BLE running event: {json_pretty(.)}"),
+    )
 });
 
 pub struct BluetoothBleRunningProtocol;
@@ -60,7 +67,11 @@ impl Protocol for BluetoothBleRunningProtocol {
                     "type": "set_pace",
                     "min_per_km": 42
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE running pace: {min_per_km} min/km")
+                        .with_debug("BLE running set_pace: min_per_km={min_per_km}"),
+                ),
             },
             ActionDefinition {
                 name: "set_cadence".to_string(),
@@ -75,7 +86,11 @@ impl Protocol for BluetoothBleRunningProtocol {
                     "type": "set_cadence",
                     "spm": 42
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE running cadence: {spm} SPM")
+                        .with_debug("BLE running set_cadence: spm={spm}"),
+                ),
             },
             ActionDefinition {
                 name: "simulate_run".to_string(),
@@ -90,7 +105,11 @@ impl Protocol for BluetoothBleRunningProtocol {
                     "type": "simulate_run",
                     "profile": "example_profile"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE running simulate: {profile}")
+                        .with_debug("BLE running simulate_run: profile={profile}"),
+                ),
             },
         ]
     }

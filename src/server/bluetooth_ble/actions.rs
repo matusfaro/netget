@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -43,6 +44,12 @@ pub static BLUETOOTH_BLE_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE GATT server started: {device_name}")
+            .with_debug("BLE GATT server started: device={device_name}")
+            .with_trace("BLE started: {json_pretty(.)}"),
+    )
 });
 
 /// Bluetooth adapter state changed event
@@ -60,6 +67,11 @@ pub static BLUETOOTH_STATE_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(||
         description: "Current state description".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE state: {state}")
+            .with_debug("BLE adapter state changed: {state}"),
+    )
 });
 
 /// Read request event
@@ -86,6 +98,12 @@ pub static BLUETOOTH_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE read: {characteristic_uuid}")
+            .with_debug("BLE read request: char={characteristic_uuid}, offset={offset}")
+            .with_trace("BLE read request: {json_pretty(.)}"),
+    )
 });
 
 /// Write request event
@@ -123,6 +141,12 @@ pub static BLUETOOTH_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE write: {characteristic_uuid}")
+            .with_debug("BLE write request: char={characteristic_uuid}, value={value}")
+            .with_trace("BLE write request: {json_pretty(.)}"),
+    )
 });
 
 /// Subscribe/unsubscribe to notifications event
@@ -150,6 +174,11 @@ pub static BLUETOOTH_SUBSCRIBE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE {subscribed} notify: {characteristic_uuid}")
+            .with_debug("BLE subscribe: char={characteristic_uuid}, subscribed={subscribed}"),
+    )
 });
 
 /// Bluetooth server protocol handler
@@ -405,7 +434,11 @@ fn add_service_action() -> ActionDefinition {
                 "initial_value": "0048"
             }]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE add service: {uuid}")
+                .with_debug("BLE add service: uuid={uuid}, chars={characteristics_len}"),
+        ),
     }
 }
 
@@ -424,7 +457,7 @@ fn start_advertising_action() -> ActionDefinition {
         example: json!({
             "type": "start_advertising"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_info("-> BLE start advertising")),
     }
 }
 
@@ -436,7 +469,7 @@ fn stop_advertising_action() -> ActionDefinition {
         example: json!({
             "type": "stop_advertising"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_info("-> BLE stop advertising")),
     }
 }
 
@@ -464,7 +497,11 @@ fn send_notification_action() -> ActionDefinition {
             "characteristic_uuid": "example_characteristic_uuid",
             "value": "example_value"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE notify: {characteristic_uuid}")
+                .with_debug("BLE send notification: char={characteristic_uuid}, value={value}"),
+        ),
     }
 }
 
@@ -484,7 +521,11 @@ fn respond_to_read_action() -> ActionDefinition {
             "type": "respond_to_read",
             "value": "example_value"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE read response")
+                .with_debug("BLE respond to read: value={value}"),
+        ),
     }
 }
 
@@ -503,6 +544,10 @@ fn respond_to_write_action() -> ActionDefinition {
     example: json!({
             "type": "respond_to_write"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE write response")
+                .with_debug("BLE respond to write: status={status}"),
+        ),
     }
 }

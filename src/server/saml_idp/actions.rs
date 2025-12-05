@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -289,7 +290,11 @@ fn send_saml_response_action() -> ActionDefinition {
             "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
             "relay_state": "original-sp-url"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML assertion sent")
+                .with_debug("SAML response: assertion with relay_state={relay_state}"),
+        ),
     }
 }
 
@@ -309,7 +314,11 @@ fn send_metadata_action() -> ActionDefinition {
             "type": "send_metadata",
             "metadata_xml": "<EntityDescriptor>...</EntityDescriptor>"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML metadata sent")
+                .with_debug("SAML metadata response sent"),
+        ),
     }
 }
 
@@ -337,7 +346,11 @@ fn send_error_response_action() -> ActionDefinition {
             "error_message": "Invalid credentials",
             "status_code": 403
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML error {status_code}: {error_message}")
+                .with_debug("SAML error response: {status_code} - {error_message}"),
+        ),
     }
 }
 
@@ -355,6 +368,12 @@ pub static SAML_IDP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
             "relay_state": "original-sp-url"
         }),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} SAML {method} {path} ({duration_ms}ms)")
+            .with_debug("SAML IDP request from {client_ip}: {method} {path}")
+            .with_trace("SAML IDP request: {json_pretty(.)}"),
     )
     .with_parameters(vec![
         Parameter {

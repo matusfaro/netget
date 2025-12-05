@@ -372,7 +372,11 @@ fn send_smtp_greeting_action() -> ActionDefinition {
             "hostname": "mail.example.com",
             "message": "ESMTP Service Ready"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP 220 {hostname}")
+                .with_debug("SMTP send_smtp_greeting: {hostname}"),
+        ),
     }
 }
 
@@ -390,7 +394,11 @@ fn send_smtp_ok_action() -> ActionDefinition {
             "type": "send_smtp_ok",
             "message": "Requested mail action okay, completed"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP 250 {message}")
+                .with_debug("SMTP send_smtp_ok: {message}"),
+        ),
     }
 }
 
@@ -417,7 +425,11 @@ fn send_smtp_ehlo_action() -> ActionDefinition {
             "hostname": "mail.example.com",
             "extensions": ["8BITMIME", "SIZE 10240000", "STARTTLS"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP EHLO {hostname}")
+                .with_debug("SMTP send_smtp_ehlo: {hostname}, extensions={extensions_len}"),
+        ),
     }
 }
 
@@ -429,7 +441,11 @@ fn send_smtp_start_data_action() -> ActionDefinition {
         example: json!({
             "type": "send_smtp_start_data"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP 354 Start data")
+                .with_debug("SMTP send_smtp_start_data"),
+        ),
     }
 }
 
@@ -456,7 +472,11 @@ fn send_smtp_error_action() -> ActionDefinition {
             "code": 550,
             "message": "Mailbox unavailable"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP {code} {message}")
+                .with_debug("SMTP send_smtp_error: {code} {message}"),
+        ),
     }
 }
 
@@ -474,7 +494,11 @@ fn send_smtp_quit_action() -> ActionDefinition {
             "type": "send_smtp_quit",
             "hostname": "mail.example.com"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP 221 closing")
+                .with_debug("SMTP send_smtp_quit: {hostname}"),
+        ),
     }
 }
 
@@ -492,7 +516,11 @@ fn send_smtp_message_action() -> ActionDefinition {
             "type": "send_smtp_message",
             "message": "250 2.1.0 Sender OK"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMTP {message}")
+                .with_debug("SMTP send_smtp_message: {message}"),
+        ),
     }
 }
 
@@ -504,7 +532,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("SMTP waiting for more data"),
+        ),
     }
 }
 
@@ -516,7 +547,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SMTP connection closed")
+                .with_debug("SMTP close_connection"),
+        ),
     }
 }
 

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -404,7 +405,11 @@ fn send_bitcoin_message_action() -> ActionDefinition {
             "type": "send_bitcoin_message",
             "hex_data": "f9beb4d976657261636b000000000000000000005df6e0e2"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC raw message")
+                .with_debug("BTC send_bitcoin_message"),
+        ),
     }
 }
 
@@ -459,7 +464,11 @@ fn send_version_action() -> ActionDefinition {
             "start_height": 0,
             "relay": false
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC version v{version} {user_agent}")
+                .with_debug("BTC send_version: version={version} user_agent={user_agent} height={start_height}"),
+        ),
     }
 }
 
@@ -478,7 +487,11 @@ fn send_verack_action() -> ActionDefinition {
             "type": "send_verack",
             "network": "mainnet"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC verack")
+                .with_debug("BTC send_verack: network={network}"),
+        ),
     }
 }
 
@@ -506,7 +519,11 @@ fn send_ping_action() -> ActionDefinition {
             "network": "mainnet",
             "nonce": 123456789
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC ping nonce={nonce}")
+                .with_debug("BTC send_ping: nonce={nonce} network={network}"),
+        ),
     }
 }
 
@@ -534,7 +551,11 @@ fn send_pong_action() -> ActionDefinition {
             "network": "mainnet",
             "nonce": 123456789
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC pong nonce={nonce}")
+                .with_debug("BTC send_pong: nonce={nonce} network={network}"),
+        ),
     }
 }
 
@@ -553,7 +574,11 @@ fn send_getaddr_action() -> ActionDefinition {
             "type": "send_getaddr",
             "network": "mainnet"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC getaddr")
+                .with_debug("BTC send_getaddr: network={network}"),
+        ),
     }
 }
 
@@ -566,7 +591,11 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BTC close")
+                .with_debug("BTC close_this_connection"),
+        ),
     }
 }
 
@@ -586,6 +615,12 @@ pub static BITCOIN_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(
         })
     )
     .with_actions(vec![send_version_action(), close_this_connection_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Bitcoin P2P connection opened from {client_ip}")
+            .with_debug("Bitcoin P2P connection from {client_ip}:{client_port}")
+            .with_trace("Bitcoin connection: {json_pretty(.)}"),
+    )
 });
 
 /// Bitcoin message received event
@@ -615,6 +650,12 @@ pub static BITCOIN_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
             send_getaddr_action(),
             close_this_connection_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} BTC {message_type}")
+                .with_debug("Bitcoin {message_type} from {client_ip}:{client_port}")
+                .with_trace("Bitcoin message: {json_pretty(.)}"),
+        )
 });
 
 /// Get Bitcoin event types

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -26,6 +27,12 @@ pub static KEYBOARD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
         description: "Unique client connection ID".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE keyboard client connected: {client_id}")
+            .with_debug("BLE keyboard client {client_id} connected")
+            .with_trace("BLE keyboard connected: {json_pretty(.)}"),
+    )
 });
 
 /// Keyboard disconnection event
@@ -43,6 +50,12 @@ pub static KEYBOARD_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::n
         description: "Unique client connection ID".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE keyboard client disconnected: {client_id}")
+            .with_debug("BLE keyboard client {client_id} disconnected")
+            .with_trace("BLE keyboard disconnected: {json_pretty(.)}"),
+    )
 });
 
 /// BLE HID Keyboard protocol handler
@@ -251,7 +264,11 @@ fn type_text_action() -> ActionDefinition {
             "type": "type_text",
             "text": "Hello, World!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE keyboard type: \"{text}\"")
+                .with_debug("BLE keyboard type_text: text=\"{text}\", client_id={client_id}"),
+        ),
     }
 }
 
@@ -277,7 +294,11 @@ fn press_key_action() -> ActionDefinition {
             "type": "press_key",
             "key": "enter"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE keyboard press: {key}")
+                .with_debug("BLE keyboard press_key: key={key}, client_id={client_id}"),
+        ),
     }
 }
 
@@ -310,7 +331,11 @@ fn key_combo_action() -> ActionDefinition {
             "modifiers": ["ctrl"],
             "key": "c"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE keyboard combo: {modifiers}+{key}")
+                .with_debug("BLE keyboard key_combo: modifiers={modifiers}, key={key}"),
+        ),
     }
 }
 
@@ -337,7 +362,11 @@ fn send_to_client_action() -> ActionDefinition {
             "client_id": 1,
             "report": "0000040000000000"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE keyboard HID to client {client_id}")
+                .with_debug("BLE keyboard send_to_client: client_id={client_id}, report={report}"),
+        ),
     }
 }
 
@@ -349,6 +378,10 @@ fn list_clients_action() -> ActionDefinition {
         example: json!({
             "type": "list_clients"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE keyboard list clients")
+                .with_debug("BLE keyboard list_clients"),
+        ),
     }
 }

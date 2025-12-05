@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -118,14 +119,22 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "reload_spec", "spec": "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0\npaths:\n  /users:\n    get:\n      responses:\n        '200':\n          description: List users"}),
-                log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OpenAPI spec reloaded")
+                        .with_debug("OpenAPI reload_spec: spec_len={spec_len}"),
+                ),
                 },
                 ActionDefinition {
                     name: "get_spec_info".to_string(),
                     description: "Get summary information about the loaded OpenAPI specification".to_string(),
                     parameters: vec![],
                     example: serde_json::json!({"type": "get_spec_info"}),
-                log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OpenAPI spec info requested")
+                        .with_debug("OpenAPI get_spec_info"),
+                ),
                 },
                 ActionDefinition {
                     name: "configure_error_handling".to_string(),
@@ -139,7 +148,11 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "configure_error_handling", "llm_on_invalid": false}),
-                log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OpenAPI error handling: llm_on_invalid={llm_on_invalid}")
+                        .with_debug("OpenAPI configure_error_handling: llm_on_invalid={llm_on_invalid}"),
+                ),
                 },
             ]
     }
@@ -157,7 +170,11 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "provide_openapi_spec", "spec": "openapi: 3.1.0\ninfo:\n  title: TODO API\n  version: 1.0.0\npaths:\n  /todos:\n    get:\n      operationId: listTodos\n      responses:\n        '200':\n          description: List of todos\n          content:\n            application/json:\n              schema:\n                type: array\n                items:\n                  type: object\n                  properties:\n                    id:\n                      type: integer\n                    title:\n                      type: string\n                    done:\n                      type: boolean"}),
-                log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OpenAPI spec provided")
+                        .with_debug("OpenAPI provide_openapi_spec: spec_len={spec_len}"),
+                ),
                 },
                 ActionDefinition {
                     name: "send_openapi_response".to_string(),
@@ -183,7 +200,11 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_openapi_response", "status_code": 200, "headers": {"content-type": "application/json"}, "body": "[{\"id\": 1, \"title\": \"Buy milk\", \"done\": false}]"}),
-                log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OpenAPI {status_code} ({body_len}B)")
+                        .with_debug("OpenAPI send_openapi_response: status={status_code} body_len={body_len}"),
+                ),
                 },
                 ActionDefinition {
                     name: "send_validation_error".to_string(),
@@ -203,7 +224,11 @@ impl Protocol for OpenApiProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_validation_error", "status_code": 405, "message": "Method GET not allowed for path /users, expected POST"}),
-                log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OpenAPI {status_code}: {message}")
+                        .with_debug("OpenAPI send_validation_error: status={status_code} message={message}"),
+                ),
                 },
             ]
     }

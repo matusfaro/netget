@@ -9,6 +9,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -16,12 +17,34 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 /// IPSec/IKEv2 handshake initiation event
-pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("ipsec_handshake", "IPSec/IKEv2 client initiated handshake", json!({"type": "placeholder", "event_id": "ipsec_handshake"})));
+pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ipsec_handshake",
+        "IPSec/IKEv2 client initiated handshake",
+        json!({"type": "placeholder", "event_id": "ipsec_handshake"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} IKE {exchange_type} ({duration_ms}ms)")
+            .with_debug("IKE handshake from {client_ip}: {ike_version} {exchange_type}")
+            .with_trace("IKE handshake: {json_pretty(.)}"),
+    )
+});
 
 /// IPSec/IKEv2 data packet event
-pub static IPSEC_DATA_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("ipsec_data", "IPSec encrypted data packet received", json!({"type": "placeholder", "event_id": "ipsec_data"})));
+pub static IPSEC_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ipsec_data",
+        "IPSec encrypted data packet received",
+        json!({"type": "placeholder", "event_id": "ipsec_data"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} ESP {data_len}B")
+            .with_debug("ESP data from {client_ip}: {data_len} bytes")
+            .with_trace("ESP packet: {json_pretty(.)}"),
+    )
+});
 
 /// Get all IPSec event types
 pub fn get_ipsec_event_types() -> Vec<EventType> {
@@ -243,7 +266,11 @@ fn accept_connection_action() -> ActionDefinition {
             "type": "accept_connection",
             "message": "Legitimate VPN connection accepted"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IKE accept")
+                .with_debug("IKE connection accepted: {message}"),
+        ),
     }
 }
 
@@ -262,7 +289,11 @@ fn reject_connection_action() -> ActionDefinition {
             "type": "reject_connection",
             "reason": "Suspicious reconnaissance attempt"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IKE reject: {reason}")
+                .with_debug("IKE connection rejected: {reason}"),
+        ),
     }
 }
 
@@ -281,7 +312,11 @@ fn log_handshake_action() -> ActionDefinition {
             "type": "log_handshake",
             "details": "VPN scan attempt detected"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IKE logged: {details}")
+                .with_debug("IKE handshake logged: {details}"),
+        ),
     }
 }
 
@@ -302,7 +337,11 @@ fn send_notify_action() -> ActionDefinition {
             "type": "send_notify",
             "notify_type": "NO_PROPOSAL_CHOSEN"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IKE NOTIFY {notify_type}")
+                .with_debug("IKE send notify: {notify_type}"),
+        ),
     }
 }
 
@@ -321,7 +360,11 @@ fn inspect_traffic_action() -> ActionDefinition {
             "type": "inspect_traffic",
             "inspect": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ESP inspect={inspect}")
+                .with_debug("ESP traffic inspection: {inspect}"),
+        ),
     }
 }
 
@@ -334,7 +377,7 @@ fn list_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_connections"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_debug("IPSec list connections")),
     }
 }
 
@@ -353,6 +396,10 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "peer_addr": "192.168.1.100:500"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IKE close {peer_addr}")
+                .with_debug("IPSec close connection: {peer_addr}"),
+        ),
     }
 }

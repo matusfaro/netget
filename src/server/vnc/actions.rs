@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
@@ -138,7 +139,11 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "send_framebuffer_update", "connection_id": "conn123", "width": 800, "height": 600, "commands": [{"SetBackground": {"color": {"r": 50, "g": 50, "b": 50, "a": 255}}}, {"DrawText": {"x": 100, "y": 100, "text": "Welcome to VNC", "font_size": 24, "color": {"r": 255, "g": 255, "b": 255, "a": 255}}}]}"#).unwrap(),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> VNC update {width}x{height}")
+                            .with_debug("VNC send_framebuffer_update: {width}x{height}, {commands_len} commands"),
+                    ),
                 },
                 ActionDefinition {
                     name: "disconnect_vnc_client".to_string(),
@@ -152,7 +157,11 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "disconnect_vnc_client", "connection_id": "conn123"}"#).unwrap(),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("VNC disconnect {connection_id}")
+                            .with_debug("VNC disconnect_vnc_client: connection_id={connection_id}"),
+                    ),
                 },
             ]
     }
@@ -170,7 +179,11 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "vnc_auth_success", "username": "guest"}"#).unwrap(),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> VNC auth success: {username}")
+                            .with_debug("VNC vnc_auth_success: username={username}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "vnc_auth_deny".to_string(),
@@ -184,7 +197,11 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "vnc_auth_deny", "reason": "Access denied"}"#).unwrap(),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> VNC auth denied: {reason}")
+                            .with_debug("VNC vnc_auth_deny: reason={reason}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "vnc_render_display".to_string(),
@@ -198,7 +215,11 @@ impl Protocol for VncProtocol {
                         },
                     ],
                     example: serde_json::from_str(r#"{"type": "vnc_render_display", "commands": [{"RenderAsciiArt": {"text": "+----------+\n| Login:   |\n| User: __ |\n+----------+", "font_size": 16, "fg_color": {"r": 255, "g": 255, "b": 255, "a": 255}, "bg_color": {"r": 0, "g": 0, "b": 0, "a": 255}}}]}"#).unwrap(),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> VNC render: {commands_len} commands")
+                            .with_debug("VNC vnc_render_display: {commands_len} commands"),
+                    ),
                 },
             ]
     }

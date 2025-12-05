@@ -3,6 +3,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -24,6 +25,12 @@ pub static STREAM_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE stream started: {stream_id} @ {sample_rate} Hz")
+            .with_debug("BLE data stream started: stream_id={stream_id}, sample_rate={sample_rate}")
+            .with_trace("BLE stream started: {json_pretty(.)}"),
+    )
 });
 
 pub static STREAM_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -41,6 +48,12 @@ pub static STREAM_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE stream data: {stream_id} seq={sequence}")
+            .with_debug("BLE stream data packet: stream_id={stream_id}, sequence={sequence}")
+            .with_trace("BLE stream data: {json_pretty(.)}"),
+    )
 });
 
 pub struct BluetoothBleDataStreamProtocol;
@@ -92,7 +105,11 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                     "sample_rate": 42,
                     "data_type": "example_data_type"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE stream start: {stream_id} ({data_type} @ {sample_rate} Hz)")
+                        .with_debug("BLE start_stream: stream_id={stream_id}, sample_rate={sample_rate}, data_type={data_type}"),
+                ),
             },
             ActionDefinition {
                 name: "send_stream_data".to_string(),
@@ -116,7 +133,12 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                     "stream_id": "imu_sensor",
                     "data": {"x": 1.2, "y": 2.3, "z": -0.8}
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE stream data: {stream_id}")
+                        .with_debug("BLE send_stream_data: stream_id={stream_id}")
+                        .with_trace("BLE stream data: {json_pretty(data)}"),
+                ),
             },
             ActionDefinition {
                 name: "stop_stream".to_string(),
@@ -131,7 +153,11 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                     "type": "stop_stream",
                     "stream_id": "example_stream_id"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE stream stop: {stream_id}")
+                        .with_debug("BLE stop_stream: stream_id={stream_id}"),
+                ),
             },
         ]
     }

@@ -300,7 +300,11 @@ fn send_to_connection_action() -> ActionDefinition {
             "connection_id": "conn_12345",
             "data": "Hello from TCP"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TCP to {connection_id}")
+                .with_debug("TCP send_to_connection: connection_id={connection_id}"),
+        ),
     }
 }
 
@@ -319,7 +323,11 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "connection_id": "conn_12345"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("TCP close connection {connection_id}")
+                .with_debug("TCP close_connection: connection_id={connection_id}"),
+        ),
     }
 }
 
@@ -332,7 +340,10 @@ fn list_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_connections"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("TCP list_connections"),
+        ),
     }
 }
 

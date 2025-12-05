@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -47,6 +48,12 @@ pub static DYNAMO_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![send_dynamo_response_action(), show_message_action()])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("DynamoDB {operation}")
+                .with_debug("DynamoDB {operation} on {table_name}")
+                .with_trace("DynamoDB: {json_pretty(.)}"),
+        )
 });
 
 fn send_dynamo_response_action() -> ActionDefinition {
@@ -72,7 +79,11 @@ fn send_dynamo_response_action() -> ActionDefinition {
             "status_code": 200,
             "body": "{\"Item\": {\"id\": {\"S\": \"user-123\"}, \"name\": {\"S\": \"Alice\"}}}"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DynamoDB response (HTTP {status_code})")
+                .with_debug("DynamoDB send_dynamo_response: status={status_code}"),
+        ),
     }
 }
 
@@ -90,7 +101,11 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Stored item in Users table"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DynamoDB message: {message}")
+                .with_debug("DynamoDB show_message: message='{message}'"),
+        ),
     }
 }
 

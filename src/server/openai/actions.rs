@@ -11,6 +11,8 @@ use serde_json::json;
 use std::sync::LazyLock;
 use tracing::debug;
 
+use crate::protocol::log_template::LogTemplate;
+
 /// OpenAI request event (for /v1/models, /v1/chat/completions, etc.)
 pub static OPENAI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("openai_request", "OpenAI API request received", json!({"type": "placeholder", "event_id": "openai_request"})).with_parameters(vec![
@@ -337,7 +339,11 @@ pub fn openai_chat_response_action() -> ActionDefinition {
             "content": "Hello! How can I help you today?",
             "model": "gpt-3.5-turbo"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenAI chat {model} ({content_len} chars)")
+                .with_debug("OpenAI openai_chat_response: model={model} content_len={content_len}"),
+        ),
     }
 }
 
@@ -356,7 +362,11 @@ pub fn openai_models_response_action() -> ActionDefinition {
             "type": "openai_models_response",
             "models": ["gpt-3.5-turbo", "gpt-4"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenAI models ({models_len} available)")
+                .with_debug("OpenAI openai_models_response: models_count={models_len}"),
+        ),
     }
 }
 
@@ -392,7 +402,11 @@ pub fn openai_error_response_action() -> ActionDefinition {
             "error_type": "invalid_request_error",
             "status": 401
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenAI error {status}: {message}")
+                .with_debug("OpenAI openai_error_response: status={status} type={error_type} message={message}"),
+        ),
     }
 }
 
@@ -405,7 +419,11 @@ pub fn list_active_chats_action() -> ActionDefinition {
         example: json!({
             "type": "list_active_chats"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenAI list active chats")
+                .with_debug("OpenAI list_active_chats"),
+        ),
     }
 }
 

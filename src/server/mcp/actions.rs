@@ -336,7 +336,11 @@ fn mcp_initialize_response_action() -> ActionDefinition {
                 }
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP initialize response")
+                .with_debug("MCP mcp_initialize_response"),
+        ),
     }
 }
 
@@ -355,7 +359,11 @@ fn mcp_resources_list_response_action() -> ActionDefinition {
             "type": "mcp_resources_list_response",
             "response": {"resources": []}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP resources list")
+                .with_debug("MCP mcp_resources_list_response"),
+        ),
     }
 }
 
@@ -374,7 +382,11 @@ fn mcp_resources_read_response_action() -> ActionDefinition {
             "type": "mcp_resources_read_response",
             "response": {"contents": [{"uri": "file:///example", "text": "content"}]}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP resource content")
+                .with_debug("MCP mcp_resources_read_response"),
+        ),
     }
 }
 
@@ -393,7 +405,11 @@ fn mcp_resources_subscribe_response_action() -> ActionDefinition {
             "type": "mcp_resources_subscribe_response",
             "response": {}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP subscribe confirmed")
+                .with_debug("MCP mcp_resources_subscribe_response"),
+        ),
     }
 }
 
@@ -414,7 +430,11 @@ fn mcp_tools_list_response_action() -> ActionDefinition {
             "type": "mcp_tools_list_response",
             "response": {"tools": []}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP tools list")
+                .with_debug("MCP mcp_tools_list_response"),
+        ),
     }
 }
 
@@ -434,7 +454,11 @@ fn mcp_tools_call_response_action() -> ActionDefinition {
             "type": "mcp_tools_call_response",
             "response": {"content": [{"type": "text", "text": "result"}]}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP tool result")
+                .with_debug("MCP mcp_tools_call_response"),
+        ),
     }
 }
 
@@ -453,7 +477,11 @@ fn mcp_prompts_list_response_action() -> ActionDefinition {
             "type": "mcp_prompts_list_response",
             "response": {"prompts": []}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP prompts list")
+                .with_debug("MCP mcp_prompts_list_response"),
+        ),
     }
 }
 
@@ -472,7 +500,11 @@ fn mcp_prompts_get_response_action() -> ActionDefinition {
             "type": "mcp_prompts_get_response",
             "response": {"messages": []}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP prompt template")
+                .with_debug("MCP mcp_prompts_get_response"),
+        ),
     }
 }
 
@@ -491,7 +523,11 @@ fn mcp_completion_response_action() -> ActionDefinition {
             "type": "mcp_completion_response",
             "response": {"completion": {"values": [], "total": 0, "hasMore": false}}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP completion")
+                .with_debug("MCP mcp_completion_response"),
+        ),
     }
 }
 
@@ -526,7 +562,11 @@ fn mcp_error_response_action() -> ActionDefinition {
             "code": -32601,
             "message": "Method not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MCP error {code}: {message}")
+                .with_debug("MCP mcp_error_response: code={code} message={message}"),
+        ),
     }
 }
 

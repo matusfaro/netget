@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -310,7 +311,6 @@ impl Protocol for WebdavClientProtocol {
                     type_hint: "string".to_string(),
                     description: "Depth header".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -318,6 +318,11 @@ impl Protocol for WebdavClientProtocol {
                 "path": "/dav/folder/",
                 "depth": "1"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebDAV propfind {path}")
+                    .with_debug("WebDAV propfind: path={path} depth={depth}"),
+            ),
         }]
     }
     fn protocol_name(&self) -> &'static str {

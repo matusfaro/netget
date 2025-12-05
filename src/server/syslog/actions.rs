@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -206,7 +207,11 @@ fn forward_syslog_action() -> ActionDefinition {
             "target": "192.168.1.100:514",
             "message": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for user on /dev/pts/8"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Syslog forwarded to {target}")
+                .with_debug("Syslog forward_syslog: target={target}"),
+        ),
     }
 }
 
@@ -225,7 +230,11 @@ fn store_syslog_message_action() -> ActionDefinition {
             "type": "store_syslog_message",
             "message": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for user on /dev/pts/8"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Syslog stored")
+                .with_debug("Syslog store_syslog_message"),
+        ),
     }
 }
 
@@ -238,7 +247,11 @@ fn ignore_syslog_message_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_syslog_message"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Syslog ignored")
+                .with_debug("Syslog ignore_syslog_message"),
+        ),
     }
 }
 

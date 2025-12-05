@@ -347,7 +347,11 @@ fn list_cassandra_connections_action() -> ActionDefinition {
         description: "List all active Cassandra connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_cassandra_connections"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Cassandra listing connections")
+                .with_debug("Cassandra list_cassandra_connections"),
+        ),
     }
 }
 
@@ -357,7 +361,11 @@ fn cassandra_ready_action() -> ActionDefinition {
         description: "Send READY response after successful STARTUP".to_string(),
         parameters: vec![],
         example: json!({"type": "cassandra_ready"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Cassandra READY")
+                .with_debug("Cassandra cassandra_ready"),
+        ),
     }
 }
 
@@ -378,7 +386,11 @@ fn cassandra_supported_action() -> ActionDefinition {
                 "COMPRESSION": []
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Cassandra SUPPORTED")
+                .with_debug("Cassandra cassandra_supported"),
+        ),
     }
 }
 
@@ -408,7 +420,11 @@ fn cassandra_result_rows_action() -> ActionDefinition {
             ],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Cassandra {columns_len} cols, {rows_len} rows")
+                .with_debug("Cassandra result_rows: {columns_len} columns, {rows_len} rows"),
+        ),
     }
 }
 
@@ -444,7 +460,11 @@ fn cassandra_prepared_action() -> ActionDefinition {
                 {"name": "name", "type": "varchar"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Cassandra PREPARED ({columns_len} cols)")
+                .with_debug("Cassandra cassandra_prepared: {columns_len} columns"),
+        ),
     }
 }
 
@@ -454,7 +474,11 @@ fn cassandra_auth_success_action() -> ActionDefinition {
         description: "Accept authentication and send AUTH_SUCCESS".to_string(),
         parameters: vec![],
         example: json!({"type": "cassandra_auth_success"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Cassandra AUTH_SUCCESS")
+                .with_debug("Cassandra cassandra_auth_success"),
+        ),
     }
 }
 
@@ -481,7 +505,11 @@ fn cassandra_error_action() -> ActionDefinition {
             "error_code": 0x2200,
             "message": "Syntax error in CQL query"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Cassandra ERROR 0x{error_code:04X}: {message}")
+                .with_debug("Cassandra cassandra_error: 0x{error_code:04X}"),
+        ),
     }
 }
 
@@ -491,7 +519,11 @@ fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current Cassandra connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Cassandra connection closed")
+                .with_debug("Cassandra close_this_connection"),
+        ),
     }
 }
 

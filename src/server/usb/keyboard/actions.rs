@@ -6,6 +6,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 #[cfg(feature = "usb-keyboard")]
+use crate::protocol::log_template::LogTemplate;
+#[cfg(feature = "usb-keyboard")]
 use crate::protocol::EventType;
 #[cfg(feature = "usb-keyboard")]
 use crate::server::connection::ConnectionId;
@@ -432,7 +434,11 @@ fn type_text_action() -> ActionDefinition {
             "text": "Hello, World!",
             "typing_speed_ms": 50
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB keyboard type '{text}'")
+                .with_debug("USB-Keyboard type_text: text='{text}' speed={typing_speed_ms}ms"),
+        ),
     }
 }
 
@@ -462,7 +468,11 @@ fn press_key_action() -> ActionDefinition {
             "key": "c",
             "modifiers": ["ctrl"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB keyboard press '{key}'")
+                .with_debug("USB-Keyboard press_key: key='{key}' modifiers={modifiers}"),
+        ),
     }
 }
 
@@ -481,7 +491,11 @@ fn press_key_combo_action() -> ActionDefinition {
             "type": "press_key_combo",
             "keys": ["ctrl", "alt", "delete"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB keyboard combo {keys}")
+                .with_debug("USB-Keyboard press_key_combo: keys={keys}"),
+        ),
     }
 }
 
@@ -494,7 +508,11 @@ fn release_all_keys_action() -> ActionDefinition {
         example: json!({
             "type": "release_all_keys"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB keyboard release all keys")
+                .with_debug("USB-Keyboard release_all_keys"),
+        ),
     }
 }
 
@@ -507,6 +525,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB keyboard wait for more")
+                .with_debug("USB-Keyboard wait_for_more"),
+        ),
     }
 }

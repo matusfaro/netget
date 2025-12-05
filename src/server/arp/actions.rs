@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -131,6 +132,9 @@ impl Server for ArpProtocol {
                 .context("ARP requires network interface")?
                 .to_string();
 
+            // Get listen addr before consuming ctx fields
+            let listen_addr = ctx.legacy_listen_addr();
+
             // Spawn the ARP server
             let _interface_name = ArpServer::spawn_with_llm(
                 interface,
@@ -143,7 +147,7 @@ impl Server for ArpProtocol {
 
             // ARP doesn't bind to a socket, so return a dummy address
             // The listen_addr from context is just a placeholder
-            Ok(ctx.legacy_listen_addr())
+            Ok(listen_addr)
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -266,7 +270,11 @@ fn send_arp_reply_action() -> ActionDefinition {
             "target_mac": "11:22:33:44:55:66",
             "target_ip": "192.168.1.1"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ARP reply {sender_ip} is-at {sender_mac}")
+                .with_debug("ARP send_arp_reply: {sender_mac}/{sender_ip} -> {target_mac}/{target_ip}"),
+        ),
     }
 }
 
@@ -279,7 +287,11 @@ fn ignore_arp_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_arp"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ARP ignored")
+                .with_debug("ARP ignore_arp"),
+        ),
     }
 }
 
@@ -338,6 +350,12 @@ pub static ARP_REQUEST_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![send_arp_reply_action(), ignore_arp_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("ARP {operation} {sender_ip} ({sender_mac}) -> {target_ip}")
+            .with_debug("ARP {operation}: {sender_mac}/{sender_ip} -> {target_mac}/{target_ip}")
+            .with_trace("ARP packet: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_arp_event_types() -> Vec<EventType> {

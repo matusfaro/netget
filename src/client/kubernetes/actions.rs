@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -306,6 +307,11 @@ impl Protocol for KubernetesClientProtocol {
                 "type": "k8s_list_pods",
                 "namespace": "default"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> K8s list pods (ns={namespace})")
+                    .with_debug("Kubernetes k8s_list_pods: namespace={namespace}"),
+            ),
         }]
     }
 

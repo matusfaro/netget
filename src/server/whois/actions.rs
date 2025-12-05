@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -231,7 +232,11 @@ fn send_whois_response_action() -> ActionDefinition {
             "type": "send_whois_response",
             "response": "Domain Name: example.com\nRegistrar: Example Inc.\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WHOIS response ({response_len}B)")
+                .with_debug("WHOIS send_whois_response: {response_len} bytes"),
+        ),
     }
 }
 
@@ -278,7 +283,11 @@ fn send_whois_record_action() -> ActionDefinition {
             "registrant": "Example Inc.",
             "name_servers": ["ns1.example.com", "ns2.example.com"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WHOIS {domain} ({registrar})")
+                .with_debug("WHOIS send_whois_record: domain={domain}, registrar={registrar}"),
+        ),
     }
 }
 
@@ -296,7 +305,11 @@ fn send_error_action() -> ActionDefinition {
             "type": "send_error",
             "message": "Domain not found in database"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WHOIS error: {message}")
+                .with_debug("WHOIS send_error: {message}"),
+        ),
     }
 }
 
@@ -306,7 +319,11 @@ fn close_connection_action() -> ActionDefinition {
         description: "Close the WHOIS connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_connection"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WHOIS connection closed")
+                .with_debug("WHOIS close_connection"),
+        ),
     }
 }
 
@@ -319,6 +336,12 @@ pub static WHOIS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "The WHOIS query string".to_string(),
             required: true,
         }])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("WHOIS {query}")
+                .with_debug("WHOIS query: {query}")
+                .with_trace("WHOIS: {json_pretty(.)}"),
+        )
         .with_actions(vec![
             send_whois_response_action(),
             send_whois_record_action(),

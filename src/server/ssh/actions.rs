@@ -327,7 +327,11 @@ fn send_ssh_data_action() -> ActionDefinition {
             "type": "send_ssh_data",
             "data": "SSH-2.0-OpenSSH_8.0\r\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SSH {output_bytes}B")
+                .with_debug("SSH send_ssh_data: {output_bytes}B"),
+        ),
     }
 }
 
@@ -339,7 +343,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("SSH waiting for more data"),
+        ),
     }
 }
 
@@ -351,7 +358,11 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SSH connection closed")
+                .with_debug("SSH close_this_connection"),
+        ),
     }
 }
 
@@ -370,7 +381,11 @@ fn close_ssh_connection_action() -> ActionDefinition {
             "type": "close_ssh_connection",
             "connection_id": "conn_12345"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SSH close connection {connection_id}")
+                .with_debug("SSH close_ssh_connection: {connection_id}"),
+        ),
     }
 }
 
@@ -383,7 +398,10 @@ fn list_ssh_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_ssh_connections"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("SSH list_ssh_connections"),
+        ),
     }
 }
 
@@ -409,7 +427,12 @@ pub static SSH_SEND_BANNER_ACTION: LazyLock<ActionDefinition> =
             "type": "ssh_send_banner",
             "banner": "Welcome to NetGet SSH Server!\nType 'help' for available commands.\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SSH banner")
+                .with_debug("SSH ssh_send_banner")
+                .with_trace("SSH banner: {preview(banner,100)}"),
+        ),
     });
 
 /// SSH authentication decision action constant
@@ -430,7 +453,11 @@ pub static SSH_AUTH_DECISION_ACTION: LazyLock<ActionDefinition> =
             "type": "ssh_auth_decision",
             "allowed": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SSH auth: {allowed}")
+                .with_debug("SSH ssh_auth_decision: allowed={allowed}"),
+        ),
     });
 
 /// SSH shell response action constant
@@ -451,7 +478,12 @@ pub static SSH_SHELL_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new
             "type": "ssh_shell_response",
             "response": "/home/user\n"
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SSH response {output_bytes}B")
+                .with_debug("SSH ssh_shell_response: {output_bytes}B")
+                .with_trace("SSH response: {preview(response,200)}"),
+        ),
     }
 });
 
@@ -465,7 +497,11 @@ pub static SSH_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::n
         example: json!({
             "type": "close_this_connection"
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SSH connection closed")
+                .with_debug("SSH close_this_connection"),
+        ),
     }
 });
 

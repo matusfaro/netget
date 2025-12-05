@@ -99,7 +99,11 @@ fn send_s3_object_action() -> ActionDefinition {
             "content_type": "text/plain",
             "etag": "\"d41d8cd98f00b204e9800998ecf8427e\""
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> S3 send object ({content_type})")
+                .with_debug("S3 send_s3_object: content_type={content_type} etag={etag}"),
+        ),
     }
 }
 
@@ -130,7 +134,11 @@ fn send_s3_object_list_action() -> ActionDefinition {
             ],
             "is_truncated": false
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> S3 list objects ({objects_len} items)")
+                .with_debug("S3 send_s3_object_list: count={objects_len} truncated={is_truncated}"),
+        ),
     }
 }
 
@@ -151,7 +159,11 @@ fn send_s3_bucket_list_action() -> ActionDefinition {
                 {"name": "test-bucket", "creation_date": "2024-01-02T00:00:00Z"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> S3 list buckets ({buckets_len} buckets)")
+                .with_debug("S3 send_s3_bucket_list: count={buckets_len}"),
+        ),
     }
 }
 
@@ -186,7 +198,11 @@ fn send_s3_error_action() -> ActionDefinition {
             "message": "The specified key does not exist",
             "status_code": 404
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> S3 error {error_code} (HTTP {status_code})")
+                .with_debug("S3 send_s3_error: error_code={error_code} status={status_code} message='{message}'"),
+        ),
     }
 }
 
@@ -204,7 +220,11 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Stored object in bucket"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> S3 message: {message}")
+                .with_debug("S3 show_message: message='{message}'"),
+        ),
     }
 }
 

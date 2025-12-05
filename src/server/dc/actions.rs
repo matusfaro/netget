@@ -5,6 +5,7 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 use crate::protocol::{
+    log_template::LogTemplate,
     metadata::{DevelopmentState, ProtocolMetadataV2},
     EventType,
 };
@@ -458,7 +459,11 @@ fn send_dc_lock_action() -> ActionDefinition {
             "lock": "EXTENDEDPROTOCOLABCABCABCABCABCABC",
             "pk": "NetGetHub"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $Lock challenge")
+                .with_debug("DC send_dc_lock: pk={pk}"),
+        ),
     }
 }
 
@@ -476,7 +481,11 @@ fn send_dc_hello_action() -> ActionDefinition {
             "type": "send_dc_hello",
             "nickname": "alice"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $Hello {nickname}")
+                .with_debug("DC send_dc_hello: nickname={nickname}"),
+        ),
     }
 }
 
@@ -494,7 +503,11 @@ fn send_dc_hubname_action() -> ActionDefinition {
             "type": "send_dc_hubname",
             "name": "NetGet DC Hub"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $HubName '{name}'")
+                .with_debug("DC send_dc_hubname: name={name}"),
+        ),
     }
 }
 
@@ -528,7 +541,11 @@ fn send_dc_message_action() -> ActionDefinition {
             "source": "HubBot",
             "message": "Welcome to the hub!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC PM {source}->{target}")
+                .with_debug("DC send_dc_message: from={source} to={target}"),
+        ),
     }
 }
 
@@ -555,7 +572,11 @@ fn send_dc_broadcast_action() -> ActionDefinition {
             "source": "Hub",
             "message": "Server maintenance in 5 minutes"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC broadcast from {source}")
+                .with_debug("DC send_dc_broadcast: source={source}"),
+        ),
     }
 }
 
@@ -573,7 +594,11 @@ fn send_dc_userlist_action() -> ActionDefinition {
             "type": "send_dc_userlist",
             "users": ["alice", "bob", "charlie"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $NickList ({users_len} users)")
+                .with_debug("DC send_dc_userlist: count={users_len}"),
+        ),
     }
 }
 
@@ -621,7 +646,11 @@ fn send_dc_search_result_action() -> ActionDefinition {
             "slots": 2,
             "hub_name": "NetGetHub"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $SR {filename} ({size}B)")
+                .with_debug("DC send_dc_search_result: source={source} file={filename} size={size}"),
+        ),
     }
 }
 
@@ -639,7 +668,11 @@ fn send_dc_kick_action() -> ActionDefinition {
             "type": "send_dc_kick",
             "nickname": "alice"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $Kick {nickname}")
+                .with_debug("DC send_dc_kick: nickname={nickname}"),
+        ),
     }
 }
 
@@ -657,7 +690,11 @@ fn send_dc_redirect_action() -> ActionDefinition {
             "type": "send_dc_redirect",
             "address": "hub.example.com:411"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC $ForceMove {address}")
+                .with_debug("DC send_dc_redirect: address={address}"),
+        ),
     }
 }
 
@@ -675,6 +712,10 @@ fn send_dc_raw_action() -> ActionDefinition {
             "type": "send_dc_raw",
             "command": "$HubTopic Welcome to NetGet!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DC raw command")
+                .with_debug("DC send_dc_raw: command={command}"),
+        ),
     }
 }

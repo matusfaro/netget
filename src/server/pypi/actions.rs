@@ -11,6 +11,8 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use crate::protocol::log_template::LogTemplate;
+
 /// PyPI protocol action handler
 pub struct PypiProtocol;
 
@@ -216,7 +218,11 @@ fn send_pypi_response_action() -> ActionDefinition {
             },
             "body": "<!DOCTYPE html>\n<html>\n<body>\n<a href=\"hello-world/\">hello-world</a>\n</body>\n</html>"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PyPI {status} ({body_len}B)")
+                .with_debug("PyPI send_pypi_response: status={status}"),
+        ),
     }
 }
 

@@ -10,6 +10,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 #[cfg(feature = "usb-fido2")]
+use crate::protocol::log_template::LogTemplate;
+#[cfg(feature = "usb-fido2")]
 use crate::protocol::EventType;
 #[cfg(feature = "usb-fido2")]
 use crate::server::connection::ConnectionId;
@@ -249,7 +251,11 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "approve_request", "approval_id": 1}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 approve request #{approval_id}")
+                        .with_debug("USB-FIDO2 approve_request: approval_id={approval_id}"),
+                ),
             },
             ActionDefinition {
                 name: "deny_request".to_string(),
@@ -263,14 +269,22 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "deny_request", "approval_id": 1}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 deny request #{approval_id}")
+                        .with_debug("USB-FIDO2 deny_request: approval_id={approval_id}"),
+                ),
             },
             ActionDefinition {
                 name: "list_credentials".to_string(),
                 description: "List all stored FIDO2 credentials".to_string(),
                 parameters: vec![],
                 example: serde_json::json!({"type": "list_credentials"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 list credentials")
+                        .with_debug("USB-FIDO2 list_credentials"),
+                ),
             },
             ActionDefinition {
                 name: "delete_credential".to_string(),
@@ -282,7 +296,11 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "delete_credential", "rp_id": "example.com"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 delete credential for '{rp_id}'")
+                        .with_debug("USB-FIDO2 delete_credential: rp_id='{rp_id}'"),
+                ),
             },
             ActionDefinition {
                 name: "save_credentials".to_string(),
@@ -290,7 +308,11 @@ impl Protocol for UsbFido2Protocol {
                     .to_string(),
                 parameters: vec![],
                 example: serde_json::json!({"type": "save_credentials"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 save credentials")
+                        .with_debug("USB-FIDO2 save_credentials"),
+                ),
             },
             ActionDefinition {
                 name: "load_credentials".to_string(),
@@ -303,14 +325,22 @@ impl Protocol for UsbFido2Protocol {
                     required: true,
                 }],
                 example: serde_json::json!({"type": "load_credentials", "credentials_json": "[]"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 load credentials")
+                        .with_debug("USB-FIDO2 load_credentials"),
+                ),
             },
             ActionDefinition {
                 name: "list_pending_approvals".to_string(),
                 description: "List all pending approval requests awaiting LLM decision".to_string(),
                 parameters: vec![],
                 example: serde_json::json!({"type": "list_pending_approvals"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> FIDO2 list pending approvals")
+                        .with_debug("USB-FIDO2 list_pending_approvals"),
+                ),
             },
         ]
     }

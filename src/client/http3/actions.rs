@@ -206,7 +206,6 @@ impl Protocol for Http3ClientProtocol {
                     type_hint: "number".to_string(),
                     description: "Stream priority (0-7)".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -216,6 +215,7 @@ impl Protocol for Http3ClientProtocol {
                 "body": "{\"key\": \"value\"}",
                 "priority": 3
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

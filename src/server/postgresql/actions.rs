@@ -313,7 +313,11 @@ pub fn postgresql_query_response_action() -> ActionDefinition {
             "columns": [{"name": "id", "type": "int4"}, {"name": "name", "type": "text"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PostgreSQL {columns_len} cols, {rows_len} rows")
+                .with_debug("PostgreSQL query_response: {columns_len} columns, {rows_len} rows"),
+        ),
     }
 }
 
@@ -348,7 +352,11 @@ pub fn postgresql_error_response_action() -> ActionDefinition {
             "code": "42P01",
             "message": "relation \"table_name\" does not exist"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PostgreSQL {severity} {code}: {message}")
+                .with_debug("PostgreSQL error_response: {severity} {code}"),
+        ),
     }
 }
 
@@ -369,7 +377,11 @@ pub fn postgresql_ok_response_action() -> ActionDefinition {
             "type": "postgresql_ok_response",
             "tag": "INSERT 0 1"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PostgreSQL OK: {tag}")
+                .with_debug("PostgreSQL ok_response: {tag}"),
+        ),
     }
 }
 
@@ -380,7 +392,11 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current PostgreSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("PostgreSQL connection closed")
+                .with_debug("PostgreSQL close_this_connection"),
+        ),
     }
 }
 
@@ -391,7 +407,11 @@ pub fn list_postgresql_connections_action() -> ActionDefinition {
         description: "List all active PostgreSQL connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_postgresql_connections"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("PostgreSQL listing connections")
+                .with_debug("PostgreSQL list_postgresql_connections"),
+        ),
     }
 }
 
@@ -423,7 +443,11 @@ pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
             "columns": [{"name": "id", "type": "int4"}, {"name": "name", "type": "text"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PostgreSQL {columns_len} cols, {rows_len} rows")
+                .with_debug("PostgreSQL query_response: {columns_len} columns, {rows_len} rows"),
+        ),
     }
 });
 
@@ -458,7 +482,11 @@ pub static POSTGRESQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
             "code": "42P01",
             "message": "relation \"table_name\" does not exist"
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PostgreSQL {severity} {code}: {message}")
+                .with_debug("PostgreSQL error_response: {severity} {code}"),
+        ),
     }
 });
 
@@ -479,7 +507,11 @@ pub static POSTGRESQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock:
             "type": "postgresql_ok_response",
             "tag": "INSERT 0 1"
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> PostgreSQL OK: {tag}")
+                .with_debug("PostgreSQL ok_response: {tag}"),
+        ),
     }
 });
 
@@ -490,7 +522,11 @@ pub static POSTGRESQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
         description: "Close the current PostgreSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("PostgreSQL connection closed")
+                .with_debug("PostgreSQL close_this_connection"),
+        ),
     });
 
 // ============================================================================

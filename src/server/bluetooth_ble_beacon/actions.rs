@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -21,11 +22,23 @@ pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE beacon started: {beacon_type}")
+            .with_debug("BLE beacon advertising started: type={beacon_type}")
+            .with_trace("BLE beacon started: {json_pretty(.)}"),
+    )
 });
 
 /// Beacon stopped event
 pub static BEACON_STOPPED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("beacon_stopped", "BLE beacon advertising stopped", json!({"type": "placeholder", "event_id": "beacon_stopped"})).with_parameters(vec![])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE beacon stopped")
+            .with_debug("BLE beacon advertising stopped")
+            .with_trace("BLE beacon stopped: {json_pretty(.)}"),
+    )
 });
 
 /// BLE Beacon protocol handler
@@ -232,7 +245,11 @@ fn advertise_ibeacon_action() -> ActionDefinition {
             "major": 42,
             "minor": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE iBeacon: {uuid} ({major}/{minor})")
+                .with_debug("BLE advertise_ibeacon: uuid={uuid}, major={major}, minor={minor}"),
+        ),
     }
 }
 
@@ -265,7 +282,11 @@ fn advertise_eddystone_uid_action() -> ActionDefinition {
             "namespace": "example_namespace",
             "instance": "example_instance"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE Eddystone-UID: {namespace}/{instance}")
+                .with_debug("BLE advertise_eddystone_uid: namespace={namespace}, instance={instance}"),
+        ),
     }
 }
 
@@ -291,7 +312,11 @@ fn advertise_eddystone_url_action() -> ActionDefinition {
             "type": "advertise_eddystone_url",
             "url": "example_url"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE Eddystone-URL: {url}")
+                .with_debug("BLE advertise_eddystone_url: url={url}"),
+        ),
     }
 }
 
@@ -328,7 +353,11 @@ fn advertise_eddystone_tlm_action() -> ActionDefinition {
         example: json!({
             "type": "advertise_eddystone_tlm"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE Eddystone-TLM: {battery_voltage}mV, {temperature}°C")
+                .with_debug("BLE advertise_eddystone_tlm: battery={battery_voltage}mV, temp={temperature}°C"),
+        ),
     }
 }
 
@@ -340,6 +369,10 @@ fn stop_beacon_action() -> ActionDefinition {
         example: json!({
             "type": "stop_beacon"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE beacon stopped")
+                .with_debug("BLE stop_beacon"),
+        ),
     }
 }

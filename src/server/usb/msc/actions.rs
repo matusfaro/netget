@@ -6,6 +6,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 #[cfg(feature = "usb-msc")]
+use crate::protocol::log_template::LogTemplate;
+#[cfg(feature = "usb-msc")]
 use crate::protocol::EventType;
 #[cfg(feature = "usb-msc")]
 use crate::server::connection::ConnectionId;
@@ -528,7 +530,11 @@ fn mount_disk_action() -> ActionDefinition {
             "disk_image": "/path/to/disk.img",
             "write_protect": false
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB MSC mount disk '{disk_image}'")
+                .with_debug("USB-MSC mount_disk: path={disk_image} write_protect={write_protect}"),
+        ),
     }
 }
 
@@ -547,7 +553,11 @@ fn eject_disk_action() -> ActionDefinition {
             "type": "eject_disk",
             "connection_id": "123"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB MSC eject disk")
+                .with_debug("USB-MSC eject_disk: connection_id={connection_id}"),
+        ),
     }
 }
 
@@ -575,7 +585,11 @@ fn set_write_protect_action() -> ActionDefinition {
             "connection_id": "123",
             "enabled": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB MSC write protect {enabled}")
+                .with_debug("USB-MSC set_write_protect: enabled={enabled}"),
+        ),
     }
 }
 
@@ -588,6 +602,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB MSC wait for more")
+                .with_debug("USB-MSC wait_for_more"),
+        ),
     }
 }

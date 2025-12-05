@@ -651,7 +651,11 @@ fn send_imap_greeting_action() -> ActionDefinition {
             "hostname": "mail.example.com",
             "capabilities": ["IMAP4rev1", "IDLE", "NAMESPACE"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP greeting {hostname}")
+                .with_debug("IMAP send_imap_greeting: {hostname}"),
+        ),
     }
 }
 
@@ -693,7 +697,11 @@ fn send_imap_response_action() -> ActionDefinition {
             "code": "READ-WRITE",
             "message": "SELECT completed"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP {tag} {status}")
+                .with_debug("IMAP send_imap_response: {tag} {status} {message}"),
+        ),
     }
 }
 
@@ -721,7 +729,11 @@ fn send_imap_untagged_action() -> ActionDefinition {
             "response_type": "OK",
             "data": "[PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP * {response_type}")
+                .with_debug("IMAP send_imap_untagged: {response_type}"),
+        ),
     }
 }
 
@@ -739,7 +751,11 @@ fn send_imap_capability_action() -> ActionDefinition {
             "type": "send_imap_capability",
             "capabilities": ["IMAP4rev1", "IDLE", "NAMESPACE", "UIDPLUS"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP CAPABILITY")
+                .with_debug("IMAP send_imap_capability: {capabilities_len} caps"),
+        ),
     }
 }
 
@@ -768,7 +784,11 @@ fn send_imap_list_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP LIST {mailboxes_len} mailboxes")
+                .with_debug("IMAP send_imap_list: {mailboxes_len} mailboxes"),
+        ),
     }
 }
 
@@ -802,7 +822,11 @@ fn send_imap_status_action() -> ActionDefinition {
                 "UNSEEN": 3
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP STATUS {mailbox}")
+                .with_debug("IMAP send_imap_status: {mailbox}"),
+        ),
     }
 }
 
@@ -835,7 +859,11 @@ fn send_imap_fetch_action() -> ActionDefinition {
                 "BODY[]": "From: sender@example.com\r\nSubject: Test\r\n\r\nHello World"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP FETCH {sequence}")
+                .with_debug("IMAP send_imap_fetch: sequence={sequence}"),
+        ),
     }
 }
 
@@ -853,7 +881,11 @@ fn send_imap_search_action() -> ActionDefinition {
             "type": "send_imap_search",
             "results": [1, 3, 5]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP SEARCH {results_len} results")
+                .with_debug("IMAP send_imap_search: {results_len} results"),
+        ),
     }
 }
 
@@ -872,7 +904,11 @@ fn send_imap_exists_action() -> ActionDefinition {
             "type": "send_imap_exists",
             "count": 5
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP {count} EXISTS")
+                .with_debug("IMAP send_imap_exists: {count}"),
+        ),
     }
 }
 
@@ -890,7 +926,11 @@ fn send_imap_recent_action() -> ActionDefinition {
             "type": "send_imap_recent",
             "count": 2
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP {count} RECENT")
+                .with_debug("IMAP send_imap_recent: {count}"),
+        ),
     }
 }
 
@@ -908,7 +948,11 @@ fn send_imap_flags_action() -> ActionDefinition {
             "type": "send_imap_flags",
             "flags": ["\\Seen", "\\Answered", "\\Flagged", "\\Deleted", "\\Draft"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP FLAGS")
+                .with_debug("IMAP send_imap_flags: {flags_len} flags"),
+        ),
     }
 }
 
@@ -927,7 +971,11 @@ fn send_imap_expunge_action() -> ActionDefinition {
             "type": "send_imap_expunge",
             "sequence": 3
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP {sequence} EXPUNGE")
+                .with_debug("IMAP send_imap_expunge: {sequence}"),
+        ),
     }
 }
 
@@ -996,7 +1044,11 @@ fn send_imap_select_action() -> ActionDefinition {
             "permanent_flags": ["\\Deleted", "\\Seen", "\\*"],
             "read_write": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IMAP SELECT {exists} msgs")
+                .with_debug("IMAP send_imap_select: exists={exists}, recent={recent}"),
+        ),
     }
 }
 
@@ -1008,7 +1060,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("IMAP waiting for more data"),
+        ),
     }
 }
 
@@ -1020,7 +1075,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("IMAP connection closed")
+                .with_debug("IMAP close_connection"),
+        ),
     }
 }
 

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -260,17 +261,59 @@ impl TorrentPeerProtocol {
     }
 }
 
-pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_handshake", "BitTorrent peer handshake received", json!({"type": "placeholder", "event_id": "peer_handshake"})));
+pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "peer_handshake",
+        "BitTorrent peer handshake received",
+        json!({"type": "placeholder", "event_id": "peer_handshake"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT peer handshake ({duration_ms}ms)")
+            .with_debug("BT peer handshake from {client_ip}: info_hash={info_hash}")
+            .with_trace("BT handshake: {json_pretty(.)}"),
+    )
+});
 
-pub static PEER_CHOKE_MESSAGE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_choke_message", "Peer choke message", json!({"type": "placeholder", "event_id": "peer_choke_message"})));
+pub static PEER_CHOKE_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "peer_choke_message",
+        "Peer choke message",
+        json!({"type": "placeholder", "event_id": "peer_choke_message"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT choke/unchoke")
+            .with_debug("BT peer choke/unchoke from {client_ip}"),
+    )
+});
 
-pub static PEER_REQUEST_MESSAGE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_request_message", "Peer piece request", json!({"type": "placeholder", "event_id": "peer_request_message"})));
+pub static PEER_REQUEST_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "peer_request_message",
+        "Peer piece request",
+        json!({"type": "placeholder", "event_id": "peer_request_message"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT request piece {index}")
+            .with_debug("BT peer request: piece={index}, begin={begin}, length={length}"),
+    )
+});
 
-pub static PEER_BITFIELD_MESSAGE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_bitfield_message", "Peer bitfield message", json!({"type": "placeholder", "event_id": "peer_bitfield_message"})));
+pub static PEER_BITFIELD_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "peer_bitfield_message",
+        "Peer bitfield message",
+        json!({"type": "placeholder", "event_id": "peer_bitfield_message"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT bitfield")
+            .with_debug("BT peer bitfield from {client_ip}")
+            .with_trace("BT bitfield: {bitfield}"),
+    )
+});
 
 pub static SEND_HANDSHAKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
     name: "send_handshake".to_string(),
@@ -287,10 +330,14 @@ pub static SEND_HANDSHAKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| 
             type_hint: "string".to_string(),
             description: "Peer ID (20 characters)".to_string(),
             required: false,
-        log_template: None,
         },
     ],
     example: json!({"type": "send_handshake", "info_hash": "0123456789abcdef0123456789abcdef01234567", "peer_id": "-NT0001-xxxxxxxxxxxx"}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> BT handshake")
+            .with_debug("BT send handshake: peer_id={peer_id}"),
+    ),
 });
 
 pub static SEND_CHOKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
@@ -298,6 +345,7 @@ pub static SEND_CHOKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| Acti
     description: "Send choke message".to_string(),
     parameters: vec![],
     example: json!({"type": "send_choke"}),
+    log_template: Some(LogTemplate::new().with_info("-> BT choke")),
 });
 
 pub static SEND_UNCHOKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
@@ -305,6 +353,7 @@ pub static SEND_UNCHOKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| Ac
     description: "Send unchoke message".to_string(),
     parameters: vec![],
     example: json!({"type": "send_unchoke"}),
+    log_template: Some(LogTemplate::new().with_info("-> BT unchoke")),
 });
 
 pub static SEND_BITFIELD_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
@@ -317,6 +366,11 @@ pub static SEND_BITFIELD_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| A
         required: true,
     }],
     example: json!({"type": "send_bitfield", "bitfield": "ff"}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> BT bitfield")
+            .with_debug("BT send bitfield: {bitfield}"),
+    ),
 });
 
 pub static SEND_HAVE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
@@ -329,6 +383,11 @@ pub static SEND_HAVE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| Actio
         required: true,
     }],
     example: json!({"type": "send_have", "piece_index": 0}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> BT have piece {piece_index}")
+            .with_debug("BT send have: piece_index={piece_index}"),
+    ),
 });
 
 pub static SEND_PIECE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
@@ -352,8 +411,12 @@ pub static SEND_PIECE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| Acti
             type_hint: "string".to_string(),
             description: "Block data (hex)".to_string(),
             required: true,
-        log_template: None,
         },
     ],
     example: json!({"type": "send_piece", "index": 0, "begin": 0, "block_hex": "00112233"}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> BT piece {index} @{begin}")
+            .with_debug("BT send piece: index={index}, begin={begin}, block_len={block_hex_len}"),
+    ),
 });

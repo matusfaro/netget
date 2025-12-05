@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -253,13 +254,61 @@ impl BgpProtocol {
 }
 
 // Event types for BGP
-pub static BGP_OPEN_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_open", "BGP OPEN message received from peer", json!({"type": "placeholder", "event_id": "bgp_open"})));
+pub static BGP_OPEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "bgp_open",
+        "BGP OPEN message received from peer",
+        json!({"type": "placeholder", "event_id": "bgp_open"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BGP OPEN from AS{peer_as} router_id={router_id}")
+            .with_debug("BGP OPEN: AS={peer_as} hold_time={hold_time} router_id={router_id}")
+            .with_trace("BGP OPEN: {json_pretty(.)}"),
+    )
+});
 
-pub static BGP_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_update", "BGP UPDATE message received (route announcement or withdrawal)", json!({"type": "placeholder", "event_id": "bgp_update"})));
+pub static BGP_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "bgp_update",
+        "BGP UPDATE message received (route announcement or withdrawal)",
+        json!({"type": "placeholder", "event_id": "bgp_update"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BGP UPDATE from AS{peer_as}")
+            .with_debug("BGP UPDATE from AS{peer_as} on {connection_id}")
+            .with_trace("BGP UPDATE: {json_pretty(.)}"),
+    )
+});
 
-pub static BGP_KEEPALIVE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_keepalive", "BGP KEEPALIVE message received", json!({"type": "placeholder", "event_id": "bgp_keepalive"})));
+pub static BGP_KEEPALIVE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "bgp_keepalive",
+        "BGP KEEPALIVE message received",
+        json!({"type": "placeholder", "event_id": "bgp_keepalive"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BGP KEEPALIVE from AS{peer_as}")
+            .with_debug("BGP KEEPALIVE on {connection_id}")
+            .with_trace("BGP KEEPALIVE: {json_pretty(.)}"),
+    )
+});
 
-pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_notification", "BGP NOTIFICATION message received (error)", json!({"type": "placeholder", "event_id": "bgp_notification"})));
+pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "bgp_notification",
+        "BGP NOTIFICATION message received (error)",
+        json!({"type": "placeholder", "event_id": "bgp_notification"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BGP NOTIFICATION code={error_code} subcode={error_subcode}")
+            .with_debug("BGP NOTIFICATION: code={error_code} subcode={error_subcode} from AS{peer_as}")
+            .with_trace("BGP NOTIFICATION: {json_pretty(.)}"),
+    )
+});
 
 // Implement Protocol trait (common functionality)
 impl Protocol for BgpProtocol {
@@ -287,7 +336,11 @@ impl Protocol for BgpProtocol {
                     "prefix": "10.0.0.0/24",
                     "next_hop": "192.168.1.1"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP announce {prefix} via {next_hop}")
+                        .with_debug("BGP announce_route: prefix={prefix}, next_hop={next_hop}"),
+                ),
             },
             ActionDefinition {
                 name: "withdraw_route".to_string(),
@@ -302,7 +355,11 @@ impl Protocol for BgpProtocol {
                     "type": "withdraw_route",
                     "prefix": "10.0.0.0/24"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP withdraw {prefix}")
+                        .with_debug("BGP withdraw_route: prefix={prefix}"),
+                ),
             },
             ActionDefinition {
                 name: "reset_peer".to_string(),
@@ -312,7 +369,11 @@ impl Protocol for BgpProtocol {
                 example: json!({
                     "type": "reset_peer"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP reset peer")
+                        .with_debug("BGP reset_peer: sending NOTIFICATION and closing"),
+                ),
             },
         ]
     }
@@ -347,7 +408,11 @@ impl Protocol for BgpProtocol {
                     "hold_time": 180,
                     "router_id": "192.168.1.100"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP OPEN AS{my_as} hold={hold_time}s")
+                        .with_debug("BGP send_bgp_open: AS={my_as}, hold_time={hold_time}, router_id={router_id}"),
+                ),
             },
             ActionDefinition {
                 name: "send_bgp_keepalive".to_string(),
@@ -356,7 +421,11 @@ impl Protocol for BgpProtocol {
                 example: json!({
                     "type": "send_bgp_keepalive"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP KEEPALIVE")
+                        .with_debug("BGP send_bgp_keepalive"),
+                ),
             },
             ActionDefinition {
                 name: "send_bgp_update".to_string(),
@@ -380,7 +449,11 @@ impl Protocol for BgpProtocol {
                     "type": "send_bgp_update",
                     "nlri": ["10.0.0.0/24"]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP UPDATE {nlri_len} routes")
+                        .with_debug("BGP send_bgp_update: nlri={nlri_len} routes, withdrawn={withdrawn_routes_len}"),
+                ),
             },
             ActionDefinition {
                 name: "send_bgp_notification".to_string(),
@@ -411,7 +484,11 @@ impl Protocol for BgpProtocol {
                     "error_code": 6,
                     "error_subcode": 0
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP NOTIFICATION code={error_code}")
+                        .with_debug("BGP send_bgp_notification: code={error_code}, subcode={error_subcode}"),
+                ),
             },
             ActionDefinition {
                 name: "transition_state".to_string(),
@@ -428,7 +505,11 @@ impl Protocol for BgpProtocol {
                     "type": "transition_state",
                     "new_state": "Established"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP FSM -> {new_state}")
+                        .with_debug("BGP transition_state: new_state={new_state}"),
+                ),
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -437,7 +518,11 @@ impl Protocol for BgpProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BGP wait for more")
+                        .with_debug("BGP wait_for_more: awaiting additional messages"),
+                ),
             },
         ]
     }

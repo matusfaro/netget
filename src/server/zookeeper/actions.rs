@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Context, Result};
@@ -98,7 +99,11 @@ impl Protocol for ZookeeperProtocol {
                     "error_code": 0,
                     "data_hex": "0000000000000064"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> ZooKeeper response (err={error_code})")
+                        .with_debug("ZooKeeper zookeeper_response: xid={xid} zxid={zxid} error_code={error_code}"),
+                ),
             },
         ]
     }

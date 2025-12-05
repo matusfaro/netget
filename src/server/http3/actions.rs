@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -310,7 +311,11 @@ fn send_to_stream_action() -> ActionDefinition {
             "stream_id": "conn_12345",
             "data": "Hello from HTTP3"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> HTTP/3 to stream {stream_id}")
+                .with_debug("HTTP/3 send_to_stream: stream={stream_id}"),
+        ),
     }
 }
 
@@ -329,7 +334,11 @@ fn close_stream_action() -> ActionDefinition {
             "type": "close_stream",
             "stream_id": "conn_12345"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("HTTP/3 close stream {stream_id}")
+                .with_debug("HTTP/3 close_stream: stream={stream_id}"),
+        ),
     }
 }
 
@@ -342,7 +351,11 @@ fn list_streams_action() -> ActionDefinition {
         example: json!({
             "type": "list_streams"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("HTTP/3 list streams")
+                .with_debug("HTTP/3 list_streams"),
+        ),
     }
 }
 
@@ -361,7 +374,11 @@ fn send_http3_data_action() -> ActionDefinition {
             "type": "send_http3_data",
             "data": "Hello from HTTP3\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> HTTP/3 data")
+                .with_debug("HTTP/3 send_http3_data"),
+        ),
     }
 }
 
@@ -375,7 +392,11 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("HTTP/3 wait for more")
+                .with_debug("HTTP/3 wait_for_more"),
+        ),
     }
 }
 
@@ -388,7 +409,11 @@ fn close_this_stream_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_stream"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("HTTP/3 close this stream")
+                .with_debug("HTTP/3 close_this_stream"),
+        ),
     }
 }
 
@@ -414,6 +439,12 @@ pub static HTTP3_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(||
         json!({"type": "placeholder", "event_id": "http3_connection_opened"}),
     )
     // No parameters - just connection opened notification
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("HTTP/3 connection opened")
+            .with_debug("HTTP/3 connection established with TLS 1.3")
+            .with_trace("HTTP/3 connection: {json_pretty(.)}"),
+    )
     .with_actions(vec![])
 });
 
@@ -430,6 +461,12 @@ pub static HTTP3_STREAM_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "The stream ID (HTTP3 uses per-connection stream numbering)".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("HTTP/3 stream opened: {stream_id}")
+            .with_debug("HTTP/3 stream {stream_id} opened")
+            .with_trace("HTTP/3 stream: {json_pretty(.)}"),
+    )
     .with_actions(vec![
         SEND_HTTP3_DATA_ACTION.clone(),
         CLOSE_THIS_STREAM_ACTION.clone(),
@@ -453,6 +490,12 @@ pub static HTTP3_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 required: true,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("HTTP/3 data on {stream_id}")
+                .with_debug("HTTP/3 data received on stream {stream_id}")
+                .with_trace("HTTP/3 data: {json_pretty(.)}"),
+        )
         .with_actions(vec![
             SEND_HTTP3_DATA_ACTION.clone(),
             WAIT_FOR_MORE_ACTION.clone(),

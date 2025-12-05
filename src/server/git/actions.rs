@@ -5,6 +5,7 @@
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition};
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::{EventType, SpawnContext};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -78,7 +79,11 @@ impl Protocol for GitProtocol {
                     "description": "My project",
                     "default_branch": "main"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("Git repository '{name}' created")
+                        .with_debug("Git create repository: name={name}, branch={default_branch}"),
+                ),
             },
             ActionDefinition {
                 name: "delete_git_repository".to_string(),
@@ -93,14 +98,22 @@ impl Protocol for GitProtocol {
                     "type": "delete_git_repository",
                     "name": "old-project"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("Git repository '{name}' deleted")
+                        .with_debug("Git delete repository: name={name}"),
+                ),
             },
             ActionDefinition {
                 name: "list_git_repositories".to_string(),
                 description: "List all virtual Git repositories".to_string(),
                 parameters: vec![],
                 example: json!({"type": "list_git_repositories"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("Git repositories listed")
+                        .with_debug("Git list repositories"),
+                ),
             },
         ]
     }
@@ -130,7 +143,11 @@ impl Protocol for GitProtocol {
                     "refs": [{"name": "refs/heads/main", "sha": "abc123"}],
                     "capabilities": ["multi_ack"]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> {refs_len} refs advertised")
+                        .with_debug("Git advertise refs: {refs_len} refs, capabilities={capabilities}"),
+                ),
             },
             ActionDefinition {
                 name: "git_send_pack".to_string(),
@@ -145,7 +162,11 @@ impl Protocol for GitProtocol {
                     "type": "git_send_pack",
                     "pack_data": "PACK..."
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> pack sent")
+                        .with_debug("Git send pack: {pack_data_len}B"),
+                ),
             },
             ActionDefinition {
                 name: "git_error".to_string(),
@@ -169,7 +190,11 @@ impl Protocol for GitProtocol {
                     "message": "Repository not found",
                     "code": 404
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> error {code}: {message}")
+                        .with_debug("Git error: code={code}, message={message}"),
+                ),
             },
         ]
     }

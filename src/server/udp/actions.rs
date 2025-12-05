@@ -218,7 +218,11 @@ fn send_to_address_action() -> ActionDefinition {
             "address": "127.0.0.1:8080",
             "data": "Hello from UDP"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> UDP to {address}")
+                .with_debug("UDP send_to_address: address={address}"),
+        ),
     }
 }
 
@@ -238,7 +242,12 @@ fn send_udp_response_action() -> ActionDefinition {
             "type": "send_udp_response",
             "data": "Response data"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> UDP response {output_bytes}B")
+                .with_debug("UDP send_udp_response: {output_bytes}B")
+                .with_trace("UDP response: {preview(data,200)}"),
+        ),
     }
 }
 
@@ -251,7 +260,10 @@ fn ignore_datagram_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_datagram"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("UDP ignore_datagram"),
+        ),
     }
 }
 

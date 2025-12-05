@@ -424,7 +424,11 @@ fn send_ntp_time_response_action() -> ActionDefinition {
             "type": "send_ntp_time_response",
             "stratum": 2
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NTP stratum {stratum}")
+                .with_debug("NTP send_ntp_time_response: stratum={stratum}"),
+        ),
     }
 }
 
@@ -443,7 +447,11 @@ fn send_ntp_response_action() -> ActionDefinition {
             "type": "send_ntp_response",
             "data": "240201e900000000000000000000000000000000000000000000000000000000eca56dd14ae94680eca56dd14ae94680eca56dd14ae94680"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NTP raw response ({data_len}B)")
+                .with_debug("NTP send_ntp_response: {data_len} bytes"),
+        ),
     }
 }
 
@@ -455,7 +463,11 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("NTP request ignored")
+                .with_debug("NTP ignore_request"),
+        ),
     }
 }
 

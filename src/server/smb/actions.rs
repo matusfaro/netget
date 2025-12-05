@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -178,6 +179,12 @@ pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SMB {operation} {path}")
+            .with_debug("SMB {operation}: {path}")
+            .with_trace("SMB: {json_pretty(.)}"),
+    )
 });
 
 // Action definitions
@@ -196,7 +203,11 @@ fn disconnect_client_action() -> ActionDefinition {
             "type": "disconnect_client",
             "client": "192.168.1.100:54321"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SMB disconnect {client}")
+                .with_debug("SMB disconnect_client: {client}"),
+        ),
     }
 }
 
@@ -231,7 +242,11 @@ fn smb_list_directory_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB DIR {path} ({files_len} files)")
+                .with_debug("SMB smb_list_directory: path={path}, {files_len} files"),
+        ),
     }
 }
 
@@ -258,7 +273,11 @@ fn smb_read_file_action() -> ActionDefinition {
             "path": "/documents/file.txt",
             "content": "Hello, World!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB READ {path}")
+                .with_debug("SMB smb_read_file: path={path}"),
+        ),
     }
 }
 
@@ -285,7 +304,11 @@ fn smb_write_file_action() -> ActionDefinition {
             "path": "/documents/file.txt",
             "data": "New content"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB WRITE {path}")
+                .with_debug("SMB smb_write_file: path={path}"),
+        ),
     }
 }
 
@@ -326,7 +349,11 @@ fn smb_get_file_info_action() -> ActionDefinition {
             "is_directory": false,
             "modified_time": "2025-01-15T10:30:00Z"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB INFO {path}")
+                .with_debug("SMB smb_get_file_info: path={path}, size={size}"),
+        ),
     }
 }
 
@@ -344,7 +371,11 @@ fn smb_create_file_action() -> ActionDefinition {
             "type": "smb_create_file",
             "path": "/documents/newfile.txt"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB CREATE {path}")
+                .with_debug("SMB smb_create_file: path={path}"),
+        ),
     }
 }
 
@@ -362,7 +393,11 @@ fn smb_delete_file_action() -> ActionDefinition {
             "type": "smb_delete_file",
             "path": "/documents/oldfile.txt"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB DELETE {path}")
+                .with_debug("SMB smb_delete_file: path={path}"),
+        ),
     }
 }
 
@@ -380,7 +415,11 @@ fn smb_create_directory_action() -> ActionDefinition {
             "type": "smb_create_directory",
             "path": "/documents/newdir"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB MKDIR {path}")
+                .with_debug("SMB smb_create_directory: path={path}"),
+        ),
     }
 }
 
@@ -398,7 +437,11 @@ fn smb_delete_directory_action() -> ActionDefinition {
             "type": "smb_delete_directory",
             "path": "/documents/olddir"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB RMDIR {path}")
+                .with_debug("SMB smb_delete_directory: path={path}"),
+        ),
     }
 }
 
@@ -426,7 +469,11 @@ fn smb_auth_success_action() -> ActionDefinition {
             "username": "alice",
             "message": "User alice authenticated successfully"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB AUTH OK {username}")
+                .with_debug("SMB smb_auth_success: user={username}"),
+        ),
     }
 }
 
@@ -454,6 +501,10 @@ fn smb_auth_deny_action() -> ActionDefinition {
             "username": "hacker",
             "reason": "User not authorized"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SMB AUTH DENIED {username}")
+                .with_debug("SMB smb_auth_deny: user={username}, reason={reason}"),
+        ),
     }
 }

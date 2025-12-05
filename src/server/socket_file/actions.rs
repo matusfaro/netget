@@ -7,6 +7,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -319,7 +320,11 @@ fn send_to_connection_action() -> ActionDefinition {
             "connection_id": "conn_12345",
             "data": "Hello from socket file"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCK send to {connection_id} ({data_len}B)")
+                .with_debug("SOCK send_to_connection: conn={connection_id} data_len={data_len}"),
+        ),
     }
 }
 
@@ -338,7 +343,11 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "connection_id": "conn_12345"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCK close {connection_id}")
+                .with_debug("SOCK close_connection: conn={connection_id}"),
+        ),
     }
 }
 
@@ -351,7 +360,11 @@ fn list_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_connections"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCK list connections")
+                .with_debug("SOCK list_connections"),
+        ),
     }
 }
 
@@ -370,7 +383,11 @@ fn send_socket_data_action() -> ActionDefinition {
             "type": "send_socket_data",
             "data": "ACK\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCK {data_len}B")
+                .with_debug("SOCK send_socket_data: data_len={data_len}"),
+        ),
     }
 }
 
@@ -384,7 +401,11 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCK waiting for more")
+                .with_debug("SOCK wait_for_more"),
+        ),
     }
 }
 
@@ -397,7 +418,11 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCK close connection")
+                .with_debug("SOCK close_this_connection"),
+        ),
     }
 }
 

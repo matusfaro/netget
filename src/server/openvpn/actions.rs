@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -22,6 +23,12 @@ pub static OPENVPN_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             "inspect": true
         }),
     )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} OpenVPN connected -> {vpn_ip}")
+            .with_debug("OpenVPN peer connected: {client_ip} -> VPN IP {vpn_ip}")
+            .with_trace("OpenVPN peer: {json_pretty(.)}"),
+    )
 });
 
 /// OpenVPN peer request event (for LLM authorization)
@@ -34,6 +41,12 @@ pub static OPENVPN_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "peer_addr": "203.0.113.45:1194",
             "vpn_ip": "10.8.0.5"
         }),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} OpenVPN auth request")
+            .with_debug("OpenVPN peer auth request from {client_ip}")
+            .with_trace("OpenVPN auth request: {json_pretty(.)}"),
     )
 });
 
@@ -268,7 +281,11 @@ fn authorize_peer_action() -> ActionDefinition {
             "peer_addr": "203.0.113.45:1194",
             "vpn_ip": "10.8.0.5"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenVPN authorize {peer_addr} -> {vpn_ip}")
+                .with_debug("OpenVPN authorize peer: {peer_addr} -> VPN IP {vpn_ip}"),
+        ),
     }
 }
 
@@ -296,7 +313,11 @@ fn reject_peer_action() -> ActionDefinition {
             "peer_addr": "203.0.113.45:1194",
             "reason": "Unauthorized"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenVPN reject {peer_addr}: {reason}")
+                .with_debug("OpenVPN reject peer: {peer_addr}, reason: {reason}"),
+        ),
     }
 }
 
@@ -324,7 +345,11 @@ fn set_peer_limit_action() -> ActionDefinition {
             "peer_addr": "203.0.113.45:1194",
             "limit_mbps": 10
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenVPN limit {peer_addr} {limit_mbps}Mbps")
+                .with_debug("OpenVPN set peer limit: {peer_addr} -> {limit_mbps} Mbps"),
+        ),
     }
 }
 
@@ -343,7 +368,11 @@ fn inspect_traffic_action() -> ActionDefinition {
             "type": "inspect_traffic",
             "inspect": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenVPN inspect={inspect}")
+                .with_debug("OpenVPN traffic inspection: {inspect}"),
+        ),
     }
 }
 
@@ -356,7 +385,7 @@ fn list_peers_action() -> ActionDefinition {
         example: json!({
             "type": "list_peers"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_debug("OpenVPN list peers")),
     }
 }
 
@@ -375,7 +404,11 @@ fn remove_peer_action() -> ActionDefinition {
             "type": "remove_peer",
             "peer_addr": "203.0.113.45:1194"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OpenVPN remove {peer_addr}")
+                .with_debug("OpenVPN remove peer: {peer_addr}"),
+        ),
     }
 }
 
@@ -388,6 +421,6 @@ fn get_server_info_action() -> ActionDefinition {
         example: json!({
             "type": "get_server_info"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_debug("OpenVPN get server info")),
     }
 }

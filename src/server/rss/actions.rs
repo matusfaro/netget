@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::{EventType, SpawnContext};
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -27,6 +28,12 @@ pub static RSS_FEED_REQUESTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("RSS request")
+            .with_debug("RSS feed request")
+            .with_trace("RSS: {json_pretty(.)}"),
+    )
 });
 
 /// RSS protocol action handler
@@ -268,6 +275,10 @@ fn generate_rss_feed_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> RSS feed: {title}")
+                .with_debug("RSS generate_rss_feed: title={title} items={items_len}"),
+        ),
     }
 }

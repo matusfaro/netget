@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -242,6 +243,11 @@ impl Protocol for PypiClientProtocol {
                 "type": "get_package_info",
                 "package_name": "numpy"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> PyPI get package {package_name}")
+                    .with_debug("PyPI get_package_info: package_name={package_name}"),
+            ),
         }]
     }
     fn protocol_name(&self) -> &'static str {

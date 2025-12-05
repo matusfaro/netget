@@ -225,7 +225,11 @@ fn register_mdns_service_action() -> ActionDefinition {
                 "version": "1.0"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> mDNS register {service_type} '{instance_name}' on port {port}")
+                .with_debug("mDNS register_mdns_service: type={service_type}, name={instance_name}, port={port}"),
+        ),
     }
 }
 
@@ -255,6 +259,12 @@ pub static MDNS_SERVER_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
     // No parameters - just startup notification
     .with_actions(vec![REGISTER_MDNS_SERVICE_ACTION.clone()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("mDNS server startup")
+            .with_debug("mDNS server initializing for service registration")
+            .with_trace("mDNS startup: {json_pretty(.)}"),
+    )
 });
 
 /// Get mDNS event types

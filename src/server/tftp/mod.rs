@@ -2,7 +2,7 @@
 pub mod actions;
 
 use crate::server::connection::ConnectionId;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;

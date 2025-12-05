@@ -531,7 +531,11 @@ fn send_stun_binding_response_action() -> ActionDefinition {
             "xor_mapped_address": true,
             "software": "NetGet STUN/1.0"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> STUN binding response {mapped_address}")
+                .with_debug("STUN binding_response: {mapped_address}"),
+        ),
     }
 }
 
@@ -565,7 +569,11 @@ fn send_stun_error_response_action() -> ActionDefinition {
             "reason": "Unauthorized",
             "transaction_id": "0123456789abcdef01234567"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> STUN error {error_code}: {reason}")
+                .with_debug("STUN error_response: {error_code} {reason}"),
+        ),
     }
 }
 
@@ -577,7 +585,11 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("STUN request ignored")
+                .with_debug("STUN ignore_request"),
+        ),
     }
 }
 

@@ -11,6 +11,8 @@ use serde_json::json;
 use std::sync::LazyLock;
 use tracing::debug;
 
+use crate::protocol::log_template::LogTemplate;
+
 /// Ollama generate request event
 pub static OLLAMA_GENERATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("ollama_generate_request", "Received /api/generate request", json!({"type": "placeholder", "event_id": "ollama_generate_request"})).with_parameters(
@@ -260,7 +262,11 @@ fn ollama_generate_response_action() -> ActionDefinition {
             "type": "ollama_generate_response",
             "response_text": "The capital of France is Paris."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Ollama generate ({response_text_len} chars)")
+                .with_debug("Ollama ollama_generate_response: response_len={response_text_len}"),
+        ),
     }
 }
 
@@ -278,7 +284,11 @@ fn ollama_chat_response_action() -> ActionDefinition {
             "type": "ollama_chat_response",
             "message_content": "Hello! How can I help you today?"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Ollama chat ({message_content_len} chars)")
+                .with_debug("Ollama ollama_chat_response: content_len={message_content_len}"),
+        ),
     }
 }
 
@@ -296,7 +306,11 @@ fn ollama_models_response_action() -> ActionDefinition {
             "type": "ollama_models_response",
             "models": ["llama2", "codellama", "mistral"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Ollama models ({models_len} available)")
+                .with_debug("Ollama ollama_models_response: models_count={models_len}"),
+        ),
     }
 }
 
@@ -314,7 +328,11 @@ fn ollama_error_response_action() -> ActionDefinition {
             "type": "ollama_error_response",
             "error_message": "Model not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Ollama error: {error_message}")
+                .with_debug("Ollama ollama_error_response: {error_message}"),
+        ),
     }
 }
 

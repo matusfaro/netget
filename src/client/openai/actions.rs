@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -213,7 +214,6 @@ impl Protocol for OpenAiClientProtocol {
                     type_hint: "string".to_string(),
                     description: "Model to use".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -222,6 +222,11 @@ impl Protocol for OpenAiClientProtocol {
                     {"role": "user", "content": "Follow-up question"}
                 ]
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> OpenAI chat completion ({model})")
+                    .with_debug("OpenAI send_chat_completion: model={model}"),
+            ),
         }]
     }
     fn protocol_name(&self) -> &'static str {

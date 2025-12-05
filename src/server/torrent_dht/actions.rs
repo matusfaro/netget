@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -310,14 +311,47 @@ impl TorrentDhtProtocol {
     }
 }
 
-pub static DHT_PING_QUERY_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("dht_ping_query", "DHT ping query", json!({"type": "placeholder", "event_id": "dht_ping_query"})));
+pub static DHT_PING_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "dht_ping_query",
+        "DHT ping query",
+        json!({"type": "placeholder", "event_id": "dht_ping_query"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} DHT ping ({duration_ms}ms)")
+            .with_debug("DHT ping from {client_ip}")
+            .with_trace("DHT ping: {json_pretty(.)}"),
+    )
+});
 
-pub static DHT_FIND_NODE_QUERY_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("dht_find_node_query", "DHT find_node query", json!({"type": "placeholder", "event_id": "dht_find_node_query"})));
+pub static DHT_FIND_NODE_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "dht_find_node_query",
+        "DHT find_node query",
+        json!({"type": "placeholder", "event_id": "dht_find_node_query"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} DHT find_node ({duration_ms}ms)")
+            .with_debug("DHT find_node from {client_ip}: target={target}")
+            .with_trace("DHT find_node: {json_pretty(.)}"),
+    )
+});
 
-pub static DHT_GET_PEERS_QUERY_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("dht_get_peers_query", "DHT get_peers query", json!({"type": "placeholder", "event_id": "dht_get_peers_query"})));
+pub static DHT_GET_PEERS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "dht_get_peers_query",
+        "DHT get_peers query",
+        json!({"type": "placeholder", "event_id": "dht_get_peers_query"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} DHT get_peers ({duration_ms}ms)")
+            .with_debug("DHT get_peers from {client_ip}: info_hash={info_hash}")
+            .with_trace("DHT get_peers: {json_pretty(.)}"),
+    )
+});
 
 pub static SEND_PING_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
@@ -330,7 +364,11 @@ pub static SEND_PING_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new
             required: true,
         }],
         example: json!({"type": "send_ping_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567"}),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHT ping response")
+                .with_debug("DHT ping response: node_id={node_id}"),
+        ),
     }
 });
 
@@ -353,7 +391,11 @@ pub static SEND_FIND_NODE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock
             },
         ],
         example: json!({"type": "send_find_node_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567", "nodes": [{"id": "0123456789abcdef0123456789abcdef01234567", "ip": "192.168.1.100", "port": 6881}]}),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHT find_node: {nodes_len} nodes")
+                .with_debug("DHT find_node response: {nodes_len} nodes"),
+        ),
     }
 });
 
@@ -376,6 +418,10 @@ pub static SEND_GET_PEERS_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock
             },
         ],
         example: json!({"type": "send_get_peers_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567", "token": "aoeusnth", "peers": [{"ip": "192.168.1.100", "port": 51413}]}),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHT get_peers: {peers_len} peers")
+                .with_debug("DHT get_peers response: {peers_len} peers"),
+        ),
     }
 });

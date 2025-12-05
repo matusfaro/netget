@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -303,11 +304,33 @@ impl TorrentTrackerProtocol {
     }
 }
 
-pub static TRACKER_ANNOUNCE_REQUEST_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("tracker_announce_request", "BitTorrent announce request", json!({"type": "placeholder", "event_id": "tracker_announce_request"})));
+pub static TRACKER_ANNOUNCE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tracker_announce_request",
+        "BitTorrent announce request",
+        json!({"type": "placeholder", "event_id": "tracker_announce_request"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT announce {event} ({duration_ms}ms)")
+            .with_debug("BT tracker announce from {client_ip}: event={event}")
+            .with_trace("BT announce: {json_pretty(.)}"),
+    )
+});
 
-pub static TRACKER_SCRAPE_REQUEST_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("tracker_scrape_request", "BitTorrent scrape request", json!({"type": "placeholder", "event_id": "tracker_scrape_request"})));
+pub static TRACKER_SCRAPE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tracker_scrape_request",
+        "BitTorrent scrape request",
+        json!({"type": "placeholder", "event_id": "tracker_scrape_request"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT scrape ({duration_ms}ms)")
+            .with_debug("BT tracker scrape from {client_ip}")
+            .with_trace("BT scrape: {json_pretty(.)}"),
+    )
+});
 
 pub static SEND_ANNOUNCE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
@@ -328,7 +351,11 @@ pub static SEND_ANNOUNCE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock:
             },
         ],
         example: json!({"type": "send_announce_response", "interval": 1800, "complete": 10, "incomplete": 5, "peers": [{"peer_id": "-TR0001-xxxxxxxxxxxx", "ip": "192.168.1.100", "port": 51413}]}),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BT announce: {peers_len} peers, interval={interval}s")
+                .with_debug("BT announce response: {peers_len} peers, complete={complete}, incomplete={incomplete}"),
+        ),
     }
 });
 
@@ -343,7 +370,11 @@ pub static SEND_SCRAPE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             required: false,
         }],
         example: json!({"type": "send_scrape_response", "files": {"aabbccdd": {"complete": 10, "downloaded": 100, "incomplete": 5}}}),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BT scrape: {files_len} torrents")
+                .with_debug("BT scrape response: {files_len} torrents"),
+        ),
     }
 });
 
@@ -358,4 +389,9 @@ pub static SEND_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> =
             required: true,
         }],
         example: json!({"type": "send_error_response", "error": "Torrent not found"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BT error: {error}")
+                .with_debug("BT tracker error: {error}"),
+        ),
     });

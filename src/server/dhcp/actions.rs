@@ -484,7 +484,11 @@ fn send_dhcp_offer_action() -> ActionDefinition {
             "dns_servers": ["8.8.8.8", "8.8.4.4"],
             "lease_time": 86400
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHCP OFFER {offered_ip}")
+                .with_debug("DHCP send_dhcp_offer: IP={offered_ip}, lease={lease_time}s"),
+        ),
     }
 }
 
@@ -541,7 +545,11 @@ fn send_dhcp_ack_action() -> ActionDefinition {
             "dns_servers": ["8.8.8.8"],
             "lease_time": 86400
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHCP ACK {assigned_ip}")
+                .with_debug("DHCP send_dhcp_ack: IP={assigned_ip}, lease={lease_time}s"),
+        ),
     }
 }
 
@@ -567,7 +575,11 @@ fn send_dhcp_nak_action() -> ActionDefinition {
             "type": "send_dhcp_nak",
             "message": "Requested IP address not available"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHCP NAK: {message}")
+                .with_debug("DHCP send_dhcp_nak: {message}"),
+        ),
     }
 }
 
@@ -585,7 +597,11 @@ fn send_dhcp_response_action() -> ActionDefinition {
             "type": "send_dhcp_response",
             "data": "020106006395a3e3000080000000000000000000c0a8016400000000..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHCP raw response ({data_len}B)")
+                .with_debug("DHCP send_dhcp_response: {data_len} bytes"),
+        ),
     }
 }
 
@@ -597,7 +613,11 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DHCP request ignored")
+                .with_debug("DHCP ignore_request"),
+        ),
     }
 }
 

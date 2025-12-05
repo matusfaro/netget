@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -258,7 +259,11 @@ pub fn ipp_response_action() -> ActionDefinition {
             "status": 200,
             "body": ""
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IPP response {status}")
+                .with_debug("IPP ipp_response: status={status}"),
+        ),
     }
 }
 
@@ -283,7 +288,11 @@ pub fn ipp_printer_attributes_action() -> ActionDefinition {
                 "printer-uri-supported": ["ipp://localhost:631/printers/my-printer"]
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IPP printer attributes")
+                .with_debug("IPP ipp_printer_attributes: {attributes_len} attrs"),
+        ),
     }
 }
 
@@ -308,7 +317,11 @@ pub fn ipp_job_attributes_action() -> ActionDefinition {
                 "job-name": "document.pdf"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IPP job attributes")
+                .with_debug("IPP ipp_job_attributes: {attributes_len} attrs"),
+        ),
     }
 }
 
@@ -319,7 +332,11 @@ pub fn list_print_jobs_action() -> ActionDefinition {
         description: "List all active and completed print jobs".to_string(),
         parameters: vec![],
         example: json!({"type": "list_print_jobs"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IPP list jobs")
+                .with_debug("IPP list_print_jobs"),
+        ),
     }
 }
 
@@ -477,6 +494,12 @@ pub static IPP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             IPP_PRINTER_ATTRIBUTES_ACTION.clone(),
             IPP_JOB_ATTRIBUTES_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("IPP {operation}")
+                .with_debug("IPP operation={operation}")
+                .with_trace("IPP: {json_pretty(.)}"),
+        )
 });
 
 /// Get IPP event types

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -34,6 +35,12 @@ pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WebRTC peer {peer_id} connected (channel: {channel_label})")
+            .with_debug("WebRTC peer_id={peer_id} channel={channel_label}")
+            .with_trace("WebRTC connected: {json_pretty(.)}"),
+    )
 });
 
 /// WebRTC message received event
@@ -66,6 +73,12 @@ pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WebRTC {peer_id} <- {preview(message,50)}")
+            .with_debug("WebRTC message from peer_id={peer_id} binary={is_binary}")
+            .with_trace("WebRTC message: {json_pretty(.)}"),
+    )
 });
 
 /// WebRTC offer received event (manual signaling mode)
@@ -91,6 +104,12 @@ pub static WEBRTC_OFFER_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WebRTC offer from {peer_id}")
+            .with_debug("WebRTC SDP offer peer_id={peer_id}")
+            .with_trace("WebRTC offer: {json_pretty(.)}"),
+    )
 });
 
 /// WebRTC peer disconnected event
@@ -116,6 +135,12 @@ pub static WEBRTC_PEER_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
             required: false,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WebRTC peer {peer_id} disconnected")
+            .with_debug("WebRTC disconnect peer_id={peer_id} reason={reason}")
+            .with_trace("WebRTC disconnect: {json_pretty(.)}"),
+    )
 });
 
 /// WebRTC server protocol action handler
@@ -178,7 +203,11 @@ impl Protocol for WebRtcProtocol {
                     "peer_id": "peer-abc123",
                     "sdp_offer": "{\"type\":\"offer\",\"sdp\":\"...\"}"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC accept offer peer={peer_id}")
+                    .with_debug("WebRTC accept_offer: peer_id={peer_id}"),
+            ),
             },
             ActionDefinition {
                 name: "send_to_peer".to_string(),
@@ -202,7 +231,11 @@ impl Protocol for WebRtcProtocol {
                     "peer_id": "peer-abc123",
                     "message": "Hello from NetGet server!"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC send to {peer_id}")
+                    .with_debug("WebRTC send_to_peer: peer_id={peer_id}"),
+            ),
             },
             ActionDefinition {
                 name: "close_peer".to_string(),
@@ -217,7 +250,11 @@ impl Protocol for WebRtcProtocol {
                     "type": "close_peer",
                     "peer_id": "peer-abc123"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC close peer {peer_id}")
+                    .with_debug("WebRTC close_peer: peer_id={peer_id}"),
+            ),
             },
             ActionDefinition {
                 name: "list_peers".to_string(),
@@ -226,7 +263,11 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "list_peers"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC list peers")
+                    .with_debug("WebRTC list_peers"),
+            ),
             },
         ]
     }
@@ -246,7 +287,11 @@ impl Protocol for WebRtcProtocol {
                     "type": "send_message",
                     "message": "Reply message"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC message")
+                    .with_debug("WebRTC send_message"),
+            ),
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -255,7 +300,11 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC disconnect")
+                    .with_debug("WebRTC disconnect"),
+            ),
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -264,7 +313,11 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC wait")
+                    .with_debug("WebRTC wait_for_more"),
+            ),
             },
         ]
     }

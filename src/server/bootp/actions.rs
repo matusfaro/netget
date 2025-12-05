@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Context, Result};
@@ -310,7 +311,11 @@ fn send_bootp_reply_action() -> ActionDefinition {
             "boot_file": "boot/pxeboot.n12",
             "server_hostname": "bootserver.local"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BOOTP reply IP={assigned_ip}")
+                .with_debug("BOOTP send_bootp_reply: ip={assigned_ip} server={server_ip} file={boot_file}"),
+        ),
     }
 }
 
@@ -328,7 +333,11 @@ fn send_bootp_response_action() -> ActionDefinition {
             "type": "send_bootp_response",
             "data": "020106006395a3e3000080000000000000000000c0a8016400000000..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BOOTP raw response ({data_len}B)")
+                .with_debug("BOOTP send_bootp_response: data_len={data_len}"),
+        ),
     }
 }
 
@@ -340,7 +349,11 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BOOTP ignored")
+                .with_debug("BOOTP ignore_request"),
+        ),
     }
 }
 
@@ -379,6 +392,12 @@ pub static BOOTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BOOTP {op_code} from {client_mac}")
+            .with_debug("BOOTP {op_code} from MAC {client_mac}, IP {client_ip}")
+            .with_trace("BOOTP: {json_pretty(.)}"),
+    )
     .with_actions(vec![
         send_bootp_reply_action(),
         send_bootp_response_action(),

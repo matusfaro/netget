@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -48,6 +49,12 @@ pub static SQS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![send_sqs_response_action(), show_message_action()])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} SQS {operation} {queue_url} -> {status} ({duration_ms}ms)")
+                .with_debug("SQS {operation} queue={queue_url} from {client_ip}")
+                .with_trace("SQS request: {json_pretty(.)}"),
+        )
 });
 
 fn send_sqs_response_action() -> ActionDefinition {
@@ -73,7 +80,12 @@ fn send_sqs_response_action() -> ActionDefinition {
             "status_code": 200,
             "body": "{\"MessageId\": \"msg-123\", \"MD5OfMessageBody\": \"d41d8cd98f00b204e9800998ecf8427e\"}"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {status_code} ({body_len}B)")
+                .with_debug("SQS response: status={status_code}")
+                .with_trace("SQS response body: {body}"),
+        ),
     }
 }
 
@@ -91,7 +103,11 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Message sent to orders-queue"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("{message}")
+                .with_debug("SQS: {message}"),
+        ),
     }
 }
 

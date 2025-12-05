@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -268,7 +269,11 @@ pub fn jsonrpc_success_action() -> ActionDefinition {
             "type": "jsonrpc_success",
             "result": {"status": "ok", "data": [1, 2, 3]}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> JSON-RPC success id={id}")
+                .with_debug("JSON-RPC jsonrpc_success: id={id}"),
+        ),
     }
 }
 
@@ -308,7 +313,11 @@ pub fn jsonrpc_error_action() -> ActionDefinition {
             "code": -32601,
             "message": "Method not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> JSON-RPC error {code}: {message}")
+                .with_debug("JSON-RPC jsonrpc_error: code={code} message={message}"),
+        ),
     }
 }
 
@@ -322,7 +331,11 @@ pub fn list_rpc_methods_action() -> ActionDefinition {
         example: json!({
             "type": "list_rpc_methods"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> JSON-RPC list methods")
+                .with_debug("JSON-RPC list_rpc_methods"),
+        ),
     }
 }
 
@@ -350,6 +363,12 @@ pub static JSONRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![jsonrpc_success_action(), jsonrpc_error_action()])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("JSON-RPC {method}")
+                .with_debug("JSON-RPC method={method}, id={id}")
+                .with_trace("JSON-RPC: {json_pretty(.)}"),
+        )
 });
 
 /// Get JSON-RPC event types

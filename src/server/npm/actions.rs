@@ -11,6 +11,8 @@ use serde_json::json;
 use std::sync::LazyLock;
 use tracing::debug;
 
+use crate::protocol::log_template::LogTemplate;
+
 // NPM event type constants (matching IDs used in get_npm_event_types)
 pub static NPM_PACKAGE_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
@@ -281,7 +283,11 @@ fn package_metadata_action() -> ActionDefinition {
                 "description": "Fast, unopinionated, minimalist web framework"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NPM package metadata")
+                .with_debug("NPM npm_package_metadata: returned package info"),
+        ),
     }
 }
 
@@ -299,7 +305,11 @@ fn package_tarball_action() -> ActionDefinition {
             "type": "npm_package_tarball",
             "tarball_data": "H4sIAAAAAAAAA..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NPM tarball ({tarball_data_len}B)")
+                .with_debug("NPM npm_package_tarball: sending tarball data"),
+        ),
     }
 }
 
@@ -320,7 +330,11 @@ fn package_list_action() -> ActionDefinition {
                 "lodash": {"version": "4.17.21"}
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NPM package list")
+                .with_debug("NPM npm_package_list: listing packages"),
+        ),
     }
 }
 
@@ -344,7 +358,11 @@ fn package_search_action() -> ActionDefinition {
                 "total": 1
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NPM search results")
+                .with_debug("NPM npm_package_search: returning search results"),
+        ),
     }
 }
 
@@ -371,7 +389,11 @@ fn npm_error_action() -> ActionDefinition {
             "error": "Package not found",
             "status_code": 404
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NPM error {status_code}: {error}")
+                .with_debug("NPM npm_error: status={status_code} error={error}"),
+        ),
     }
 }
 

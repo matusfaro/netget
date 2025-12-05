@@ -4,6 +4,7 @@
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
 use crate::llm::actions::{ActionDefinition, Parameter};
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -94,6 +95,12 @@ pub static COUCHDB_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_replication_response_action(),
         send_auth_required_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} CouchDB {method} {path} -> {status} ({duration_ms}ms)")
+            .with_debug("CouchDB {operation}: {method} {path} db={database} doc={doc_id}")
+            .with_trace("CouchDB request: {json_pretty(.)}"),
+    )
 });
 
 fn send_couchdb_response_action() -> ActionDefinition {
@@ -126,7 +133,12 @@ fn send_couchdb_response_action() -> ActionDefinition {
             "body": "{\"ok\": true}",
             "etag": "\"1-abc123\""
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {status_code} ({body_len}B)")
+                .with_debug("CouchDB response: {status_code}")
+                .with_trace("CouchDB response: {body}"),
+        ),
     }
 }
 
@@ -146,7 +158,11 @@ fn send_server_info_action() -> ActionDefinition {
             "type": "send_server_info",
             "version": "3.5.1"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> CouchDB {version}")
+                .with_debug("CouchDB server info: version={version}"),
+        ),
     }
 }
 
@@ -180,7 +196,11 @@ fn send_db_info_action() -> ActionDefinition {
             "doc_count": 42,
             "update_seq": "42-abc"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> db {db_name}: {doc_count} docs")
+                .with_debug("CouchDB db info: {db_name}, docs={doc_count}"),
+        ),
     }
 }
 
@@ -233,7 +253,11 @@ fn send_doc_response_action() -> ActionDefinition {
             "rev": "1-abc123",
             "document": {"name": "Alice", "age": 30}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> doc {doc_id} rev={rev}")
+                .with_debug("CouchDB doc: {doc_id} success={success} rev={rev}"),
+        ),
     }
 }
 
@@ -253,7 +277,11 @@ fn send_all_dbs_action() -> ActionDefinition {
             "type": "send_all_dbs",
             "databases": ["_replicator", "_users", "mydb", "testdb"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {databases_len} databases")
+                .with_debug("CouchDB all_dbs: {databases_len} databases"),
+        ),
     }
 }
 
@@ -283,7 +311,11 @@ fn send_all_docs_action() -> ActionDefinition {
                 {"id": "doc2", "key": "doc2", "value": {"rev": "1-def"}}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {total_rows} documents")
+                .with_debug("CouchDB all_docs: {total_rows} rows"),
+        ),
     }
 }
 
@@ -306,7 +338,11 @@ fn send_bulk_docs_response_action() -> ActionDefinition {
                 {"ok": true, "id": "doc2", "rev": "1-def"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> bulk: {results_len} docs")
+                .with_debug("CouchDB bulk_docs: {results_len} results"),
+        ),
     }
 }
 
@@ -343,7 +379,11 @@ fn send_view_response_action() -> ActionDefinition {
                 {"id": "user2", "key": 30, "value": "Bob"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> view: {total_rows} rows")
+                .with_debug("CouchDB view: {total_rows} total, offset={offset}"),
+        ),
     }
 }
 
@@ -380,7 +420,11 @@ fn send_changes_response_action() -> ActionDefinition {
             "last_seq": "2-def",
             "pending": 0
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> changes: {results_len} seq={last_seq}")
+                .with_debug("CouchDB changes: {results_len} results, last_seq={last_seq}"),
+        ),
     }
 }
 
@@ -413,7 +457,11 @@ fn send_replication_response_action() -> ActionDefinition {
             "session_id": "abc123",
             "source_last_seq": "10-xyz"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> replication session={session_id}")
+                .with_debug("CouchDB replication: session={session_id}, seq={source_last_seq}"),
+        ),
     }
 }
 
@@ -433,7 +481,11 @@ fn send_auth_required_action() -> ActionDefinition {
             "type": "send_auth_required",
             "realm": "CouchDB"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> 401 Unauthorized")
+                .with_debug("CouchDB auth required: realm={realm}"),
+        ),
     }
 }
 

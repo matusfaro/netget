@@ -6,6 +6,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::dns::actions::DnsProtocol;
 use crate::state::app_state::AppState;
@@ -47,6 +48,12 @@ pub static DOT_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 required: true,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("DoT {query_type} {domain}")
+                .with_debug("DoT query from {peer_addr}: {query_type} {domain}")
+                .with_trace("DoT: {json_pretty(.)}"),
+        )
         .with_actions(dns_actions)
 });
 
@@ -162,16 +169,19 @@ impl Server for DotProtocol {
         Box::pin(async move {
             use crate::server::dot::DotServer;
             // DoT spawn returns JoinHandle, but we need to return the socket address
+            // Get listen address before moving ctx fields
+            let listen_addr = ctx.legacy_listen_addr();
+
             // The server binds before spawning, so we can return listen_addr
             let _ = DotServer::spawn(
-                ctx.legacy_listen_addr(),
+                listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.server_id,
                 ctx.status_tx,
             )
             .await?;
-            Ok(ctx.legacy_listen_addr())
+            Ok(listen_addr)
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {

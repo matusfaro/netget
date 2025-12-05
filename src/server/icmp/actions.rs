@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -142,6 +143,9 @@ impl Server for IcmpProtocol {
                 .context("ICMP requires network interface")?
                 .to_string();
 
+            // Get listen address before moving ctx fields
+            let listen_addr = ctx.legacy_listen_addr();
+
             // Spawn the ICMP server
             let _interface_name = IcmpServer::spawn_with_llm(
                 interface,
@@ -154,7 +158,7 @@ impl Server for IcmpProtocol {
 
             // ICMP doesn't bind to a socket, so return a dummy address
             // The listen_addr from context is just a placeholder
-            Ok(ctx.legacy_listen_addr())
+            Ok(listen_addr)
         })
     }
 
@@ -407,7 +411,11 @@ fn send_echo_reply_action() -> ActionDefinition {
             "sequence": 1,
             "payload_hex": "48656c6c6f"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ICMP echo reply to {destination_ip}")
+                .with_debug("ICMP send_echo_reply: dst={destination_ip} id={identifier} seq={sequence}"),
+        ),
     }
 }
 
@@ -450,7 +458,11 @@ fn send_destination_unreachable_action() -> ActionDefinition {
             "code": 1,
             "original_packet_hex": "4500003c..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ICMP unreachable code={code} to {destination_ip}")
+                .with_debug("ICMP send_destination_unreachable: dst={destination_ip} code={code}"),
+        ),
     }
 }
 
@@ -493,7 +505,11 @@ fn send_time_exceeded_action() -> ActionDefinition {
             "code": 0,
             "original_packet_hex": "4500003c..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ICMP TTL exceeded to {destination_ip}")
+                .with_debug("ICMP send_time_exceeded: dst={destination_ip} code={code}"),
+        ),
     }
 }
 
@@ -544,7 +560,11 @@ fn send_timestamp_reply_action() -> ActionDefinition {
             "sequence": 1,
             "originate_timestamp": 12345678
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ICMP timestamp reply to {destination_ip}")
+                .with_debug("ICMP send_timestamp_reply: dst={destination_ip} id={identifier} seq={sequence}"),
+        ),
     }
 }
 */
@@ -558,7 +578,11 @@ fn ignore_icmp_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_icmp"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ICMP ignore")
+                .with_debug("ICMP ignore_icmp"),
+        ),
     }
 }
 
@@ -625,6 +649,14 @@ pub static ICMP_TIMESTAMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "icmp_timestamp_request",
         "ICMP Timestamp Request received from network",
+        json!({
+            "type": "send_timestamp_reply",
+            "source_ip": "192.168.1.100",
+            "destination_ip": "192.168.1.50",
+            "identifier": 1234,
+            "sequence": 1,
+            "originate_timestamp": 12345678
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -659,6 +691,11 @@ pub static ICMP_TIMESTAMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         },
     ])
     .with_actions(vec![send_timestamp_reply_action(), ignore_icmp_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("ICMP timestamp request from {source_ip}")
+            .with_debug("ICMP timestamp_request: src={source_ip} id={identifier} seq={sequence}"),
+    )
 });
 */
 

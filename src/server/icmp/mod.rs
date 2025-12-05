@@ -5,7 +5,7 @@
 
 pub mod actions;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use pnet::packet::icmp::echo_request::EchoRequestPacket;
 // Note: pnet doesn't provide timestamp packet types
 use pnet::packet::icmp::{

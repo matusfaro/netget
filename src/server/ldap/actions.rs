@@ -358,7 +358,11 @@ fn ldap_bind_response_action() -> ActionDefinition {
             "success": true,
             "message": "Bind successful"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> LDAP bind: {success}")
+                .with_debug("LDAP ldap_bind_response: success={success}"),
+        ),
     }
 }
 
@@ -401,7 +405,11 @@ fn ldap_search_response_action() -> ActionDefinition {
             ],
             "result_code": 0
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> LDAP search: {entries_len} entries")
+                .with_debug("LDAP ldap_search_response: {entries_len} entries"),
+        ),
     }
 }
 
@@ -442,7 +450,11 @@ fn ldap_add_response_action() -> ActionDefinition {
             "result_code": 0,
             "message": "Entry added successfully"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> LDAP add: {success}")
+                .with_debug("LDAP ldap_add_response: success={success}"),
+        ),
     }
 }
 
@@ -483,7 +495,11 @@ fn ldap_modify_response_action() -> ActionDefinition {
             "result_code": 0,
             "message": "Entry modified successfully"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> LDAP modify: {success}")
+                .with_debug("LDAP ldap_modify_response: success={success}"),
+        ),
     }
 }
 
@@ -524,7 +540,11 @@ fn ldap_delete_response_action() -> ActionDefinition {
             "result_code": 0,
             "message": "Entry deleted successfully"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> LDAP delete: {success}")
+                .with_debug("LDAP ldap_delete_response: success={success}"),
+        ),
     }
 }
 
@@ -536,7 +556,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("LDAP waiting for more data"),
+        ),
     }
 }
 
@@ -548,7 +571,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("LDAP connection closed")
+                .with_debug("LDAP close_connection"),
+        ),
     }
 }
 

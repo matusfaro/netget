@@ -353,6 +353,7 @@ impl Protocol for OspfClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: None,
         }]
     }
     fn get_event_types(&self) -> Vec<EventType> {

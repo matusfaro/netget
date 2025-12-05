@@ -356,7 +356,11 @@ fn authorize_peer_action() -> ActionDefinition {
             "endpoint": "203.0.113.45:51820",
             "message": "Legitimate VPN client authorized"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG authorize {public_key}")
+                .with_debug("WG authorize_peer: pubkey={public_key} ips={allowed_ips}"),
+        ),
     }
 }
 
@@ -384,7 +388,11 @@ fn reject_peer_action() -> ActionDefinition {
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
             "reason": "Unauthorized client - unknown public key"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG reject {public_key}: {reason}")
+                .with_debug("WG reject_peer: pubkey={public_key} reason={reason}"),
+        ),
     }
 }
 
@@ -419,7 +427,11 @@ fn set_peer_traffic_limit_action() -> ActionDefinition {
             "limit_mbps": 100,
             "limit_total_mb": 10000
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG traffic limit {public_key}")
+                .with_debug("WG set_peer_traffic_limit: pubkey={public_key} mbps={limit_mbps}"),
+        ),
     }
 }
 
@@ -447,7 +459,11 @@ fn disconnect_peer_action() -> ActionDefinition {
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
             "reason": "Suspicious traffic detected"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG disconnect {public_key}")
+                .with_debug("WG disconnect_peer: pubkey={public_key} reason={reason}"),
+        ),
     }
 }
 
@@ -460,7 +476,11 @@ fn list_peers_action() -> ActionDefinition {
         example: json!({
             "type": "list_peers"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG list peers")
+                .with_debug("WG list_peers"),
+        ),
     }
 }
 
@@ -479,7 +499,11 @@ fn remove_peer_action() -> ActionDefinition {
             "type": "remove_peer",
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG remove {public_key}")
+                .with_debug("WG remove_peer: pubkey={public_key}"),
+        ),
     }
 }
 
@@ -492,6 +516,10 @@ fn get_server_info_action() -> ActionDefinition {
         example: json!({
             "type": "get_server_info"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG server info")
+                .with_debug("WG get_server_info"),
+        ),
     }
 }

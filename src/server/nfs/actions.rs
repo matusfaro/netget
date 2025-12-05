@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -316,7 +317,11 @@ fn mount_filesystem_action() -> ActionDefinition {
             "type": "mount_filesystem",
             "path": "/export/data"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("NFS mount {path}")
+                .with_debug("NFS mount_filesystem: path={path}"),
+        ),
     }
 }
 
@@ -334,7 +339,11 @@ fn unmount_filesystem_action() -> ActionDefinition {
             "type": "unmount_filesystem",
             "path": "/export/data"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("NFS unmount {path}")
+                .with_debug("NFS unmount_filesystem: path={path}"),
+        ),
     }
 }
 
@@ -362,7 +371,11 @@ fn nfs_lookup_response_action() -> ActionDefinition {
             "type": "nfs_lookup_response",
             "fileid": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS lookup fileid={fileid}")
+                .with_debug("NFS nfs_lookup_response: fileid={fileid}"),
+        ),
     }
 }
 
@@ -395,7 +408,11 @@ fn nfs_read_response_action() -> ActionDefinition {
             "data": "Hello from NFS!",
             "eof": false
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS read data")
+                .with_debug("NFS nfs_read_response: eof={eof}"),
+        ),
     }
 }
 
@@ -434,7 +451,11 @@ fn nfs_write_response_action() -> ActionDefinition {
             "size": 1024,
             "mode": 0o644
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS write size={size}")
+                .with_debug("NFS nfs_write_response: size={size}, mode={mode}"),
+        ),
     }
 }
 
@@ -506,7 +527,11 @@ fn nfs_getattr_response_action() -> ActionDefinition {
             "uid": 1000,
             "gid": 1000
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS attr {file_type} size={size}")
+                .with_debug("NFS nfs_getattr_response: type={file_type}, size={size}, mode={mode}"),
+        ),
     }
 }
 
@@ -546,7 +571,11 @@ fn nfs_create_response_action() -> ActionDefinition {
             "size": 0,
             "mode": 0o644
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS create fileid={fileid}")
+                .with_debug("NFS nfs_create_response: fileid={fileid}, mode={mode}"),
+        ),
     }
 }
 
@@ -572,7 +601,11 @@ fn nfs_remove_response_action() -> ActionDefinition {
             "type": "nfs_remove_response",
             "success": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS remove success={success}")
+                .with_debug("NFS nfs_remove_response: success={success}"),
+        ),
     }
 }
 
@@ -605,7 +638,11 @@ fn nfs_mkdir_response_action() -> ActionDefinition {
             "fileid": 456,
             "mode": 0o755
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS mkdir fileid={fileid}")
+                .with_debug("NFS nfs_mkdir_response: fileid={fileid}, mode={mode}"),
+        ),
     }
 }
 
@@ -643,7 +680,11 @@ fn nfs_readdir_response_action() -> ActionDefinition {
             ],
             "eof": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS readdir {entries_len} entries")
+                .with_debug("NFS nfs_readdir_response: {entries_len} entries, eof={eof}"),
+        ),
     }
 }
 
@@ -669,7 +710,11 @@ fn nfs_rename_response_action() -> ActionDefinition {
             "type": "nfs_rename_response",
             "success": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS rename success={success}")
+                .with_debug("NFS nfs_rename_response: success={success}"),
+        ),
     }
 }
 
@@ -707,7 +752,11 @@ fn nfs_setattr_response_action() -> ActionDefinition {
             "type": "nfs_setattr_response",
             "mode": 0o600
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFS setattr")
+                .with_debug("NFS nfs_setattr_response: mode={mode}"),
+        ),
     }
 }
 
@@ -736,6 +785,12 @@ pub static NFS_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         // Include all NFS response actions
         // The LLM will choose the appropriate response based on the operation type
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("NFS {operation}")
+            .with_debug("NFS {operation}: {params}")
+            .with_trace("NFS: {json_pretty(.)}"),
+    )
 });
 
 /// Get NFS event types

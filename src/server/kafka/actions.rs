@@ -246,7 +246,11 @@ fn publish_message_action() -> ActionDefinition {
             "value": "{\"item\": \"laptop\", \"price\": 999}",
             "partition": 0
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Kafka publish to {topic}")
+                .with_debug("Kafka publish_message: topic={topic}, key={key}"),
+        ),
     }
 }
 
@@ -280,7 +284,11 @@ fn create_topic_action() -> ActionDefinition {
             "partitions": 3,
             "replication_factor": 1
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Kafka create topic {topic}")
+                .with_debug("Kafka create_topic: topic={topic}, partitions={partitions}"),
+        ),
     }
 }
 
@@ -298,7 +306,11 @@ fn delete_topic_action() -> ActionDefinition {
             "type": "delete_topic",
             "topic": "orders"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Kafka delete topic {topic}")
+                .with_debug("Kafka delete_topic: topic={topic}"),
+        ),
     }
 }
 
@@ -325,7 +337,11 @@ fn set_retention_action() -> ActionDefinition {
             "topic": "orders",
             "retention_hours": 72
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Kafka set retention {topic} {retention_hours}h")
+                .with_debug("Kafka set_retention: topic={topic}, hours={retention_hours}"),
+        ),
     }
 }
 
@@ -366,7 +382,11 @@ fn produce_response_action() -> ActionDefinition {
             "offset": 42,
             "error_code": 0
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Kafka produce OK offset={offset}")
+                .with_debug("Kafka produce_response: topic={topic}, partition={partition}, offset={offset}"),
+        ),
     }
 }
 
@@ -403,7 +423,11 @@ fn fetch_response_action() -> ActionDefinition {
                 {"offset": 41, "key": "order124", "value": "{\"item\": \"mouse\"}"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Kafka fetch {records_len} records")
+                .with_debug("Kafka fetch_response: topic={topic}, partition={partition}, {records_len} records"),
+        ),
     }
 }
 
@@ -437,7 +461,11 @@ fn metadata_response_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Kafka metadata {topics_len} topics")
+                .with_debug("Kafka metadata_response: {brokers_len} brokers, {topics_len} topics"),
+        ),
     }
 }
 
@@ -471,7 +499,11 @@ fn offset_commit_response_action() -> ActionDefinition {
             "partition": 0,
             "error_code": 0
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Kafka offset commit OK")
+                .with_debug("Kafka offset_commit_response: topic={topic}, partition={partition}"),
+        ),
     }
 }
 
@@ -498,7 +530,11 @@ fn error_response_action() -> ActionDefinition {
             "error_code": 3,
             "error_message": "Unknown topic or partition"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Kafka error {error_code}")
+                .with_debug("Kafka error_response: code={error_code}, message={error_message}"),
+        ),
     }
 }
 

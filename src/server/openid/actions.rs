@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -14,6 +15,12 @@ use tracing::{debug, error, info, warn};
 /// OpenID Connect request event - triggered when client sends an HTTP request to OIDC server
 pub static OPENID_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("openid_request", "HTTP request received by OpenID Connect server", json!({"type": "placeholder", "event_id": "openid_request"}))
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} OIDC {method} {path} ({endpoint_type}) ({duration_ms}ms)")
+            .with_debug("OIDC request from {client_ip}: {method} {path}, endpoint={endpoint_type}")
+            .with_trace("OIDC request: {json_pretty(.)}"),
+    )
     .with_parameters(vec![
         Parameter {
             name: "method".to_string(),
@@ -118,7 +125,11 @@ impl Protocol for OpenIdProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "configure_provider", "issuer": "http://localhost:8080", "supported_scopes": ["openid", "profile", "email"]}),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC configured: {issuer}")
+                            .with_debug("OIDC provider configured: issuer={issuer}"),
+                    ),
                 },
             ]
     }
@@ -181,7 +192,11 @@ impl Protocol for OpenIdProtocol {
                         "supported_scopes": ["openid", "profile", "email"],
                         "supported_response_types": ["code", "id_token", "token id_token"]
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC discovery: {issuer}")
+                            .with_debug("OIDC discovery document: issuer={issuer}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_authorization_response".to_string(),
@@ -219,7 +234,11 @@ impl Protocol for OpenIdProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_authorization_response", "redirect_uri": "https://client.example.com/callback", "code": "AUTH_CODE_123", "state": "xyz"}),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC auth redirect")
+                            .with_debug("OIDC authorization response: redirect to {redirect_uri}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_token_response".to_string(),
@@ -270,7 +289,11 @@ impl Protocol for OpenIdProtocol {
                         "expires_in": 3600,
                         "scope": "openid profile email"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC token issued (expires={expires_in}s)")
+                            .with_debug("OIDC token response: type={token_type}, expires_in={expires_in}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_userinfo_response".to_string(),
@@ -320,7 +343,11 @@ impl Protocol for OpenIdProtocol {
                         "email": "john@example.com",
                         "email_verified": true
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC userinfo: {sub}")
+                            .with_debug("OIDC userinfo response: sub={sub}, name={name}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_jwks_response".to_string(),
@@ -344,7 +371,11 @@ impl Protocol for OpenIdProtocol {
                             "e": "AQAB"
                         }]
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC JWKS ({keys_len} keys)")
+                            .with_debug("OIDC JWKS response: {keys_len} keys"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_error_response".to_string(),
@@ -370,7 +401,11 @@ impl Protocol for OpenIdProtocol {
                         },
                     ],
                     example: serde_json::json!({"type": "send_error_response", "error": "invalid_client", "error_description": "Client authentication failed", "status_code": 401}),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OIDC error: {error}")
+                            .with_debug("OIDC error response: {error} - {error_description}"),
+                    ),
                 },
             ]
     }

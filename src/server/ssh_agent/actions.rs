@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -26,6 +27,12 @@ pub static SSH_AGENT_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::ne
         description: "Unique connection identifier".to_string(),
         required: true,
     })
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent connection opened")
+            .with_debug("SSH Agent conn={connection_id}")
+            .with_trace("SSH Agent connection: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_REQUEST_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -43,6 +50,12 @@ pub static SSH_AGENT_REQUEST_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::n
         description: "Connection that requested identities".to_string(),
         required: true,
     })
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent REQUEST_IDENTITIES")
+            .with_debug("SSH Agent REQUEST_IDENTITIES conn={connection_id}")
+            .with_trace("SSH Agent identities request: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_SIGN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -80,6 +93,12 @@ pub static SSH_AGENT_SIGN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent SIGN_REQUEST flags={flags}")
+            .with_debug("SSH Agent SIGN_REQUEST conn={connection_id} flags={flags}")
+            .with_trace("SSH Agent sign request: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_ADD_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -122,6 +141,12 @@ pub static SSH_AGENT_ADD_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent ADD_IDENTITY {key_type} ({comment})")
+            .with_debug("SSH Agent ADD_IDENTITY key_type={key_type} comment={comment} constrained={constrained}")
+            .with_trace("SSH Agent add identity: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_REMOVE_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -146,6 +171,12 @@ pub static SSH_AGENT_REMOVE_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent REMOVE_IDENTITY")
+            .with_debug("SSH Agent REMOVE_IDENTITY conn={connection_id}")
+            .with_trace("SSH Agent remove identity: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -162,6 +193,12 @@ pub static SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock
         description: "Connection identifier".to_string(),
         required: true,
     })
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent REMOVE_ALL_IDENTITIES")
+            .with_debug("SSH Agent REMOVE_ALL_IDENTITIES conn={connection_id}")
+            .with_trace("SSH Agent remove all: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_LOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -178,6 +215,12 @@ pub static SSH_AGENT_LOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection identifier".to_string(),
         required: true,
     })
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent LOCK")
+            .with_debug("SSH Agent LOCK conn={connection_id}")
+            .with_trace("SSH Agent lock: {json_pretty(.)}"),
+    )
 });
 
 pub static SSH_AGENT_UNLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -194,6 +237,12 @@ pub static SSH_AGENT_UNLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection identifier".to_string(),
         required: true,
     })
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SSH Agent UNLOCK")
+            .with_debug("SSH Agent UNLOCK conn={connection_id}")
+            .with_trace("SSH Agent unlock: {json_pretty(.)}"),
+    )
 });
 
 /// SSH Agent server protocol implementation
@@ -231,7 +280,11 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "modify_instruction", "instruction": "..."}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent modify instruction")
+                    .with_debug("SSH Agent modify_instruction"),
+            ),
             },
             ActionDefinition {
                 name: "close_connection".to_string(),
@@ -243,7 +296,11 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "close_connection", "connection_id": "conn-123"}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent close conn {connection_id}")
+                    .with_debug("SSH Agent close_connection: conn_id={connection_id}"),
+            ),
             },
         ]
     }
@@ -260,7 +317,11 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "send_identities_list", "identities": [{"key_type": "ssh-ed25519", "public_key_blob_hex": "...", "comment": "my-key"}]}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent {identities_len} identities")
+                    .with_debug("SSH Agent send_identities_list: count={identities_len}"),
+            ),
             },
             ActionDefinition {
                 name: "send_sign_response".to_string(),
@@ -272,28 +333,44 @@ impl Protocol for SshAgentProtocol {
                     required: true,
                 }],
                 example: json!({"type": "send_sign_response", "signature_hex": "..."}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent signature")
+                    .with_debug("SSH Agent send_sign_response"),
+            ),
             },
             ActionDefinition {
                 name: "send_success".to_string(),
                 description: "Send SSH_AGENT_SUCCESS response".to_string(),
                 parameters: vec![],
                 example: json!({"type": "send_success"}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent SUCCESS")
+                    .with_debug("SSH Agent send_success"),
+            ),
             },
             ActionDefinition {
                 name: "send_failure".to_string(),
                 description: "Send SSH_AGENT_FAILURE response".to_string(),
                 parameters: vec![],
                 example: json!({"type": "send_failure"}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent FAILURE")
+                    .with_debug("SSH Agent send_failure"),
+            ),
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
                 description: "Wait for more data before making a decision".to_string(),
                 parameters: vec![],
                 example: json!({"type": "wait_for_more"}),
-            log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SSH Agent wait")
+                    .with_debug("SSH Agent wait_for_more"),
+            ),
             },
         ]
     }

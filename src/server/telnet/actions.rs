@@ -227,7 +227,11 @@ fn send_telnet_message_action() -> ActionDefinition {
             "type": "send_telnet_message",
             "message": "Hello\r\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Telnet: {preview(message,60)}")
+                .with_debug("Telnet send_telnet_message: {message_len} bytes"),
+        ),
     }
 }
 
@@ -245,7 +249,11 @@ fn send_telnet_line_action() -> ActionDefinition {
             "type": "send_telnet_line",
             "line": "Welcome to the Telnet server!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Telnet: {preview(line,60)}")
+                .with_debug("Telnet send_telnet_line: {line}"),
+        ),
     }
 }
 
@@ -263,7 +271,11 @@ fn send_telnet_prompt_action() -> ActionDefinition {
             "type": "send_telnet_prompt",
             "prompt": "$ "
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Telnet prompt: {prompt}")
+                .with_debug("Telnet send_telnet_prompt: prompt={prompt}"),
+        ),
     }
 }
 
@@ -275,7 +287,11 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Telnet waiting for more data")
+                .with_debug("Telnet wait_for_more"),
+        ),
     }
 }
 
@@ -287,7 +303,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Telnet connection closed")
+                .with_debug("Telnet close_connection"),
+        ),
     }
 }
 

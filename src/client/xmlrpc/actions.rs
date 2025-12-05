@@ -137,7 +137,6 @@ impl Protocol for XmlRpcClientProtocol {
                     type_hint: "array".to_string(),
                     description: "Array of parameters for the method call".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -145,6 +144,7 @@ impl Protocol for XmlRpcClientProtocol {
                 "method_name": "system.listMethods",
                 "params": []
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

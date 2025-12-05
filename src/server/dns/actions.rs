@@ -529,7 +529,11 @@ fn send_dns_aaaa_response_action() -> ActionDefinition {
             "ip": "2001:db8::1",
             "ttl": 300
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS AAAA {domain} -> {ip}")
+                .with_debug("DNS AAAA response: {domain} -> {ip} (TTL={ttl})"),
+        ),
     }
 }
 
@@ -570,7 +574,11 @@ fn send_dns_cname_response_action() -> ActionDefinition {
             "target": "example.com",
             "ttl": 300
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS CNAME {domain} -> {target}")
+                .with_debug("DNS CNAME response: {domain} -> {target} (TTL={ttl})"),
+        ),
     }
 }
 
@@ -619,7 +627,11 @@ fn send_dns_mx_response_action() -> ActionDefinition {
             "preference": 10,
             "ttl": 300
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS MX {domain} -> {exchange} (pref={preference})")
+                .with_debug("DNS MX response: {domain} -> {exchange} (pref={preference}, TTL={ttl})"),
+        ),
     }
 }
 
@@ -660,7 +672,11 @@ fn send_dns_txt_response_action() -> ActionDefinition {
             "text": "v=spf1 include:_spf.example.com ~all",
             "ttl": 300
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS TXT {domain}")
+                .with_debug("DNS TXT response: {domain} -> \"{text}\" (TTL={ttl})"),
+        ),
     }
 }
 
@@ -687,7 +703,11 @@ fn send_dns_nxdomain_action() -> ActionDefinition {
             "query_id": 12345,
             "domain": "nonexistent.example.com"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS NXDOMAIN {domain}")
+                .with_debug("DNS NXDOMAIN response: {domain}"),
+        ),
     }
 }
 
@@ -705,7 +725,11 @@ fn send_dns_response_action() -> ActionDefinition {
             "type": "send_dns_response",
             "data": "81800001000100000000076578616d706c6503636f6d0000010001c00c00010001..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("DNS raw response {output_bytes}B")
+                .with_debug("DNS send_dns_response: {output_bytes}B"),
+        ),
     }
 }
 
@@ -717,7 +741,10 @@ fn ignore_query_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_query"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("DNS ignore_query"),
+        ),
     }
 }
 

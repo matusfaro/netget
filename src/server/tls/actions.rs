@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -238,7 +239,11 @@ fn send_tls_data_action() -> ActionDefinition {
             "type": "send_tls_data",
             "data": "Hello over TLS\r\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TLS {data_len}B")
+                .with_debug("TLS send: {data_len} bytes"),
+        ),
     }
 }
 
@@ -252,7 +257,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_debug("TLS waiting for more data")),
     }
 }
 
@@ -265,7 +270,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_info("-> TLS connection closed")),
     }
 }
 
@@ -299,6 +304,11 @@ pub static TLS_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         SEND_TLS_DATA_ACTION.clone(),
         CLOSE_THIS_CONNECTION_ACTION.clone(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} TLS connected")
+            .with_debug("TLS handshake complete from {client_ip}"),
+    )
 });
 
 /// TLS data received event - triggered when data is received on encrypted connection
@@ -322,6 +332,12 @@ pub static TLS_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         WAIT_FOR_MORE_ACTION.clone(),
         CLOSE_THIS_CONNECTION_ACTION.clone(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} TLS <- {data_len}B ({duration_ms}ms)")
+            .with_debug("TLS data from {client_ip}: {data_len} bytes")
+            .with_trace("TLS data: {data}"),
+    )
 });
 
 /// Get TLS event types

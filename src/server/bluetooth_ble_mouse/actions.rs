@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -27,6 +28,12 @@ pub static MOUSE_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         description: "Unique client connection ID".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE mouse client connected: {client_id}")
+            .with_debug("BLE mouse client {client_id} connected")
+            .with_trace("BLE mouse connected: {json_pretty(.)}"),
+    )
 });
 
 /// Mouse disconnection event
@@ -44,6 +51,12 @@ pub static MOUSE_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
         description: "Unique client connection ID".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE mouse client disconnected: {client_id}")
+            .with_debug("BLE mouse client {client_id} disconnected")
+            .with_trace("BLE mouse disconnected: {json_pretty(.)}"),
+    )
 });
 
 /// BLE HID Mouse protocol handler
@@ -259,7 +272,11 @@ fn move_cursor_action() -> ActionDefinition {
             "dx": 42,
             "dy": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE mouse move: ({dx}, {dy})")
+                .with_debug("BLE mouse move_cursor: dx={dx}, dy={dy}"),
+        ),
     }
 }
 
@@ -285,7 +302,11 @@ fn click_action() -> ActionDefinition {
             "type": "click",
             "button": "example_button"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE mouse click: {button}")
+                .with_debug("BLE mouse click: button={button}"),
+        ),
     }
 }
 
@@ -311,7 +332,11 @@ fn scroll_action() -> ActionDefinition {
             "type": "scroll",
             "amount": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE mouse scroll: {amount}")
+                .with_debug("BLE mouse scroll: amount={amount}"),
+        ),
     }
 }
 
@@ -351,7 +376,11 @@ fn drag_action() -> ActionDefinition {
             "dx": 42,
             "dy": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE mouse drag: {button} ({dx}, {dy})")
+                .with_debug("BLE mouse drag: button={button}, dx={dx}, dy={dy}"),
+        ),
     }
 }
 
@@ -378,7 +407,11 @@ fn send_to_client_action() -> ActionDefinition {
             "client_id": 42,
             "report": "example_report"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE mouse HID to client {client_id}")
+                .with_debug("BLE mouse send_to_client: client_id={client_id}, report={report}"),
+        ),
     }
 }
 
@@ -390,6 +423,10 @@ fn list_clients_action() -> ActionDefinition {
         example: json!({
             "type": "list_clients"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE mouse list clients")
+                .with_debug("BLE mouse list_clients"),
+        ),
     }
 }

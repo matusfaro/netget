@@ -468,7 +468,11 @@ fn send_irc_message_action() -> ActionDefinition {
             "type": "send_irc_message",
             "message": ":server NOTICE * :Looking up your hostname"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC: {preview(message,60)}")
+                .with_debug("IRC send_irc_message: {message}"),
+        ),
     }
 }
 
@@ -502,7 +506,11 @@ fn send_irc_welcome_action() -> ActionDefinition {
             "server": "irc.example.com",
             "message": "Welcome to the IRC Network, alice!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC 001 {nickname}: {message}")
+                .with_debug("IRC send_irc_welcome: nickname={nickname}, server={server}"),
+        ),
     }
 }
 
@@ -520,7 +528,11 @@ fn send_irc_pong_action() -> ActionDefinition {
             "type": "send_irc_pong",
             "token": "1234567890"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC PONG :{token}")
+                .with_debug("IRC send_irc_pong: token={token}"),
+        ),
     }
 }
 
@@ -559,7 +571,11 @@ fn send_irc_join_action() -> ActionDefinition {
             "nickname": "alice",
             "channel": "#general"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC {nickname} JOIN {channel}")
+                .with_debug("IRC send_irc_join: nickname={nickname}, channel={channel}"),
+        ),
     }
 }
 
@@ -605,7 +621,11 @@ fn send_irc_part_action() -> ActionDefinition {
             "channel": "#general",
             "reason": "Goodbye!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC {nickname} PART {channel}")
+                .with_debug("IRC send_irc_part: nickname={nickname}, channel={channel}, reason={reason}"),
+        ),
     }
 }
 
@@ -639,7 +659,11 @@ fn send_irc_privmsg_action() -> ActionDefinition {
             "target": "alice",
             "message": "Hello, alice!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC {source} -> {target}: {preview(message,40)}")
+                .with_debug("IRC send_irc_privmsg: source={source}, target={target}"),
+        ),
     }
 }
 
@@ -673,7 +697,11 @@ fn send_irc_notice_action() -> ActionDefinition {
             "target": "alice",
             "message": "Server maintenance in 5 minutes"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC NOTICE {source} -> {target}")
+                .with_debug("IRC send_irc_notice: source={source}, target={target}, message={message}"),
+        ),
     }
 }
 
@@ -713,7 +741,11 @@ fn send_irc_numeric_action() -> ActionDefinition {
             "target": "alice",
             "message": "#general Welcome to our channel!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IRC {code} {target}: {preview(message,40)}")
+                .with_debug("IRC send_irc_numeric: code={code}, target={target}"),
+        ),
     }
 }
 
@@ -725,7 +757,11 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("IRC waiting for more data")
+                .with_debug("IRC wait_for_more"),
+        ),
     }
 }
 
@@ -737,7 +773,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("IRC connection closed")
+                .with_debug("IRC close_connection"),
+        ),
     }
 }
 

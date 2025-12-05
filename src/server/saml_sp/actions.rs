@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -399,7 +400,11 @@ fn send_authn_request_action() -> ActionDefinition {
             "idp_sso_url": "https://idp.example.com/sso",
             "binding": "HTTP-Redirect"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML AuthnRequest via {binding}")
+                .with_debug("SAML AuthnRequest to {idp_sso_url}, binding={binding}"),
+        ),
     }
 }
 
@@ -429,7 +434,11 @@ fn process_assertion_action() -> ActionDefinition {
                 "role": "admin"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML session: {user_id}")
+                .with_debug("SAML assertion processed: user={user_id}"),
+        ),
     }
 }
 
@@ -448,7 +457,11 @@ fn send_metadata_action() -> ActionDefinition {
             "type": "send_metadata",
             "metadata_xml": "<EntityDescriptor>...</EntityDescriptor>"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML SP metadata sent")
+                .with_debug("SAML SP metadata response sent"),
+        ),
     }
 }
 
@@ -475,7 +488,11 @@ fn send_error_response_action() -> ActionDefinition {
             "error_message": "Invalid assertion signature",
             "status_code": 403
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SAML error {status_code}: {error_message}")
+                .with_debug("SAML SP error response: {status_code} - {error_message}"),
+        ),
     }
 }
 
@@ -496,6 +513,12 @@ pub static SAML_SP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 "role": "user"
             }
         })
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} SAML SP {method} {path} ({duration_ms}ms)")
+            .with_debug("SAML SP request from {client_ip}: {method} {path}")
+            .with_trace("SAML SP request: {json_pretty(.)}"),
     )
     .with_parameters(vec![
         Parameter {

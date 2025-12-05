@@ -237,7 +237,11 @@ fn send_trap_action() -> ActionDefinition {
                 {"oid": "1.3.6.1.2.1.1.3.0", "type": "timeticks", "value": 12345}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SNMP trap to {target}")
+                .with_debug("SNMP send_trap: target={target}, {variables_len} vars"),
+        ),
     }
 }
 
@@ -259,7 +263,11 @@ fn send_snmp_response_action() -> ActionDefinition {
                 {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "hostname"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SNMP response {variables_len} vars")
+                .with_debug("SNMP send_snmp_response: {variables_len} variables"),
+        ),
     }
 }
 
@@ -278,7 +286,11 @@ fn send_snmp_error_action() -> ActionDefinition {
             "type": "send_snmp_error",
             "error_message": "No such object"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SNMP error: {error_message}")
+                .with_debug("SNMP send_snmp_error: {error_message}"),
+        ),
     }
 }
 
@@ -291,7 +303,11 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("SNMP request ignored")
+                .with_debug("SNMP ignore_request"),
+        ),
     }
 }
 

@@ -299,7 +299,11 @@ fn allow_socks5_connect_action() -> ActionDefinition {
             "type": "allow_socks5_connect",
             "mitm": false
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 allow (MITM={mitm})")
+                .with_debug("SOCKS5 allow_socks5_connect: mitm={mitm}"),
+        ),
     }
 }
 
@@ -317,7 +321,11 @@ fn deny_socks5_connect_action() -> ActionDefinition {
             "type": "deny_socks5_connect",
             "reason": "Blocked by security policy"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 deny: {reason}")
+                .with_debug("SOCKS5 deny_socks5_connect: reason={reason}"),
+        ),
     }
 }
 
@@ -329,7 +337,11 @@ fn allow_socks5_auth_action() -> ActionDefinition {
         example: json!({
             "type": "allow_socks5_auth"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 auth allowed")
+                .with_debug("SOCKS5 allow_socks5_auth"),
+        ),
     }
 }
 
@@ -347,7 +359,11 @@ fn deny_socks5_auth_action() -> ActionDefinition {
             "type": "deny_socks5_auth",
             "reason": "Invalid credentials"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 auth denied: {reason}")
+                .with_debug("SOCKS5 deny_socks5_auth: reason={reason}"),
+        ),
     }
 }
 
@@ -359,7 +375,11 @@ fn forward_socks5_data_action() -> ActionDefinition {
         example: json!({
             "type": "forward_socks5_data"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 forward")
+                .with_debug("SOCKS5 forward_socks5_data"),
+        ),
     }
 }
 
@@ -377,7 +397,11 @@ fn modify_socks5_data_action() -> ActionDefinition {
             "type": "modify_socks5_data",
             "data": "Modified payload"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 modify data")
+                .with_debug("SOCKS5 modify_socks5_data"),
+        ),
     }
 }
 
@@ -395,7 +419,11 @@ fn close_connection_action() -> ActionDefinition {
             "type": "close_connection",
             "reason": "Suspicious data detected"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SOCKS5 close: {reason}")
+                .with_debug("SOCKS5 close_connection: reason={reason}"),
+        ),
     }
 }
 

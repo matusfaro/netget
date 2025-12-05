@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -277,7 +278,6 @@ impl Protocol for OpenApiClientProtocol {
                     type_hint: "object".to_string(),
                     description: "Request body".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -285,6 +285,11 @@ impl Protocol for OpenApiClientProtocol {
                 "operation_id": "createUser",
                 "body": {"name": "Alice", "email": "alice@example.com"}
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> OpenAPI operation {operation_id}")
+                    .with_debug("OpenAPI execute_operation: operation_id={operation_id}"),
+            ),
         }]
     }
 

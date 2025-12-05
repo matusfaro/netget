@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -249,7 +250,11 @@ fn send_http2_response_action() -> ActionDefinition {
             },
             "body": "{\"message\": \"Hello from HTTP/2!\"}"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> HTTP/2 {status}")
+                .with_debug("HTTP/2 send_http2_response: status={status}"),
+        ),
     }
 }
 
@@ -293,7 +298,11 @@ fn push_resource_action() -> ActionDefinition {
             },
             "body": "body { margin: 0; }"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> HTTP/2 PUSH {path}")
+                .with_debug("HTTP/2 push_resource: path={path}, status={status}"),
+        ),
     }
 }
 
@@ -345,6 +354,12 @@ pub static HTTP2_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 required: false,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{method} {uri}")
+                .with_debug("HTTP/2 {method} {uri} v{version}")
+                .with_trace("HTTP/2: {json_pretty(.)}"),
+        )
         .with_actions(vec![
             SEND_HTTP2_RESPONSE_ACTION.clone(),
             PUSH_RESOURCE_ACTION.clone(),

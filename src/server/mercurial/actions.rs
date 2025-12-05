@@ -5,6 +5,7 @@
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition};
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::{EventType, SpawnContext};
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
@@ -78,7 +79,11 @@ impl Protocol for MercurialProtocol {
                     "description": "My Mercurial project",
                     "default_branch": "default"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("Mercurial repository '{name}' created")
+                        .with_debug("Mercurial create repository: name={name}, branch={default_branch}"),
+                ),
             },
             ActionDefinition {
                 name: "delete_hg_repository".to_string(),
@@ -93,14 +98,22 @@ impl Protocol for MercurialProtocol {
                     "type": "delete_hg_repository",
                     "name": "old-project"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("Mercurial repository '{name}' deleted")
+                        .with_debug("Mercurial delete repository: name={name}"),
+                ),
             },
             ActionDefinition {
                 name: "list_hg_repositories".to_string(),
                 description: "List all virtual Mercurial repositories".to_string(),
                 parameters: vec![],
                 example: json!({"type": "list_hg_repositories"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("Mercurial repositories listed")
+                        .with_debug("Mercurial list repositories"),
+                ),
             },
         ]
     }
@@ -119,7 +132,11 @@ impl Protocol for MercurialProtocol {
                     "type": "hg_capabilities",
                     "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup", "pushkey", "unbundle=HG10GZ,HG10BZ,HG10UN"]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> {capabilities_len} capabilities")
+                        .with_debug("Mercurial capabilities: {capabilities}"),
+                ),
             },
             ActionDefinition {
                 name: "hg_heads".to_string(),
@@ -134,7 +151,11 @@ impl Protocol for MercurialProtocol {
                     "type": "hg_heads",
                     "heads": ["abc123...", "def456..."]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> {heads_len} heads")
+                        .with_debug("Mercurial heads: {heads_len} nodes"),
+                ),
             },
             ActionDefinition {
                 name: "hg_branchmap".to_string(),
@@ -152,7 +173,11 @@ impl Protocol for MercurialProtocol {
                         "stable": ["def456..."]
                     }
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> branchmap sent")
+                        .with_debug("Mercurial branchmap: {branches}"),
+                ),
             },
             ActionDefinition {
                 name: "hg_listkeys".to_string(),
@@ -171,7 +196,11 @@ impl Protocol for MercurialProtocol {
                         "develop": "def456..."
                     }
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> listkeys sent")
+                        .with_debug("Mercurial listkeys: {keys}"),
+                ),
             },
             ActionDefinition {
                 name: "hg_send_bundle".to_string(),
@@ -196,7 +225,11 @@ impl Protocol for MercurialProtocol {
                     "bundle_type": "HG10UN",
                     "bundle_data": ""
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> bundle sent ({bundle_type})")
+                        .with_debug("Mercurial send bundle: type={bundle_type}, size={bundle_data_len}B"),
+                ),
             },
             ActionDefinition {
                 name: "hg_error".to_string(),
@@ -220,7 +253,11 @@ impl Protocol for MercurialProtocol {
                     "message": "Repository not found",
                     "code": 404
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> error {code}: {message}")
+                        .with_debug("Mercurial error: code={code}, message={message}"),
+                ),
             },
         ]
     }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -350,7 +351,11 @@ fn send_greeting_action() -> ActionDefinition {
             "mechanisms": ["ANONYMOUS"],
             "realm": "svn"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SVN greeting v{min_version}-{max_version}")
+                .with_debug("SVN greeting: version={min_version}-{max_version}, mechanisms={mechanisms}"),
+        ),
     }
 }
 
@@ -377,7 +382,11 @@ fn send_success_action() -> ActionDefinition {
             "message": "success",
             "data": "123"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SVN success")
+                .with_debug("SVN success: message={message}"),
+        ),
     }
 }
 
@@ -404,7 +413,11 @@ fn send_failure_action() -> ActionDefinition {
             "error_code": 210000,
             "message": "Repository not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SVN error {error_code}: {message}")
+                .with_debug("SVN failure: code={error_code}, message={message}"),
+        ),
     }
 }
 
@@ -426,7 +439,11 @@ fn send_list_action() -> ActionDefinition {
                 {"name": "tags", "kind": "dir", "revision": 1}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SVN list: {items_len} items")
+                .with_debug("SVN list: {items_len} items returned"),
+        ),
     }
 }
 
@@ -444,7 +461,11 @@ fn send_response_action() -> ActionDefinition {
             "type": "send_svn_response",
             "response": "( success ( 42 ) )"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SVN response")
+                .with_debug("SVN custom response: {response_len}B"),
+        ),
     }
 }
 
@@ -454,7 +475,7 @@ fn close_connection_action() -> ActionDefinition {
         description: "Close the SVN connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_connection"}),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_info("-> SVN connection closed")),
     }
 }
 
@@ -471,6 +492,11 @@ pub static SVN_GREETING_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
     .with_parameters(vec![])
     .with_actions(vec![send_greeting_action(), close_connection_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} SVN connected")
+            .with_debug("SVN client connected from {client_ip}"),
+    )
 });
 
 /// SVN command event - triggered when client sends a command
@@ -503,6 +529,12 @@ pub static SVN_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             send_response_action(),
             close_connection_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} SVN {command} ({duration_ms}ms)")
+                .with_debug("SVN command from {client_ip}: {command}")
+                .with_trace("SVN command: {command_line}"),
+        )
 });
 
 pub fn get_svn_event_types() -> Vec<EventType> {

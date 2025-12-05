@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
@@ -128,7 +129,11 @@ fn etcd_range_response_action() -> ActionDefinition {
             "more": false,
             "count": 1
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> etcd range response ({kvs_len} keys)")
+                .with_debug("etcd etcd_range_response: keys={kvs_len} more={more}"),
+        ),
     }
 }
 
@@ -155,7 +160,11 @@ fn etcd_error_action() -> ActionDefinition {
             "code": "KEY_NOT_FOUND",
             "message": "etcdserver: key not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> etcd error {code}: {message}")
+                .with_debug("etcd etcd_error: code={code} message={message}"),
+        ),
     }
 }
 

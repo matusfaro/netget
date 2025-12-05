@@ -6,6 +6,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 #[cfg(feature = "usb-serial")]
+use crate::protocol::log_template::LogTemplate;
+#[cfg(feature = "usb-serial")]
 use crate::{protocol::EventType, server::connection::ConnectionId, state::app_state::AppState};
 #[cfg(feature = "usb-serial")]
 use anyhow::{Context, Result};
@@ -100,7 +102,11 @@ impl Protocol for UsbSerialProtocol {
                     required: true,
                 }],
                 example: json!({"type": "send_data", "data": "Hello\n"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> USB serial send {data_len}B")
+                        .with_debug("USB-Serial send_data: data='{data}'"),
+                ),
             },
             ActionDefinition {
                 name: "set_line_coding".to_string(),
@@ -132,14 +138,22 @@ impl Protocol for UsbSerialProtocol {
                     },
                 ],
                 example: json!({"type": "set_line_coding", "baud_rate": 9600}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> USB serial line coding {baud_rate} baud")
+                        .with_debug("USB-Serial set_line_coding: baud={baud_rate} data_bits={data_bits} parity={parity} stop_bits={stop_bits}"),
+                ),
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
                 description: "Wait for more data".to_string(),
                 parameters: vec![],
                 example: json!({"type": "wait_for_more"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> USB serial wait for more")
+                        .with_debug("USB-Serial wait_for_more"),
+                ),
             },
         ]
     }

@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -164,6 +165,11 @@ impl Protocol for MdnsClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> mDNS wait for more")
+                    .with_debug("mDNS wait_for_more"),
+            ),
         }]
     }
     fn protocol_name(&self) -> &'static str {

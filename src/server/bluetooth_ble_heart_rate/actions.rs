@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -19,6 +20,12 @@ pub static HEART_RATE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE heart rate: {bpm} BPM")
+            .with_debug("BLE heart rate updated to {bpm} BPM")
+            .with_trace("BLE heart rate event: {json_pretty(.)}"),
+    )
 });
 
 pub struct BluetoothBleHeartRateProtocol;
@@ -55,7 +62,11 @@ impl Protocol for BluetoothBleHeartRateProtocol {
                     "type": "set_bpm",
                     "bpm": 42
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE heart rate: {bpm} BPM")
+                        .with_debug("BLE heart rate set_bpm: bpm={bpm}"),
+                ),
             },
             ActionDefinition {
                 name: "simulate_activity".to_string(),
@@ -70,7 +81,11 @@ impl Protocol for BluetoothBleHeartRateProtocol {
                     "type": "simulate_activity",
                     "activity": "example_activity"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE heart rate simulate: {activity}")
+                        .with_debug("BLE heart rate simulate_activity: activity={activity}"),
+                ),
             },
         ]
     }

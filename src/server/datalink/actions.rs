@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -156,6 +157,9 @@ impl Server for DataLinkProtocol {
                 .as_ref()
                 .and_then(|p| p.get_optional_string("filter"));
 
+            // Get listen address before moving ctx fields
+            let listen_addr = ctx.legacy_listen_addr();
+
             // Spawn the datalink server
             let _interface_name = DataLinkServer::spawn_with_llm(
                 interface,
@@ -169,7 +173,7 @@ impl Server for DataLinkProtocol {
 
             // DataLink doesn't bind to a socket, so return a dummy address
             // The listen_addr from context is just a placeholder
-            Ok(ctx.legacy_listen_addr())
+            Ok(listen_addr)
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -205,7 +209,11 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "ARP request detected for 192.168.1.1"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> L2 {message}")
+                .with_debug("DataLink show_message: {message}"),
+        ),
     }
 }
 
@@ -218,7 +226,11 @@ fn ignore_packet_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_packet"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> L2 ignored")
+                .with_debug("DataLink ignore_packet"),
+        ),
     }
 }
 

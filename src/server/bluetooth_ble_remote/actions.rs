@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -25,6 +26,12 @@ pub static REMOTE_BUTTON_PRESSED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Button name (play_pause, volume_up, etc.)".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE remote button pressed: {button}")
+            .with_debug("BLE remote button: {button}")
+            .with_trace("BLE remote event: {json_pretty(.)}"),
+    )
 });
 
 /// BLE Remote Control protocol handler
@@ -218,7 +225,11 @@ fn play_pause_action() -> ActionDefinition {
         example: json!({
             "type": "play_pause"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: play/pause")
+                .with_debug("BLE remote play_pause"),
+        ),
     }
 }
 
@@ -230,7 +241,11 @@ fn next_track_action() -> ActionDefinition {
         example: json!({
             "type": "next_track"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: next track")
+                .with_debug("BLE remote next_track"),
+        ),
     }
 }
 
@@ -242,7 +257,11 @@ fn previous_track_action() -> ActionDefinition {
         example: json!({
             "type": "previous_track"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: previous track")
+                .with_debug("BLE remote previous_track"),
+        ),
     }
 }
 
@@ -254,7 +273,11 @@ fn volume_up_action() -> ActionDefinition {
         example: json!({
             "type": "volume_up"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: volume up")
+                .with_debug("BLE remote volume_up"),
+        ),
     }
 }
 
@@ -266,7 +289,11 @@ fn volume_down_action() -> ActionDefinition {
         example: json!({
             "type": "volume_down"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: volume down")
+                .with_debug("BLE remote volume_down"),
+        ),
     }
 }
 
@@ -278,7 +305,11 @@ fn mute_action() -> ActionDefinition {
         example: json!({
             "type": "mute"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: mute")
+                .with_debug("BLE remote mute"),
+        ),
     }
 }
 
@@ -290,7 +321,11 @@ fn fast_forward_action() -> ActionDefinition {
         example: json!({
             "type": "fast_forward"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: fast forward")
+                .with_debug("BLE remote fast_forward"),
+        ),
     }
 }
 
@@ -302,7 +337,11 @@ fn rewind_action() -> ActionDefinition {
         example: json!({
             "type": "rewind"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: rewind")
+                .with_debug("BLE remote rewind"),
+        ),
     }
 }
 
@@ -314,6 +353,10 @@ fn stop_action() -> ActionDefinition {
         example: json!({
             "type": "stop"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE remote: stop")
+                .with_debug("BLE remote stop"),
+        ),
     }
 }

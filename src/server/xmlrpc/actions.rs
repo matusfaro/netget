@@ -10,6 +10,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::{Event, EventType};
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -354,7 +355,11 @@ fn success_response_action() -> ActionDefinition {
             "value_type": "int",
             "value": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XML-RPC success type={value_type}")
+                .with_debug("XML-RPC xmlrpc_success_response: type={value_type}"),
+        ),
     }
 }
 
@@ -381,7 +386,11 @@ fn fault_response_action() -> ActionDefinition {
             "fault_code": -32601,
             "fault_string": "Method not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XML-RPC fault {fault_code}: {fault_string}")
+                .with_debug("XML-RPC xmlrpc_fault_response: code={fault_code} message={fault_string}"),
+        ),
     }
 }
 
@@ -400,7 +409,11 @@ fn list_methods_response_action() -> ActionDefinition {
             "type": "xmlrpc_list_methods_response",
             "methods": ["add", "subtract", "system.listMethods", "system.methodHelp"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XML-RPC list methods ({methods_len})")
+                .with_debug("XML-RPC xmlrpc_list_methods_response: count={methods_len}"),
+        ),
     }
 }
 
@@ -419,7 +432,11 @@ fn method_help_response_action() -> ActionDefinition {
             "type": "xmlrpc_method_help_response",
             "help_text": "add(a, b) - Returns the sum of two numbers"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XML-RPC method help")
+                .with_debug("XML-RPC xmlrpc_method_help_response"),
+        ),
     }
 }
 
@@ -437,7 +454,11 @@ fn method_signature_response_action() -> ActionDefinition {
             "type": "xmlrpc_method_signature_response",
             "signatures": [["int", "int", "int"]]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XML-RPC method signature")
+                .with_debug("XML-RPC xmlrpc_method_signature_response: {signatures_len} sigs"),
+        ),
     }
 }
 
@@ -475,6 +496,12 @@ pub static XMLRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         method_help_response_action(),
         method_signature_response_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("XML-RPC {method_name}")
+            .with_debug("XML-RPC method={method_name}")
+            .with_trace("XML-RPC: {json_pretty(.)}"),
+    )
 });
 
 /// Create event from method call

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -164,6 +165,9 @@ impl Server for IsisProtocol {
                 .context("IS-IS requires network interface")?
                 .to_string();
 
+            // Get listen addr before consuming ctx fields
+            let listen_addr = ctx.legacy_listen_addr();
+
             // Spawn the IS-IS server
             let _interface_name = IsisServer::spawn_with_llm_actions(
                 interface,
@@ -176,7 +180,7 @@ impl Server for IsisProtocol {
             .await?;
 
             // IS-IS doesn't bind to a socket, so return a dummy address
-            Ok(ctx.legacy_listen_addr())
+            Ok(listen_addr)
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -447,6 +451,12 @@ pub static ISIS_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "area_id": "49.0001"
         }),
     )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("IS-IS {pdu_type} from {peer_addr}")
+            .with_debug("IS-IS Hello: type={pdu_type} peer={peer_addr} areas={area_addresses}")
+            .with_trace("IS-IS Hello: {json_pretty(.)}"),
+    )
 });
 
 fn get_isis_event_types() -> Vec<EventType> {
@@ -490,7 +500,11 @@ fn send_isis_hello_action() -> ActionDefinition {
             "system_id": "0000.0000.0001",
             "area_id": "49.0001"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IS-IS {pdu_type} Hello sys={system_id}")
+                .with_debug("IS-IS send_isis_hello: type={pdu_type} sys_id={system_id} area={area_id}"),
+        ),
     }
 }
 
@@ -517,7 +531,11 @@ fn send_isis_lsp_action() -> ActionDefinition {
             "level": "level-2",
             "system_id": "0000.0000.0001"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IS-IS LSP {level} sys={system_id}")
+                .with_debug("IS-IS send_isis_lsp: level={level} sys_id={system_id}"),
+        ),
     }
 }
 
@@ -535,7 +553,11 @@ fn send_isis_pdu_action() -> ActionDefinition {
             "type": "send_isis_pdu",
             "data": "831b01001001060000..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IS-IS raw PDU ({data_len}B)")
+                .with_debug("IS-IS send_isis_pdu: len={data_len}"),
+        ),
     }
 }
 
@@ -547,6 +569,10 @@ fn ignore_pdu_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_pdu"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IS-IS ignore PDU")
+                .with_debug("IS-IS ignore_pdu"),
+        ),
     }
 }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -470,15 +471,55 @@ impl OspfProtocol {
 }
 
 // Event types for OSPF
-pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_hello", "OSPF Hello packet received from neighbor", json!({"type": "placeholder", "event_id": "ospf_hello"})));
+pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("ospf_hello", "OSPF Hello packet received from neighbor", json!({"type": "placeholder", "event_id": "ospf_hello"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OSPF Hello from {neighbor_id}")
+                .with_debug("OSPF Hello: neighbor={neighbor_id} area={area_id} priority={router_priority}")
+                .with_trace("OSPF Hello: {json_pretty(.)}"),
+        )
+});
 
-pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_database_description", "OSPF Database Description packet received", json!({"type": "placeholder", "event_id": "ospf_database_description"})));
+pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("ospf_database_description", "OSPF Database Description packet received", json!({"type": "placeholder", "event_id": "ospf_database_description"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OSPF DD from {neighbor_id}")
+                .with_debug("OSPF Database Description: neighbor={neighbor_id}")
+                .with_trace("OSPF DD: {json_pretty(.)}"),
+        )
+});
 
-pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_request", "OSPF Link State Request packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_request"})));
+pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("ospf_link_state_request", "OSPF Link State Request packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_request"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OSPF LSR from {neighbor_id}")
+                .with_debug("OSPF Link State Request: neighbor={neighbor_id}")
+                .with_trace("OSPF LSR: {json_pretty(.)}"),
+        )
+});
 
-pub static OSPF_LINK_STATE_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_update", "OSPF Link State Update packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_update"})));
+pub static OSPF_LINK_STATE_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("ospf_link_state_update", "OSPF Link State Update packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_update"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OSPF LSU from {neighbor_id}")
+                .with_debug("OSPF Link State Update: neighbor={neighbor_id}")
+                .with_trace("OSPF LSU: {json_pretty(.)}"),
+        )
+});
 
-pub static OSPF_LINK_STATE_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_ack", "OSPF Link State Acknowledgment packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_ack"})));
+pub static OSPF_LINK_STATE_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("ospf_link_state_ack", "OSPF Link State Acknowledgment packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_ack"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("OSPF LSAck from {neighbor_id}")
+                .with_debug("OSPF Link State Acknowledgment: neighbor={neighbor_id}")
+                .with_trace("OSPF LSAck: {json_pretty(.)}"),
+        )
+});
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OspfProtocol {
@@ -491,7 +532,11 @@ impl Protocol for OspfProtocol {
                 example: json!({
                     "type": "list_neighbors"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OSPF list neighbors")
+                        .with_debug("OSPF list_neighbors"),
+                ),
             },
             ActionDefinition {
                 name: "list_lsdb".to_string(),
@@ -500,7 +545,11 @@ impl Protocol for OspfProtocol {
                 example: json!({
                     "type": "list_lsdb"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> OSPF list LSDB")
+                        .with_debug("OSPF list_lsdb"),
+                ),
             },
         ]
     }
@@ -579,7 +628,11 @@ impl Protocol for OspfProtocol {
                         "neighbors": ["2.2.2.2"],
                         "destination": "multicast"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OSPF Hello router={router_id} area={area_id}")
+                            .with_debug("OSPF send_hello: router_id={router_id} area={area_id} priority={priority}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_database_description".to_string(),
@@ -637,7 +690,11 @@ impl Protocol for OspfProtocol {
                         "master": true,
                         "destination": "192.168.1.2"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OSPF DD seq={sequence}")
+                            .with_debug("OSPF send_database_description: router_id={router_id} seq={sequence} init={init}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_link_state_request".to_string(),
@@ -668,7 +725,11 @@ impl Protocol for OspfProtocol {
                         "area_id": "0.0.0.0",
                         "destination": "192.168.1.2"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OSPF LSR to {destination}")
+                            .with_debug("OSPF send_link_state_request: router_id={router_id} dest={destination}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_link_state_update".to_string(),
@@ -699,7 +760,11 @@ impl Protocol for OspfProtocol {
                         "area_id": "0.0.0.0",
                         "destination": "multicast"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OSPF LSU to {destination}")
+                            .with_debug("OSPF send_link_state_update: router_id={router_id} dest={destination}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "send_link_state_ack".to_string(),
@@ -730,7 +795,11 @@ impl Protocol for OspfProtocol {
                         "area_id": "0.0.0.0",
                         "destination": "192.168.1.2"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OSPF LSAck to {destination}")
+                            .with_debug("OSPF send_link_state_ack: router_id={router_id} dest={destination}"),
+                    ),
                 },
                 ActionDefinition {
                     name: "wait_for_more".to_string(),
@@ -739,7 +808,11 @@ impl Protocol for OspfProtocol {
                     example: json!({
                         "type": "wait_for_more"
                     }),
-                log_template: None,
+                    log_template: Some(
+                        LogTemplate::new()
+                            .with_info("-> OSPF wait for more")
+                            .with_debug("OSPF wait_for_more"),
+                    ),
                 },
             ]
     }

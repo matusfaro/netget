@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -305,7 +306,11 @@ pub fn mssql_query_response_action() -> ActionDefinition {
             "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "NVARCHAR"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {columns_len} cols, {rows_len} rows")
+                .with_debug("MSSQL result: {columns_len} columns, {rows_len} rows"),
+        ),
     }
 }
 
@@ -341,7 +346,11 @@ pub fn mssql_error_response_action() -> ActionDefinition {
             "message": "Invalid object name 'table_name'",
             "severity": 16
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> error {error_number}: {message}")
+                .with_debug("MSSQL error: code={error_number}, severity={severity}"),
+        ),
     }
 }
 
@@ -362,7 +371,11 @@ pub fn mssql_ok_response_action() -> ActionDefinition {
             "type": "mssql_ok_response",
             "rows_affected": 1
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OK ({rows_affected} rows affected)")
+                .with_debug("MSSQL OK: {rows_affected} rows affected"),
+        ),
     }
 }
 
@@ -373,7 +386,7 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current MSSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_info("-> connection closed")),
     }
 }
 
@@ -384,7 +397,7 @@ pub fn list_mssql_connections_action() -> ActionDefinition {
         description: "List all active MSSQL connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_mssql_connections"}),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_debug("Listing MSSQL connections")),
     }
 }
 
@@ -416,7 +429,11 @@ pub static MSSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "NVARCHAR"}],
             "rows": [[1, "Alice"], [2, "Bob"]]
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MSSQL response ({rows_len} rows)")
+                .with_debug("MSSQL mssql_query_response: columns={columns_len} rows={rows_len}"),
+        ),
     }
 });
 
@@ -450,7 +467,11 @@ pub static MSSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             "error_number": 208,
             "message": "Invalid object name"
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MSSQL error {error_number}")
+                .with_debug("MSSQL mssql_error_response: error_number={error_number} severity={severity} message='{message}'"),
+        ),
     }
 });
 
@@ -469,7 +490,11 @@ pub static MSSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(
             "type": "mssql_ok_response",
             "rows_affected": 1
         }),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MSSQL OK ({rows_affected} rows affected)")
+                .with_debug("MSSQL mssql_ok_response: rows_affected={rows_affected}"),
+        ),
     }
 });
 
@@ -480,7 +505,11 @@ pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
         description: "Close the current MSSQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-    log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> MSSQL close connection")
+                .with_debug("MSSQL close_this_connection"),
+        ),
     }
 });
 
@@ -503,6 +532,12 @@ pub static MSSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             MSSQL_OK_RESPONSE_ACTION.clone(),
             MSSQL_CLOSE_CONNECTION_ACTION.clone(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} MSSQL {preview(query,50)} ({duration_ms}ms)")
+                .with_debug("MSSQL query from {client_ip}: {preview(query,100)}")
+                .with_trace("MSSQL full query: {query}"),
+        )
 });
 
 /// Get MSSQL event types

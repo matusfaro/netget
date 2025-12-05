@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -451,7 +452,11 @@ fn send_stream_header_action() -> ActionDefinition {
             "from": "localhost",
             "stream_id": "stream-123"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP stream header from={from}")
+                .with_debug("XMPP send_stream_header: from={from}, stream_id={stream_id}"),
+        ),
     }
 }
 
@@ -469,7 +474,11 @@ fn send_stream_features_action() -> ActionDefinition {
             "type": "send_stream_features",
             "mechanisms": ["PLAIN"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP stream features")
+                .with_debug("XMPP send_stream_features: mechanisms={mechanisms}"),
+        ),
     }
 }
 
@@ -510,7 +519,11 @@ fn send_message_action() -> ActionDefinition {
             "body": "Hello, world!",
             "message_type": "chat"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP {from} -> {to}: {preview(body,40)}")
+                .with_debug("XMPP send_message: from={from}, to={to}, type={message_type}"),
+        ),
     }
 }
 
@@ -550,7 +563,11 @@ fn send_presence_action() -> ActionDefinition {
             "show": "chat",
             "status": "Available for chat"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP presence: {presence_type}")
+                .with_debug("XMPP send_presence: from={from}, show={show}"),
+        ),
     }
 }
 
@@ -584,7 +601,11 @@ fn send_iq_result_action() -> ActionDefinition {
             "to": "user@localhost",
             "payload": "<query xmlns='jabber:iq:roster'/>"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP IQ result id={id}")
+                .with_debug("XMPP send_iq_result: id={id}, to={to}"),
+        ),
     }
 }
 
@@ -618,7 +639,11 @@ fn send_iq_error_action() -> ActionDefinition {
             "error_type": "cancel",
             "condition": "feature-not-implemented"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP IQ error id={id}: {condition}")
+                .with_debug("XMPP send_iq_error: id={id}, type={error_type}, condition={condition}"),
+        ),
     }
 }
 
@@ -630,7 +655,11 @@ fn send_auth_success_action() -> ActionDefinition {
         example: json!({
             "type": "send_auth_success"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP auth success")
+                .with_debug("XMPP send_auth_success"),
+        ),
     }
 }
 
@@ -648,7 +677,11 @@ fn send_auth_failure_action() -> ActionDefinition {
             "type": "send_auth_failure",
             "reason": "not-authorized"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP auth failure: {reason}")
+                .with_debug("XMPP send_auth_failure: reason={reason}"),
+        ),
     }
 }
 
@@ -666,7 +699,11 @@ fn send_raw_xml_action() -> ActionDefinition {
             "type": "send_raw_xml",
             "xml": "<custom xmlns='example:custom'/>"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> XMPP raw: {preview(xml,60)}")
+                .with_debug("XMPP send_raw_xml"),
+        ),
     }
 }
 
@@ -678,7 +715,11 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("XMPP waiting for more data")
+                .with_debug("XMPP wait_for_more"),
+        ),
     }
 }
 
@@ -690,7 +731,11 @@ fn close_stream_action() -> ActionDefinition {
         example: json!({
             "type": "close_stream"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("XMPP stream closed")
+                .with_debug("XMPP close_stream"),
+        ),
     }
 }
 
@@ -716,6 +761,12 @@ pub static XMPP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             wait_for_more_action(),
             close_stream_action(),
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("XMPP data received")
+                .with_debug("XMPP XML: {xml_data}")
+                .with_trace("XMPP: {json_pretty(.)}"),
+        )
 });
 
 pub fn get_xmpp_event_types() -> Vec<EventType> {

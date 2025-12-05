@@ -605,7 +605,11 @@ fn send_turn_allocate_response_action() -> ActionDefinition {
             "lifetime_seconds": 600,
             "allocation_id": "alloc-123"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TURN allocate {relay_address}")
+                .with_debug("TURN allocate_response: relay={relay_address}, lifetime={lifetime_seconds}s"),
+        ),
     }
 }
 
@@ -632,7 +636,11 @@ fn send_turn_refresh_response_action() -> ActionDefinition {
             "transaction_id": "0123456789abcdef01234567",
             "lifetime_seconds": 600
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TURN refresh ({lifetime_seconds}s)")
+                .with_debug("TURN refresh_response: lifetime={lifetime_seconds}s"),
+        ),
     }
 }
 
@@ -650,7 +658,11 @@ fn send_turn_create_permission_response_action() -> ActionDefinition {
             "type": "send_turn_create_permission_response",
             "transaction_id": "0123456789abcdef01234567"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TURN permission created")
+                .with_debug("TURN create_permission_response"),
+        ),
     }
 }
 
@@ -677,7 +689,11 @@ fn relay_data_to_peer_action() -> ActionDefinition {
             "peer_address": "203.0.113.50:12345",
             "data": "SGVsbG8gV29ybGQ="
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TURN relay to {peer_address}")
+                .with_debug("TURN relay_data_to_peer: peer={peer_address}"),
+        ),
     }
 }
 
@@ -711,7 +727,11 @@ fn send_turn_error_response_action() -> ActionDefinition {
             "reason": "Insufficient Capacity",
             "transaction_id": "0123456789abcdef01234567"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TURN error {error_code}: {reason}")
+                .with_debug("TURN error_response: {error_code} {reason}"),
+        ),
     }
 }
 
@@ -738,7 +758,11 @@ fn allocate_relay_address_action() -> ActionDefinition {
             "client_address": "192.168.1.100:54321",
             "relay_address": "203.0.113.100:55000"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("TURN allocating {relay_address} for {client_address}")
+                .with_debug("TURN allocate_relay_address: {client_address} -> {relay_address}"),
+        ),
     }
 }
 
@@ -756,7 +780,11 @@ fn revoke_allocation_action() -> ActionDefinition {
             "type": "revoke_allocation",
             "allocation_id": "alloc-123"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("TURN revoking allocation {allocation_id}")
+                .with_debug("TURN revoke_allocation: {allocation_id}"),
+        ),
     }
 }
 
@@ -768,7 +796,11 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("TURN request ignored")
+                .with_debug("TURN ignore_request"),
+        ),
     }
 }
 

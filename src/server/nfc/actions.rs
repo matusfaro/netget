@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Context, Result};
@@ -143,7 +144,11 @@ impl Protocol for NfcServerProtocol {
                     "type": "set_atr",
                     "atr_hex": "3B8F8001804F0CA0000003060300030000000068"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> NFC set ATR ({atr_hex_len} bytes)")
+                        .with_debug("NFC set_atr: atr={atr_hex}"),
+                ),
             },
             ActionDefinition {
                 name: "set_ndef_message".to_string(),
@@ -168,7 +173,11 @@ impl Protocol for NfcServerProtocol {
                         }
                     ]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> NFC set NDEF ({records_len} records)")
+                        .with_debug("NFC set_ndef_message: records={records_len}"),
+                ),
             },
         ]
     }
@@ -195,7 +204,6 @@ impl Protocol for NfcServerProtocol {
                     type_hint: "string".to_string(),
                     description: "Status byte 2 (hex, default: '00' for success)".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -204,6 +212,11 @@ impl Protocol for NfcServerProtocol {
                 "sw1": "90",
                 "sw2": "00"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> NFC APDU response SW={sw1}{sw2}")
+                    .with_debug("NFC respond_to_apdu: data={data_hex} sw1={sw1} sw2={sw2}"),
+            ),
         }]
     }
 

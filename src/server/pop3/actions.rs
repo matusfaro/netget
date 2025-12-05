@@ -2,6 +2,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -30,6 +31,12 @@ pub static POP3_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("POP3 command: {command}")
+            .with_debug("POP3 {command} on {connection_id}")
+            .with_trace("POP3: {json_pretty(.)}"),
+    )
 });
 
 pub struct Pop3Protocol;
@@ -258,6 +265,11 @@ impl Protocol for Pop3Protocol {
                 "type": "close_pop3_connection",
                 "connection_id": "conn-123"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("POP3 close connection {connection_id}")
+                    .with_debug("POP3 close_pop3_connection: connection_id={connection_id}"),
+            ),
         }]
     }
 
@@ -276,7 +288,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_ok",
                     "message": "1 octets"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 +OK {message}")
+                        .with_debug("POP3 send_pop3_ok: message={message}"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_err".to_string(),
@@ -291,7 +307,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_err",
                     "message": "Invalid credentials"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 -ERR {message}")
+                        .with_debug("POP3 send_pop3_err: message={message}"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_greeting".to_string(),
@@ -306,7 +326,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_greeting",
                     "message": "POP3 server ready"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 greeting: {message}")
+                        .with_debug("POP3 send_pop3_greeting: message={message}"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_stat".to_string(),
@@ -330,7 +354,11 @@ impl Protocol for Pop3Protocol {
                     "message_count": 3,
                     "total_size": 1024
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 STAT {message_count} {total_size}")
+                        .with_debug("POP3 send_pop3_stat: {message_count} messages, {total_size} bytes"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_list".to_string(),
@@ -346,7 +374,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_list",
                     "messages": [{"id": 1, "size": 512}, {"id": 2, "size": 256}]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 LIST {messages_len} messages")
+                        .with_debug("POP3 send_pop3_list: {messages_len} messages"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_uidl".to_string(),
@@ -361,7 +393,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_uidl",
                     "messages": [{"id": 1, "uidl": "msg-abc123"}, {"id": 2, "uidl": "msg-def456"}]
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 UIDL {messages_len} messages")
+                        .with_debug("POP3 send_pop3_uidl: {messages_len} messages"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_retr".to_string(),
@@ -385,7 +421,11 @@ impl Protocol for Pop3Protocol {
                     "size": 512,
                     "content": "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nHello"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 RETR {size}B")
+                        .with_debug("POP3 send_pop3_retr: size={size} bytes"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_top".to_string(),
@@ -401,7 +441,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_top",
                     "content": "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nFirst line"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3 TOP")
+                        .with_debug("POP3 send_pop3_top"),
+                ),
             },
             ActionDefinition {
                 name: "send_pop3_message".to_string(),
@@ -416,7 +460,11 @@ impl Protocol for Pop3Protocol {
                     "type": "send_pop3_message",
                     "message": "+OK Custom response"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> POP3: {preview(message,60)}")
+                        .with_debug("POP3 send_pop3_message: {message}"),
+                ),
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -426,7 +474,11 @@ impl Protocol for Pop3Protocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("POP3 waiting for more data")
+                        .with_debug("POP3 wait_for_more"),
+                ),
             },
             ActionDefinition {
                 name: "close_connection".to_string(),
@@ -435,7 +487,11 @@ impl Protocol for Pop3Protocol {
                 example: json!({
                     "type": "close_connection"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("POP3 connection closed")
+                        .with_debug("POP3 close_connection"),
+                ),
             },
         ]
     }

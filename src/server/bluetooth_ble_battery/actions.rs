@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -20,6 +21,12 @@ pub static BATTERY_LEVEL_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE battery level: {level}%")
+            .with_debug("BLE battery level changed to {level}%")
+            .with_trace("BLE battery event: {json_pretty(.)}"),
+    )
 });
 
 /// BLE Battery Service protocol handler
@@ -224,7 +231,11 @@ fn set_battery_level_action() -> ActionDefinition {
             "type": "set_battery_level",
             "level": 75
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE battery set: {level}%")
+                .with_debug("BLE battery set_battery_level: level={level}"),
+        ),
     }
 }
 
@@ -251,7 +262,11 @@ fn simulate_drain_action() -> ActionDefinition {
             "amount": 10,
             "interval_ms": 5000
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE battery drain: {amount}%")
+                .with_debug("BLE battery simulate_drain: amount={amount}, interval_ms={interval_ms}"),
+        ),
     }
 }
 
@@ -278,6 +293,10 @@ fn simulate_charge_action() -> ActionDefinition {
             "amount": 20,
             "interval_ms": 2000
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BLE battery charge: {amount}%")
+                .with_debug("BLE battery simulate_charge: amount={amount}, interval_ms={interval_ms}"),
+        ),
     }
 }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -341,6 +342,12 @@ pub static NNTP_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "The NNTP command received from client".to_string(),
         required: true,
     }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("NNTP command: {command}")
+            .with_debug("NNTP {command}")
+            .with_trace("NNTP: {json_pretty(.)}"),
+    )
 });
 
 fn get_nntp_event_types() -> Vec<EventType> {
@@ -363,7 +370,11 @@ fn send_nntp_message_action() -> ActionDefinition {
             "type": "send_nntp_message",
             "message": "200 NetGet NNTP Service Ready"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NNTP: {preview(message,60)}")
+                .with_debug("NNTP send_nntp_message: {message}"),
+        ),
     }
 }
 
@@ -390,7 +401,11 @@ fn send_nntp_response_action() -> ActionDefinition {
             "code": 200,
             "text": "NetGet NNTP Service Ready"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NNTP {code} {text}")
+                .with_debug("NNTP send_nntp_response: code={code}"),
+        ),
     }
 }
 
@@ -431,7 +446,11 @@ fn send_nntp_article_action() -> ActionDefinition {
             "headers": "Subject: Test\r\nFrom: user@example.com",
             "body": "This is a test article."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NNTP {code} {message_id} article")
+                .with_debug("NNTP send_nntp_article: code={code}, message_id={message_id}"),
+        ),
     }
 }
 
@@ -451,7 +470,11 @@ fn send_nntp_list_action() -> ActionDefinition {
                 {"name": "comp.lang.rust", "high": 100, "low": 1, "status": "y"}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NNTP 215 {groups_len} newsgroups")
+                .with_debug("NNTP send_nntp_list: {groups_len} groups"),
+        ),
     }
 }
 
@@ -492,7 +515,11 @@ fn send_nntp_group_action() -> ActionDefinition {
             "low": 1,
             "high": 100
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NNTP 211 {name} {count} articles")
+                .with_debug("NNTP send_nntp_group: name={name}, count={count}"),
+        ),
     }
 }
 
@@ -521,7 +548,11 @@ fn send_nntp_overview_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NNTP 224 {articles_len} articles")
+                .with_debug("NNTP send_nntp_overview: {articles_len} articles"),
+        ),
     }
 }
 
@@ -531,7 +562,11 @@ fn wait_for_more_action() -> ActionDefinition {
         description: "Wait for more data before responding".to_string(),
         parameters: vec![],
         example: json!({"type": "wait_for_more"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("NNTP waiting for more data")
+                .with_debug("NNTP wait_for_more"),
+        ),
     }
 }
 
@@ -541,6 +576,10 @@ fn close_connection_action() -> ActionDefinition {
         description: "Close the NNTP connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_connection"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("NNTP connection closed")
+                .with_debug("NNTP close_connection"),
+        ),
     }
 }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -366,7 +367,11 @@ fn send_tftp_data_action() -> ActionDefinition {
             "data_hex": "48656c6c6f20544654502100",
             "is_final": true
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TFTP DATA #{block_number}")
+                .with_debug("TFTP send_tftp_data: block={block_number} is_final={is_final}"),
+        ),
     }
 }
 
@@ -386,7 +391,11 @@ fn send_tftp_ack_action() -> ActionDefinition {
             "type": "send_tftp_ack",
             "block_number": 5
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TFTP ACK #{block_number}")
+                .with_debug("TFTP send_tftp_ack: block={block_number}"),
+        ),
     }
 }
 
@@ -413,6 +422,10 @@ fn send_tftp_error_action() -> ActionDefinition {
             "error_code": 1,
             "error_message": "File not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TFTP ERROR #{error_code}: {error_message}")
+                .with_debug("TFTP send_tftp_error: code={error_code} msg={error_message}"),
+        ),
     }
 }

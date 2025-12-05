@@ -163,7 +163,6 @@ impl Protocol for JsonRpcClientProtocol {
                     type_hint: "number | string".to_string(),
                     description: "Request ID".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -171,6 +170,7 @@ impl Protocol for JsonRpcClientProtocol {
                 "method": "getStatus",
                 "id": 2
             }),
+            log_template: None,
         }]
     }
     fn protocol_name(&self) -> &'static str {

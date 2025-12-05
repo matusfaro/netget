@@ -137,6 +137,7 @@ pub struct MongodbHandler {
     connection_id: ConnectionId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
+    #[allow(dead_code)]
     status_tx: mpsc::UnboundedSender<String>,
     #[allow(dead_code)]
     server_id: Option<crate::state::ServerId>,

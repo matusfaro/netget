@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -249,7 +250,11 @@ fn detect_create_cell_action() -> ActionDefinition {
             "type": "detect_create_cell",
             "response_type": "reject"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor CREATE cell {response_type}")
+                .with_debug("Tor detect_create_cell: response_type={response_type}"),
+        ),
     }
 }
 
@@ -267,7 +272,11 @@ fn detect_relay_cell_action() -> ActionDefinition {
             "type": "detect_relay_cell",
             "message": "RELAY cell detected from circuit 0x12345"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor RELAY cell")
+                .with_debug("Tor detect_relay_cell: {message}"),
+        ),
     }
 }
 
@@ -279,7 +288,11 @@ fn send_destroy_action() -> ActionDefinition {
         example: json!({
             "type": "send_destroy"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor DESTROY")
+                .with_debug("Tor send_destroy: tearing down circuit"),
+        ),
     }
 }
 
@@ -291,7 +304,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor close connection")
+                .with_debug("Tor close_connection: closing immediately"),
+        ),
     }
 }
 
@@ -313,7 +330,11 @@ fn set_relay_type_action() -> ActionDefinition {
             "type": "set_relay_type",
             "relay_type": "guard"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor set relay type={relay_type}")
+                .with_debug("Tor set_relay_type: type={relay_type}"),
+        ),
     }
 }
 
@@ -331,7 +352,11 @@ fn configure_exit_policy_action() -> ActionDefinition {
             "type": "configure_exit_policy",
             "allowed_ports": [80, 443, 22]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor exit policy configured")
+                .with_debug("Tor configure_exit_policy: allowed_ports={allowed_ports_len}"),
+        ),
     }
 }
 
@@ -343,7 +368,11 @@ fn list_active_circuits_action() -> ActionDefinition {
         example: json!({
             "type": "list_active_circuits"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor list circuits")
+                .with_debug("Tor list_active_circuits"),
+        ),
     }
 }
 
@@ -361,7 +390,11 @@ fn disconnect_circuit_action() -> ActionDefinition {
             "type": "disconnect_circuit",
             "circuit_id": "0x12345678"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor disconnect circuit {circuit_id}")
+                .with_debug("Tor disconnect_circuit: circuit_id={circuit_id}"),
+        ),
     }
 }
 
@@ -373,7 +406,11 @@ fn list_active_streams_action() -> ActionDefinition {
         example: json!({
             "type": "list_active_streams"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor list streams")
+                .with_debug("Tor list_active_streams"),
+        ),
     }
 }
 
@@ -400,7 +437,11 @@ fn close_stream_action() -> ActionDefinition {
             "circuit_id": "0x12345678",
             "stream_id": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor close stream {stream_id}")
+                .with_debug("Tor close_stream: circuit={circuit_id}, stream={stream_id}"),
+        ),
     }
 }
 
@@ -412,7 +453,11 @@ fn get_relay_statistics_action() -> ActionDefinition {
         example: json!({
             "type": "get_relay_statistics"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Tor relay stats")
+                .with_debug("Tor get_relay_statistics"),
+        ),
     }
 }
 

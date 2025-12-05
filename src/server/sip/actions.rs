@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -242,27 +243,63 @@ pub static SIP_REGISTER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "expires": 3600
         })
     )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SIP REGISTER")
+            .with_debug("SIP REGISTER request")
+            .with_trace("SIP: {json_pretty(.)}"),
+    )
 });
 
 /// SIP INVITE event
 pub static SIP_INVITE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_invite", "Client initiates session with INVITE request", json!({"type": "placeholder", "event_id": "sip_invite"})));
+    LazyLock::new(|| EventType::new("sip_invite", "Client initiates session with INVITE request", json!({"type": "placeholder", "event_id": "sip_invite"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("SIP INVITE")
+                .with_debug("SIP INVITE request")
+                .with_trace("SIP: {json_pretty(.)}"),
+        ));
 
 /// SIP BYE event
 pub static SIP_BYE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_bye", "Client or server terminates session with BYE", json!({"type": "placeholder", "event_id": "sip_bye"})));
+    LazyLock::new(|| EventType::new("sip_bye", "Client or server terminates session with BYE", json!({"type": "placeholder", "event_id": "sip_bye"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("SIP BYE")
+                .with_debug("SIP BYE request")
+                .with_trace("SIP: {json_pretty(.)}"),
+        ));
 
 /// SIP ACK event
 pub static SIP_ACK_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_ack", "Client acknowledges INVITE response", json!({"type": "placeholder", "event_id": "sip_ack"})));
+    LazyLock::new(|| EventType::new("sip_ack", "Client acknowledges INVITE response", json!({"type": "placeholder", "event_id": "sip_ack"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("SIP ACK")
+                .with_debug("SIP ACK request")
+                .with_trace("SIP: {json_pretty(.)}"),
+        ));
 
 /// SIP OPTIONS event
 pub static SIP_OPTIONS_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_options", "Client queries server capabilities", json!({"type": "placeholder", "event_id": "sip_options"})));
+    LazyLock::new(|| EventType::new("sip_options", "Client queries server capabilities", json!({"type": "placeholder", "event_id": "sip_options"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("SIP OPTIONS")
+                .with_debug("SIP OPTIONS request")
+                .with_trace("SIP: {json_pretty(.)}"),
+        ));
 
 /// SIP CANCEL event
 pub static SIP_CANCEL_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_cancel", "Client cancels pending INVITE request", json!({"type": "placeholder", "event_id": "sip_cancel"})));
+    LazyLock::new(|| EventType::new("sip_cancel", "Client cancels pending INVITE request", json!({"type": "placeholder", "event_id": "sip_cancel"}))
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("SIP CANCEL")
+                .with_debug("SIP CANCEL request")
+                .with_trace("SIP: {json_pretty(.)}"),
+        ));
 
 // Action definitions
 fn sip_register_action() -> ActionDefinition {
@@ -295,7 +332,11 @@ fn sip_register_action() -> ActionDefinition {
             "status_code": 200,
             "expires": 3600
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP {status_code} REGISTER")
+                .with_debug("SIP sip_register: status={status_code}, expires={expires}"),
+        ),
     }
 }
 
@@ -329,7 +370,11 @@ fn sip_invite_action() -> ActionDefinition {
             "status_code": 200,
             "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\ns=Call\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio 8000 RTP/AVP 0\n"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP {status_code} INVITE")
+                .with_debug("SIP sip_invite: status={status_code}"),
+        ),
     }
 }
 
@@ -347,7 +392,11 @@ fn sip_bye_action() -> ActionDefinition {
             "type": "sip_bye",
             "status_code": 200
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP {status_code} BYE")
+                .with_debug("SIP sip_bye: status={status_code}"),
+        ),
     }
 }
 
@@ -359,7 +408,11 @@ fn sip_ack_action() -> ActionDefinition {
         example: json!({
             "type": "sip_ack"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP ACK processed")
+                .with_debug("SIP sip_ack"),
+        ),
     }
 }
 
@@ -386,7 +439,11 @@ fn sip_options_action() -> ActionDefinition {
             "status_code": 200,
             "allow_methods": ["INVITE", "ACK", "BYE", "REGISTER", "OPTIONS"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP {status_code} OPTIONS")
+                .with_debug("SIP sip_options: status={status_code}, methods={allow_methods_len}"),
+        ),
     }
 }
 
@@ -404,7 +461,11 @@ fn sip_cancel_action() -> ActionDefinition {
             "type": "sip_cancel",
             "status_code": 200
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP {status_code} CANCEL")
+                .with_debug("SIP sip_cancel: status={status_code}"),
+        ),
     }
 }
 
@@ -439,7 +500,11 @@ fn send_sip_invite_action() -> ActionDefinition {
             "from": "sip:alice@example.com",
             "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\n..."
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP INVITE {from} -> {to}")
+                .with_debug("SIP send_sip_invite: from={from}, to={to}"),
+        ),
     }
 }
 
@@ -457,7 +522,11 @@ fn send_sip_bye_action() -> ActionDefinition {
             "type": "send_sip_bye",
             "call_id": "call-123@example.com"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP BYE call={call_id}")
+                .with_debug("SIP send_sip_bye: call_id={call_id}"),
+        ),
     }
 }
 
@@ -478,6 +547,10 @@ fn update_registration_action() -> ActionDefinition {
                 "bob@localhost": "sip:bob@192.168.1.11:5060"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SIP registration updated")
+                .with_debug("SIP update_registration: bindings updated"),
+        ),
     }
 }

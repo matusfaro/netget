@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -228,7 +229,11 @@ fn read_file_action() -> ActionDefinition {
             "type": "read_file",
             "path": "/documents/readme.txt"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WebDAV read: {path}")
+                .with_debug("WebDAV read_file: path={path}"),
+        ),
     }
 }
 
@@ -255,7 +260,11 @@ fn create_file_action() -> ActionDefinition {
             "path": "/documents/hello.txt",
             "content": "Hello World!"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WebDAV create file: {path}")
+                .with_debug("WebDAV create_file: path={path}"),
+        ),
     }
 }
 
@@ -273,7 +282,11 @@ fn create_directory_action() -> ActionDefinition {
             "type": "create_directory",
             "path": "/documents/new_folder"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WebDAV mkdir: {path}")
+                .with_debug("WebDAV create_directory: path={path}"),
+        ),
     }
 }
 
@@ -291,7 +304,11 @@ fn delete_resource_action() -> ActionDefinition {
             "type": "delete_resource",
             "path": "/documents/old_file.txt"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WebDAV delete: {path}")
+                .with_debug("WebDAV delete_resource: path={path}"),
+        ),
     }
 }
 
@@ -309,7 +326,11 @@ fn list_directory_action() -> ActionDefinition {
             "type": "list_directory",
             "path": "/documents"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WebDAV list: {path}")
+                .with_debug("WebDAV list_directory: path={path}"),
+        ),
     }
 }
 
@@ -327,6 +348,10 @@ fn get_properties_action() -> ActionDefinition {
             "type": "get_properties",
             "path": "/documents/readme.txt"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("WebDAV props: {path}")
+                .with_debug("WebDAV get_properties: path={path}"),
+        ),
     }
 }

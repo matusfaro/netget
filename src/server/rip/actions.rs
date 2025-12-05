@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -317,6 +318,12 @@ pub static RIP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("RIP {message_type} from {peer_address} ({bytes_received}B)")
+            .with_debug("RIPv{version} {message_type} from {peer_address}, {routes_len} routes")
+            .with_trace("RIP message: {json_pretty(.)}"),
+    )
 });
 
 fn get_rip_event_types() -> Vec<EventType> {
@@ -353,7 +360,11 @@ fn send_rip_response_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> RIP response ({routes_len} routes)")
+                .with_debug("RIP send_rip_response: routes={routes_len}"),
+        ),
     }
 }
 
@@ -372,7 +383,11 @@ fn send_rip_request_action() -> ActionDefinition {
         example: json!({
             "type": "send_rip_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> RIP request")
+                .with_debug("RIP send_rip_request"),
+        ),
     }
 }
 
@@ -384,6 +399,10 @@ fn ignore_request_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_request"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> RIP ignore")
+                .with_debug("RIP ignore_request"),
+        ),
     }
 }

@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -307,7 +308,6 @@ impl Protocol for BitcoinClientProtocol {
                     type_hint: "array".to_string(),
                     description: "RPC parameters".to_string(),
                     required: false,
-                log_template: None,
                 },
             ],
             example: json!({
@@ -315,6 +315,11 @@ impl Protocol for BitcoinClientProtocol {
                 "method": "getblock",
                 "params": ["00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048"]
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> Bitcoin RPC {method}")
+                    .with_debug("Bitcoin execute_rpc: method={method}"),
+            ),
         }]
     }
     fn protocol_name(&self) -> &'static str {

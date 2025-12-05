@@ -456,8 +456,6 @@ impl MongodbClient {
         llm_client: &OllamaClient,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        use crate::llm::actions::client_trait::Client;
-
         let mut event_data = serde_json::json!({
             "result_type": result_type,
         });

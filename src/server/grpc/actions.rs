@@ -286,7 +286,11 @@ fn grpc_unary_response_action() -> ActionDefinition {
                 "email": "alice@example.com"
             }
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> gRPC response")
+                .with_debug("gRPC grpc_unary_response"),
+        ),
     }
 }
 
@@ -315,7 +319,11 @@ fn grpc_error_action() -> ActionDefinition {
             "code": "NOT_FOUND",
             "message": "User not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> gRPC error {code}")
+                .with_debug("gRPC grpc_error: code={code}, message={message}"),
+        ),
     }
 }
 
@@ -333,7 +341,11 @@ fn reload_schema_action() -> ActionDefinition {
             "type": "reload_schema",
             "proto_schema": "service UserService { rpc GetUser(UserId) returns (User); }"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("gRPC reload schema")
+                .with_debug("gRPC reload_schema"),
+        ),
     }
 }
 
@@ -345,7 +357,11 @@ fn list_services_action() -> ActionDefinition {
         example: json!({
             "type": "list_services"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("gRPC list services")
+                .with_debug("gRPC list_services"),
+        ),
     }
 }
 
@@ -372,7 +388,11 @@ fn describe_method_action() -> ActionDefinition {
             "service": "UserService",
             "method": "GetUser"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("gRPC describe {service}/{method}")
+                .with_debug("gRPC describe_method: service={service}, method={method}"),
+        ),
     }
 }
 

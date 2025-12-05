@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -74,6 +75,12 @@ pub static MONGODB_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 required: false,
             },
         ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} MongoDB {command} {database}.{collection} ({duration_ms}ms)")
+                .with_debug("MongoDB {command} on {database}.{collection} from {client_ip}")
+                .with_trace("MongoDB command: {json_pretty(.)}"),
+        )
 });
 
 pub static MONGODB_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -84,6 +91,11 @@ pub static MONGODB_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Disconnection reason".to_string(),
             required: false,
         }])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("{client_ip} MongoDB disconnected: {reason}")
+                .with_debug("MongoDB disconnect from {client_ip}: {reason}"),
+        )
 });
 
 // Implement Protocol trait (common functionality)
@@ -398,7 +410,11 @@ fn find_response_action() -> ActionDefinition {
                 {"_id": {"$oid": "507f191e810c19729de860ea"}, "name": "Bob", "age": 25}
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {documents_len} documents")
+                .with_debug("MongoDB find: {documents_len} documents returned"),
+        ),
     }
 }
 
@@ -416,7 +432,11 @@ fn insert_response_action() -> ActionDefinition {
             "type": "insert_response",
             "inserted_count": 1
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> inserted {inserted_count}")
+                .with_debug("MongoDB insert: {inserted_count} documents"),
+        ),
     }
 }
 
@@ -443,7 +463,11 @@ fn update_response_action() -> ActionDefinition {
             "matched_count": 1,
             "modified_count": 1
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> matched {matched_count}, modified {modified_count}")
+                .with_debug("MongoDB update: matched={matched_count}, modified={modified_count}"),
+        ),
     }
 }
 
@@ -461,7 +485,11 @@ fn delete_response_action() -> ActionDefinition {
             "type": "delete_response",
             "deleted_count": 2
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> deleted {deleted_count}")
+                .with_debug("MongoDB delete: {deleted_count} documents"),
+        ),
     }
 }
 
@@ -488,7 +516,11 @@ fn error_response_action() -> ActionDefinition {
             "code": 26,
             "message": "Namespace not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> error {code}: {message}")
+                .with_debug("MongoDB error: code={code}, message={message}"),
+        ),
     }
 }
 
@@ -500,7 +532,7 @@ fn close_this_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_this_connection"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_info("-> connection closed")),
     }
 }
 
@@ -512,6 +544,6 @@ fn list_mongodb_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_mongodb_connections"
         }),
-        log_template: None,
+        log_template: Some(LogTemplate::new().with_debug("Listing MongoDB connections")),
     }
 }

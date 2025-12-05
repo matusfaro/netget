@@ -3,6 +3,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -24,6 +25,12 @@ pub static WEIGHT_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE weight scale: {weight_kg} kg, BMI {bmi}")
+            .with_debug("BLE weight measurement: weight={weight_kg} kg, bmi={bmi}")
+            .with_trace("BLE weight event: {json_pretty(.)}"),
+    )
 });
 
 pub struct BluetoothBleWeightScaleProtocol;
@@ -60,7 +67,11 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                     "type": "set_weight",
                     "kg": 70.5
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE weight scale: {kg} kg")
+                        .with_debug("BLE weight scale set_weight: kg={kg}"),
+                ),
             },
             ActionDefinition {
                 name: "set_bmi".to_string(),
@@ -75,7 +86,11 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                     "type": "set_bmi",
                     "bmi": 22.5
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE weight scale BMI: {bmi}")
+                        .with_debug("BLE weight scale set_bmi: bmi={bmi}"),
+                ),
             },
             ActionDefinition {
                 name: "multi_user".to_string(),
@@ -99,7 +114,11 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                     "user_id": 1,
                     "weight_kg": 70.5
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE weight scale user {user_id}: {weight_kg} kg")
+                        .with_debug("BLE weight scale multi_user: user_id={user_id}, weight_kg={weight_kg}"),
+                ),
             },
         ]
     }

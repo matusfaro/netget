@@ -6,6 +6,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter,
 };
 #[cfg(feature = "usb-mouse")]
+use crate::protocol::log_template::LogTemplate;
+#[cfg(feature = "usb-mouse")]
 use crate::protocol::EventType;
 #[cfg(feature = "usb-mouse")]
 use crate::server::connection::ConnectionId;
@@ -335,7 +337,11 @@ fn move_relative_action() -> ActionDefinition {
             "x": 10,
             "y": -5
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB mouse move ({x}, {y})")
+                .with_debug("USB-Mouse move_relative: x={x} y={y}"),
+        ),
     }
 }
 
@@ -377,7 +383,11 @@ fn move_absolute_action() -> ActionDefinition {
             "screen_width": 1920,
             "screen_height": 1080
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB mouse move to ({x}, {y})")
+                .with_debug("USB-Mouse move_absolute: x={x} y={y} screen={screen_width}x{screen_height}"),
+        ),
     }
 }
 
@@ -396,7 +406,11 @@ fn click_action() -> ActionDefinition {
             "type": "click",
             "button": "left"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB mouse click {button}")
+                .with_debug("USB-Mouse click: button={button}"),
+        ),
     }
 }
 
@@ -424,7 +438,11 @@ fn scroll_action() -> ActionDefinition {
             "direction": "up",
             "amount": 3
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB mouse scroll {direction} ({amount})")
+                .with_debug("USB-Mouse scroll: direction={direction} amount={amount}"),
+        ),
     }
 }
 
@@ -473,7 +491,11 @@ fn drag_action() -> ActionDefinition {
             "end_y": 200,
             "duration_ms": 500
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB mouse drag ({start_x},{start_y}) to ({end_x},{end_y})")
+                .with_debug("USB-Mouse drag: from=({start_x},{start_y}) to=({end_x},{end_y}) duration={duration_ms}ms"),
+        ),
     }
 }
 
@@ -486,6 +508,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB mouse wait for more")
+                .with_debug("USB-Mouse wait_for_more"),
+        ),
     }
 }

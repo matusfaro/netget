@@ -333,7 +333,11 @@ pub fn redis_simple_string_action() -> ActionDefinition {
             "type": "redis_simple_string",
             "value": "OK"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Redis +{value}")
+                .with_debug("Redis redis_simple_string: value={value}"),
+        ),
     }
 }
 
@@ -352,7 +356,11 @@ pub fn redis_bulk_string_action() -> ActionDefinition {
             "type": "redis_bulk_string",
             "value": "hello world"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Redis ${value_len}B")
+                .with_debug("Redis redis_bulk_string: {value_len} bytes"),
+        ),
     }
 }
 
@@ -372,7 +380,11 @@ pub fn redis_array_action() -> ActionDefinition {
             "type": "redis_array",
             "values": ["value1", "value2", "value3"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Redis *{values_len} elements")
+                .with_debug("Redis redis_array: {values_len} elements"),
+        ),
     }
 }
 
@@ -391,7 +403,11 @@ pub fn redis_integer_action() -> ActionDefinition {
             "type": "redis_integer",
             "value": 42
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Redis :{value}")
+                .with_debug("Redis redis_integer: value={value}"),
+        ),
     }
 }
 
@@ -410,7 +426,11 @@ pub fn redis_error_action() -> ActionDefinition {
             "type": "redis_error",
             "message": "ERR unknown command 'foobar'"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Redis -{message}")
+                .with_debug("Redis redis_error: {message}"),
+        ),
     }
 }
 
@@ -423,7 +443,11 @@ pub fn redis_null_action() -> ActionDefinition {
         example: json!({
             "type": "redis_null"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Redis (nil)")
+                .with_debug("Redis redis_null"),
+        ),
     }
 }
 
@@ -434,7 +458,11 @@ pub fn close_this_connection_action() -> ActionDefinition {
         description: "Close the current Redis connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Redis connection closed")
+                .with_debug("Redis close_this_connection"),
+        ),
     }
 }
 
@@ -445,7 +473,11 @@ pub fn list_redis_connections_action() -> ActionDefinition {
         description: "List all active Redis connections".to_string(),
         parameters: vec![],
         example: json!({"type": "list_redis_connections"}),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Redis list connections")
+                .with_debug("Redis list_redis_connections"),
+        ),
     }
 }
 

@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -170,6 +171,11 @@ impl Protocol for SamlClientProtocol {
                 "type": "parse_assertion",
                 "response_xml": "<samlp:Response...>"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> SAML parse assertion")
+                    .with_debug("SAML parse_assertion"),
+            ),
         }]
     }
     fn protocol_name(&self) -> &'static str {

@@ -3,6 +3,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -24,6 +25,12 @@ pub static CYCLING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE cycling: {speed_kmh} km/h, {cadence_rpm} RPM")
+            .with_debug("BLE cycling measurement: speed={speed_kmh} km/h, cadence={cadence_rpm} RPM")
+            .with_trace("BLE cycling event: {json_pretty(.)}"),
+    )
 });
 
 pub struct BluetoothBleCyclingProtocol;
@@ -60,7 +67,11 @@ impl Protocol for BluetoothBleCyclingProtocol {
                     "type": "set_speed",
                     "kmh": 42
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE cycling speed: {kmh} km/h")
+                        .with_debug("BLE cycling set_speed: kmh={kmh}"),
+                ),
             },
             ActionDefinition {
                 name: "set_cadence".to_string(),
@@ -75,7 +86,11 @@ impl Protocol for BluetoothBleCyclingProtocol {
                     "type": "set_cadence",
                     "rpm": 42
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE cycling cadence: {rpm} RPM")
+                        .with_debug("BLE cycling set_cadence: rpm={rpm}"),
+                ),
             },
             ActionDefinition {
                 name: "simulate_ride".to_string(),
@@ -90,7 +105,11 @@ impl Protocol for BluetoothBleCyclingProtocol {
                     "type": "simulate_ride",
                     "profile": "example_profile"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> BLE cycling simulate: {profile}")
+                        .with_debug("BLE cycling simulate_ride: profile={profile}"),
+                ),
             },
         ]
     }

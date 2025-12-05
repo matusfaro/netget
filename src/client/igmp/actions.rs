@@ -5,6 +5,7 @@ use crate::llm::actions::{
     protocol_trait::Protocol,
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Context, Result};
@@ -170,6 +171,11 @@ impl Protocol for IgmpClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> IGMP wait for more")
+                    .with_debug("IGMP wait_for_more"),
+            ),
         }]
     }
     fn get_event_types(&self) -> Vec<EventType> {

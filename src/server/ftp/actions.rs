@@ -299,7 +299,11 @@ fn send_ftp_response_action() -> ActionDefinition {
             "code": 220,
             "message": "FTP Server Ready"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> FTP {code} {message}")
+                .with_debug("FTP send_ftp_response: {code} {message}"),
+        ),
     }
 }
 
@@ -326,7 +330,11 @@ fn send_ftp_multiline_action() -> ActionDefinition {
             "code": 211,
             "lines": ["Features:", "UTF8", "End"]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> FTP {code} multiline")
+                .with_debug("FTP send_ftp_multiline: code={code}, lines={lines_len}"),
+        ),
     }
 }
 
@@ -344,7 +352,12 @@ fn send_ftp_data_action() -> ActionDefinition {
             "type": "send_ftp_data",
             "data": "Hello from FTP"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> FTP data {output_bytes}B")
+                .with_debug("FTP send_ftp_data: {output_bytes}B")
+                .with_trace("FTP data: {preview(data,200)}"),
+        ),
     }
 }
 
@@ -365,7 +378,11 @@ fn send_ftp_list_action() -> ActionDefinition {
                 "drwxr-xr-x 2 ftp ftp 4096 Jan 01 00:00 subdir"
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> FTP LIST {entries_len} entries")
+                .with_debug("FTP send_ftp_list: {entries_len} entries"),
+        ),
     }
 }
 
@@ -377,7 +394,10 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_debug("FTP waiting for more data"),
+        ),
     }
 }
 
@@ -389,7 +409,11 @@ fn close_connection_action() -> ActionDefinition {
         example: json!({
             "type": "close_connection"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("FTP connection closed")
+                .with_debug("FTP close_connection"),
+        ),
     }
 }
 

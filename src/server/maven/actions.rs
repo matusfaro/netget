@@ -11,6 +11,8 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use crate::protocol::log_template::LogTemplate;
+
 /// Maven protocol action handler
 pub struct MavenProtocol;
 
@@ -317,7 +319,11 @@ fn send_maven_artifact_action() -> ActionDefinition {
             "content_type": "application/java-archive",
             "body": "UEsDBBQACAgIAAAAIQAAAAAAAAAAAAAAAAA..." // base64-encoded JAR
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Maven {status} {content_type} ({body_len}B)")
+                .with_debug("Maven send_maven_artifact: status={status} type={content_type}"),
+        ),
     }
 }
 
@@ -366,7 +372,11 @@ fn send_maven_metadata_action() -> ActionDefinition {
             "latest": "1.1.0",
             "release": "1.1.0"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Maven metadata {group_id}:{artifact_id}")
+                .with_debug("Maven send_maven_metadata: {group_id}:{artifact_id} versions={versions_len}"),
+        ),
     }
 }
 
@@ -394,7 +404,11 @@ fn send_maven_error_action() -> ActionDefinition {
             "status": 404,
             "message": "Artifact not found"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Maven error {status}: {message}")
+                .with_debug("Maven send_maven_error: status={status} message={message}"),
+        ),
     }
 }
 

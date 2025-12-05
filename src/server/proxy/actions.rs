@@ -605,7 +605,11 @@ fn configure_certificate_action() -> ActionDefinition {
             "type": "configure_certificate",
             "mode": "generate"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy cert mode={mode}")
+                .with_debug("Proxy configure_certificate: mode={mode}"),
+        ),
     }
 }
 
@@ -631,7 +635,11 @@ fn configure_request_filters_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy request filters configured")
+                .with_debug("Proxy configure_request_filters: {filters_len} filters"),
+        ),
     }
 }
 
@@ -656,7 +664,11 @@ fn configure_response_filters_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy response filters configured")
+                .with_debug("Proxy configure_response_filters: {filters_len} filters"),
+        ),
     }
 }
 
@@ -682,7 +694,11 @@ fn configure_https_connection_filters_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy HTTPS filters configured")
+                .with_debug("Proxy configure_https_connection_filters: {filters_len} filters"),
+        ),
     }
 }
 
@@ -716,7 +732,11 @@ fn set_filter_mode_action() -> ActionDefinition {
             "response_filter_mode": "all",
             "https_connection_filter_mode": "match_only"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy filter modes set")
+                .with_debug("Proxy set_filter_mode: req={request_filter_mode}, resp={response_filter_mode}, https={https_connection_filter_mode}"),
+        ),
     }
 }
 
@@ -743,7 +763,11 @@ fn export_ca_certificate_action() -> ActionDefinition {
             "output_path": "./netget-ca.crt",
             "format": "pem"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy CA cert exported to {output_path}")
+                .with_debug("Proxy export_ca_certificate: path={output_path}, format={format}"),
+        ),
     }
 }
 
@@ -758,7 +782,11 @@ fn handle_request_pass_action() -> ActionDefinition {
         example: json!({
             "type": "handle_request_pass"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy PASS request")
+                .with_debug("Proxy handle_request_pass: forwarding unchanged"),
+        ),
     }
 }
 
@@ -786,7 +814,11 @@ fn handle_request_block_action() -> ActionDefinition {
             "status": 403,
             "body": "Access denied by security policy"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy BLOCK request {status}")
+                .with_debug("Proxy handle_request_block: status={status}"),
+        ),
     }
 }
 
@@ -848,7 +880,11 @@ fn handle_request_modify_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy MODIFY request")
+                .with_debug("Proxy handle_request_modify: path={new_path}"),
+        ),
     }
 }
 
@@ -862,7 +898,11 @@ fn handle_response_pass_action() -> ActionDefinition {
         example: json!({
             "type": "handle_response_pass"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy PASS response")
+                .with_debug("Proxy handle_response_pass: forwarding unchanged"),
+        ),
     }
 }
 
@@ -890,7 +930,11 @@ fn handle_response_block_action() -> ActionDefinition {
             "status": 502,
             "body": "Response blocked by content policy"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy BLOCK response {status}")
+                .with_debug("Proxy handle_response_block: status={status}"),
+        ),
     }
 }
 
@@ -944,7 +988,11 @@ fn handle_response_modify_action() -> ActionDefinition {
                 }
             ]
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy MODIFY response")
+                .with_debug("Proxy handle_response_modify: status={status}"),
+        ),
     }
 }
 
@@ -959,7 +1007,11 @@ fn handle_https_connection_allow_action() -> ActionDefinition {
         example: json!({
             "type": "handle_https_connection_allow"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy ALLOW HTTPS")
+                .with_debug("Proxy handle_https_connection_allow: tunnel established"),
+        ),
     }
 }
 
@@ -977,7 +1029,11 @@ fn handle_https_connection_block_action() -> ActionDefinition {
             "type": "handle_https_connection_block",
             "reason": "Destination blocked by security policy"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Proxy BLOCK HTTPS")
+                .with_debug("Proxy handle_https_connection_block: reason={reason}"),
+        ),
     }
 }
 
@@ -1020,14 +1076,22 @@ pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Pass HTTP request through to destination".to_string(),
                 parameters: vec![],
                 example: json!({"type": "handle_request_pass"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Proxy pass request")
+                        .with_debug("Proxy handle_request_pass"),
+                ),
             },
             ActionDefinition {
                 name: "handle_request_block".to_string(),
                 description: "Block HTTP request and return error to client".to_string(),
                 parameters: vec![],
                 example: json!({"type": "handle_request_block"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Proxy block request")
+                        .with_debug("Proxy handle_request_block"),
+                ),
             },
         ])
         .with_log_template(
@@ -1073,7 +1137,11 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "Pass HTTP response through to client unchanged".to_string(),
                 parameters: vec![],
                 example: json!({"type": "handle_response_pass"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Proxy pass response")
+                        .with_debug("Proxy handle_response_pass"),
+                ),
             },
             ActionDefinition {
                 name: "handle_response_block".to_string(),
@@ -1093,7 +1161,11 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                     },
                 ],
                 example: json!({"type": "handle_response_block", "status": 403, "body": "Blocked"}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Proxy block response (HTTP {status})")
+                        .with_debug("Proxy handle_response_block: status={status}"),
+                ),
             },
             ActionDefinition {
                 name: "handle_response_modify".to_string(),
@@ -1125,7 +1197,11 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                     },
                 ],
                 example: json!({"type": "handle_response_modify", "status": 200, "headers": {"X-Modified": "true"}}),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Proxy modify response")
+                        .with_debug("Proxy handle_response_modify: status={status}"),
+                ),
             },
         ])
         .with_log_template(
@@ -1169,14 +1245,22 @@ pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Allow HTTPS connection to proceed".to_string(),
             parameters: vec![],
             example: json!({"type": "handle_https_connection_allow"}),
-        log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> Proxy allow HTTPS")
+                    .with_debug("Proxy handle_https_connection_allow"),
+            ),
         },
         ActionDefinition {
             name: "handle_https_connection_block".to_string(),
             description: "Block HTTPS connection".to_string(),
             parameters: vec![],
             example: json!({"type": "handle_https_connection_block"}),
-        log_template: None,
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> Proxy block HTTPS")
+                    .with_debug("Proxy handle_https_connection_block"),
+            ),
         },
     ])
     .with_log_template(

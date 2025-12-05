@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -113,7 +114,11 @@ impl Protocol for WebRtcSignalingProtocol {
                 example: json!({
                     "type": "list_signaling_peers"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC list signaling peers")
+                        .with_debug("WebRTC-Signaling list_signaling_peers"),
+                ),
             },
             ActionDefinition {
                 name: "broadcast_message".to_string(),
@@ -128,7 +133,11 @@ impl Protocol for WebRtcSignalingProtocol {
                     "type": "broadcast_message",
                     "message": {"type": "announcement", "text": "Server restarting in 5 minutes"}
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC broadcast message")
+                        .with_debug("WebRTC-Signaling broadcast_message: message={message}"),
+                ),
             },
         ]
     }

@@ -9,6 +9,8 @@ use crate::llm::actions::{
     ActionDefinition, Parameter, ParameterDefinition,
 };
 #[cfg(feature = "usb-smartcard")]
+use crate::protocol::log_template::LogTemplate;
+#[cfg(feature = "usb-smartcard")]
 use crate::protocol::EventType;
 #[cfg(feature = "usb-smartcard")]
 use crate::state::app_state::AppState;
@@ -213,7 +215,11 @@ impl Protocol for UsbSmartCardProtocol {
                     "type": "insert_card",
                     "connection_id": "conn_1"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Smart card insert")
+                        .with_debug("USB-SmartCard insert_card: connection_id={connection_id}"),
+                ),
             },
             ActionDefinition {
                 name: "remove_card".to_string(),
@@ -228,7 +234,11 @@ impl Protocol for UsbSmartCardProtocol {
                     "type": "remove_card",
                     "connection_id": "conn_1"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Smart card remove")
+                        .with_debug("USB-SmartCard remove_card: connection_id={connection_id}"),
+                ),
             },
             ActionDefinition {
                 name: "set_pin".to_string(),
@@ -252,7 +262,11 @@ impl Protocol for UsbSmartCardProtocol {
                     "connection_id": "conn_1",
                     "new_pin": "123456"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Smart card set PIN")
+                        .with_debug("USB-SmartCard set_pin: connection_id={connection_id}"),
+                ),
             },
             ActionDefinition {
                 name: "verify_pin".to_string(),
@@ -276,7 +290,11 @@ impl Protocol for UsbSmartCardProtocol {
                     "connection_id": "conn_1",
                     "pin": "123456"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Smart card verify PIN")
+                        .with_debug("USB-SmartCard verify_pin: connection_id={connection_id}"),
+                ),
             },
             ActionDefinition {
                 name: "list_files".to_string(),
@@ -291,7 +309,11 @@ impl Protocol for UsbSmartCardProtocol {
                     "type": "list_files",
                     "connection_id": "conn_1"
                 }),
-            log_template: None,
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> Smart card list files")
+                        .with_debug("USB-SmartCard list_files: connection_id={connection_id}"),
+                ),
             },
         ]
     }

@@ -4,6 +4,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -305,7 +306,11 @@ fn join_group_action() -> ActionDefinition {
             "type": "join_group",
             "group_address": "239.255.255.250"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IGMP join {group_address}")
+                .with_debug("IGMP join_group: group={group_address}"),
+        ),
     }
 }
 
@@ -323,7 +328,11 @@ fn leave_group_action() -> ActionDefinition {
             "type": "leave_group",
             "group_address": "239.255.255.250"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IGMP leave {group_address}")
+                .with_debug("IGMP leave_group: group={group_address}"),
+        ),
     }
 }
 
@@ -341,7 +350,11 @@ fn send_membership_report_action() -> ActionDefinition {
             "type": "send_membership_report",
             "group_address": "239.255.255.250"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IGMP report {group_address}")
+                .with_debug("IGMP send_membership_report: group={group_address}"),
+        ),
     }
 }
 
@@ -359,7 +372,11 @@ fn send_leave_group_action() -> ActionDefinition {
             "type": "send_leave_group",
             "group_address": "239.255.255.250"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IGMP leave msg {group_address}")
+                .with_debug("IGMP send_leave_group: group={group_address}"),
+        ),
     }
 }
 
@@ -371,7 +388,11 @@ fn ignore_message_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_message"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> IGMP ignore")
+                .with_debug("IGMP ignore_message"),
+        ),
     }
 }
 

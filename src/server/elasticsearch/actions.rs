@@ -116,7 +116,11 @@ fn send_elasticsearch_response_action() -> ActionDefinition {
             "status_code": 200,
             "body": "{\"acknowledged\": true}"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch {status_code}")
+                .with_debug("Elasticsearch response: status={status_code}"),
+        ),
     }
 }
 
@@ -154,7 +158,11 @@ fn send_search_response_action() -> ActionDefinition {
             "total": 2,
             "took": 15
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch {hits_len} hits, {total} total")
+                .with_debug("Elasticsearch search_response: {hits_len} hits"),
+        ),
     }
 }
 
@@ -188,7 +196,11 @@ fn send_index_response_action() -> ActionDefinition {
             "id": "abc123",
             "result": "created"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch {result} {index}/{id}")
+                .with_debug("Elasticsearch index_response: {index}/{id} {result}"),
+        ),
     }
 }
 
@@ -229,7 +241,11 @@ fn send_get_response_action() -> ActionDefinition {
             "id": "abc123",
             "source": {"name": "Widget", "price": 19.99}
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch GET {index}/{id} found={found}")
+                .with_debug("Elasticsearch get_response: {index}/{id}"),
+        ),
     }
 }
 
@@ -259,7 +275,11 @@ fn send_bulk_response_action() -> ActionDefinition {
             ],
             "errors": false
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch bulk {items_len} items, errors={errors}")
+                .with_debug("Elasticsearch bulk_response: {items_len} items"),
+        ),
     }
 }
 
@@ -293,7 +313,11 @@ fn send_cluster_info_action() -> ActionDefinition {
             "status": "green",
             "version": "8.0.0"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch cluster {cluster_name} ({status})")
+                .with_debug("Elasticsearch cluster_info: {cluster_name} v{version}"),
+        ),
     }
 }
 
@@ -311,7 +335,11 @@ fn show_message_action() -> ActionDefinition {
             "type": "show_message",
             "message": "Indexed document in products index"
         }),
-        log_template: None,
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("Elasticsearch: {message}")
+                .with_debug("Elasticsearch show_message: {message}"),
+        ),
     }
 }
 

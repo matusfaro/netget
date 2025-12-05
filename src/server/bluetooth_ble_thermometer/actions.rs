@@ -3,6 +3,7 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
+use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
@@ -18,6 +19,12 @@ pub static TEMPERATURE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("BLE thermometer: {celsius}°C")
+            .with_debug("BLE thermometer updated to {celsius}°C")
+            .with_trace("BLE thermometer event: {json_pretty(.)}"),
+    )
 });
 
 pub struct BluetoothBleThermometerProtocol;
@@ -50,6 +57,11 @@ impl Protocol for BluetoothBleThermometerProtocol {
                 required: true,
             }],
             example: json!({"type": "set_temperature", "celsius": 37.0}),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> BLE thermometer: {celsius}°C")
+                    .with_debug("BLE thermometer set_temperature: celsius={celsius}"),
+            ),
         }]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {

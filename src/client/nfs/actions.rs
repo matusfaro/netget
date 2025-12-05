@@ -271,6 +271,7 @@ impl Protocol for NfsClientProtocol {
             example: json!({
                 "type": "wait_for_more"
             }),
+            log_template: None,
         }]
     }
 
