@@ -21,8 +21,9 @@ pub struct ColorPalette {
     pub trace: Color,
     pub user: Color,
 
-    // Connection/server indicators
+    // Connection/server/client indicators
     pub server: Color,
+    pub client: Color,
     pub connection: Color,
 
     // UI elements
@@ -47,6 +48,7 @@ impl ColorPalette {
             trace: Color::DarkGrey,
             user: Color::Green,
             server: Color::Cyan,
+            client: Color::Magenta,
             connection: Color::Cyan,
             separator: Color::DarkGreen,
             dimmed: Color::DarkGrey,
@@ -67,6 +69,7 @@ impl ColorPalette {
             trace: Color::DarkGrey,
             user: Color::DarkGreen,
             server: Color::DarkCyan,
+            client: Color::DarkMagenta,
             connection: Color::DarkCyan,
             separator: Color::DarkGreen,
             dimmed: Color::Grey,
@@ -88,6 +91,7 @@ impl ColorPalette {
             trace: Color::Grey,
             user: Color::DarkGreen,
             server: Color::DarkCyan,
+            client: Color::DarkMagenta,
             connection: Color::DarkCyan,
             separator: Color::DarkGreen,
             dimmed: Color::Grey,

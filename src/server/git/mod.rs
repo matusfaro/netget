@@ -357,7 +357,10 @@ Provide references for this repository."#,
     };
 
     trace!("LLM response for Git refs: {}", llm_response);
-    let _ = status_tx.send(format!("[TRACE] LLM response: {}", llm_response));
+    let _ = status_tx.send("[TRACE] LLM response:".to_string());
+    for line in crate::llm::format_indented_dimmed_lines(&llm_response, 8) {
+        let _ = status_tx.send(format!("[TRACE] {}", line));
+    }
 
     // Parse LLM response as actions
     let actions_result: Value = match serde_json::from_str(&llm_response) {
@@ -526,7 +529,10 @@ Generate a pack file response."#,
     };
 
     trace!("LLM response for Git pack: {}", llm_response);
-    let _ = status_tx.send(format!("[TRACE] LLM response for pack generation"));
+    let _ = status_tx.send("[TRACE] LLM response for pack generation:".to_string());
+    for line in crate::llm::format_indented_dimmed_lines(&llm_response, 8) {
+        let _ = status_tx.send(format!("[TRACE] {}", line));
+    }
 
     // Parse and execute actions (similar to handle_info_refs)
     let actions_result: Value = match serde_json::from_str(&llm_response) {

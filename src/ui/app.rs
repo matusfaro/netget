@@ -302,6 +302,9 @@ impl App {
         {
             self.command_history.push(command);
         }
+        // Reset history navigation state so pressing up shows the last command
+        self.history_position = None;
+        self.history_temp_input = None;
     }
 
     /// Get or allocate a global connection ID for a network connection

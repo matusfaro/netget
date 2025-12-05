@@ -87,7 +87,7 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 
 **Script Output (CRITICAL - must output JSON with actions array):**
 ```json
-{"actions": [{"type": "action_name", "param": "value"}]}
+{"actions": [{"type": "send_http_response", "status": 200, "body": "Hello"}]}
 ```
 
 **CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_server_documentation` or `read_client_documentation`) to see the exact action types and their parameters for your protocol.
@@ -117,7 +117,7 @@ import sys
 
 # No escaping needed! Write code naturally.
 data = json.load(sys.stdin)
-result = {"actions": [{"type": "action_name"}]}
+result = {"actions": [{"type": "send_http_response", "status": 200, "body": "Hello"}]}
 print(json.dumps(result))
 </script001>
 ```

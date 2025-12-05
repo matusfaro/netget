@@ -302,6 +302,10 @@ struct AppStateInner {
     total_llm_calls: u64,
     /// SQLite database manager
     _database_manager: crate::state::DatabaseManager,
+    /// Server protocols that have been documented (enables open_server for these protocols)
+    documented_server_protocols: std::collections::HashSet<String>,
+    /// Client protocols that have been documented (enables open_client for these protocols)
+    documented_client_protocols: std::collections::HashSet<String>,
 }
 
 impl AppState {
@@ -367,6 +371,8 @@ impl AppState {
                 total_output_tokens: 0,
                 total_llm_calls: 0,
                 _database_manager: crate::state::DatabaseManager::new(),
+                documented_server_protocols: std::collections::HashSet::new(),
+                documented_client_protocols: std::collections::HashSet::new(),
             })),
         }
     }
@@ -658,6 +664,42 @@ impl AppState {
 
         inner.selected_scripting_mode = next;
         (next, true)
+    }
+
+    /// Check if server documentation has been read (enables open_server)
+    pub async fn is_server_docs_read(&self) -> bool {
+        !self.inner.read().await.documented_server_protocols.is_empty()
+    }
+
+    /// Check if client documentation has been read (enables open_client)
+    pub async fn is_client_docs_read(&self) -> bool {
+        !self.inner.read().await.documented_client_protocols.is_empty()
+    }
+
+    /// Mark server protocols as documented
+    pub async fn mark_server_protocols_documented(&self, protocols: &[String]) {
+        let mut inner = self.inner.write().await;
+        for protocol in protocols {
+            inner.documented_server_protocols.insert(protocol.clone());
+        }
+    }
+
+    /// Mark client protocols as documented
+    pub async fn mark_client_protocols_documented(&self, protocols: &[String]) {
+        let mut inner = self.inner.write().await;
+        for protocol in protocols {
+            inner.documented_client_protocols.insert(protocol.clone());
+        }
+    }
+
+    /// Get all documented server protocols
+    pub async fn get_documented_server_protocols(&self) -> std::collections::HashSet<String> {
+        self.inner.read().await.documented_server_protocols.clone()
+    }
+
+    /// Get all documented client protocols
+    pub async fn get_documented_client_protocols(&self) -> std::collections::HashSet<String> {
+        self.inner.read().await.documented_client_protocols.clone()
     }
 
     /// Get the currently selected event handler mode
@@ -1993,10 +2035,42 @@ impl AppState {
 
         if inner.user_conversation_state.is_none() {
             // Create with default 50k character limit for conversation history
-            let conversation_state = Arc::new(std::sync::Mutex::new(
-                crate::llm::ConversationState::new(50000),
-            ));
-            inner.user_conversation_state = Some(conversation_state.clone());
+            let mut conversation_state = crate::llm::ConversationState::new(50000);
+
+            // Sync documented protocols from AppState to ConversationState
+            // This ensures the LLM knows which protocols have been documented
+            // even when conversation history has been truncated
+            if !inner.documented_server_protocols.is_empty() {
+                let protocols: Vec<String> =
+                    inner.documented_server_protocols.iter().cloned().collect();
+                conversation_state.mark_server_protocols_documented(&protocols);
+            }
+            if !inner.documented_client_protocols.is_empty() {
+                let protocols: Vec<String> =
+                    inner.documented_client_protocols.iter().cloned().collect();
+                conversation_state.mark_client_protocols_documented(&protocols);
+            }
+
+            inner.user_conversation_state =
+                Some(Arc::new(std::sync::Mutex::new(conversation_state)));
+        } else {
+            // Sync documented protocols if conversation state already exists
+            // This ensures protocols documented in this session are reflected
+            if let Some(ref conv_state) = inner.user_conversation_state {
+                if let Ok(mut state) = conv_state.lock() {
+                    // Only sync if AppState has more protocols than ConversationState
+                    for protocol in &inner.documented_server_protocols {
+                        if !state.documented_server_protocols.contains(protocol) {
+                            state.documented_server_protocols.insert(protocol.clone());
+                        }
+                    }
+                    for protocol in &inner.documented_client_protocols {
+                        if !state.documented_client_protocols.contains(protocol) {
+                            state.documented_client_protocols.insert(protocol.clone());
+                        }
+                    }
+                }
+            }
         }
 
         inner.user_conversation_state.as_ref().unwrap().clone()

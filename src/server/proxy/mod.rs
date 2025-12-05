@@ -327,10 +327,6 @@ impl ProxyServer {
     ) -> Result<()> {
         use tokio::io::AsyncReadExt;
 
-        eprintln!(
-            ">>> PROXY: handle_proxy_connection called from {}",
-            peer_addr
-        );
         info!(
             "Proxy: handling connection {} from {}",
             connection_id, peer_addr
@@ -343,16 +339,11 @@ impl ProxyServer {
         // Read the initial HTTP request
         let mut buffer = vec![0u8; 8192];
 
-        eprintln!(">>> PROXY: about to read from connection {}", connection_id);
         let n = stream
             .read(&mut buffer)
             .await
             .context("Failed to read initial request")?;
 
-        eprintln!(
-            ">>> PROXY: received {} bytes from connection {}",
-            n, connection_id
-        );
         console_debug!(
             status_tx,
             "Proxy connection {} received {} bytes",

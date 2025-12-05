@@ -3,6 +3,8 @@
 
 Tools gather information and return results to you. After a tool completes, you'll be invoked again with the results so you can decide what to do next.
 
+**CRITICAL: Only use tools listed below. Do NOT invent or hallucinate tool names.**
+
 {{#each tool_actions}}
 ## {{@index}}. {{this.name}}
 
@@ -32,6 +34,10 @@ Include actions in your JSON response to execute operations.
 You will see past actions you have executed on previous invocation, actions are not idempotent.
 Unless tools are also included, you will not be invoked again if you only return actions
 so you may include multiple actions in a single response.
+
+**CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
+If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
+to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
 
 {{#each regular_actions}}
 ## {{@index}}. {{this.name}}

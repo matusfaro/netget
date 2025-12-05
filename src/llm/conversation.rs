@@ -373,7 +373,19 @@ impl ConversationHandler {
         let mut all_actions = Vec::new();
         let mut tool_results = Vec::new();
         let mut consecutive_tool_failures = 0;
+        let mut unknown_action_retries = 0;
         const MAX_CONSECUTIVE_FAILURES: usize = 2;
+        const MAX_UNKNOWN_ACTION_RETRIES: usize = 2;
+
+        // Build set of valid action names for validation
+        let valid_action_names: std::collections::HashSet<String> = available_actions
+            .iter()
+            .map(|a| a.name.clone())
+            .collect();
+        let valid_action_names_list: Vec<String> = available_actions
+            .iter()
+            .map(|a| a.name.clone())
+            .collect();
 
         for iteration in 1..=self.max_tool_iterations {
             debug!(
@@ -429,6 +441,95 @@ impl ConversationHandler {
             let action_response = ActionResponse {
                 actions: actions_with_refs,
             };
+
+            // Validate action names against available actions
+            let unknown_actions: Vec<String> = action_response
+                .actions
+                .iter()
+                .filter_map(|action| {
+                    let action_type = action.get("type").and_then(|v| v.as_str())?;
+                    // Skip tool actions - they're validated separately
+                    if ToolAction::is_tool_action(action) {
+                        return None;
+                    }
+                    // Check if action exists in valid actions
+                    if !valid_action_names.contains(action_type) {
+                        Some(action_type.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !unknown_actions.is_empty() {
+                unknown_action_retries += 1;
+
+                // Log warning with the actual response
+                warn!(
+                    "LLM returned unknown action(s): {:?}. Response was: {}",
+                    unknown_actions,
+                    if cleaned_response.len() > 500 {
+                        format!("{}...", &cleaned_response[..500])
+                    } else {
+                        cleaned_response.clone()
+                    }
+                );
+
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[WARN] LLM returned unknown action(s): {:?}",
+                        unknown_actions
+                    ));
+                }
+
+                if unknown_action_retries >= MAX_UNKNOWN_ACTION_RETRIES {
+                    // All retries exhausted - log error
+                    error!(
+                        "LLM failed to use valid actions after {} retries. Unknown actions: {:?}",
+                        unknown_action_retries, unknown_actions
+                    );
+                    if let Some(ref tx) = self.status_tx {
+                        let _ = tx.send(format!(
+                            "[ERROR] LLM failed to use valid actions after {} retries",
+                            unknown_action_retries
+                        ));
+                    }
+                    // Return error instead of silently continuing
+                    anyhow::bail!(
+                        "LLM returned unknown action(s) after {} retries: {:?}",
+                        unknown_action_retries,
+                        unknown_actions
+                    );
+                }
+
+                // Build retry prompt for unknown actions
+                let correction = crate::llm::prompt::PromptBuilder::build_unknown_action_retry_prompt(
+                    &unknown_actions,
+                    &valid_action_names_list,
+                );
+
+                // Log the correction before adding to messages
+                trace!(
+                    "→ Sending unknown action correction and retrying (attempt {})...",
+                    unknown_action_retries + 1
+                );
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send("[TRACE] → Sending correction to LLM for unknown action...".to_string());
+                    // Show the correction message being sent (indented and dimmed)
+                    for line in crate::llm::format_indented_dimmed_lines(&correction, 8) {
+                        let _ = tx.send(format!("[TRACE] {}", line));
+                    }
+                }
+
+                // Add the malformed response as assistant message
+                self.messages.push(Message::assistant(cleaned_response.clone()));
+
+                // Add correction as user message
+                self.messages.push(Message::user(correction));
+
+                // Continue to next iteration to retry
+                continue;
+            }
 
             // Separate tool calls from regular actions
             let (tools, regular): (Vec<_>, Vec<_>) = action_response
@@ -513,9 +614,58 @@ impl ConversationHandler {
 
                         // Mark protocol docs as read if the tool succeeded
                         // This will update the system prompt to enable open_server/open_client actions
-                        // For now, all doc reading tools enable both open_server and open_client
-                        if result.success && (is_read_server_docs || is_read_client_docs || is_read_base_docs) {
-                            self.mark_protocol_docs_read(&available_actions);
+                        if result.success {
+                            if is_read_server_docs {
+                                self.mark_protocol_docs_read(&available_actions);
+                                // Extract protocols and update AppState and ConversationState
+                                if let ToolAction::ReadServerDocumentation { protocols, protocol } = &tool_action {
+                                    let mut all_protocols = protocols.clone();
+                                    if let Some(p) = protocol {
+                                        if !all_protocols.contains(p) {
+                                            all_protocols.push(p.clone());
+                                        }
+                                    }
+                                    // Update ConversationState to persist documented protocols
+                                    if let Ok(mut conv_state) = self.conversation_state.lock() {
+                                        conv_state.mark_server_protocols_documented(&all_protocols);
+                                    }
+                                    // Update AppState (global persistence)
+                                    if let Some(ref state) = self.state {
+                                        let state_clone = state.clone();
+                                        let protocols_clone = all_protocols.clone();
+                                        tokio::spawn(async move {
+                                            state_clone.mark_server_protocols_documented(&protocols_clone).await;
+                                        });
+                                    }
+                                }
+                            }
+                            if is_read_client_docs {
+                                self.mark_protocol_docs_read(&available_actions);
+                                // Extract protocols and update AppState and ConversationState
+                                if let ToolAction::ReadClientDocumentation { protocols, protocol } = &tool_action {
+                                    let mut all_protocols = protocols.clone();
+                                    if let Some(p) = protocol {
+                                        if !all_protocols.contains(p) {
+                                            all_protocols.push(p.clone());
+                                        }
+                                    }
+                                    // Update ConversationState to persist documented protocols
+                                    if let Ok(mut conv_state) = self.conversation_state.lock() {
+                                        conv_state.mark_client_protocols_documented(&all_protocols);
+                                    }
+                                    // Update AppState (global persistence)
+                                    if let Some(ref state) = self.state {
+                                        let state_clone = state.clone();
+                                        let protocols_clone = all_protocols.clone();
+                                        tokio::spawn(async move {
+                                            state_clone.mark_client_protocols_documented(&protocols_clone).await;
+                                        });
+                                    }
+                                }
+                            }
+                            if is_read_base_docs {
+                                self.mark_protocol_docs_read(&available_actions);
+                            }
                         }
 
                         tool_results.push(result);
@@ -642,12 +792,16 @@ impl ConversationHandler {
                         } else {
                             msg.content.clone()
                         };
+                        // Send header line
                         let _ = tx.send(format!(
-                            "[TRACE] Message {}: [{}] {}",
+                            "[TRACE] ·  Message {}: [{}]",
                             idx + 1,
                             msg.role,
-                            preview.replace('\n', "\r\n")
                         ));
+                        // Send content indented and dimmed using the shared formatting function
+                        for line in crate::llm::format_indented_dimmed_lines(&preview, 8) {
+                            let _ = tx.send(format!("[TRACE] {}", line));
+                        }
                     }
                 }
             }
@@ -657,15 +811,6 @@ impl ConversationHandler {
 
             // Concatenate all messages into a single prompt for generate API
             // This provides better JSON formatting than chat API
-            eprintln!("🔍 DEBUG: Building prompt from {} messages", self.messages.len());
-            for (idx, msg) in self.messages.iter().enumerate() {
-                eprintln!("  Message {}: role={}, content_len={}", idx, msg.role, msg.content.len());
-                if msg.role == "user" {
-                    let preview_len = msg.content.len().min(300);
-                    eprintln!("    User message preview: {}", &msg.content[..preview_len]);
-                }
-            }
-
             let mut full_prompt = String::new();
             for msg in &self.messages {
                 match msg.role.as_str() {
@@ -686,13 +831,6 @@ impl ConversationHandler {
                     _ => {}
                 }
             }
-
-            eprintln!("🔍 DEBUG: Full prompt length: {} chars", full_prompt.len());
-            eprintln!("🔍 DEBUG: Prompt contains 'Event ID:': {}", full_prompt.contains("Event ID:"));
-            // Use floor_char_boundary to ensure we don't slice in the middle of a UTF-8 character
-            let preview_bytes = full_prompt.len().saturating_sub(500);
-            let preview_start = full_prompt.floor_char_boundary(preview_bytes);
-            eprintln!("🔍 DEBUG: Last 500 chars of prompt: {}", &full_prompt[preview_start..]);
 
             // Acquire rate limiter permit (waits for user requests, discards network requests if limited)
             let permit = self
@@ -734,7 +872,10 @@ impl ConversationHandler {
             if let Some(ref reasoning_text) = reasoning {
                 trace!("LLM Reasoning: {}", reasoning_text);
                 if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!("[TRACE] Reasoning: {}", reasoning_text));
+                    let _ = tx.send("[TRACE] Reasoning:".to_string());
+                    for line in crate::llm::format_indented_dimmed_lines(reasoning_text, 8) {
+                        let _ = tx.send(format!("[TRACE] {}", line));
+                    }
                 }
             }
 
@@ -757,12 +898,10 @@ impl ConversationHandler {
 
             if let Some(ref tx) = self.status_tx {
                 // Don't truncate for DEBUG level - show full response (but normalized)
-                // Replace \n with \r\n for proper terminal display
-                let response_with_cr = normalized_response.replace('\n', "\r\n");
-                let _ = tx.send(format!(
-                    "[DEBUG] LLM response (attempt {}): {}",
-                    attempt, response_with_cr
-                ));
+                let _ = tx.send(format!("[DEBUG] LLM response (attempt {}):", attempt));
+                for line in crate::llm::format_indented_dimmed_lines(&normalized_response, 8) {
+                    let _ = tx.send(format!("[DEBUG] {}", line));
+                }
             }
 
             // Try to parse as ActionResponse (use normalized version for better compatibility)
@@ -847,15 +986,19 @@ impl ConversationHandler {
                             state.add_retry_instruction(correction.clone());
                         }
 
-                        self.messages.push(Message::user(correction));
-
                         info!(
                             "→ Sending correction and retrying (attempt {})...",
                             attempt + 1
                         );
                         if let Some(ref tx) = self.status_tx {
                             let _ = tx.send("[INFO] → Sending correction to LLM...".to_string());
+                            // Show the correction message being sent (indented and dimmed)
+                            for line in crate::llm::format_indented_dimmed_lines(&correction, 8) {
+                                let _ = tx.send(format!("[INFO] {}", line));
+                            }
                         }
+
+                        self.messages.push(Message::user(correction));
                     } else {
                         // No more retries
                         error!("✗ Failed to get valid response after {} attempts", attempt);

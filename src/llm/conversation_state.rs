@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 /// Manages conversation history with token-based size limits
 #[derive(Debug, Clone)]
@@ -23,6 +23,14 @@ pub struct ConversationState {
     /// Conversation metadata
     pub started_at: DateTime<Utc>,
     pub last_interaction: DateTime<Utc>,
+
+    /// Server protocols that have been documented in this conversation
+    /// (enables open_server for these protocols)
+    pub documented_server_protocols: HashSet<String>,
+
+    /// Client protocols that have been documented in this conversation
+    /// (enables open_client for these protocols)
+    pub documented_client_protocols: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +81,8 @@ impl ConversationState {
             truncated: false,
             started_at: now,
             last_interaction: now,
+            documented_server_protocols: HashSet::new(),
+            documented_client_protocols: HashSet::new(),
         }
     }
 
@@ -154,6 +164,39 @@ impl ConversationState {
             history.push_str("[Note: Earlier messages were removed due to size limits]\n");
         }
 
+        // Include documented protocols at the start of history
+        // This ensures the LLM knows which protocols have been documented
+        if !self.documented_server_protocols.is_empty()
+            || !self.documented_client_protocols.is_empty()
+        {
+            history.push_str("<documented_protocols>\n");
+            if !self.documented_server_protocols.is_empty() {
+                let mut protocols: Vec<_> = self.documented_server_protocols.iter().collect();
+                protocols.sort();
+                history.push_str(&format!(
+                    "Server protocols documented: {}\n",
+                    protocols
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if !self.documented_client_protocols.is_empty() {
+                let mut protocols: Vec<_> = self.documented_client_protocols.iter().collect();
+                protocols.sort();
+                history.push_str(&format!(
+                    "Client protocols documented: {}\n",
+                    protocols
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            history.push_str("</documented_protocols>\n");
+        }
+
         // Format each message with appropriate tags
         for message in &self.messages {
             match &message.message_type {
@@ -188,6 +231,40 @@ impl ConversationState {
         }
 
         history
+    }
+
+    /// Mark server protocols as documented in this conversation
+    pub fn mark_server_protocols_documented(&mut self, protocols: &[String]) {
+        for protocol in protocols {
+            self.documented_server_protocols.insert(protocol.clone());
+        }
+    }
+
+    /// Mark client protocols as documented in this conversation
+    pub fn mark_client_protocols_documented(&mut self, protocols: &[String]) {
+        for protocol in protocols {
+            self.documented_client_protocols.insert(protocol.clone());
+        }
+    }
+
+    /// Check if any server protocols have been documented
+    pub fn has_server_docs(&self) -> bool {
+        !self.documented_server_protocols.is_empty()
+    }
+
+    /// Check if any client protocols have been documented
+    pub fn has_client_docs(&self) -> bool {
+        !self.documented_client_protocols.is_empty()
+    }
+
+    /// Get all documented server protocols
+    pub fn get_documented_server_protocols(&self) -> &HashSet<String> {
+        &self.documented_server_protocols
+    }
+
+    /// Get all documented client protocols
+    pub fn get_documented_client_protocols(&self) -> &HashSet<String> {
+        &self.documented_client_protocols
     }
 
     /// Clear all conversation history

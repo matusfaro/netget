@@ -112,7 +112,6 @@ impl SmbServer {
 
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        eprintln!("[SMB] Connection accepted from {}", peer_addr);
                         info!("SMB connection accepted from {}", peer_addr);
                         let _ =
                             status_tx.send(format!("→ SMB connection from {}", peer_addr));
@@ -124,7 +123,6 @@ impl SmbServer {
                         let status_tx = status_tx.clone();
 
                         tokio::spawn(async move {
-                            eprintln!("[SMB] Handler task started for {}", peer_addr);
                             if let Err(e) = Self::handle_connection(
                                 stream,
                                 peer_addr,
@@ -222,10 +220,8 @@ impl SmbServer {
             // SMB2 header is 64 bytes minimum
             let mut header_buf = vec![0u8; 64];
 
-            eprintln!("[SMB] Reading packet from {}", peer_addr);
             match stream.read_exact(&mut header_buf).await {
                 Ok(_) => {
-                    eprintln!("[SMB] Read 64-byte header from {}", peer_addr);
                     // Update connection stats for received data
                     app_state
                         .update_connection_stats(
@@ -273,10 +269,8 @@ impl SmbServer {
 
                     // Send response
                     if let Some(response_data) = response {
-                        eprintln!("[SMB] Sending {}-byte response to {}", response_data.len(), peer_addr);
                         match stream.write_all(&response_data).await {
                             Ok(_) => {
-                                eprintln!("[SMB] Response sent, looping back to read next packet");
                                 trace!(
                                     "SMB2 response sent to {}, {} bytes",
                                     peer_addr,

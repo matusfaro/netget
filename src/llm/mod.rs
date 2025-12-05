@@ -91,3 +91,34 @@ pub use hybrid_manager::{ActiveBackend, HybridLLMManager};
 pub use rate_limiter::{
     RateLimiter, RateLimiterConfig, RateLimiterPermit, RateLimiterStats, RequestSource,
 };
+
+/// Format text with indentation and ANSI dim styling for log output.
+///
+/// Each line is prefixed with the specified number of spaces and wrapped
+/// with ANSI dim codes (\x1b[2m ... \x1b[0m) for greyed out appearance.
+///
+/// # Arguments
+/// * `text` - The text to format
+/// * `indent_spaces` - Number of spaces to indent each line (default: 8)
+///
+/// # Returns
+/// Vec of formatted lines, each indented and dimmed (ready to send via tx.send())
+pub fn format_indented_dimmed_lines(text: &str, indent_spaces: usize) -> Vec<String> {
+    let indent = " ".repeat(indent_spaces);
+    text.lines()
+        .map(|line| format!("{}\x1b[2m{}\x1b[0m", indent, line))
+        .collect()
+}
+
+/// Format text with indentation and ANSI dim styling for log output.
+/// Returns a single string with lines joined by newlines (for tracing/debug output).
+///
+/// # Arguments
+/// * `text` - The text to format
+/// * `indent_spaces` - Number of spaces to indent each line (default: 8)
+///
+/// # Returns
+/// Formatted string with each line indented and dimmed, joined by \n
+pub fn format_indented_dimmed(text: &str, indent_spaces: usize) -> String {
+    format_indented_dimmed_lines(text, indent_spaces).join("\n")
+}

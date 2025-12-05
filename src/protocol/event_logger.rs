@@ -315,6 +315,7 @@ pub fn log_action_result(
 mod tests {
     use super::*;
     use crate::protocol::event_type::EventType;
+    use crate::server::connection::ConnectionId;
     use serde_json::json;
     use std::sync::LazyLock;
 
@@ -346,14 +347,14 @@ mod tests {
         let ctx = EventLogContext::new(
             &event,
             ServerId::new(1),
-            Some(42),
+            Some(ConnectionId::new(42)),
             Some("192.168.1.1:12345".parse().unwrap()),
             "HTTP",
         );
 
         assert_eq!(ctx.protocol_name, "HTTP");
         assert_eq!(ctx.server_id.as_u32(), 1);
-        assert_eq!(ctx.connection_id, Some(42));
+        assert_eq!(ctx.connection_id.map(|c| c.as_u32()), Some(42));
     }
 
     #[test]
@@ -369,7 +370,7 @@ mod tests {
         let ctx = EventLogContext::new(
             &event,
             ServerId::new(5),
-            Some(10),
+            Some(ConnectionId::new(10)),
             Some("10.0.0.1:8080".parse().unwrap()),
             "TEST",
         );

@@ -1312,33 +1312,45 @@ pub fn get_all_common_actions(
     is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
     #[allow(unused_mut)]
-    let mut actions = vec![
-        // === Server Management ===
-        open_server_action(selected_mode, env, is_open_server_enabled),
-        close_server_action(),
-        close_all_servers_action(),
-        // === Client Management ===
-        open_client_action(selected_mode, env, is_open_client_enabled),
-        close_client_action(),
-        close_all_clients_action(),
-        // === Connection Management ===
-        close_connection_by_id_action(),
-        // === Client Configuration ===
-        reconnect_client_action(),
-        update_client_instruction_action(),
-        // === Server Configuration ===
-        update_instruction_action(),
-        set_memory_action(),
-        append_memory_action(),
-        // === Task Management ===
-        schedule_task_action(selected_mode, env),
-        cancel_task_action(),
-        list_tasks_action(),
-        // === System/Utility ===
-        change_model_action(),
-        show_message_action(),
-        append_to_log_action(),
-    ];
+    let mut actions = vec![];
+
+    // === Server Management ===
+    // Only include open_server when enabled (after docs are read)
+    if is_open_server_enabled {
+        actions.push(open_server_action(selected_mode, env, true));
+    }
+    actions.push(close_server_action());
+    actions.push(close_all_servers_action());
+
+    // === Client Management ===
+    // Only include open_client when enabled (after docs are read)
+    if is_open_client_enabled {
+        actions.push(open_client_action(selected_mode, env, true));
+    }
+    actions.push(close_client_action());
+    actions.push(close_all_clients_action());
+
+    // === Connection Management ===
+    actions.push(close_connection_by_id_action());
+
+    // === Client Configuration ===
+    actions.push(reconnect_client_action());
+    actions.push(update_client_instruction_action());
+
+    // === Server Configuration ===
+    actions.push(update_instruction_action());
+    actions.push(set_memory_action());
+    actions.push(append_memory_action());
+
+    // === Task Management ===
+    actions.push(schedule_task_action(selected_mode, env));
+    actions.push(cancel_task_action());
+    actions.push(list_tasks_action());
+
+    // === System/Utility ===
+    actions.push(change_model_action());
+    actions.push(show_message_action());
+    actions.push(append_to_log_action());
 
     // === Database Management ===
     #[cfg(feature = "sqlite")]

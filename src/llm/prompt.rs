@@ -225,6 +225,63 @@ Your response must be **pure JSON** only:
         )
     }
 
+    /// Build retry message for unknown action errors
+    ///
+    /// Used when LLM returns actions that don't exist. Lists the unknown actions
+    /// and reminds the LLM to only use actions from the Available Actions list.
+    ///
+    /// # Arguments
+    /// * `unknown_actions` - List of action names that don't exist
+    /// * `available_action_names` - List of valid action names
+    pub fn build_unknown_action_retry_prompt(
+        unknown_actions: &[String],
+        available_action_names: &[String],
+    ) -> String {
+        let unknown_list = unknown_actions
+            .iter()
+            .map(|a| format!("- `{}`", a))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let available_summary = if available_action_names.len() > 20 {
+            format!(
+                "{} actions available (see 'Available Actions' section above)",
+                available_action_names.len()
+            )
+        } else {
+            available_action_names
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        format!(
+            r#"# ❌ Error: Unknown Action(s)
+
+**The following action(s) do not exist:**
+{}
+
+## What Went Wrong
+
+You used action name(s) that are not in the Available Actions list. This is NOT allowed.
+
+**CRITICAL RULES:**
+1. You can ONLY use actions explicitly listed in the "Available Actions" section
+2. Do NOT invent, guess, or hallucinate action names
+3. If you need a protocol-specific action, use `read_server_documentation` or `read_client_documentation` tools first to learn the available actions for that protocol
+
+## Valid Actions
+
+{}
+
+---
+
+**Please retry:** Use ONLY actions from the Available Actions list. If you're unsure what actions exist for a protocol, use the documentation tools first."#,
+            unknown_list, available_summary
+        )
+    }
+
     /// Build format reminder message (added before every LLM call)
     ///
     /// This is a short system message added at the end of the conversation
@@ -464,19 +521,53 @@ Your response must be **pure JSON** only:
     /// This builds the SYSTEM prompt only (without the user input trigger).
     /// The caller should add the user input as a separate user message.
     ///
+    /// By default, `open_server` and `open_client` are DISABLED. They become enabled
+    /// only after `read_server_documentation` or `read_client_documentation` tools are called.
+    /// Use `build_user_input_system_prompt_with_docs` to explicitly enable them.
+    ///
     /// # Arguments
     /// * `state` - Application state
     /// * `protocol_async_actions` - Optional async actions from active protocol
+    /// * `conversation_history` - Optional conversation history
     pub async fn build_user_input_system_prompt(
         state: &AppState,
         protocol_async_actions: Vec<ActionDefinition>,
         conversation_history: Option<String>,
     ) -> String {
+        // By default, open_server and open_client are DISABLED
+        // Use build_user_input_system_prompt_with_docs to enable them after docs are read
+        Self::build_user_input_system_prompt_with_docs(
+            state,
+            protocol_async_actions,
+            conversation_history,
+            false, // is_open_server_enabled
+            false, // is_open_client_enabled
+        )
+        .await
+    }
+
+    /// Build system prompt for user input with explicit open_server/open_client enablement
+    ///
+    /// This variant allows explicitly controlling whether open_server/open_client are enabled.
+    /// Used by ConversationHandler after documentation tools have been called.
+    ///
+    /// # Arguments
+    /// * `state` - Application state
+    /// * `protocol_async_actions` - Optional async actions from active protocol
+    /// * `conversation_history` - Optional conversation history
+    /// * `is_open_server_enabled` - Whether open_server action is enabled
+    /// * `is_open_client_enabled` - Whether open_client action is enabled
+    pub async fn build_user_input_system_prompt_with_docs(
+        state: &AppState,
+        protocol_async_actions: Vec<ActionDefinition>,
+        conversation_history: Option<String>,
+        is_open_server_enabled: bool,
+        is_open_client_enabled: bool,
+    ) -> String {
         let selected_mode = state.get_selected_scripting_mode().await;
         let scripting_env = state.get_scripting_env().await;
 
-        // Check if documentation has been fetched
-        // Track this to customize the prompt guidance, but always enable actions
+        // Check if documentation has been fetched (for prompt guidance, not action enablement)
         let has_documentation = conversation_history.as_ref()
             .map(|history| {
                 history.contains("read_server_documentation") ||
@@ -487,11 +578,6 @@ Your response must be **pure JSON** only:
             .unwrap_or(false);
 
         let has_running_servers = !state.get_all_servers().await.is_empty();
-
-        // Always enable open_server and open_client
-        // The prompt will guide usage based on whether docs have been fetched
-        let is_open_server_enabled = true;
-        let is_open_client_enabled = true;
 
         let mut actions = get_user_input_common_actions(
             selected_mode,
@@ -513,8 +599,9 @@ Your response must be **pure JSON** only:
         } else {
             "`read_file`"
         };
-        let instructions = format!(
-            r#"## Your Mission
+        let instructions = if is_open_server_enabled || is_open_client_enabled {
+            format!(
+                r#"## Your Mission
 
 Understand what the user wants and respond with the appropriate actions to make it happen.
 
@@ -528,12 +615,40 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 4. **JSON responses only**: Your entire response must be valid JSON: `{{"actions": [...]}}`
             "#,
-            tool_examples
-        );
+                tool_examples
+            )
+        } else {
+            format!(
+                r#"## Your Mission
+
+Understand what the user wants and respond with the appropriate actions to make it happen.
+
+### Important Guidelines
+
+1. **Read documentation first**: Before starting servers or clients, you MUST call `read_server_documentation` or `read_client_documentation` with the protocol(s) you need. This enables the `open_server` and `open_client` actions.
+
+2. **Gather information**: Use tools like {} to read files or search for information before taking action.
+
+3. **Update, don't recreate**: If a user asks to modify an existing server (e.g., "add an endpoint", "change the behavior"), use `update_instruction` - don't create a new server on the same port.
+
+4. **JSON responses only**: Your entire response must be valid JSON: `{{"actions": [...]}}`
+
+**IMPORTANT**: The `open_server` and `open_client` actions are DISABLED until you read protocol documentation. Use `read_server_documentation` or `read_client_documentation` first!
+            "#,
+                tool_examples
+            )
+        };
 
         // Build prompt with conditional base stack docs
-        // Only show full base stack docs after documentation has been fetched
-        let include_base_stacks = has_documentation || has_running_servers;
+        // Only show full base stack docs after documentation has been fetched or explicitly enabled
+        // Also check if protocols have been documented in AppState
+        let has_documented_protocols =
+            state.is_server_docs_read().await || state.is_client_docs_read().await;
+        let include_base_stacks = has_documentation
+            || has_running_servers
+            || has_documented_protocols
+            || is_open_server_enabled
+            || is_open_client_enabled;
 
         Self::build_action_prompt(
             state,

@@ -144,12 +144,123 @@ async fn test_user_input_prompt() {
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
 
-    // Sanity checks - should include scripting/event handler info
-    assert!(prompt.contains("Event Handler Configuration"));
-    assert!(prompt.contains("Script Handlers"));
-    assert!(prompt.contains("Python")); // Selected language
-    assert!(prompt.contains("script_inline"));
-    assert!(prompt.contains("Available Base Stacks"));
+    // CRITICAL: In the initial prompt (before docs are read), base stacks and scripting
+    // sections are NOT shown - they only appear after documentation has been fetched.
+    // This prevents the LLM from trying to use open_server/open_client before learning the protocols.
+    assert!(
+        !prompt.contains("Available Base Stacks"),
+        "Base stacks should NOT be shown in initial prompt (before reading docs)"
+    );
+    assert!(
+        !prompt.contains("Script Handlers"),
+        "Script handlers should NOT be shown in initial prompt (before reading docs)"
+    );
+
+    // But read_server_documentation/read_client_documentation tools MUST be available
+    assert!(
+        prompt.contains("read_server_documentation"),
+        "Initial prompt should mention read_server_documentation tool"
+    );
+    assert!(
+        prompt.contains("read_client_documentation"),
+        "Initial prompt should mention read_client_documentation tool"
+    );
+
+    // CRITICAL: open_server and open_client actions should NOT EXIST as action definitions
+    // They are only included after calling read_server_documentation or read_client_documentation
+    // Note: They may still be mentioned in instructions (e.g., "use open_server after reading docs")
+    // but should NOT have action definition headers like "## 0. open_server"
+    assert!(
+        !prompt.contains("## 0. open_server") && !prompt.contains("## 1. open_server"),
+        "open_server should NOT have an action definition in initial prompt"
+    );
+    assert!(
+        !prompt.contains("## 0. open_client")
+            && !prompt.contains("## 1. open_client")
+            && !prompt.contains("## 2. open_client")
+            && !prompt.contains("## 3. open_client"),
+        "open_client should NOT have an action definition in initial prompt"
+    );
+}
+
+#[tokio::test]
+async fn test_user_input_prompt_after_docs_read() {
+    // Create state and mark protocols as documented
+    let state = Arc::new(AppState::new());
+
+    // Set up mock scripting environment
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+        go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.38.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    // Mark multiple server protocols as documented (simulates multiple read_server_documentation calls)
+    state
+        .mark_server_protocols_documented(&["HTTP".to_string(), "SSH".to_string()])
+        .await;
+
+    // Mark a client protocol as documented
+    state
+        .mark_client_protocols_documented(&["http".to_string()])
+        .await;
+
+    let user_input = "start an HTTP server on port 8080";
+
+    // Build prompt WITH docs enabled (is_open_server_enabled = true, is_open_client_enabled = true)
+    let system_prompt = PromptBuilder::build_user_input_system_prompt_with_docs(
+        &state,
+        vec![],
+        None,
+        true,  // is_open_server_enabled
+        true,  // is_open_client_enabled
+    )
+    .await;
+    let prompt = format!(
+        "{}\n\nTrigger: User input: \"{}\"",
+        system_prompt, user_input
+    );
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("user_input_prompt_after_docs", SNAPSHOT_DIR, &prompt);
+
+    // open_server should be ENABLED (have parameters, not marked as DISABLED)
+    // The action should have a "port" parameter which is only present when enabled
+    assert!(
+        prompt.contains("open_server") && prompt.contains("port"),
+        "open_server should be ENABLED and have port parameter after docs are read"
+    );
+    assert!(
+        !prompt.contains("open_server") || !prompt.contains("⚠️ DISABLED"),
+        "open_server should NOT be marked as DISABLED after docs are read"
+    );
+
+    // open_client should be ENABLED
+    assert!(
+        prompt.contains("open_client") && prompt.contains("remote_addr"),
+        "open_client should be ENABLED and have remote_addr parameter after docs are read"
+    );
+
+    // Should have base_stack parameter (enabled open_server has this)
+    assert!(
+        prompt.contains("base_stack"),
+        "Enabled open_server should have base_stack parameter"
+    );
+
+    // After docs are read, base stacks section SHOULD be present
+    assert!(
+        prompt.contains("Available Base Stacks"),
+        "Base stacks should be shown after reading docs"
+    );
+
+    // Scripting section should be present (since scripting env is set up)
+    // The scripting section is titled "Event Handler Configuration"
+    assert!(
+        prompt.contains("Event Handler Configuration"),
+        "Event Handler Configuration section should be present after docs are read"
+    );
 }
 
 #[tokio::test]
@@ -208,8 +319,11 @@ async fn test_user_input_prompt_no_scripting() {
     );
     // Note: script_inline and script_handles appear in scheduled_tasks param docs, which is OK
 
-    // Should still have base stacks
-    assert!(prompt.contains("Available Base Stacks"));
+    // Since docs haven't been read, base stacks should NOT be present
+    assert!(
+        !prompt.contains("Available Base Stacks"),
+        "Base stacks should NOT be shown before reading docs"
+    );
 }
 
 #[tokio::test]
@@ -262,9 +376,11 @@ async fn test_user_input_prompt_without_web_search() {
         "Prompt should still contain 'read_file'"
     );
 
-    // Should have base stacks and event handler info
-    assert!(prompt.contains("Available Base Stacks"));
-    assert!(prompt.contains("Event Handler Configuration"));
+    // Since docs haven't been read, base stacks should NOT be present
+    assert!(
+        !prompt.contains("Available Base Stacks"),
+        "Base stacks should NOT be shown before reading docs"
+    );
 }
 
 #[tokio::test]
@@ -374,6 +490,48 @@ async fn test_retry_mechanism_prompt() {
 }
 
 #[tokio::test]
+async fn test_json_parse_retry_prompt() {
+    // Test the retry prompt sent when LLM returns invalid JSON
+    // This is the correction message added to conversation when parsing fails
+    let error = "expected `,` or `}` at line 3 column 5";
+    let prompt = netget::llm::PromptBuilder::build_retry_prompt(error);
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("json_parse_retry_prompt", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks - verify key elements are present
+    assert!(prompt.contains("Invalid Response Format"));
+    assert!(prompt.contains(error)); // The actual error should be in the prompt
+    assert!(prompt.contains("pure JSON"));
+    assert!(prompt.contains("Please retry"));
+    assert!(prompt.contains("original request")); // Should reference original request
+}
+
+#[tokio::test]
+async fn test_unknown_action_retry_prompt() {
+    // Test the retry prompt sent when LLM uses unknown actions
+    let unknown_actions = vec!["send_magic_packet".to_string(), "do_something".to_string()];
+    let available_actions = vec![
+        "open_server".to_string(),
+        "close_server".to_string(),
+        "show_message".to_string(),
+    ];
+    let prompt =
+        netget::llm::PromptBuilder::build_unknown_action_retry_prompt(&unknown_actions, &available_actions);
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("unknown_action_retry_prompt", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks
+    assert!(prompt.contains("Unknown Action"));
+    assert!(prompt.contains("send_magic_packet"));
+    assert!(prompt.contains("do_something"));
+    assert!(prompt.contains("open_server"));
+    assert!(prompt.contains("Please retry"));
+    assert!(prompt.contains("ONLY")); // Should emphasize only using listed actions
+}
+
+#[tokio::test]
 async fn test_protocol_documentation_prompt() {
     // Test protocol-specific metadata documentation
     let _state = Arc::new(AppState::new());
@@ -442,6 +600,59 @@ async fn test_protocol_documentation_prompt() {
         assert!(doc.contains("LLM Control:"));
         assert!(doc.contains("E2E Testing:"));
     }
+}
+
+/// Test that read_server_documentation with multiple protocols includes examples for ALL protocols
+#[tokio::test]
+#[cfg(all(feature = "http", feature = "ssh", feature = "dns"))]
+async fn test_multi_protocol_documentation_examples() {
+    use netget::llm::actions::tools::{execute_tool, ToolAction};
+    use netget::state::app_state::WebSearchMode;
+
+    // Create a ToolAction for read_server_documentation with multiple protocols
+    let action = ToolAction::ReadServerDocumentation {
+        protocols: vec!["HTTP".to_string(), "SSH".to_string(), "DNS".to_string()],
+        protocol: None,
+    };
+
+    // Execute the tool
+    let tool_result = execute_tool(&action, None, WebSearchMode::Off, None).await;
+    let result = tool_result.result;
+
+    // The result should contain documentation for all requested protocols
+    assert!(
+        result.contains("HTTP") || result.contains("http"),
+        "Documentation should include HTTP protocol"
+    );
+    assert!(
+        result.contains("SSH") || result.contains("ssh"),
+        "Documentation should include SSH protocol"
+    );
+    assert!(
+        result.contains("DNS") || result.contains("dns"),
+        "Documentation should include DNS protocol"
+    );
+
+    // Check that examples for each protocol are present
+    // The execute_read_server_documentation generates open_server examples per protocol
+    assert!(
+        result.contains("Example for HTTP") || result.contains("\"base_stack\": \"HTTP\""),
+        "Documentation should include example for HTTP"
+    );
+    assert!(
+        result.contains("Example for SSH") || result.contains("\"base_stack\": \"SSH\""),
+        "Documentation should include example for SSH"
+    );
+    assert!(
+        result.contains("Example for DNS") || result.contains("\"base_stack\": \"DNS\""),
+        "Documentation should include example for DNS"
+    );
+
+    // Should indicate that open_server is now enabled
+    assert!(
+        result.contains("open_server") && result.contains("enabled"),
+        "Documentation should indicate open_server is now enabled"
+    );
 }
 
 #[tokio::test]

@@ -7,12 +7,12 @@ You MUST respond with ONLY valid JSON. NO explanatory text. NO markdown. JUST JS
 
 **Required format:**
 ```
-{"actions": [{"type": "action_name", "param": "value"}]}
+{"actions": [{"type": "read_file", "path": "config.json"}]}
 ```
 
 **Example response:**
 ```
-{"actions": [{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Return Hello World"}]}
+{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
 ```
 
 DO NOT write:

@@ -134,6 +134,15 @@ set -o pipefail
 
 # Run cargo and tee output to log file (captures both stdout and stderr)
 cargo "${CARGO_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+CARGO_EXIT=$?
+
+# Run cargo-sweep in background to keep target/ under 15GB (non-blocking)
+# NOTE: Using --maxsize instead of --time because sccache doesn't update file
+# modification times when serving cached artifacts, causing --time to incorrectly
+# delete recently-used artifacts.
+if command -v cargo-sweep &> /dev/null; then
+    (cargo sweep --maxsize 15 "$CARGO_TARGET_DIR" &> /dev/null &)
+fi
 
 # Exit with cargo's exit code
-exit $?
+exit $CARGO_EXIT

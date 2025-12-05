@@ -442,10 +442,10 @@ impl OllamaClient {
         // TRACE: Full payload
         trace!("Full LLM prompt:\n{}", prompt);
         if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[TRACE] LLM prompt:\r\n{}",
-                prompt.replace('\n', "\r\n")
-            ));
+            let _ = tx.send("[TRACE] LLM prompt:".to_string());
+            for line in crate::llm::format_indented_dimmed_lines(prompt, 8) {
+                let _ = tx.send(format!("[TRACE] {}", line));
+            }
         }
         if let Some(ref schema) = format {
             trace!(
@@ -455,10 +455,10 @@ impl OllamaClient {
             if let Some(ref tx) = self.status_tx {
                 let schema_str =
                     serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string());
-                let _ = tx.send(format!(
-                    "[TRACE] JSON schema:\r\n{}",
-                    schema_str.replace('\n', "\r\n")
-                ));
+                let _ = tx.send("[TRACE] JSON schema:".to_string());
+                for line in crate::llm::format_indented_dimmed_lines(&schema_str, 8) {
+                    let _ = tx.send(format!("[TRACE] {}", line));
+                }
             }
         }
 
@@ -531,9 +531,8 @@ impl OllamaClient {
             let pretty = serde_json::to_string_pretty(&json).unwrap_or(api_response.response.clone());
             trace!("Full LLM response (JSON):\n{}", pretty);
             if let Some(ref tx) = self.status_tx {
-                // Send each line separately to ensure proper formatting
                 let _ = tx.send("[TRACE] LLM response (JSON):".to_string());
-                for line in pretty.lines() {
+                for line in crate::llm::format_indented_dimmed_lines(&pretty, 8) {
                     let _ = tx.send(format!("[TRACE] {}", line));
                 }
             }
@@ -541,7 +540,7 @@ impl OllamaClient {
             trace!("Full LLM response (text):\n{}", api_response.response);
             if let Some(ref tx) = self.status_tx {
                 let _ = tx.send("[TRACE] LLM response (text):".to_string());
-                for line in api_response.response.lines() {
+                for line in crate::llm::format_indented_dimmed_lines(&api_response.response, 8) {
                     let _ = tx.send(format!("[TRACE] {}", line));
                 }
             }

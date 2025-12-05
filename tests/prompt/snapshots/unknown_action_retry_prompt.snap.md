@@ -1,0 +1,22 @@
+# ❌ Error: Unknown Action(s)
+
+**The following action(s) do not exist:**
+- `send_magic_packet`
+- `do_something`
+
+## What Went Wrong
+
+You used action name(s) that are not in the Available Actions list. This is NOT allowed.
+
+**CRITICAL RULES:**
+1. You can ONLY use actions explicitly listed in the "Available Actions" section
+2. Do NOT invent, guess, or hallucinate action names
+3. If you need a protocol-specific action, use `read_server_documentation` or `read_client_documentation` tools first to learn the available actions for that protocol
+
+## Valid Actions
+
+`open_server`, `close_server`, `show_message`
+
+---
+
+**Please retry:** Use ONLY actions from the Available Actions list. If you're unsure what actions exist for a protocol, use the documentation tools first.

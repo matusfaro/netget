@@ -80,19 +80,49 @@ You will see past actions you have executed on previous invocation, actions are 
 Unless tools are also included, you will not be invoked again if you only return actions
 so you may include multiple actions in a single response.
 
+**CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
+If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
+to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
+
 ## 0. open_server
 
 Start a new server.
 
+PARAMETER USAGE RULES:
+1. ONLY use parameters that are explicitly documented below
+2. DO NOT invent new parameters, even if they seem logical
+3. For custom requirements (timeouts, special behavior, etc.):
+- Put them in the 'instruction' field as natural language
+
+EXAMPLE - User says 'open HTTP server with 30 second timeout':
+❌ WRONG: {"type": "open_server", "base_stack": "http", "timeout": 30}
+✅ RIGHT: {"type": "open_server", "base_stack": "http", "instruction": "HTTP server with 30 second timeout"}
+
+TASK SCHEDULING RULES:
+FOR PERIODIC TASKS (heartbeat, every X seconds/minutes):
+- Use 'scheduled_tasks' parameter with interval_secs
+- DO NOT use event_handlers for time-based tasks
+
+EXAMPLE - User says 'send heartbeat every 10 seconds':
+❌ WRONG: {"event_handlers": [{"event_pattern": "*", "handler": {...}}]}
+✅ RIGHT: {"scheduled_tasks": [{"task_id": "heartbeat", "recurring": true, "interval_secs": 10, "instruction": "Send heartbeat log"}]}
+
+FOR NETWORK EVENTS (data received, connection made):
+- Use 'event_handlers' parameter
+- Only for responding to actual network events
+
 Parameters:
-- `port` (number, required): Port number to listen on. Use 0 to automatically find an available port.
-- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, Maven, Mercurial, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TLS, TURN, Telnet, Tor Directory, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
+- `mac_address` (string): Optional: MAC address for Layer 2 protocols (e.g., ARP spoofing). Format: "00:11:22:33:44:55". Most protocols don't need this.
+- `interface` (string): Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Examples: "lo" (loopback), "eth0", "en0". Port-based protocols (TCP, HTTP, DNS) don't use this.
+- `host` (string): Optional: Host address to bind (IPv4, IPv6, or hostname). Examples: "127.0.0.1" (loopback), "0.0.0.0" (all interfaces), "::". Protocols will use sensible defaults if omitted.
+- `port` (number): Optional: Port number to listen on. Use 0 to automatically find an available port. Required for port-based protocols (TCP, HTTP, DNS). Raw protocols (ICMP, ARP) don't use this.
+- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, Proxy, SSH, TCP
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
-- `instruction` (string, required): Detailed instructions for handling network events
+- `instruction` (string, required): Detailed instructions for handling network events. Use this field for custom requirements that don't have dedicated parameters (e.g., 'with 30 second timeout', 'log all requests to file', 'rate limit to 10 requests per second', etc.)
 - `startup_params` (object): Optional protocol-specific startup parameters. See protocol documentation for available parameters.
-- `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).
-- `event_handlers` (array): Optional: Array of event handlers to configure how events are processed. You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"tcp_data_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"ssh_auth\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'send_data','data':'OK'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_data\", \"data\": \"Welcome\"}]}}\n\nExample LLM handler: {\"event_pattern\": \"http_request\", \"handler\": {\"type\": \"llm\"}}
+- `scheduled_tasks` (array): Optional: Array of TIME-BASED tasks that execute periodically or after a delay. USE WHEN: User says 'every X seconds/minutes', 'heartbeat', 'periodic', 'scheduled', or describes time-based automation. EXAMPLES: - 'send heartbeat every 10 seconds' → scheduled_tasks with interval_secs: 10 - 'check status every minute' → scheduled_tasks with interval_secs: 60 - 'cleanup after 30 seconds' → scheduled_tasks with delay_secs: 30 DO NOT use event_handlers for periodic tasks - event_handlers respond to network events, NOT time-based triggers! Each task has: task_id (string), recurring (boolean), interval_secs (for periodic) OR delay_secs (for one-shot), max_executions (optional), instruction (what to do), context (optional).
+- `event_handlers` (array): Optional: Array of event handlers to configure how events are processed. You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"tcp_data_received\") or \"*\" for all events\n- handler: Object with:\n- type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n- For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n- For static: actions (array of action objects)\n\nSCRIPT EVENT DATA STRUCTURE:\nScripts receive JSON via stdin with this structure:\n{\n\"event_type_id\": \"http_request\",  // Event type identifier\n\"server\": {\"id\": 1, \"port\": 8080, \"stack\": \"HTTP\", \"memory\": \"\", \"instruction\": \"...\"},\n\"connection\": {\"id\": \"1\", \"remote_addr\": \"127.0.0.1:12345\"},  // Optional\n\"event\": {\n// Protocol-specific event data (fields vary by event type)\n// For HTTP: method, path, query_string, query, headers, body\n// For TCP: data (hex-encoded bytes)\n// For DNS: query_id, domain, query_type\n}\n}\n\nIMPORTANT: Event data is directly under data['event'], NOT data['event']['data']!\nAccess pattern: data['event']['field_name'] (e.g., data['event']['method'])\n\nCRITICAL - COMMON MISTAKES TO AVOID:\n❌ WRONG: data['event']['request']['query_string']      # NO 'request' wrapper!\n❌ WRONG: data['event']['http_request']['query_string'] # NO 'http_request' wrapper!\n❌ WRONG: data['event']['data']['method']               # NO 'data' wrapper!\n✅ RIGHT: data['event']['query_string']                 # Direct access\n✅ RIGHT: data['event']['method']                       # Direct access\n\nThe event_type_id tells you WHAT event occurred, but data fields are DIRECTLY under data['event'].\n\nExample HTTP script (sum query parameters x and y):\n{\"event_pattern\": \"http_request\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"<http_sum_script>\"}}\n\n<http_sum_script>\nimport json\nimport sys\n\ndata = json.load(sys.stdin)\n# Access event data: data['event']['field_name']\nquery_params = data['event']['query']  # Pre-parsed query parameters object\nx = float(query_params['x'])\ny = float(query_params['y'])\nresult = x + y\n\nprint(json.dumps({\n'actions': [{\n'type': 'send_http_response',\n'status': 200,\n'body': str(result)\n}]\n}))\n</http_sum_script>\n\nExample TCP script (echo received data):\n{\"event_pattern\": \"tcp_data_received\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"<tcp_echo_script>\"}}\n\n<tcp_echo_script>\nimport json\nimport sys\n\ndata = json.load(sys.stdin)\n# TCP data is hex-encoded in data['event']['data']\nreceived_hex = data['event']['data']\n\nprint(json.dumps({\n'actions': [{\n'type': 'send_tcp_data',\n'data': received_hex  # Echo back the same hex data\n}]\n}))\n</tcp_echo_script>\n\nExample static handler:\n{\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_data\", \"data\": \"Welcome\"}]}}\n\nExample LLM handler:\n{\"event_pattern\": \"http_request\", \"handler\": {\"type\": \"llm\"}}
 - `feedback_instructions` (string): Optional: Instructions for automatic server adjustment based on network request feedback. When set, network requests can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the server behavior (e.g., update instructions, modify handlers, change configuration). Example: "Adjust response time if clients are timing out" or "Learn from failed requests and improve error handling".
 
 Example:
@@ -133,7 +163,7 @@ Parameters:
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context. Example: "auth_token: abc123\nrequest_count: 0"
 - `startup_params` (object): Optional protocol-specific startup parameters. For example, HTTP clients may accept default headers or user agent settings.
 - `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this client. Each task will be attached to the client and execute at specified intervals or delays. Tasks are automatically cleaned up when the client disconnects.
-- `event_handlers` (array): Optional: Array of event handlers to configure how client events are processed. You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"http_response_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"redis_response_received\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'execute_redis_command','command':'PING'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_http_request\", \"method\": \"GET\", \"path\": \"/\"}]}}
+- `event_handlers` (array): Optional: Array of event handlers to configure how client events are processed. You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"http_response_received\") or \"*\" for all events\n- handler: Object with:\n- type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n- For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n- For static: actions (array of action objects)\n\nNote: Client scripts use the same event data structure as server scripts (see open_server documentation for details).\nAccess pattern: data['event']['field_name'] (e.g., data['event']['status_code'] for HTTP responses)\n\nExample script handler: {\"event_pattern\": \"redis_response_received\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'execute_redis_command','command':'PING'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_http_request\", \"method\": \"GET\", \"path\": \"/\"}]}}
 - `feedback_instructions` (string): Optional: Instructions for automatic client adjustment based on server response feedback. When set, server responses can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the client behavior (e.g., update request strategy, modify retry logic, change authentication method). Example: "Adjust request rate if server is throttling" or "Learn from error responses and modify request format".
 
 Example:
@@ -319,56 +349,6 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
-## 18. create_database
-
-Create a new SQLite database (in-memory or file-based). Use this to store protocol state (e.g., NFS file system, DNS cache, user sessions). The database persists for the lifetime of the owning server/client, or forever if global. You can execute DDL to create tables during creation.
-
-Parameters:
-- `name` (string, required): Database name (user-friendly identifier). This will be used to construct the filename as './netget_db_<name>.db' for file-based databases.
-- `is_memory` (boolean): true = in-memory database (fast, data lost on close), false = file-based database (persistent, saved to ./netget_db_<name>.db). Defaults to false (file-based).
-- `owner` (string): Owner scope: 'server-N' (auto-deleted when server closes), 'client-N' (auto-deleted when client disconnects), or 'global' (persists across servers/clients). Omit to default to current context.
-- `schema_ddl` (string): SQL DDL statements to create initial schema (e.g., 'CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB);'). Use semicolons to separate multiple statements.
-
-Example:
-```json
-{"type":"create_database","name":"nfs_storage","is_memory":true,"owner":"server-1","schema_ddl":"CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"}
-```
-
-## 19. execute_sql
-
-Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.
-
-Parameters:
-- `database_id` (number, required): Database ID (from create_database response or list_databases). Format: db-N → use N.
-- `query` (string, required): SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).
-
-Example:
-```json
-{"type":"execute_sql","database_id":1,"query":"SELECT * FROM files WHERE path LIKE '/home/%'"}
-```
-
-## 20. list_databases
-
-List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.
-
-
-Example:
-```json
-{"type":"list_databases"}
-```
-
-## 21. delete_database
-
-Delete a database and remove its file (if file-based). This is permanent and cannot be undone. Server/client-owned databases are automatically deleted when the owner closes.
-
-Parameters:
-- `database_id` (number, required): Database ID to delete
-
-Example:
-```json
-{"type":"delete_database","database_id":1}
-```
-
 
 ---
 
@@ -379,7 +359,7 @@ Example:
 ## Required Format
 
 ```
-{"actions": [{"type": "action_name", "param": "value"}, ...]}
+{"actions": [{"type": "read_file", "path": "config.json"}]}
 ```
 
 - Must start with `{` and end with `}`
@@ -420,15 +400,15 @@ Brief explanation of your understanding and decision (1-3 sentences)
 
 ✓ **Valid (with reasoning):**
 ```
-<reasoning>User wants HTTP server on port 8080. No conflicts detected.</reasoning>
-{"actions": [{"type": "open_server", "port": 8080, "base_stack": "http"}]}
+<reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
+{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
 ```
 
 ✓ **Valid (multiple actions):**
 ```json
 {"actions": [
   {"type": "read_file", "path": "config.json", "mode": "full"},
-  {"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}
+  {"type": "show_message", "message": "Config loaded successfully"}
 ]}
 ```
 
@@ -469,7 +449,7 @@ error_count: 3
 
 - **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✓ Available
+- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
 
 
 Trigger: Analyze the accumulated feedback and suggest adjustments.

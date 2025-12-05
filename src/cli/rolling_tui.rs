@@ -628,6 +628,14 @@ fn print_output_line(line: &str, footer: &mut StickyFooter, palette: &ColorPalet
             ResetColor,
             Print(line.strip_prefix("[SERVER]").unwrap()),
         )?;
+    } else if line.starts_with("[CLIENT]") {
+        execute!(
+            stdout,
+            SetForegroundColor(palette.client),
+            Print("◁ "),
+            ResetColor,
+            Print(line.strip_prefix("[CLIENT]").unwrap()),
+        )?;
     } else if line.starts_with("[CONN]") {
         execute!(
             stdout,

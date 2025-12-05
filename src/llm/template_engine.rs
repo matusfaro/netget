@@ -181,7 +181,6 @@ impl TemplateEngine {
                     template_name, e, available_partials
                 );
                 error!("{}", error_msg);
-                eprintln!("{}", error_msg);
                 std::process::exit(1);
             }
         }

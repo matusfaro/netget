@@ -126,6 +126,16 @@ fn render_output(f: &mut Frame, app: &App, area: Rect) {
                 ),
                 Span::raw(msg.strip_prefix("[SERVER]").unwrap()),
             ])
+        } else if msg.starts_with("[CLIENT]") {
+            Line::from(vec![
+                Span::styled(
+                    "◁ ",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(msg.strip_prefix("[CLIENT]").unwrap()),
+            ])
         } else if msg.starts_with("[CONN]") {
             Line::from(vec![
                 Span::styled("◇ ", Style::default().fg(Color::LightCyan)),

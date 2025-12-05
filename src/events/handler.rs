@@ -8,10 +8,300 @@ use super::errors::ActionExecutionError;
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
 use crate::llm::actions::{get_all_tool_actions, get_user_input_common_actions};
+use crate::llm::format_indented_dimmed_lines;
 use crate::llm::OllamaClient;
 use crate::llm::{execute_actions, CommonAction, Server};
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
+
+/// Log detailed open_server action summary to the status channel
+fn log_open_server_summary(
+    status_tx: &mpsc::UnboundedSender<String>,
+    mac_address: &Option<String>,
+    interface: &Option<String>,
+    host: &Option<String>,
+    port: Option<u16>,
+    base_stack: &str,
+    send_first: bool,
+    initial_memory: &Option<String>,
+    instruction: &str,
+    startup_params: &Option<serde_json::Value>,
+    event_handlers: &Option<Vec<serde_json::Value>>,
+    scheduled_tasks: &Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
+    feedback_instructions: &Option<String>,
+) {
+    // Header
+    let _ = status_tx.send("[INFO] ═══ open_server ═══".to_string());
+
+    // Basic server configuration
+    let _ = status_tx.send(format!("[INFO]   Protocol: {}", base_stack));
+    if let Some(p) = port {
+        let _ = status_tx.send(format!("[INFO]   Port: {}", p));
+    }
+    if let Some(h) = host {
+        let _ = status_tx.send(format!("[INFO]   Host: {}", h));
+    }
+    if let Some(i) = interface {
+        let _ = status_tx.send(format!("[INFO]   Interface: {}", i));
+    }
+    if let Some(m) = mac_address {
+        let _ = status_tx.send(format!("[INFO]   MAC Address: {}", m));
+    }
+    if send_first {
+        let _ = status_tx.send("[INFO]   Send First: yes".to_string());
+    }
+
+    // Instruction (truncated if long)
+    if !instruction.is_empty() {
+        let truncated = if instruction.len() > 100 {
+            format!("{}...", &instruction[..100])
+        } else {
+            instruction.to_string()
+        };
+        let _ = status_tx.send(format!("[INFO]   Instruction: {}", truncated));
+    }
+
+    // Initial memory (truncated if long)
+    if let Some(mem) = initial_memory {
+        if !mem.is_empty() {
+            let truncated = if mem.len() > 100 {
+                format!("{}...", &mem[..100])
+            } else {
+                mem.to_string()
+            };
+            let _ = status_tx.send(format!("[INFO]   Initial Memory: {}", truncated));
+        }
+    }
+
+    // Startup params
+    if let Some(params) = startup_params {
+        if !params.is_null() {
+            let params_str = serde_json::to_string_pretty(params).unwrap_or_else(|_| params.to_string());
+            let _ = status_tx.send("[INFO]   Startup Params:".to_string());
+            for line in format_indented_dimmed_lines(&params_str, 8) {
+                let _ = status_tx.send(format!("[INFO] {}", line));
+            }
+        }
+    }
+
+    // Event handlers summary
+    if let Some(handlers) = event_handlers {
+        let _ = status_tx.send(format!("[INFO]   Event Handlers: {} configured", handlers.len()));
+        for handler in handlers {
+            let event_pattern = handler.get("event_pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
+            let handler_type = handler.get("handler")
+                .and_then(|h| h.get("type"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+
+            let _ = status_tx.send(format!("[INFO]     • {} → {}", event_pattern, handler_type));
+
+            // For script handlers, show the script code (dimmed)
+            if handler_type == "script" {
+                if let Some(code) = handler.get("handler")
+                    .and_then(|h| h.get("code"))
+                    .and_then(|c| c.as_str())
+                {
+                    let truncated = if code.len() > 200 {
+                        format!("{}...", &code[..200])
+                    } else {
+                        code.to_string()
+                    };
+                    for line in format_indented_dimmed_lines(&truncated, 8) {
+                        let _ = status_tx.send(format!("[INFO] {}", line));
+                    }
+                }
+            }
+
+            // For static handlers, show the actions (dimmed)
+            if handler_type == "static" {
+                if let Some(actions) = handler.get("handler")
+                    .and_then(|h| h.get("actions"))
+                {
+                    let actions_str = serde_json::to_string_pretty(actions).unwrap_or_else(|_| actions.to_string());
+                    let truncated = if actions_str.len() > 300 {
+                        format!("{}...", &actions_str[..300])
+                    } else {
+                        actions_str
+                    };
+                    for line in format_indented_dimmed_lines(&truncated, 8) {
+                        let _ = status_tx.send(format!("[INFO] {}", line));
+                    }
+                }
+            }
+        }
+    }
+
+    // Scheduled tasks summary
+    if let Some(tasks) = scheduled_tasks {
+        let _ = status_tx.send(format!("[INFO]   Scheduled Tasks: {} configured", tasks.len()));
+        for task in tasks {
+            let timing = if task.recurring {
+                task.interval_secs.map(|i| format!("every {}s", i)).unwrap_or_else(|| "recurring".to_string())
+            } else {
+                task.delay_secs.map(|d| format!("after {}s", d)).unwrap_or_else(|| "one-shot".to_string())
+            };
+            let _ = status_tx.send(format!("[INFO]     • {} ({})", task.task_id, timing));
+            // Task instruction (dimmed)
+            let truncated = if task.instruction.len() > 100 {
+                format!("{}...", &task.instruction[..100])
+            } else {
+                task.instruction.clone()
+            };
+            for line in format_indented_dimmed_lines(&truncated, 8) {
+                let _ = status_tx.send(format!("[INFO] {}", line));
+            }
+        }
+    }
+
+    // Feedback instructions
+    if let Some(fb) = feedback_instructions {
+        let truncated = if fb.len() > 100 {
+            format!("{}...", &fb[..100])
+        } else {
+            fb.to_string()
+        };
+        let _ = status_tx.send(format!("[INFO]   Feedback Instructions: {}", truncated));
+    }
+
+    let _ = status_tx.send("[INFO] ══════════════════".to_string());
+}
+
+/// Log detailed open_client action summary to the status channel
+fn log_open_client_summary(
+    status_tx: &mpsc::UnboundedSender<String>,
+    protocol: &str,
+    remote_addr: &str,
+    instruction: &str,
+    startup_params: &Option<serde_json::Value>,
+    initial_memory: &Option<String>,
+    event_handlers: &Option<Vec<serde_json::Value>>,
+    scheduled_tasks: &Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
+    feedback_instructions: &Option<String>,
+) {
+    // Header
+    let _ = status_tx.send("[INFO] ═══ open_client ═══".to_string());
+
+    // Basic client configuration
+    let _ = status_tx.send(format!("[INFO]   Protocol: {}", protocol));
+    let _ = status_tx.send(format!("[INFO]   Remote: {}", remote_addr));
+
+    // Instruction (truncated if long)
+    if !instruction.is_empty() {
+        let truncated = if instruction.len() > 100 {
+            format!("{}...", &instruction[..100])
+        } else {
+            instruction.to_string()
+        };
+        let _ = status_tx.send(format!("[INFO]   Instruction: {}", truncated));
+    }
+
+    // Initial memory (truncated if long)
+    if let Some(mem) = initial_memory {
+        if !mem.is_empty() {
+            let truncated = if mem.len() > 100 {
+                format!("{}...", &mem[..100])
+            } else {
+                mem.to_string()
+            };
+            let _ = status_tx.send(format!("[INFO]   Initial Memory: {}", truncated));
+        }
+    }
+
+    // Startup params
+    if let Some(params) = startup_params {
+        if !params.is_null() {
+            let params_str = serde_json::to_string_pretty(params).unwrap_or_else(|_| params.to_string());
+            let _ = status_tx.send("[INFO]   Startup Params:".to_string());
+            for line in format_indented_dimmed_lines(&params_str, 8) {
+                let _ = status_tx.send(format!("[INFO] {}", line));
+            }
+        }
+    }
+
+    // Event handlers summary (same logic as server)
+    if let Some(handlers) = event_handlers {
+        let _ = status_tx.send(format!("[INFO]   Event Handlers: {} configured", handlers.len()));
+        for handler in handlers {
+            let event_pattern = handler.get("event_pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
+            let handler_type = handler.get("handler")
+                .and_then(|h| h.get("type"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+
+            let _ = status_tx.send(format!("[INFO]     • {} → {}", event_pattern, handler_type));
+
+            if handler_type == "script" {
+                if let Some(code) = handler.get("handler")
+                    .and_then(|h| h.get("code"))
+                    .and_then(|c| c.as_str())
+                {
+                    let truncated = if code.len() > 200 {
+                        format!("{}...", &code[..200])
+                    } else {
+                        code.to_string()
+                    };
+                    for line in format_indented_dimmed_lines(&truncated, 8) {
+                        let _ = status_tx.send(format!("[INFO] {}", line));
+                    }
+                }
+            }
+
+            if handler_type == "static" {
+                if let Some(actions) = handler.get("handler")
+                    .and_then(|h| h.get("actions"))
+                {
+                    let actions_str = serde_json::to_string_pretty(actions).unwrap_or_else(|_| actions.to_string());
+                    let truncated = if actions_str.len() > 300 {
+                        format!("{}...", &actions_str[..300])
+                    } else {
+                        actions_str
+                    };
+                    for line in format_indented_dimmed_lines(&truncated, 8) {
+                        let _ = status_tx.send(format!("[INFO] {}", line));
+                    }
+                }
+            }
+        }
+    }
+
+    // Scheduled tasks summary
+    if let Some(tasks) = scheduled_tasks {
+        let _ = status_tx.send(format!("[INFO]   Scheduled Tasks: {} configured", tasks.len()));
+        for task in tasks {
+            let timing = if task.recurring {
+                task.interval_secs.map(|i| format!("every {}s", i)).unwrap_or_else(|| "recurring".to_string())
+            } else {
+                task.delay_secs.map(|d| format!("after {}s", d)).unwrap_or_else(|| "one-shot".to_string())
+            };
+            let _ = status_tx.send(format!("[INFO]     • {} ({})", task.task_id, timing));
+            let truncated = if task.instruction.len() > 100 {
+                format!("{}...", &task.instruction[..100])
+            } else {
+                task.instruction.clone()
+            };
+            for line in format_indented_dimmed_lines(&truncated, 8) {
+                let _ = status_tx.send(format!("[INFO] {}", line));
+            }
+        }
+    }
+
+    // Feedback instructions
+    if let Some(fb) = feedback_instructions {
+        let truncated = if fb.len() > 100 {
+            format!("{}...", &fb[..100])
+        } else {
+            fb.to_string()
+        };
+        let _ = status_tx.send(format!("[INFO]   Feedback Instructions: {}", truncated));
+    }
+
+    let _ = status_tx.send("[INFO] ══════════════════".to_string());
+}
 
 /// Event handler that coordinates all event processing
 #[derive(Clone)]
@@ -279,21 +569,23 @@ impl EventHandler {
         // Get conversation history from persistent state
         let conversation_history = self.state.get_user_conversation_history().await;
 
+        // Check if documentation has been read (enables open_server/open_client)
+        let is_open_server_enabled = self.state.is_server_docs_read().await;
+        let is_open_client_enabled = self.state.is_client_docs_read().await;
+
         // Build system prompt (without user input - that's added as a message)
-        let system_prompt = PromptBuilder::build_user_input_system_prompt(
+        let system_prompt = PromptBuilder::build_user_input_system_prompt_with_docs(
             &self.state,
             protocol_async_actions.clone(),
             conversation_history,
+            is_open_server_enabled,
+            is_open_client_enabled,
         )
         .await;
 
         // Get available actions for retry correction messages
         let selected_mode = self.state.get_selected_scripting_mode().await;
         let scripting_env = self.state.get_scripting_env().await;
-        // Enable open_server and open_client by default
-        // LLM can still use read_server_documentation/read_client_documentation tools for detailed protocol info
-        let is_open_server_enabled = true;
-        let is_open_client_enabled = true;
         let mut available_actions = get_user_input_common_actions(
             selected_mode,
             &scripting_env,
@@ -485,6 +777,23 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
+                // Log detailed summary of the open_server action
+                log_open_server_summary(
+                    status_tx,
+                    &mac_address,
+                    &interface,
+                    &host,
+                    port,
+                    &base_stack,
+                    send_first,
+                    &initial_memory,
+                    &instruction,
+                    &startup_params,
+                    &event_handlers,
+                    &scheduled_tasks,
+                    &feedback_instructions,
+                );
+
                 // Use start_server_from_action which properly handles flexible binding
                 // (including interface, mac_address, host for migrated protocols)
                 match server_startup::start_server_from_action(
@@ -792,6 +1101,19 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
+                // Log detailed summary of the open_client action
+                log_open_client_summary(
+                    status_tx,
+                    &protocol,
+                    &remote_addr,
+                    &instruction,
+                    &startup_params,
+                    &initial_memory,
+                    &event_handlers,
+                    &scheduled_tasks,
+                    &feedback_instructions,
+                );
+
                 use crate::state::client::{ClientInstance, ClientStatus};
 
                 // Create client instance with temporary ID (add_client will assign real ID)

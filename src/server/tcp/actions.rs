@@ -202,8 +202,9 @@ impl Server for TcpProtocol {
                 .unwrap_or(false);
 
             use crate::server::tcp::TcpServer;
+            let listen_addr = ctx.legacy_listen_addr();
             TcpServer::spawn_with_llm_actions(
-                ctx.listen_addr,
+                listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
