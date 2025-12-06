@@ -377,12 +377,12 @@ impl ConversationHandler {
         const MAX_CONSECUTIVE_FAILURES: usize = 2;
         const MAX_UNKNOWN_ACTION_RETRIES: usize = 2;
 
-        // Build set of valid action names for validation
-        let valid_action_names: std::collections::HashSet<String> = available_actions
+        // Build set of valid action names for validation (mutable to allow updates after docs read)
+        let mut valid_action_names: std::collections::HashSet<String> = available_actions
             .iter()
             .map(|a| a.name.clone())
             .collect();
-        let valid_action_names_list: Vec<String> = available_actions
+        let mut valid_action_names_list: Vec<String> = available_actions
             .iter()
             .map(|a| a.name.clone())
             .collect();
@@ -658,6 +658,11 @@ impl ConversationHandler {
                                         });
                                     }
                                 }
+                                // Enable open_server in valid actions
+                                if !valid_action_names.contains("open_server") {
+                                    valid_action_names.insert("open_server".to_string());
+                                    valid_action_names_list.push("open_server".to_string());
+                                }
                             }
                             if is_read_client_docs {
                                 self.mark_protocol_docs_read(&available_actions);
@@ -682,9 +687,23 @@ impl ConversationHandler {
                                         });
                                     }
                                 }
+                                // Enable open_client in valid actions
+                                if !valid_action_names.contains("open_client") {
+                                    valid_action_names.insert("open_client".to_string());
+                                    valid_action_names_list.push("open_client".to_string());
+                                }
                             }
                             if is_read_base_docs {
                                 self.mark_protocol_docs_read(&available_actions);
+                                // Enable both open_server and open_client in valid actions
+                                if !valid_action_names.contains("open_server") {
+                                    valid_action_names.insert("open_server".to_string());
+                                    valid_action_names_list.push("open_server".to_string());
+                                }
+                                if !valid_action_names.contains("open_client") {
+                                    valid_action_names.insert("open_client".to_string());
+                                    valid_action_names_list.push("open_client".to_string());
+                                }
                             }
                             // Handle unified read_documentation tool
                             if is_read_docs {
@@ -711,6 +730,18 @@ impl ConversationHandler {
                                             state_clone.mark_client_protocols_documented(&protocols_clone).await;
                                         });
                                     }
+                                }
+                                // CRITICAL: Enable open_server and open_client in valid actions
+                                // so the LLM can use them in subsequent iterations
+                                if !valid_action_names.contains("open_server") {
+                                    valid_action_names.insert("open_server".to_string());
+                                    valid_action_names_list.push("open_server".to_string());
+                                    debug!("Enabled open_server action after reading documentation");
+                                }
+                                if !valid_action_names.contains("open_client") {
+                                    valid_action_names.insert("open_client".to_string());
+                                    valid_action_names_list.push("open_client".to_string());
+                                    debug!("Enabled open_client action after reading documentation");
                                 }
                             }
                         }
