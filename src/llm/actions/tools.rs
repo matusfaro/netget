@@ -2434,9 +2434,15 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     // Add enabled actions summary at the end
     result.push_str("## Enabled Actions\n\n");
 
+    // Add decision reminder before showing actions
+    result.push_str("**⚠️ BEFORE CHOOSING**: Re-read the user's request. What do they want to DO?\n");
+    result.push_str("- If they want to SERVE/HOST/PROVIDE content → use `open_server`\n");
+    result.push_str("- If they want to CONNECT TO/FETCH FROM a remote server → use `open_client`\n");
+    result.push_str("- The ACTION matters, not the words. \"serve recipes\" = server, even if user says \"client\"\n\n");
+
     if !found_server_protocols.is_empty() {
-        result.push_str("### open_server (Now Enabled)\n\n");
-        result.push_str("Start a server to LISTEN for incoming connections.\n\n");
+        result.push_str("### open_server (For SERVING content)\n\n");
+        result.push_str("Use when: User wants to HOST content, SERVE data, LISTEN for connections, or PROVIDE a service.\n\n");
         for protocol in &found_server_protocols {
             result.push_str(&format!("**Example for {} server:**\n```json\n", protocol));
             result.push_str("{\n");
@@ -2449,8 +2455,8 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     }
 
     if !found_client_protocols.is_empty() {
-        result.push_str("### open_client (Now Enabled)\n\n");
-        result.push_str("Connect to a remote server as a client.\n\n");
+        result.push_str("### open_client (For CONNECTING to remote servers)\n\n");
+        result.push_str("Use when: User wants to CONNECT TO an existing server, FETCH data, QUERY a database, or ACCESS a remote service.\n\n");
         for protocol in &found_client_protocols {
             result.push_str(&format!("**Example for {} client:**\n```json\n", protocol));
             result.push_str("{\n");
