@@ -572,17 +572,30 @@ impl ConversationHandler {
                     "Maximum iterations reached with {} pending tool calls",
                     tools.len()
                 );
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[WARN] Maximum iterations ({}) reached with {} pending tool call(s)",
+                        self.max_tool_iterations,
+                        tools.len()
+                    ));
+                }
                 break;
             }
 
             // Execute tool calls
             debug!("Executing {} tool calls", tools.len());
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!("[INFO] Executing {} tool call(s)...", tools.len()));
+            }
             tool_results.clear();
 
             for tool_json in tools {
                 match ToolAction::from_json(&tool_json) {
                     Ok(tool_action) => {
                         info!("→ Executing tool: {}", tool_action.describe());
+                        if let Some(ref tx) = self.status_tx {
+                            let _ = tx.send(format!("[INFO] → Executing tool: {}", tool_action.describe()));
+                        }
 
                         // Track tool call in conversation state
                         if let Ok(mut state) = self.conversation_state.lock() {
@@ -592,6 +605,7 @@ impl ConversationHandler {
                                 ToolAction::ReadBaseStackDocs { .. } => "read_base_stack_docs",
                                 ToolAction::ReadServerDocumentation { .. } => "read_server_documentation",
                                 ToolAction::ReadClientDocumentation { .. } => "read_client_documentation",
+                                ToolAction::ReadDocumentation { .. } => "read_documentation",
                                 ToolAction::ListNetworkInterfaces => "list_network_interfaces",
                                 ToolAction::ListModels => "list_models",
                                 ToolAction::GenerateRandom { .. } => "generate_random",
@@ -606,11 +620,17 @@ impl ConversationHandler {
                             matches!(tool_action, ToolAction::ReadClientDocumentation { .. });
                         let is_read_base_docs =
                             matches!(tool_action, ToolAction::ReadBaseStackDocs { .. });
+                        let is_read_docs =
+                            matches!(tool_action, ToolAction::ReadDocumentation { .. });
 
                         let result =
                             execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None)
                                 .await;
                         info!("  Result: {}", result.summary());
+                        if let Some(ref tx) = self.status_tx {
+                            let status = if result.success { "✓" } else { "✗" };
+                            let _ = tx.send(format!("[INFO]   {} {}", status, result.summary()));
+                        }
 
                         // Mark protocol docs as read if the tool succeeded
                         // This will update the system prompt to enable open_server/open_client actions
@@ -666,12 +686,42 @@ impl ConversationHandler {
                             if is_read_base_docs {
                                 self.mark_protocol_docs_read(&available_actions);
                             }
+                            // Handle unified read_documentation tool
+                            if is_read_docs {
+                                self.mark_protocol_docs_read(&available_actions);
+                                // Extract protocols and update both server and client state
+                                if let ToolAction::ReadDocumentation { protocols, protocol } = &tool_action {
+                                    let mut all_protocols = protocols.clone();
+                                    if let Some(p) = protocol {
+                                        if !all_protocols.contains(p) {
+                                            all_protocols.push(p.clone());
+                                        }
+                                    }
+                                    // Update ConversationState to persist documented protocols (both server and client)
+                                    if let Ok(mut conv_state) = self.conversation_state.lock() {
+                                        conv_state.mark_server_protocols_documented(&all_protocols);
+                                        conv_state.mark_client_protocols_documented(&all_protocols);
+                                    }
+                                    // Update AppState (global persistence for both server and client)
+                                    if let Some(ref state) = self.state {
+                                        let state_clone = state.clone();
+                                        let protocols_clone = all_protocols.clone();
+                                        tokio::spawn(async move {
+                                            state_clone.mark_server_protocols_documented(&protocols_clone).await;
+                                            state_clone.mark_client_protocols_documented(&protocols_clone).await;
+                                        });
+                                    }
+                                }
+                            }
                         }
 
                         tool_results.push(result);
                     }
                     Err(e) => {
                         error!("Failed to parse tool action: {}", e);
+                        if let Some(ref tx) = self.status_tx {
+                            let _ = tx.send(format!("[ERROR] Failed to parse tool action: {}", e));
+                        }
                         tool_results.push(ToolResult::error(
                             "unknown",
                             "parse_error",
@@ -690,12 +740,25 @@ impl ConversationHandler {
                     tool_results.len(),
                     consecutive_tool_failures
                 );
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[WARN] All {} tool calls failed (consecutive failures: {})",
+                        tool_results.len(),
+                        consecutive_tool_failures
+                    ));
+                }
 
                 if consecutive_tool_failures >= MAX_CONSECUTIVE_FAILURES {
                     error!(
                         "Breaking tool calling loop after {} consecutive failures",
                         consecutive_tool_failures
                     );
+                    if let Some(ref tx) = self.status_tx {
+                        let _ = tx.send(format!(
+                            "[ERROR] Breaking tool loop after {} consecutive failures",
+                            consecutive_tool_failures
+                        ));
+                    }
                     // Add a final message explaining the issue
                     self.messages.push(Message::user(
                         "CRITICAL: All tool calls are failing. Stop calling tools and respond with regular actions instead.".to_string()
@@ -719,12 +782,26 @@ impl ConversationHandler {
                 self.max_tool_iterations,
                 tool_results.len()
             );
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!(
+                    "[TRACE] Iteration {}/{} complete, continuing with {} tool result(s)...",
+                    iteration,
+                    self.max_tool_iterations,
+                    tool_results.len()
+                ));
+            }
         }
 
         info!(
             "Conversation complete: {} total actions collected",
             all_actions.len()
         );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[INFO] ✓ Conversation complete: {} action(s) collected",
+                all_actions.len()
+            ));
+        }
 
         // End conversation tracking if enabled
         if let Some(state) = &self.state {

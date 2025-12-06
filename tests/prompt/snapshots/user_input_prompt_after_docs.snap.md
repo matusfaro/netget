@@ -16,7 +16,7 @@ You MUST respond with ONLY valid JSON. NO explanatory text. NO markdown. JUST JS
 
 **Example response:**
 ```
-{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
+{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
 ```
 
 DO NOT write:
@@ -133,8 +133,8 @@ Unless tools are also included, you will not be invoked again if you only return
 so you may include multiple actions in a single response.
 
 **CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
-If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
-to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
+If an action you need is not listed, use `read_documentation` tool to learn about protocol-specific actions.
+Unknown actions will be rejected and you will be asked to retry.
 
 ## 0. open_server
 
@@ -168,7 +168,7 @@ Parameters:
 - `interface` (string): Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Examples: "lo" (loopback), "eth0", "en0". Port-based protocols (TCP, HTTP, DNS) don't use this.
 - `host` (string): Optional: Host address to bind (IPv4, IPv6, or hostname). Examples: "127.0.0.1" (loopback), "0.0.0.0" (all interfaces), "::". Protocols will use sensible defaults if omitted.
 - `port` (number): Optional: Port number to listen on. Use 0 to automatically find an available port. Required for port-based protocols (TCP, HTTP, DNS). Raw protocols (ICMP, ARP) don't use this.
-- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, Proxy, SSH, TCP
+- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, SSH, TCP
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
 - `instruction` (string, required): Detailed instructions for handling network events. Use this field for custom requirements that don't have dedicated parameters (e.g., 'with 30 second timeout', 'log all requests to file', 'rate limit to 10 requests per second', etc.)
@@ -401,28 +401,34 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
-## 18. read_server_documentation
+## 18. read_documentation
 
-Get detailed documentation for one or more server protocols. Returns comprehensive information including description, startup parameters, examples, and keywords. **REQUIRED before using open_server** - you must read documentation for a protocol before starting a server with it. Available server protocols: DNS, HTTP, Proxy, SSH, TCP
+Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
+
+## When to Use Server vs Client Mode
+
+**Server Mode (open_server)**: Use when YOU want to LISTEN for incoming connections and respond to requests.
+- Examples: "Start an HTTP server", "Create a DNS server", "Run an FTP server"
+- You RECEIVE requests and SEND responses
+- You control the port and wait for clients to connect
+
+**Client Mode (open_client)**: Use when YOU want to CONNECT to an existing remote server.
+- Examples: "Connect to Redis", "Query a database", "Fetch from an API"
+- You SEND requests and RECEIVE responses
+- You specify the remote server's address and port
+
+## Available Protocols
+
+**Server protocols** (use with open_server): DNS, HTTP, SSH, TCP
+
+**Client protocols** (use with open_client): DNS, HTTP, SSH, TCP
 
 Parameters:
-- `protocols` (array, required): Array of server protocol names to get documentation for (e.g., ['HTTP', 'SSH', 'DNS']). Use uppercase.
+- `protocols` (array, required): Array of protocol names to get documentation for (e.g., ['http', 'dns', 'ssh']). Returns both server and client docs if available for each protocol.
 
 Example:
 ```json
-{"type":"read_server_documentation","protocols":["HTTP"]}
-```
-
-## 19. read_client_documentation
-
-Get detailed documentation for one or more client protocols. Returns comprehensive information including description, startup parameters, examples, and keywords. **REQUIRED before using open_client** - you must read documentation for a protocol before starting a client with it. Available client protocols: DNS, HTTP, SSH, TCP
-
-Parameters:
-- `protocols` (array, required): Array of client protocol names to get documentation for (e.g., ['http', 'redis', 'ssh']). Use lowercase.
-
-Example:
-```json
-{"type":"read_client_documentation","protocols":["http"]}
+{"type":"read_documentation","protocols":["http"]}
 ```
 
 
@@ -433,9 +439,6 @@ DNS (dns)
 HTTP (http, http server, http stack, via http, hyper)
 SSH (ssh)
 TCP (tcp, raw, ftp, custom)
-
-### Proxy & Network
-Proxy (proxy, mitm)
 
 
 
@@ -531,7 +534,7 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 {"actions": [{"type": "send_http_response", "status": 200, "body": "Hello"}]}
 ```
 
-**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_server_documentation` or `read_client_documentation`) to see the exact action types and their parameters for your protocol.
+**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_documentation`) to see the exact action types and their parameters for your protocol.
 
 ---
 
@@ -769,7 +772,7 @@ Use `*` as event_pattern to route all events to the LLM.
 ]
 ```
 
-**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_server_documentation` or `read_client_documentation` to get protocol-specific event IDs and action types.
+**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_documentation` to get protocol-specific event IDs and action types.
 
 
 
@@ -824,7 +827,7 @@ Brief explanation of your understanding and decision (1-3 sentences)
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
+{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
 ```
 
 ✓ **Valid (multiple actions):**

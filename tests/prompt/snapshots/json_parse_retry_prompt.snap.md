@@ -14,7 +14,7 @@ Your response could not be parsed as valid JSON. This usually happens when:
 Your response must be **pure JSON** only:
 
 ```
-{"actions": [{"type": "read_file", "path": "config.json"}]}
+{"actions": [{"type": "action_name", "param": "value"}]}
 ```
 
 - Start with `{` and end with `}`

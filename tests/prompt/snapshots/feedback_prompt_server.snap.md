@@ -81,8 +81,8 @@ Unless tools are also included, you will not be invoked again if you only return
 so you may include multiple actions in a single response.
 
 **CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
-If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
-to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
+If an action you need is not listed, use `read_documentation` tool to learn about protocol-specific actions.
+Unknown actions will be rejected and you will be asked to retry.
 
 ## 0. open_server
 
@@ -116,7 +116,7 @@ Parameters:
 - `interface` (string): Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Examples: "lo" (loopback), "eth0", "en0". Port-based protocols (TCP, HTTP, DNS) don't use this.
 - `host` (string): Optional: Host address to bind (IPv4, IPv6, or hostname). Examples: "127.0.0.1" (loopback), "0.0.0.0" (all interfaces), "::". Protocols will use sensible defaults if omitted.
 - `port` (number): Optional: Port number to listen on. Use 0 to automatically find an available port. Required for port-based protocols (TCP, HTTP, DNS). Raw protocols (ICMP, ARP) don't use this.
-- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, Proxy, SSH, TCP
+- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, SSH, TCP
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
 - `instruction` (string, required): Detailed instructions for handling network events. Use this field for custom requirements that don't have dedicated parameters (e.g., 'with 30 second timeout', 'log all requests to file', 'rate limit to 10 requests per second', etc.)
@@ -401,7 +401,7 @@ Brief explanation of your understanding and decision (1-3 sentences)
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
+{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
 ```
 
 ✓ **Valid (multiple actions):**

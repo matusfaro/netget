@@ -11,7 +11,7 @@ You used action name(s) that are not in the Available Actions list. This is NOT 
 **CRITICAL RULES:**
 1. You can ONLY use actions explicitly listed in the "Available Actions" section
 2. Do NOT invent, guess, or hallucinate action names
-3. If you need a protocol-specific action, use `read_server_documentation` or `read_client_documentation` tools first to learn the available actions for that protocol
+3. If you need a protocol-specific action, use `read_documentation` tool first to learn the available actions for that protocol
 
 ## Valid Actions
 

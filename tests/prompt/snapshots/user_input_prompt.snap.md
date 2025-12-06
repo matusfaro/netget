@@ -16,7 +16,7 @@ You MUST respond with ONLY valid JSON. NO explanatory text. NO markdown. JUST JS
 
 **Example response:**
 ```
-{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
+{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
 ```
 
 DO NOT write:
@@ -42,15 +42,19 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 ### Important Guidelines
 
-1. **Read documentation first**: Before starting servers or clients, you MUST call &#x60;read_server_documentation&#x60; or &#x60;read_client_documentation&#x60; with the protocol(s) you need. This enables the &#x60;open_server&#x60; and &#x60;open_client&#x60; actions.
+1. **Read documentation first**: Before starting servers or clients, you MUST call &#x60;read_documentation&#x60; with the protocol(s) you need. This enables the &#x60;open_server&#x60; and &#x60;open_client&#x60; actions and explains when to use each mode.
 
-2. **Gather information**: Use tools like &#x60;read_file&#x60; and &#x60;web_search&#x60; to read files or search for information before taking action.
+2. **Understanding Server vs Client**:
+   - **Server (open_server)**: YOU listen for incoming connections. Example: &quot;Start an HTTP server&quot;
+   - **Client (open_client)**: YOU connect to a remote server. Example: &quot;Connect to Redis&quot;
 
-3. **Update, don&#x27;t recreate**: If a user asks to modify an existing server (e.g., &quot;add an endpoint&quot;, &quot;change the behavior&quot;), use &#x60;update_instruction&#x60; - don&#x27;t create a new server on the same port.
+3. **Gather information**: Use tools like &#x60;read_file&#x60; and &#x60;web_search&#x60; to read files or search for information before taking action.
 
-4. **JSON responses only**: Your entire response must be valid JSON: &#x60;{&quot;actions&quot;: [...]}&#x60;
+4. **Update, don&#x27;t recreate**: If a user asks to modify an existing server (e.g., &quot;add an endpoint&quot;, &quot;change the behavior&quot;), use &#x60;update_instruction&#x60; - don&#x27;t create a new server on the same port.
 
-**IMPORTANT**: The &#x60;open_server&#x60; and &#x60;open_client&#x60; actions are DISABLED until you read protocol documentation. Use &#x60;read_server_documentation&#x60; or &#x60;read_client_documentation&#x60; first!
+5. **JSON responses only**: Your entire response must be valid JSON: &#x60;{&quot;actions&quot;: [...]}&#x60;
+
+**IMPORTANT**: The &#x60;open_server&#x60; and &#x60;open_client&#x60; actions are DISABLED until you read protocol documentation. Use &#x60;read_documentation&#x60; first!
             
 
 # Available Tools
@@ -135,8 +139,8 @@ Unless tools are also included, you will not be invoked again if you only return
 so you may include multiple actions in a single response.
 
 **CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
-If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
-to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
+If an action you need is not listed, use `read_documentation` tool to learn about protocol-specific actions.
+Unknown actions will be rejected and you will be asked to retry.
 
 ## 0. close_server
 
@@ -338,28 +342,34 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
-## 16. read_server_documentation
+## 16. read_documentation
 
-Get detailed documentation for one or more server protocols. Returns comprehensive information including description, startup parameters, examples, and keywords. **REQUIRED before using open_server** - you must read documentation for a protocol before starting a server with it. Available server protocols: DNS, HTTP, Proxy, SSH, TCP
+Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
+
+## When to Use Server vs Client Mode
+
+**Server Mode (open_server)**: Use when YOU want to LISTEN for incoming connections and respond to requests.
+- Examples: "Start an HTTP server", "Create a DNS server", "Run an FTP server"
+- You RECEIVE requests and SEND responses
+- You control the port and wait for clients to connect
+
+**Client Mode (open_client)**: Use when YOU want to CONNECT to an existing remote server.
+- Examples: "Connect to Redis", "Query a database", "Fetch from an API"
+- You SEND requests and RECEIVE responses
+- You specify the remote server's address and port
+
+## Available Protocols
+
+**Server protocols** (use with open_server): DNS, HTTP, SSH, TCP
+
+**Client protocols** (use with open_client): DNS, HTTP, SSH, TCP
 
 Parameters:
-- `protocols` (array, required): Array of server protocol names to get documentation for (e.g., ['HTTP', 'SSH', 'DNS']). Use uppercase.
+- `protocols` (array, required): Array of protocol names to get documentation for (e.g., ['http', 'dns', 'ssh']). Returns both server and client docs if available for each protocol.
 
 Example:
 ```json
-{"type":"read_server_documentation","protocols":["HTTP"]}
-```
-
-## 17. read_client_documentation
-
-Get detailed documentation for one or more client protocols. Returns comprehensive information including description, startup parameters, examples, and keywords. **REQUIRED before using open_client** - you must read documentation for a protocol before starting a client with it. Available client protocols: DNS, HTTP, SSH, TCP
-
-Parameters:
-- `protocols` (array, required): Array of client protocol names to get documentation for (e.g., ['http', 'redis', 'ssh']). Use lowercase.
-
-Example:
-```json
-{"type":"read_client_documentation","protocols":["http"]}
+{"type":"read_documentation","protocols":["http"]}
 ```
 
 
@@ -455,7 +465,7 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 {"actions": [{"type": "send_http_response", "status": 200, "body": "Hello"}]}
 ```
 
-**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_server_documentation` or `read_client_documentation`) to see the exact action types and their parameters for your protocol.
+**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_documentation`) to see the exact action types and their parameters for your protocol.
 
 ---
 
@@ -693,7 +703,7 @@ Use `*` as event_pattern to route all events to the LLM.
 ]
 ```
 
-**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_server_documentation` or `read_client_documentation` to get protocol-specific event IDs and action types.
+**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_documentation` to get protocol-specific event IDs and action types.
 
 
 
@@ -748,7 +758,7 @@ Brief explanation of your understanding and decision (1-3 sentences)
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
+{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
 ```
 
 ✓ **Valid (multiple actions):**

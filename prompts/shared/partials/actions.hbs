@@ -36,8 +36,8 @@ Unless tools are also included, you will not be invoked again if you only return
 so you may include multiple actions in a single response.
 
 **CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
-If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
-to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
+If an action you need is not listed, use `read_documentation` tool to learn about protocol-specific actions.
+Unknown actions will be rejected and you will be asked to retry.
 
 {{#each regular_actions}}
 ## {{@index}}. {{this.name}}

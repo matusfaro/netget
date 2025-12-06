@@ -433,7 +433,7 @@ pub fn open_server_action(
         - Only for responding to actual network events".to_string();
 
     if !is_enabled {
-        description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_server_documentation tool (for server protocols) or read_client_documentation tool (for client protocols). These tools list all available protocols and provide detailed configuration information.");
+        description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_documentation tool. This tool lists all available protocols (both server and client) and provides detailed configuration information including when to use server vs client mode.");
         return ActionDefinition {
             name,
             description,
@@ -681,7 +681,7 @@ pub fn open_client_action(
     let mut description = "Connect to a remote server as a client.".to_string();
 
     if !is_enabled {
-        description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_client_documentation tool (for client protocols) or read_server_documentation tool (for server protocols). These tools list all available protocols and provide detailed configuration information.");
+        description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_documentation tool. This tool lists all available protocols (both server and client) and provides detailed configuration information including when to use server vs client mode.");
         return ActionDefinition {
             name,
             description,

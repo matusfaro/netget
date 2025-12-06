@@ -80,7 +80,7 @@ fn init_tracing() {
 /// When the user asks to open a server without documentation context,
 /// the LLM can either:
 /// 1. Directly open the server (open_server action is always available)
-/// 2. Request documentation first (read_server_documentation tool)
+/// 2. Request documentation first (read_documentation tool)
 /// Both are valid behaviors.
 #[tokio::test]
 async fn test_server_request_without_docs() -> Result<()> {
@@ -89,11 +89,11 @@ async fn test_server_request_without_docs() -> Result<()> {
         // NO documentation injected - LLM can either request docs or directly open
         .expect_custom("valid server action", |action| {
             let action_type = action["type"].as_str().unwrap_or("");
-            if action_type == "open_server" || action_type == "read_server_documentation" {
+            if action_type == "open_server" || action_type == "read_documentation" {
                 Ok(())
             } else {
                 anyhow::bail!(
-                    "Expected 'open_server' or 'read_server_documentation', got '{}'",
+                    "Expected 'open_server' or 'read_documentation', got '{}'",
                     action_type
                 )
             }
@@ -108,7 +108,7 @@ async fn test_server_request_without_docs() -> Result<()> {
 /// When the user asks to connect to a server without documentation context,
 /// the LLM can either:
 /// 1. Directly open the client (open_client action is always available)
-/// 2. Request documentation first (read_client_documentation tool)
+/// 2. Request documentation first (read_documentation tool)
 /// Both are valid behaviors.
 #[tokio::test]
 async fn test_client_request_without_docs() -> Result<()> {
@@ -117,11 +117,11 @@ async fn test_client_request_without_docs() -> Result<()> {
         // NO documentation injected - LLM can either request docs or directly connect
         .expect_custom("valid client action", |action| {
             let action_type = action["type"].as_str().unwrap_or("");
-            if action_type == "open_client" || action_type == "read_client_documentation" {
+            if action_type == "open_client" || action_type == "read_documentation" {
                 Ok(())
             } else {
                 anyhow::bail!(
-                    "Expected 'open_client' or 'read_client_documentation', got '{}'",
+                    "Expected 'open_client' or 'read_documentation', got '{}'",
                     action_type
                 )
             }

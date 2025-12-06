@@ -90,7 +90,7 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 {"actions": [{"type": "send_http_response", "status": 200, "body": "Hello"}]}
 ```
 
-**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_server_documentation` or `read_client_documentation`) to see the exact action types and their parameters for your protocol.
+**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_documentation`) to see the exact action types and their parameters for your protocol.
 
 ---
 
@@ -328,6 +328,6 @@ Use `*` as event_pattern to route all events to the LLM.
 ]
 ```
 
-**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_server_documentation` or `read_client_documentation` to get protocol-specific event IDs and action types.
+**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_documentation` to get protocol-specific event IDs and action types.
 
 

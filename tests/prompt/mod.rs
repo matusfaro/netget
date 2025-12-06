@@ -156,18 +156,14 @@ async fn test_user_input_prompt() {
         "Script handlers should NOT be shown in initial prompt (before reading docs)"
     );
 
-    // But read_server_documentation/read_client_documentation tools MUST be available
+    // But read_documentation tool MUST be available
     assert!(
-        prompt.contains("read_server_documentation"),
-        "Initial prompt should mention read_server_documentation tool"
-    );
-    assert!(
-        prompt.contains("read_client_documentation"),
-        "Initial prompt should mention read_client_documentation tool"
+        prompt.contains("read_documentation"),
+        "Initial prompt should mention read_documentation tool"
     );
 
     // CRITICAL: open_server and open_client actions should NOT EXIST as action definitions
-    // They are only included after calling read_server_documentation or read_client_documentation
+    // They are only included after calling read_documentation
     // Note: They may still be mentioned in instructions (e.g., "use open_server after reading docs")
     // but should NOT have action definition headers like "## 0. open_server"
     assert!(
@@ -197,7 +193,7 @@ async fn test_user_input_prompt_after_docs_read() {
     };
     state.set_scripting_env(scripting_env).await;
 
-    // Mark multiple server protocols as documented (simulates multiple read_server_documentation calls)
+    // Mark multiple server protocols as documented (simulates read_documentation call)
     state
         .mark_server_protocols_documented(&["HTTP".to_string(), "SSH".to_string()])
         .await;
@@ -602,16 +598,16 @@ async fn test_protocol_documentation_prompt() {
     }
 }
 
-/// Test that read_server_documentation with multiple protocols includes examples for ALL protocols
+/// Test that read_documentation with multiple protocols includes examples for ALL protocols
 #[tokio::test]
 #[cfg(all(feature = "http", feature = "ssh", feature = "dns"))]
 async fn test_multi_protocol_documentation_examples() {
     use netget::llm::actions::tools::{execute_tool, ToolAction};
     use netget::state::app_state::WebSearchMode;
 
-    // Create a ToolAction for read_server_documentation with multiple protocols
-    let action = ToolAction::ReadServerDocumentation {
-        protocols: vec!["HTTP".to_string(), "SSH".to_string(), "DNS".to_string()],
+    // Create a ToolAction for read_documentation with multiple protocols
+    let action = ToolAction::ReadDocumentation {
+        protocols: vec!["http".to_string(), "ssh".to_string(), "dns".to_string()],
         protocol: None,
     };
 
@@ -634,17 +630,17 @@ async fn test_multi_protocol_documentation_examples() {
     );
 
     // Check that examples for each protocol are present
-    // The execute_read_server_documentation generates open_server examples per protocol
+    // The execute_read_documentation generates open_server examples per protocol
     assert!(
-        result.contains("Example for HTTP") || result.contains("\"base_stack\": \"HTTP\""),
+        result.contains("Example for HTTP") || result.contains("\"base_stack\": \"http\""),
         "Documentation should include example for HTTP"
     );
     assert!(
-        result.contains("Example for SSH") || result.contains("\"base_stack\": \"SSH\""),
+        result.contains("Example for SSH") || result.contains("\"base_stack\": \"ssh\""),
         "Documentation should include example for SSH"
     );
     assert!(
-        result.contains("Example for DNS") || result.contains("\"base_stack\": \"DNS\""),
+        result.contains("Example for DNS") || result.contains("\"base_stack\": \"dns\""),
         "Documentation should include example for DNS"
     );
 

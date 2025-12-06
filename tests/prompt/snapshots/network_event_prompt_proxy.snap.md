@@ -122,8 +122,8 @@ Unless tools are also included, you will not be invoked again if you only return
 so you may include multiple actions in a single response.
 
 **CRITICAL: Only use actions listed below. Do NOT invent or hallucinate action names.**
-If an action you need is not listed, use `read_server_documentation` or `read_client_documentation` tools
-to learn about protocol-specific actions. Unknown actions will be rejected and you will be asked to retry.
+If an action you need is not listed, use `read_documentation` tool to learn about protocol-specific actions.
+Unknown actions will be rejected and you will be asked to retry.
 
 ## 0. set_memory
 
@@ -172,107 +172,6 @@ Parameters:
 Example:
 ```json
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
-```
-
-## 4. handle_request_pass
-
-Pass the intercepted request through unchanged to its destination
-
-
-Example:
-```json
-{"type":"handle_request_pass"}
-```
-
-## 5. handle_request_block
-
-Block the intercepted request and return an error response to the client
-
-Parameters:
-- `status` (number): HTTP status code (default: 403)
-- `body` (string): Response body explaining why request was blocked
-
-Example:
-```json
-{"type":"handle_request_block","status":403,"body":"Access denied by security policy"}
-```
-
-## 6. handle_request_modify
-
-Modify the intercepted request before forwarding to destination
-
-Parameters:
-- `headers` (object): Headers to add or modify (key-value pairs)
-- `remove_headers` (array): Header names to remove
-- `new_path` (string): New URL path (replaces entire path)
-- `query_params` (object): Query parameters to add/modify
-- `new_body` (string): Complete body replacement
-- `body_replacements` (array): Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]
-
-Example:
-```json
-{"type":"handle_request_modify","headers":{"X-Proxy-Modified":"true","User-Agent":"CustomBot/1.0"},"remove_headers":["Cookie"],"body_replacements":[{"pattern":"password","replacement":"****REDACTED****"}]}
-```
-
-## 7. handle_response_pass
-
-Pass the intercepted response through unchanged to the client
-
-
-Example:
-```json
-{"type":"handle_response_pass"}
-```
-
-## 8. handle_response_block
-
-Block the intercepted response and return a different response to the client
-
-Parameters:
-- `status` (number): HTTP status code (default: 502)
-- `body` (string): Response body
-
-Example:
-```json
-{"type":"handle_response_block","status":502,"body":"Response blocked by content policy"}
-```
-
-## 9. handle_response_modify
-
-Modify the intercepted response before returning to client
-
-Parameters:
-- `status` (number): New HTTP status code
-- `headers` (object): Headers to add or modify (key-value pairs)
-- `remove_headers` (array): Header names to remove
-- `new_body` (string): Complete body replacement
-- `body_replacements` (array): Array of regex replacements: [{pattern: 'regex', replacement: 'text'}]
-
-Example:
-```json
-{"type":"handle_response_modify","headers":{"X-Content-Filtered":"true"},"body_replacements":[{"pattern":"secret-api-key-\\w+","replacement":"****REDACTED****"}]}
-```
-
-## 10. handle_https_connection_allow
-
-Allow HTTPS connection to proceed (pass-through mode only, no MITM)
-
-
-Example:
-```json
-{"type":"handle_https_connection_allow"}
-```
-
-## 11. handle_https_connection_block
-
-Block HTTPS connection (pass-through mode only, no MITM)
-
-Parameters:
-- `reason` (string): Optional reason for blocking
-
-Example:
-```json
-{"type":"handle_https_connection_block","reason":"Destination blocked by security policy"}
 ```
 
 
@@ -340,7 +239,7 @@ Brief explanation of your understanding and decision (1-3 sentences)
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_server_documentation", "protocols": ["HTTP"]}]}
+{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
 ```
 
 ✓ **Valid (multiple actions):**

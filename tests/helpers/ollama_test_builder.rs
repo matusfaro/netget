@@ -51,9 +51,9 @@ pub enum PromptContext {
     /// User input from CLI
     UserInput {
         user_message: String,
-        /// Optional server documentation to inject (simulates having called read_server_documentation)
+        /// Optional server documentation to inject (simulates having called read_documentation)
         server_documentation: Option<String>,
-        /// Optional client documentation to inject (simulates having called read_client_documentation)
+        /// Optional client documentation to inject (simulates having called read_documentation)
         client_documentation: Option<String>,
     },
     /// Network request event
@@ -123,7 +123,7 @@ impl OllamaTestBuilder {
         self
     }
 
-    /// Add server documentation context (simulates having called read_server_documentation)
+    /// Add server documentation context (simulates having called read_documentation)
     ///
     /// This marks that documentation was requested, enabling protocol-specific features
     /// in the prompt. The actual documentation is already available in the system prompt.
@@ -161,7 +161,7 @@ impl OllamaTestBuilder {
         self
     }
 
-    /// Add client documentation context (simulates having called read_client_documentation)
+    /// Add client documentation context (simulates having called read_documentation)
     ///
     /// This marks that documentation was requested, enabling protocol-specific features
     /// in the prompt. The actual documentation is already available in the system prompt.
@@ -342,8 +342,8 @@ impl OllamaTestBuilder {
                 if let Some(server_doc) = &server_documentation {
                     conversation_history_parts.push(format!(
                         "User: I need to open a server\n\n\
-                         Assistant: {{\"actions\": [{{\"type\": \"read_server_documentation\", \"protocol\": \"...\"}}]}}\n\n\
-                         Tool Result (read_server_documentation):\n{}\n",
+                         Assistant: {{\"actions\": [{{\"type\": \"read_documentation\", \"protocols\": [\"...\"]}}]}}\n\n\
+                         Tool Result (read_documentation):\n{}\n",
                         server_doc
                     ));
                 }
@@ -351,8 +351,8 @@ impl OllamaTestBuilder {
                 if let Some(client_doc) = &client_documentation {
                     conversation_history_parts.push(format!(
                         "User: I need to connect to a server\n\n\
-                         Assistant: {{\"actions\": [{{\"type\": \"read_client_documentation\", \"protocol\": \"...\"}}]}}\n\n\
-                         Tool Result (read_client_documentation):\n{}\n",
+                         Assistant: {{\"actions\": [{{\"type\": \"read_documentation\", \"protocols\": [\"...\"]}}]}}\n\n\
+                         Tool Result (read_documentation):\n{}\n",
                         client_doc
                     ));
                 }

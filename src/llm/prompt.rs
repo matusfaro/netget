@@ -269,7 +269,7 @@ You used action name(s) that are not in the Available Actions list. This is NOT 
 **CRITICAL RULES:**
 1. You can ONLY use actions explicitly listed in the "Available Actions" section
 2. Do NOT invent, guess, or hallucinate action names
-3. If you need a protocol-specific action, use `read_server_documentation` or `read_client_documentation` tools first to learn the available actions for that protocol
+3. If you need a protocol-specific action, use `read_documentation` tool first to learn the available actions for that protocol
 
 ## Valid Actions
 
@@ -522,7 +522,7 @@ You used action name(s) that are not in the Available Actions list. This is NOT 
     /// The caller should add the user input as a separate user message.
     ///
     /// By default, `open_server` and `open_client` are DISABLED. They become enabled
-    /// only after `read_server_documentation` or `read_client_documentation` tools are called.
+    /// only after `read_documentation` tool is called.
     /// Use `build_user_input_system_prompt_with_docs` to explicitly enable them.
     ///
     /// # Arguments
@@ -570,6 +570,7 @@ You used action name(s) that are not in the Available Actions list. This is NOT 
         // Check if documentation has been fetched (for prompt guidance, not action enablement)
         let has_documentation = conversation_history.as_ref()
             .map(|history| {
+                history.contains("read_documentation") ||
                 history.contains("read_server_documentation") ||
                 history.contains("read_client_documentation") ||
                 history.contains("Server Protocol:") ||
@@ -625,15 +626,19 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 ### Important Guidelines
 
-1. **Read documentation first**: Before starting servers or clients, you MUST call `read_server_documentation` or `read_client_documentation` with the protocol(s) you need. This enables the `open_server` and `open_client` actions.
+1. **Read documentation first**: Before starting servers or clients, you MUST call `read_documentation` with the protocol(s) you need. This enables the `open_server` and `open_client` actions and explains when to use each mode.
 
-2. **Gather information**: Use tools like {} to read files or search for information before taking action.
+2. **Understanding Server vs Client**:
+   - **Server (open_server)**: YOU listen for incoming connections. Example: "Start an HTTP server"
+   - **Client (open_client)**: YOU connect to a remote server. Example: "Connect to Redis"
 
-3. **Update, don't recreate**: If a user asks to modify an existing server (e.g., "add an endpoint", "change the behavior"), use `update_instruction` - don't create a new server on the same port.
+3. **Gather information**: Use tools like {} to read files or search for information before taking action.
 
-4. **JSON responses only**: Your entire response must be valid JSON: `{{"actions": [...]}}`
+4. **Update, don't recreate**: If a user asks to modify an existing server (e.g., "add an endpoint", "change the behavior"), use `update_instruction` - don't create a new server on the same port.
 
-**IMPORTANT**: The `open_server` and `open_client` actions are DISABLED until you read protocol documentation. Use `read_server_documentation` or `read_client_documentation` first!
+5. **JSON responses only**: Your entire response must be valid JSON: `{{"actions": [...]}}`
+
+**IMPORTANT**: The `open_server` and `open_client` actions are DISABLED until you read protocol documentation. Use `read_documentation` first!
             "#,
                 tool_examples
             )

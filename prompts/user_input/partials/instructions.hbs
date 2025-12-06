@@ -11,10 +11,16 @@ Understand what the user wants and respond with the appropriate actions to make 
 ### Important Guidelines
 
 {{#unless include_base_stacks}}
-**💡 BEST PRACTICE**: For optimal configuration, use documentation tools BEFORE starting servers/clients:
+**💡 BEST PRACTICE**: For optimal configuration, use the `read_documentation` tool BEFORE starting servers/clients:
+
+**Understanding Server vs Client**:
+- **Server Mode (open_server)**: YOU listen for incoming connections and respond to requests
+  - Examples: "Start an HTTP server", "Create a DNS server"
+- **Client Mode (open_client)**: YOU connect to a remote server
+  - Examples: "Connect to Redis", "Query a database"
 
 **Recommended workflow**:
-1. Read documentation: `read_server_documentation` or `read_client_documentation`
+1. Read documentation: `read_documentation` (covers both server and client protocols)
 2. Open with full knowledge: `open_server` or `open_client` with correct parameters
 
 **Quick start** (if user needs immediate action):
@@ -22,7 +28,7 @@ Understand what the user wants and respond with the appropriate actions to make 
 - Example: `{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Return Hello World"}`
 - Protocol names: Use simple lowercase names like `"http"`, `"tcp"`, `"dns"`, `"redis"`, `"ssh"`
 
-**Available tools**: {{tool_examples}}, `read_server_documentation`, `read_client_documentation`
+**Available tools**: {{tool_examples}}, `read_documentation`
 
 {{else}}
 1. **Use built-in protocols**: When users ask to start servers, use the `open_server` action with the appropriate `base_stack` (e.g., `http`, `ssh`, `dns`, `s3`). NetGet has 50+ protocols built-in - leverage them!
