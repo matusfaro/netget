@@ -1492,17 +1492,19 @@ pub fn read_documentation_action() -> ActionDefinition {
         description: format!(
             r#"Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
 
-## When to Use Server vs Client Mode
+## CRITICAL: When to Use Server vs Client Mode
 
-**Server Mode (open_server)**: Use when YOU want to LISTEN for incoming connections and respond to requests.
-- Examples: "Start an HTTP server", "Create a DNS server", "Run an FTP server"
-- You RECEIVE requests and SEND responses
-- You control the port and wait for clients to connect
+**Server Mode (open_server)** - Use when user wants to HOST/SERVE content:
+- Keywords: "serve", "host", "listen", "provide", "run server", "start server"
+- You LISTEN on a port and RESPOND to incoming requests
+- Examples: "host a website", "start HTTP server", "serve data on port 8080"
 
-**Client Mode (open_client)**: Use when YOU want to CONNECT to an existing remote server.
-- Examples: "Connect to Redis", "Query a database", "Fetch from an API"
-- You SEND requests and RECEIVE responses
-- You specify the remote server's address and port
+**Client Mode (open_client)** - Use when user wants to CONNECT to existing remote server:
+- Keywords: "connect to", "fetch from", "query", "send to", "access remote"
+- You CONNECT to a remote server and SEND requests to it
+- Examples: "connect to Redis at localhost:6379", "send ping to host"
+
+**⚠️ IMPORTANT**: If user says "serve", "host", or "provide", use `open_server` even if they say "client". The ACTION matters more than the word choice!
 
 ## Available Protocols
 
