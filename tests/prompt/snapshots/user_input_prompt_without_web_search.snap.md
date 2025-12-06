@@ -44,9 +44,14 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 1. **Read documentation first**: Before starting servers or clients, you MUST call &#x60;read_documentation&#x60; with the protocol(s) you need. This enables the &#x60;open_server&#x60; and &#x60;open_client&#x60; actions and explains when to use each mode.
 
-2. **Understanding Server vs Client**:
-   - **Server (open_server)**: YOU listen for incoming connections. Example: &quot;Start an HTTP server&quot;
-   - **Client (open_client)**: YOU connect to a remote server. Example: &quot;Connect to Redis&quot;
+2. **Understanding Server vs Client** (CRITICAL):
+   - **Server (open_server)**: Use when user wants to HOST/SERVE content
+     - Keywords: &quot;serve&quot;, &quot;host&quot;, &quot;listen&quot;, &quot;provide&quot;, &quot;run server&quot;
+     - Example: &quot;serve recipes&quot;, &quot;host website&quot;, &quot;start HTTP server&quot;
+   - **Client (open_client)**: Use when user wants to CONNECT to existing remote server
+     - Keywords: &quot;connect to&quot;, &quot;fetch from&quot;, &quot;query&quot;, &quot;access remote&quot;, &quot;send to&quot;, &quot;send a&quot;
+     - Example: &quot;connect to Redis at localhost:6379&quot;, &quot;send ICMP ping&quot;
+   - ⚠️ If user says &quot;serve&quot; or &quot;host&quot;, use open_server even if they mistakenly say &quot;client&quot;
 
 3. **Gather information**: Use tools like &#x60;read_file&#x60; to read files or search for information before taking action.
 

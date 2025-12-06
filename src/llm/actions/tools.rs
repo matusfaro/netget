@@ -2276,15 +2276,21 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     let mut found_client_protocols = Vec::new();
     let mut not_found_protocols = Vec::new();
 
-    // Add guidance header
+    // Add guidance header with explicit keyword matching
     result.push_str("# Protocol Documentation\n\n");
-    result.push_str("## When to Use Server vs Client Mode\n\n");
-    result.push_str("**Server Mode (open_server)**: Use when YOU want to LISTEN for incoming connections.\n");
-    result.push_str("- You RECEIVE requests and SEND responses\n");
-    result.push_str("- Examples: \"Start an HTTP server\", \"Create a DNS server\"\n\n");
-    result.push_str("**Client Mode (open_client)**: Use when YOU want to CONNECT to a remote server.\n");
-    result.push_str("- You SEND requests and RECEIVE responses\n");
-    result.push_str("- Examples: \"Connect to Redis\", \"Query a database\"\n\n");
+    result.push_str("## CRITICAL: When to Use Server vs Client Mode\n\n");
+    result.push_str("**Server Mode (open_server)** - Use when the user wants to HOST/SERVE content:\n");
+    result.push_str("- Keywords: \"serve\", \"host\", \"listen\", \"start a server\", \"create a server\", \"run a server\", \"open server\", \"provide\", \"respond to\"\n");
+    result.push_str("- You LISTEN on a port and RESPOND to incoming requests\n");
+    result.push_str("- User wants to PROVIDE a service that others connect to\n");
+    result.push_str("- Examples: \"serve recipes\", \"host a website\", \"start HTTP server\", \"create DNS server\"\n\n");
+    result.push_str("**Client Mode (open_client)** - Use when the user wants to CONNECT to an existing remote server:\n");
+    result.push_str("- Keywords: \"connect to\", \"fetch from\", \"query\", \"access\", \"call\", \"request from\", \"get from\", \"send to\", \"send a\"\n");
+    result.push_str("- You CONNECT to a remote server and SEND requests to it\n");
+    result.push_str("- User wants to ACCESS a service that someone else is running\n");
+    result.push_str("- Examples: \"connect to Redis at localhost:6379\", \"fetch from API\", \"query database\"\n\n");
+    result.push_str("**⚠️ IMPORTANT**: If the user says \"serve\", \"host\", or \"provide\" content, use `open_server` even if they mistakenly say \"client\".\n");
+    result.push_str("The ACTION (serving content) matters more than the word choice.\n\n");
     result.push_str("---\n\n");
 
     for protocol in protocols {
