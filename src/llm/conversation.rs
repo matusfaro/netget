@@ -823,13 +823,83 @@ impl ConversationHandler {
             }
         }
 
+        // Log details for each action
+        for action in &all_actions {
+            let action_type = action
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown");
+
+            // Build action details string based on action type
+            let details = match action_type {
+                "open_server" => {
+                    let port = action.get("port").and_then(|p| p.as_u64());
+                    let base_stack = action.get("base_stack").and_then(|b| b.as_str());
+                    format!(
+                        "port={}, base_stack={}",
+                        port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()),
+                        base_stack.unwrap_or("?")
+                    )
+                }
+                "open_client" => {
+                    let protocol = action.get("protocol").and_then(|p| p.as_str());
+                    let remote_addr = action.get("remote_addr").and_then(|r| r.as_str());
+                    format!(
+                        "protocol={}, remote_addr={}",
+                        protocol.unwrap_or("?"),
+                        remote_addr.unwrap_or("?")
+                    )
+                }
+                "close_server" => {
+                    let port = action.get("port").and_then(|p| p.as_u64());
+                    format!("port={}", port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()))
+                }
+                "update_instruction" => {
+                    let port = action.get("port").and_then(|p| p.as_u64());
+                    format!("port={}", port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()))
+                }
+                "show_message" => {
+                    let message = action.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                    let preview: String = message.chars().take(50).collect();
+                    if message.len() > 50 {
+                        format!("\"{}...\"", preview)
+                    } else {
+                        format!("\"{}\"", preview)
+                    }
+                }
+                _ => {
+                    // For other actions, show first few keys
+                    let keys: Vec<&str> = action
+                        .as_object()
+                        .map(|obj| obj.keys().filter(|k| *k != "type").take(3).map(|s| s.as_str()).collect())
+                        .unwrap_or_default();
+                    if keys.is_empty() {
+                        String::new()
+                    } else {
+                        format!("keys=[{}]", keys.join(", "))
+                    }
+                }
+            };
+
+            let log_msg = if details.is_empty() {
+                format!("[INFO]   → {}", action_type)
+            } else {
+                format!("[INFO]   → {} ({})", action_type, details)
+            };
+
+            info!("Action: {} {}", action_type, details);
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(log_msg);
+            }
+        }
+
         info!(
             "Conversation complete: {} total actions collected",
             all_actions.len()
         );
         if let Some(ref tx) = self.status_tx {
             let _ = tx.send(format!(
-                "[INFO] ✓ Conversation complete: {} action(s) collected",
+                "[INFO] ✓ Conversation complete: {} action(s)",
                 all_actions.len()
             ));
         }
