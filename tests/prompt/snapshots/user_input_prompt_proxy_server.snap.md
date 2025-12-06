@@ -47,7 +47,7 @@ Understand what the user wants and respond with the appropriate actions to make 
 2. **Understanding Server vs Client** (CRITICAL):
    - **Server (open_server)**: Use when user wants to HOST/SERVE content
      - Keywords: &quot;serve&quot;, &quot;host&quot;, &quot;listen&quot;, &quot;provide&quot;, &quot;run server&quot;
-     - Example: &quot;serve recipes&quot;, &quot;host website&quot;, &quot;start HTTP server&quot;
+     - Example: &quot;host a website&quot;, &quot;start HTTP server&quot;, &quot;run DNS server&quot;
    - **Client (open_client)**: Use when user wants to CONNECT to existing remote server
      - Keywords: &quot;connect to&quot;, &quot;fetch from&quot;, &quot;query&quot;, &quot;access remote&quot;, &quot;send to&quot;, &quot;send a&quot;
      - Example: &quot;connect to Redis at localhost:6379&quot;, &quot;send ICMP ping&quot;

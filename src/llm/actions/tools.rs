@@ -2283,7 +2283,7 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     result.push_str("- Keywords: \"serve\", \"host\", \"listen\", \"start a server\", \"create a server\", \"run a server\", \"open server\", \"provide\", \"respond to\"\n");
     result.push_str("- You LISTEN on a port and RESPOND to incoming requests\n");
     result.push_str("- User wants to PROVIDE a service that others connect to\n");
-    result.push_str("- Examples: \"serve recipes\", \"host a website\", \"start HTTP server\", \"create DNS server\"\n\n");
+    result.push_str("- Examples: \"host a website\", \"start HTTP server\", \"create DNS server\", \"run FTP server\"\n\n");
     result.push_str("**Client Mode (open_client)** - Use when the user wants to CONNECT to an existing remote server:\n");
     result.push_str("- Keywords: \"connect to\", \"fetch from\", \"query\", \"access\", \"call\", \"request from\", \"get from\", \"send to\", \"send a\"\n");
     result.push_str("- You CONNECT to a remote server and SEND requests to it\n");
