@@ -1487,10 +1487,21 @@ pub fn read_documentation_action() -> ActionDefinition {
         client_protocols.join(", ")
     };
 
+    // Build example protocols array with all available protocols
+    let mut all_protocols: Vec<String> = server_protocols.clone();
+    for client_proto in &client_protocols {
+        if !all_protocols.iter().any(|s| s.eq_ignore_ascii_case(client_proto)) {
+            all_protocols.push(client_proto.clone());
+        }
+    }
+    all_protocols.sort();
+
     ActionDefinition {
         name: "read_documentation".to_string(),
         description: format!(
             r#"Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
+
+**LIMIT**: Maximum 5 protocols per call. Request will fail if more than 5 are specified.
 
 ## CRITICAL: When to Use Server vs Client Mode
 
@@ -1516,12 +1527,12 @@ pub fn read_documentation_action() -> ActionDefinition {
         parameters: vec![Parameter {
             name: "protocols".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of protocol names to get documentation for (e.g., ['http', 'dns', 'ssh']). Returns both server and client docs if available for each protocol.".to_string(),
+            description: "Array of protocol names to get documentation for. Maximum 5 protocols per call. Returns both server and client docs if available for each protocol.".to_string(),
             required: true,
         }],
         example: json!({
             "type": "read_documentation",
-            "protocols": ["http"]
+            "protocols": all_protocols
         }),
         log_template: None,
     }
@@ -2264,6 +2275,18 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
             "read_documentation",
             "no protocols".to_string(),
             "No protocols specified. Provide at least one protocol name in the 'protocols' array.".to_string(),
+        );
+    }
+
+    if protocols.len() > 5 {
+        return ToolResult::error(
+            "read_documentation",
+            format!("{} protocols requested", protocols.len()),
+            format!(
+                "Too many protocols requested ({}). Maximum is 5 per call. Please retry with 5 or fewer protocols. Requested: {:?}",
+                protocols.len(),
+                protocols
+            ),
         );
     }
 

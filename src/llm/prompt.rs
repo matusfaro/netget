@@ -215,7 +215,7 @@ Your response must be **pure JSON** only:
 
 ✓ **Correct:**
 ```json
-{{"actions": [{{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}}]}}
+{{"actions": [{{"type": "show_message", "message": "Server started successfully"}}]}}
 ```
 
 ---
@@ -626,16 +626,16 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 ### Important Guidelines
 
-1. **Read documentation first**: Before starting servers or clients, you MUST call `read_documentation` with the protocol(s) you need. This enables the `open_server` and `open_client` actions and explains when to use each mode.
+1. **Read documentation first**: Before starting servers or clients, you MUST call `read_documentation` with the protocol(s) you need. This enables the server/client actions and explains when to use each mode.
 
 2. **Understanding Server vs Client** (CRITICAL):
-   - **Server (open_server)**: Use when user wants to HOST/SERVE content
+   - **Server (hosting)**: Use when user wants to HOST/SERVE content
      - Keywords: "serve", "host", "listen", "provide", "run server"
      - Example: "host a website", "start HTTP server", "run DNS server"
-   - **Client (open_client)**: Use when user wants to CONNECT to existing remote server
-     - Keywords: "connect to", "fetch from", "query", "access remote", "send to", "send a"
-     - Example: "connect to Redis at localhost:6379", "send ICMP ping"
-   - ⚠️ If user says "serve" or "host", use open_server even if they mistakenly say "client"
+   - **Client (connecting)**: Use when user wants to CONNECT to existing remote server
+     - Keywords: "connect to", "fetch from", "query", "send to", "access remote"
+     - Example: "connect to Redis at localhost:6379", "send ping to host"
+   - ⚠️ If user says "serve", "host", or "provide", use server mode even if they say "client". The ACTION matters more than the word choice!
 
 3. **Gather information**: Use tools like {} to read files or search for information before taking action.
 
@@ -643,7 +643,7 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 5. **JSON responses only**: Your entire response must be valid JSON: `{{"actions": [...]}}`
 
-**IMPORTANT**: The `open_server` and `open_client` actions are DISABLED until you read protocol documentation. Use `read_documentation` first!
+**IMPORTANT**: The server and client actions are DISABLED until you read protocol documentation. Use `read_documentation` first!
             "#,
                 tool_examples
             )

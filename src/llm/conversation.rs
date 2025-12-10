@@ -831,41 +831,63 @@ impl ConversationHandler {
                 .unwrap_or("unknown");
 
             // Build action details string based on action type
-            let details = match action_type {
+            // Also track if required parameters are missing for warnings
+            let (details, missing_required) = match action_type {
                 "open_server" => {
                     let port = action.get("port").and_then(|p| p.as_u64());
                     let base_stack = action.get("base_stack").and_then(|b| b.as_str());
-                    format!(
-                        "port={}, base_stack={}",
-                        port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()),
-                        base_stack.unwrap_or("?")
+                    let missing = base_stack.is_none(); // base_stack is required
+                    (
+                        format!(
+                            "port={}, base_stack={}",
+                            port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()),
+                            base_stack.unwrap_or("?")
+                        ),
+                        missing,
                     )
                 }
                 "open_client" => {
                     let protocol = action.get("protocol").and_then(|p| p.as_str());
                     let remote_addr = action.get("remote_addr").and_then(|r| r.as_str());
-                    format!(
-                        "protocol={}, remote_addr={}",
-                        protocol.unwrap_or("?"),
-                        remote_addr.unwrap_or("?")
+                    let missing = protocol.is_none() || remote_addr.is_none(); // both required
+                    (
+                        format!(
+                            "protocol={}, remote_addr={}",
+                            protocol.unwrap_or("?"),
+                            remote_addr.unwrap_or("?")
+                        ),
+                        missing,
                     )
                 }
                 "close_server" => {
-                    let port = action.get("port").and_then(|p| p.as_u64());
-                    format!("port={}", port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()))
+                    let server_id = action.get("server_id").and_then(|p| p.as_u64());
+                    let missing = server_id.is_none();
+                    (
+                        format!("server_id={}", server_id.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string())),
+                        missing,
+                    )
                 }
                 "update_instruction" => {
-                    let port = action.get("port").and_then(|p| p.as_u64());
-                    format!("port={}", port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()))
+                    let instruction = action.get("instruction").and_then(|i| i.as_str());
+                    let missing = instruction.is_none();
+                    (
+                        format!("instruction={}", instruction.map(|i| {
+                            let preview: String = i.chars().take(30).collect();
+                            if i.len() > 30 { format!("\"{}...\"", preview) } else { format!("\"{}\"", i) }
+                        }).unwrap_or_else(|| "?".to_string())),
+                        missing,
+                    )
                 }
                 "show_message" => {
-                    let message = action.get("message").and_then(|m| m.as_str()).unwrap_or("");
-                    let preview: String = message.chars().take(50).collect();
-                    if message.len() > 50 {
+                    let message = action.get("message").and_then(|m| m.as_str());
+                    let missing = message.is_none();
+                    let preview: String = message.unwrap_or("").chars().take(50).collect();
+                    let details = if message.map(|m| m.len()).unwrap_or(0) > 50 {
                         format!("\"{}...\"", preview)
                     } else {
                         format!("\"{}\"", preview)
-                    }
+                    };
+                    (details, missing)
                 }
                 _ => {
                     // For other actions, show first few keys
@@ -873,13 +895,25 @@ impl ConversationHandler {
                         .as_object()
                         .map(|obj| obj.keys().filter(|k| *k != "type").take(3).map(|s| s.as_str()).collect())
                         .unwrap_or_default();
-                    if keys.is_empty() {
+                    let details = if keys.is_empty() {
                         String::new()
                     } else {
                         format!("keys=[{}]", keys.join(", "))
-                    }
+                    };
+                    (details, false) // Unknown actions don't have required param checks
                 }
             };
+
+            // Log warning if required parameters are missing
+            if missing_required {
+                warn!("Action {} has missing required parameters: {}", action_type, details);
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[WARN] Action {} has missing required parameters (will likely fail): {}",
+                        action_type, details
+                    ));
+                }
+            }
 
             let log_msg = if details.is_empty() {
                 format!("[INFO]   → {}", action_type)

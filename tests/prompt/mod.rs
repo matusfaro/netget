@@ -177,6 +177,21 @@ async fn test_user_input_prompt() {
             && !prompt.contains("## 3. open_client"),
         "open_client should NOT have an action definition in initial prompt"
     );
+
+    // CRITICAL: No JSON examples with open_server or open_client should exist
+    // These would teach the LLM to use these actions before documentation is read
+    assert!(
+        !prompt.contains(r#""type": "open_server""#)
+            && !prompt.contains(r#"\"type\": \"open_server\""#)
+            && !prompt.contains(r#""type":"open_server""#),
+        "Initial prompt should NOT contain JSON examples with open_server action"
+    );
+    assert!(
+        !prompt.contains(r#""type": "open_client""#)
+            && !prompt.contains(r#"\"type\": \"open_client\""#)
+            && !prompt.contains(r#""type":"open_client""#),
+        "Initial prompt should NOT contain JSON examples with open_client action"
+    );
 }
 
 #[tokio::test]

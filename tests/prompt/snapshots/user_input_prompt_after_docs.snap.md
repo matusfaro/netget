@@ -168,7 +168,7 @@ Parameters:
 - `interface` (string): Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Examples: "lo" (loopback), "eth0", "en0". Port-based protocols (TCP, HTTP, DNS) don't use this.
 - `host` (string): Optional: Host address to bind (IPv4, IPv6, or hostname). Examples: "127.0.0.1" (loopback), "0.0.0.0" (all interfaces), "::". Protocols will use sensible defaults if omitted.
 - `port` (number): Optional: Port number to listen on. Use 0 to automatically find an available port. Required for port-based protocols (TCP, HTTP, DNS). Raw protocols (ICMP, ARP) don't use this.
-- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, SSH, TCP
+- `base_stack` (string, required): Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. Available: DNS, HTTP, Proxy, SSH
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
 - `instruction` (string, required): Detailed instructions for handling network events. Use this field for custom requirements that don't have dedicated parameters (e.g., 'with 30 second timeout', 'log all requests to file', 'rate limit to 10 requests per second', etc.)
@@ -405,6 +405,8 @@ Example:
 
 Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
 
+**LIMIT**: Maximum 5 protocols per call. Request will fail if more than 5 are specified.
+
 ## CRITICAL: When to Use Server vs Client Mode
 
 **Server Mode (open_server)** - Use when user wants to HOST/SERVE content:
@@ -421,16 +423,16 @@ Get detailed protocol documentation. **REQUIRED before using open_server or open
 
 ## Available Protocols
 
-**Server protocols** (use with open_server): DNS, HTTP, SSH, TCP
+**Server protocols** (use with open_server): DNS, HTTP, Proxy, SSH
 
-**Client protocols** (use with open_client): DNS, HTTP, SSH, TCP
+**Client protocols** (use with open_client): DNS, HTTP, SSH
 
 Parameters:
-- `protocols` (array, required): Array of protocol names to get documentation for (e.g., ['http', 'dns', 'ssh']). Returns both server and client docs if available for each protocol.
+- `protocols` (array, required): Array of protocol names to get documentation for. Maximum 5 protocols per call. Returns both server and client docs if available for each protocol.
 
 Example:
 ```json
-{"type":"read_documentation","protocols":["http"]}
+{"type":"read_documentation","protocols":["DNS","HTTP","Proxy","SSH"]}
 ```
 
 
@@ -440,7 +442,9 @@ Example:
 DNS (dns)
 HTTP (http, http server, http stack, via http, hyper)
 SSH (ssh)
-TCP (tcp, raw, ftp, custom)
+
+### Proxy & Network
+Proxy (proxy, mitm)
 
 
 

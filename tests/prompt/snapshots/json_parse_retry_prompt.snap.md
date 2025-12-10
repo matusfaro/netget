@@ -25,7 +25,7 @@ Your response must be **pure JSON** only:
 
 ✓ **Correct:**
 ```json
-{"actions": [{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server"}]}
+{"actions": [{"type": "show_message", "message": "Server started successfully"}]}
 ```
 
 ---

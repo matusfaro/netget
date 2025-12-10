@@ -9,6 +9,7 @@ fn test_event_type_creation() {
         description: "Test action".to_string(),
         parameters: vec![],
         example: serde_json::json!({"type": "test_action"}),
+        log_template: None,
     };
 
     let event = EventType::new("test_event", "Test event description", json!({"type": "placeholder", "event_id": "test_event"})).with_action(action);
@@ -26,6 +27,7 @@ fn test_format_event_types() {
         description: "Send response".to_string(),
         parameters: vec![],
         example: serde_json::json!({"type": "respond"}),
+        log_template: None,
     };
 
     let events = vec![EventType::new("request", "Client request received", json!({"type": "placeholder", "event_id": "request"})).with_action(action)];
