@@ -282,6 +282,54 @@ You used action name(s) that are not in the Available Actions list. This is NOT 
         )
     }
 
+    /// Build retry message for malformed action errors
+    ///
+    /// Used when LLM returns actions with missing required parameters or invalid values.
+    /// Shows the malformed action JSON and the parse error.
+    ///
+    /// # Arguments
+    /// * `malformed_actions` - List of (action_json, error_message) tuples
+    pub fn build_malformed_action_retry_prompt(
+        malformed_actions: &[(serde_json::Value, String)],
+    ) -> String {
+        let errors_list = malformed_actions
+            .iter()
+            .map(|(action_json, error)| {
+                let action_str = serde_json::to_string_pretty(action_json)
+                    .unwrap_or_else(|_| action_json.to_string());
+                format!("**Action:**\n```json\n{}\n```\n**Error:** {}", action_str, error)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        format!(
+            r#"# ❌ Error: Malformed Action(s)
+
+**The following action(s) have invalid or missing parameters:**
+
+{}
+
+## What Went Wrong
+
+Your action JSON is missing required parameters or has invalid values. Each action type has specific required parameters that must be provided.
+
+**Common issues:**
+- `open_server` requires `base_stack` (e.g., "http", "tcp", "dns")
+- `open_client` requires both `protocol` and `remote_addr`
+- `close_server` requires `server_id`
+- Numeric values should be numbers, not strings
+
+## How to Fix
+
+Check the action definition in "Available Actions" for required parameters and provide all of them with correct types.
+
+---
+
+**Please retry:** Fix the malformed action(s) by providing all required parameters with correct values."#,
+            errors_list
+        )
+    }
+
     /// Build format reminder message (added before every LLM call)
     ///
     /// This is a short system message added at the end of the conversation

@@ -374,8 +374,10 @@ impl ConversationHandler {
         let mut tool_results = Vec::new();
         let mut consecutive_tool_failures = 0;
         let mut unknown_action_retries = 0;
+        let mut malformed_action_retries = 0;
         const MAX_CONSECUTIVE_FAILURES: usize = 2;
         const MAX_UNKNOWN_ACTION_RETRIES: usize = 2;
+        const MAX_MALFORMED_ACTION_RETRIES: usize = 2;
 
         // Build set of valid action names for validation (mutable to allow updates after docs read)
         let mut valid_action_names: std::collections::HashSet<String> = available_actions
@@ -537,8 +539,120 @@ impl ConversationHandler {
                 .into_iter()
                 .partition(ToolAction::is_tool_action);
 
-            // Collect regular actions
-            all_actions.extend(regular.clone());
+            // Validate regular actions by trying to parse them as CommonAction
+            // This catches missing required parameters before execution
+            let mut malformed_actions: Vec<(serde_json::Value, String)> = Vec::new();
+            let mut valid_regular: Vec<serde_json::Value> = Vec::new();
+
+            for action in regular {
+                let action_type = action.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+
+                // Skip validation for actions that don't map to CommonAction (protocol-specific actions)
+                // These will be validated later by their respective handlers
+                let is_common_action = matches!(
+                    action_type,
+                    "open_server" | "open_client" | "close_server" | "close_client"
+                    | "close_all_servers" | "close_all_clients" | "update_instruction"
+                    | "change_model" | "set_memory" | "schedule_task" | "cancel_task"
+                    | "show_message" | "close_connection_by_id" | "reconnect_client"
+                    | "update_client_instruction"
+                );
+
+                if is_common_action {
+                    // Try to parse as CommonAction to validate
+                    match crate::llm::actions::common::CommonAction::from_json(&action) {
+                        Ok(_) => valid_regular.push(action),
+                        Err(e) => {
+                            malformed_actions.push((action, e.to_string()));
+                        }
+                    }
+                } else {
+                    // Non-common actions pass through without validation here
+                    valid_regular.push(action);
+                }
+            }
+
+            // If we have malformed actions, trigger retry
+            if !malformed_actions.is_empty() {
+                malformed_action_retries += 1;
+
+                // Log error with the actual malformed actions
+                for (action_json, error) in &malformed_actions {
+                    error!(
+                        "LLM returned malformed action: {}. Error: {}. JSON: {}",
+                        action_json.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"),
+                        error,
+                        serde_json::to_string(action_json).unwrap_or_else(|_| action_json.to_string())
+                    );
+                }
+
+                if let Some(ref tx) = self.status_tx {
+                    for (action_json, error) in &malformed_actions {
+                        let action_type = action_json.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                        let _ = tx.send(format!(
+                            "[ERROR] Malformed action '{}': {}",
+                            action_type, error
+                        ));
+                        // Show the actual JSON that was returned
+                        let _ = tx.send(format!(
+                            "[ERROR]   JSON: {}",
+                            serde_json::to_string(action_json).unwrap_or_else(|_| action_json.to_string())
+                        ));
+                    }
+                }
+
+                if malformed_action_retries >= MAX_MALFORMED_ACTION_RETRIES {
+                    // All retries exhausted - return error
+                    let action_types: Vec<_> = malformed_actions
+                        .iter()
+                        .map(|(a, _)| a.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"))
+                        .collect();
+                    error!(
+                        "LLM failed to provide valid actions after {} retries. Malformed: {:?}",
+                        malformed_action_retries, action_types
+                    );
+                    if let Some(ref tx) = self.status_tx {
+                        let _ = tx.send(format!(
+                            "[ERROR] LLM failed to provide valid actions after {} retries",
+                            malformed_action_retries
+                        ));
+                    }
+                    anyhow::bail!(
+                        "LLM returned malformed action(s) after {} retries: {:?}",
+                        malformed_action_retries,
+                        action_types
+                    );
+                }
+
+                // Build retry prompt for malformed actions
+                let correction = crate::llm::prompt::PromptBuilder::build_malformed_action_retry_prompt(
+                    &malformed_actions,
+                );
+
+                trace!(
+                    "→ Sending malformed action correction and retrying (attempt {})...",
+                    malformed_action_retries + 1
+                );
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!(
+                        "[INFO] → Retrying due to malformed action(s) (attempt {}/{})...",
+                        malformed_action_retries, MAX_MALFORMED_ACTION_RETRIES
+                    ));
+                }
+
+                // Add the malformed response as assistant message
+                self.messages.push(Message::assistant(cleaned_response.clone()));
+
+                // Add correction as user message
+                self.messages.push(Message::user(correction));
+
+                // Continue to next iteration to retry
+                continue;
+            }
+
+            // Collect validated regular actions
+            all_actions.extend(valid_regular.clone());
+            let regular = valid_regular;
 
             // Add acknowledgment message for regular actions so LLM knows they were collected
             if !regular.is_empty() {
@@ -823,7 +937,7 @@ impl ConversationHandler {
             }
         }
 
-        // Log details for each action
+        // Log details for each action (validation already happened above)
         for action in &all_actions {
             let action_type = action
                 .get("type")
@@ -831,63 +945,44 @@ impl ConversationHandler {
                 .unwrap_or("unknown");
 
             // Build action details string based on action type
-            // Also track if required parameters are missing for warnings
-            let (details, missing_required) = match action_type {
+            let details = match action_type {
                 "open_server" => {
                     let port = action.get("port").and_then(|p| p.as_u64());
                     let base_stack = action.get("base_stack").and_then(|b| b.as_str());
-                    let missing = base_stack.is_none(); // base_stack is required
-                    (
-                        format!(
-                            "port={}, base_stack={}",
-                            port.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()),
-                            base_stack.unwrap_or("?")
-                        ),
-                        missing,
+                    format!(
+                        "port={}, base_stack={}",
+                        port.map(|p| p.to_string()).unwrap_or_else(|| "auto".to_string()),
+                        base_stack.unwrap_or("?")
                     )
                 }
                 "open_client" => {
                     let protocol = action.get("protocol").and_then(|p| p.as_str());
                     let remote_addr = action.get("remote_addr").and_then(|r| r.as_str());
-                    let missing = protocol.is_none() || remote_addr.is_none(); // both required
-                    (
-                        format!(
-                            "protocol={}, remote_addr={}",
-                            protocol.unwrap_or("?"),
-                            remote_addr.unwrap_or("?")
-                        ),
-                        missing,
+                    format!(
+                        "protocol={}, remote_addr={}",
+                        protocol.unwrap_or("?"),
+                        remote_addr.unwrap_or("?")
                     )
                 }
                 "close_server" => {
                     let server_id = action.get("server_id").and_then(|p| p.as_u64());
-                    let missing = server_id.is_none();
-                    (
-                        format!("server_id={}", server_id.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string())),
-                        missing,
-                    )
+                    format!("server_id={}", server_id.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()))
                 }
                 "update_instruction" => {
                     let instruction = action.get("instruction").and_then(|i| i.as_str());
-                    let missing = instruction.is_none();
-                    (
-                        format!("instruction={}", instruction.map(|i| {
-                            let preview: String = i.chars().take(30).collect();
-                            if i.len() > 30 { format!("\"{}...\"", preview) } else { format!("\"{}\"", i) }
-                        }).unwrap_or_else(|| "?".to_string())),
-                        missing,
-                    )
+                    format!("instruction={}", instruction.map(|i| {
+                        let preview: String = i.chars().take(30).collect();
+                        if i.len() > 30 { format!("\"{}...\"", preview) } else { format!("\"{}\"", i) }
+                    }).unwrap_or_else(|| "?".to_string()))
                 }
                 "show_message" => {
-                    let message = action.get("message").and_then(|m| m.as_str());
-                    let missing = message.is_none();
-                    let preview: String = message.unwrap_or("").chars().take(50).collect();
-                    let details = if message.map(|m| m.len()).unwrap_or(0) > 50 {
+                    let message = action.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                    let preview: String = message.chars().take(50).collect();
+                    if message.len() > 50 {
                         format!("\"{}...\"", preview)
                     } else {
                         format!("\"{}\"", preview)
-                    };
-                    (details, missing)
+                    }
                 }
                 _ => {
                     // For other actions, show first few keys
@@ -895,25 +990,13 @@ impl ConversationHandler {
                         .as_object()
                         .map(|obj| obj.keys().filter(|k| *k != "type").take(3).map(|s| s.as_str()).collect())
                         .unwrap_or_default();
-                    let details = if keys.is_empty() {
+                    if keys.is_empty() {
                         String::new()
                     } else {
                         format!("keys=[{}]", keys.join(", "))
-                    };
-                    (details, false) // Unknown actions don't have required param checks
+                    }
                 }
             };
-
-            // Log warning if required parameters are missing
-            if missing_required {
-                warn!("Action {} has missing required parameters: {}", action_type, details);
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!(
-                        "[WARN] Action {} has missing required parameters (will likely fail): {}",
-                        action_type, details
-                    ));
-                }
-            }
 
             let log_msg = if details.is_empty() {
                 format!("[INFO]   → {}", action_type)
