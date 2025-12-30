@@ -502,6 +502,9 @@ Check the action definition in "Available Actions" for required parameters and p
         });
 
         // Build template data
+        let web_search_mode = state.get_web_search_mode().await;
+        let web_search_enabled = web_search_mode != crate::state::app_state::WebSearchMode::Off;
+
         let data = TemplateDataBuilder::new()
             .field("conversation_history", &conversation_history)
             .field("instructions", instructions)
@@ -518,10 +521,10 @@ Check the action definition in "Available Actions" for required parameters and p
             .field("mode", state.get_mode().await.as_str())
             .field("servers", &servers_data)
             .optional_field("active_server", active_server_data)
+            .field("web_search_enabled", web_search_enabled)
             .field(
                 "tool_examples",
-                if state.get_web_search_mode().await != crate::state::app_state::WebSearchMode::Off
-                {
+                if web_search_enabled {
                     "`read_file` and `web_search`"
                 } else {
                     "`read_file`"
@@ -854,6 +857,9 @@ Understand what the user wants and respond with the appropriate actions to make 
         };
 
         // Build template data
+        let web_search_mode = state.get_web_search_mode().await;
+        let web_search_enabled = web_search_mode != crate::state::app_state::WebSearchMode::Off;
+
         let data = TemplateDataBuilder::new()
             .field("instance_type", instance_type)
             .field("feedback_instructions", feedback_instructions)
@@ -869,6 +875,7 @@ Understand what the user wants and respond with the appropriate actions to make 
             .field("mode", state.get_mode().await.as_str())
             .field("servers", &servers_data)
             .optional_field("active_server", active_server_data)
+            .field("web_search_enabled", web_search_enabled)
             .field("can_bind_privileged_ports", system_caps.can_bind_privileged_ports)
             .field("has_raw_socket_access", system_caps.has_raw_socket_access)
             .build();

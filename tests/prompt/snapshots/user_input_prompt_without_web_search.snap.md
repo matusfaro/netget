@@ -722,7 +722,7 @@ Use `*` as event_pattern to route all events to the LLM.
 ```
 
 - Must start with `{` and end with `}`
-- **`tools`** (optional): Array of tool calls (read_file, web_search, generate_random, etc.)
+- **`tools`** (optional): Array of tool calls (read_file, generate_random, etc.)
   - Tools are executed FIRST and their results feed back to you before actions execute
   - Use tools to gather information before deciding on actions
 - **`actions`** (optional): Array of protocol-specific actions (open_server, close_server, etc.)
@@ -801,7 +801,6 @@ Brief explanation of your understanding and decision (1-3 sentences)
 ```json
 {
   "tools": [
-    {"type": "web_search", "query": "https://datatracker.ietf.org/doc/html/rfc7231"},
     {"type": "generate_random", "data_type": "uuid"}
   ]
 }
