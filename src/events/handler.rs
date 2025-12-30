@@ -1248,8 +1248,15 @@ impl EventHandler {
                             );
                         }
                         Err(e) => {
-                            let _ = status_tx
-                                .send(format!("[WARN] Failed to parse event handlers: {}", e));
+                            // Return error instead of just warning - invalid config should fail
+                            let _ = status_tx.send(format!(
+                                "[ERROR] Invalid event handler configuration: {}",
+                                e
+                            ));
+                            return Err(ActionExecutionError::Fatal(anyhow::anyhow!(
+                                "Invalid event handler configuration: {}",
+                                e
+                            )));
                         }
                     }
                 }
@@ -1576,7 +1583,7 @@ impl EventHandler {
     }
 
     /// Parse event handlers from JSON array into EventHandlerConfig
-    fn parse_event_handlers(
+    pub fn parse_event_handlers(
         handlers_json: Vec<serde_json::Value>,
     ) -> Result<crate::scripting::EventHandlerConfig> {
         use crate::scripting::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};

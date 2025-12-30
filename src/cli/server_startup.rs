@@ -389,21 +389,23 @@ pub async fn start_server_from_action(
 
     // Configure event handlers if provided
     if let Some(handlers) = event_handlers {
-        use crate::scripting::{EventHandler, EventHandlerConfig};
-
-        let event_handlers: Vec<EventHandler> = handlers
-            .into_iter()
-            .filter_map(|h| serde_json::from_value(h).ok())
-            .collect();
-
-        if !event_handlers.is_empty() {
-            state
-                .with_server_mut(server_id, |s| {
-                    s.event_handler_config = Some(EventHandlerConfig {
-                        handlers: event_handlers,
-                    });
-                })
-                .await;
+        // Use proper validation that checks LLM handler instruction field
+        match crate::events::handler::EventHandler::parse_event_handlers(handlers) {
+            Ok(config) => {
+                state
+                    .with_server_mut(server_id, |s| {
+                        s.event_handler_config = Some(config);
+                    })
+                    .await;
+                let _ = status_tx.send("[INFO] Event handler configuration applied".to_string());
+            }
+            Err(e) => {
+                // Return error instead of just warning - invalid config should fail
+                return Err(anyhow::anyhow!(
+                    "Invalid event handler configuration: {}",
+                    e
+                ));
+            }
         }
     }
 
