@@ -536,10 +536,12 @@ pub fn open_server_action(
 Each handler has:\\n\
 - event_pattern: Event ID to match (e.g., \\\"tcp_data_received\\\") or \\\"*\\\" for all events\\n\
 - handler: Object with:\\n\
-  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n\
+  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n\\n\
+REQUIRED FIELDS BY TYPE:\\n\
   - For script: language ({}), code (inline script)\\n\
   - For static: actions (array of action objects)\\n\
-  - For llm: instruction (REQUIRED - describes how the LLM should handle this event)\\n\\n\
+  - For llm: instruction (string, REQUIRED) - describes how the LLM should handle this event\\n\\n\
+CRITICAL: LLM handlers MUST include 'instruction' field. Example: {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"Handle HTTP requests...\\\"}}\\n\\n\
 SCRIPT EVENT DATA STRUCTURE:\\n\
 Scripts receive JSON via stdin with this structure:\\n\
 {{\\n\
