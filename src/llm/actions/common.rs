@@ -176,8 +176,7 @@ pub enum CommonAction {
         send_first: bool,
         #[serde(default)]
         initial_memory: Option<String>,
-        /// Server instruction for LLM. Optional when using static/script handlers exclusively.
-        #[serde(default)]
+        /// Server instruction for LLM (required)
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
@@ -205,8 +204,7 @@ pub enum CommonAction {
     OpenClient {
         protocol: String,
         remote_addr: String,
-        /// Client instruction for LLM. Optional when using static/script handlers exclusively.
-        #[serde(default)]
+        /// Client instruction for LLM (required)
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
