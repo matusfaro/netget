@@ -392,7 +392,7 @@ termbg = "0.5"  # Terminal background detection for adaptive theming
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "http2"] }
 
 # Ollama Rust client
-ollama-rs = { version = "0.3", features = ["stream"] }
+ollama-rs = { version = "0.3.3", features = ["stream"] }
 
 # HTTP server
 hyper = { version = "1.5", features = ["full"] }

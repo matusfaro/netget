@@ -399,7 +399,7 @@ impl ConversationHandler {
             let (original_response, cleaned_response) = self
                 .generate_with_retry()
                 .await
-                .context("✗  LLM failed to generate valid response after retries.\n   This may indicate:\n   1. Ollama is not running or not accessible\n   2. Model is not available or not loaded\n   3. Network/connection issues\n   \n   Use `/model` to check and select an available model")?;
+                .context("✗  LLM failed to generate valid response after retries.")?;
 
             // Add assistant's response to conversation history (with reasoning preserved)
             self.messages
@@ -420,27 +420,36 @@ impl ConversationHandler {
             let action_response = ActionResponse::from_str(&json_only)
                 .context("Failed to parse action response (should not happen after retry)")?;
 
-            // Resolve references in actions (replace <tagname> placeholders with actual content)
+            // Resolve references in both tools and actions (replace <tagname> placeholders with actual content)
+            let resolve_refs = |item: serde_json::Value| {
+                let mut resolved_item = item;
+                // Convert to JSON string, resolve references, parse back
+                if let Ok(item_json) = serde_json::to_string(&resolved_item) {
+                    if crate::llm::reference_parser::contains_references(&item_json) {
+                        let resolved_json = crate::llm::reference_parser::resolve_references(&item_json, &references);
+                        if let Ok(new_item) = serde_json::from_str(&resolved_json) {
+                            resolved_item = new_item;
+                        }
+                    }
+                }
+                resolved_item
+            };
+
+            let tools_with_refs: Vec<_> = action_response
+                .tools
+                .into_iter()
+                .map(&resolve_refs)
+                .collect();
+
             let actions_with_refs: Vec<_> = action_response
                 .actions
                 .into_iter()
-                .map(|action| {
-                    let mut resolved_action = action;
-                    // Convert to JSON string, resolve references, parse back
-                    if let Ok(action_json) = serde_json::to_string(&resolved_action) {
-                        if crate::llm::reference_parser::contains_references(&action_json) {
-                            let resolved_json = crate::llm::reference_parser::resolve_references(&action_json, &references);
-                            if let Ok(new_action) = serde_json::from_str(&resolved_json) {
-                                resolved_action = new_action;
-                            }
-                        }
-                    }
-                    resolved_action
-                })
+                .map(&resolve_refs)
                 .collect();
 
             // Create new action response with resolved references
             let action_response = ActionResponse {
+                tools: tools_with_refs,
                 actions: actions_with_refs,
             };
 
@@ -533,11 +542,11 @@ impl ConversationHandler {
                 continue;
             }
 
-            // Separate tool calls from regular actions
-            let (tools, regular): (Vec<_>, Vec<_>) = action_response
-                .actions
-                .into_iter()
-                .partition(ToolAction::is_tool_action);
+            // Get tool calls and regular actions from separate fields
+            // Note: action_response.tools and action_response.actions are already separated
+            // by the parsing logic (with backward compatibility for old format)
+            let tools = action_response.tools;
+            let regular = action_response.actions;
 
             // Validate regular actions by trying to parse them as CommonAction
             // This catches missing required parameters before execution
@@ -720,7 +729,6 @@ impl ConversationHandler {
                                 ToolAction::ReadServerDocumentation { .. } => "read_server_documentation",
                                 ToolAction::ReadClientDocumentation { .. } => "read_client_documentation",
                                 ToolAction::ReadDocumentation { .. } => "read_documentation",
-                                ToolAction::ListNetworkInterfaces => "list_network_interfaces",
                                 ToolAction::ListModels => "list_models",
                                 ToolAction::GenerateRandom { .. } => "generate_random",
                             };
@@ -1134,10 +1142,12 @@ impl ConversationHandler {
                 .await
                 .context("Rate limit exceeded")?;
 
-            // Call generate API with concatenated prompt and JSON format
+            // Call generate API with concatenated prompt
+            // We rely on prompt engineering for JSON responses rather than format enforcement,
+            // as some models (e.g., gpt-oss) don't support Ollama's JSON format mode
             let generate_response = self
                 .client
-                .generate_with_format(&self.model, &full_prompt, Some(serde_json::json!("json")))
+                .generate_with_format(&self.model, &full_prompt, None)
                 .await
                 .context("Generate API call failed")?;
 

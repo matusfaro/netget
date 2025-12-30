@@ -89,9 +89,6 @@ pub enum ToolAction {
         protocol: Option<String>,
     },
 
-    /// List available network interfaces for DataLink/IP layer protocols
-    ListNetworkInterfaces,
-
     /// List available models from Ollama
     ListModels,
 
@@ -154,11 +151,10 @@ impl ToolAction {
                     | "read_server_documentation"
                     | "read_client_documentation"
                     | "read_documentation"
-                    | "list_network_interfaces"
                     | "list_models"
                     | "generate_random"
             ) {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_documentation, list_network_interfaces, list_models, generate_random", action_type);
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_documentation, list_models, generate_random", action_type);
             }
         }
 
@@ -176,7 +172,6 @@ impl ToolAction {
                     | "read_server_documentation"
                     | "read_client_documentation"
                     | "read_documentation"
-                    | "list_network_interfaces"
                     | "list_models"
                     | "generate_random"
             )
@@ -232,7 +227,6 @@ impl ToolAction {
                 let all_protocols = Self::merge_protocols(protocols, protocol);
                 format!("read_documentation: {:?}", all_protocols)
             }
-            ToolAction::ListNetworkInterfaces => "list_network_interfaces".to_string(),
             ToolAction::ListModels => "list_models: query available Ollama models".to_string(),
             ToolAction::GenerateRandom {
                 data_type,
@@ -1370,86 +1364,6 @@ pub fn read_base_stack_docs_action() -> ActionDefinition {
     }
 }
 
-/// Get server protocol documentation action definition
-pub fn read_server_documentation_action() -> ActionDefinition {
-    // Get all available server protocols from registry
-    let registry = crate::protocol::server_registry::registry();
-    let mut all_protocols: Vec<String> = registry
-        .all_protocols()
-        .into_iter()
-        .filter(|(_, protocol)| {
-            registry
-                .metadata(protocol.protocol_name())
-                .map(|m| m.is_available_to_llm())
-                .unwrap_or(true)
-        })
-        .map(|(name, _)| name)
-        .collect();
-
-    // Sort protocols alphabetically for deterministic output
-    all_protocols.sort();
-
-    let protocol_list = if all_protocols.is_empty() {
-        "No server protocols available".to_string()
-    } else {
-        all_protocols.join(", ")
-    };
-
-    ActionDefinition {
-        name: "read_server_documentation".to_string(),
-        description: format!(
-            "Get detailed documentation for one or more server protocols. Returns comprehensive information including description, startup parameters, examples, and keywords. **REQUIRED before using open_server** - you must read documentation for a protocol before starting a server with it. Available server protocols: {}",
-            protocol_list
-        ),
-        parameters: vec![Parameter {
-            name: "protocols".to_string(),
-            type_hint: "array".to_string(),
-            description: "Array of server protocol names to get documentation for (e.g., ['HTTP', 'SSH', 'DNS']). Use uppercase.".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "read_server_documentation",
-            "protocols": ["HTTP"]
-        }),
-        log_template: None,
-    }
-}
-
-/// Get client protocol documentation action definition
-pub fn read_client_documentation_action() -> ActionDefinition {
-    // Get all available client protocols from registry
-    let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
-    let mut all_protocols: Vec<String> = client_registry.list_protocols();
-
-    // Sort protocols alphabetically for deterministic output
-    all_protocols.sort();
-
-    let protocol_list = if all_protocols.is_empty() {
-        "No client protocols available".to_string()
-    } else {
-        all_protocols.join(", ")
-    };
-
-    ActionDefinition {
-        name: "read_client_documentation".to_string(),
-        description: format!(
-            "Get detailed documentation for one or more client protocols. Returns comprehensive information including description, startup parameters, examples, and keywords. **REQUIRED before using open_client** - you must read documentation for a protocol before starting a client with it. Available client protocols: {}",
-            protocol_list
-        ),
-        parameters: vec![Parameter {
-            name: "protocols".to_string(),
-            type_hint: "array".to_string(),
-            description: "Array of client protocol names to get documentation for (e.g., ['http', 'redis', 'ssh']). Use lowercase.".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "read_client_documentation",
-            "protocols": ["http"]
-        }),
-        log_template: None,
-    }
-}
-
 /// Get unified protocol documentation action definition
 ///
 /// This unified tool replaces both `read_server_documentation` and `read_client_documentation`.
@@ -1499,29 +1413,13 @@ pub fn read_documentation_action() -> ActionDefinition {
     ActionDefinition {
         name: "read_documentation".to_string(),
         description: format!(
-            r#"Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
-
-**LIMIT**: Maximum 5 protocols per call. Request will fail if more than 5 are specified.
-
-## CRITICAL: When to Use Server vs Client Mode
-
-**Server Mode (open_server)** - Use when user wants to HOST/SERVE content:
-- Keywords: "serve", "host", "listen", "provide", "run server", "start server"
-- You LISTEN on a port and RESPOND to incoming requests
-- Examples: "host a website", "start HTTP server", "serve data on port 8080"
-
-**Client Mode (open_client)** - Use when user wants to CONNECT to existing remote server:
-- Keywords: "connect to", "fetch from", "query", "send to", "access remote"
-- You CONNECT to a remote server and SEND requests to it
-- Examples: "connect to Redis at localhost:6379", "send ping to host"
-
-**⚠️ IMPORTANT**: If user says "serve", "host", or "provide", use `open_server` even if they say "client". The ACTION matters more than the word choice!
+            r#"Get detailed protocol documentation. After you fetch documentation, you will be able to open a server or a client.
 
 ## Available Protocols
 
-**Server protocols** (use with open_server): {}
+**Server protocols**: {}
 
-**Client protocols** (use with open_client): {}"#,
+**Client protocols**: {}"#,
             server_list, client_list
         ),
         parameters: vec![Parameter {
@@ -1533,19 +1431,6 @@ pub fn read_documentation_action() -> ActionDefinition {
         example: json!({
             "type": "read_documentation",
             "protocols": all_protocols
-        }),
-        log_template: None,
-    }
-}
-
-/// Get list network interfaces action definition
-pub fn list_network_interfaces_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_network_interfaces".to_string(),
-        description: "List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_network_interfaces"
         }),
         log_template: None,
     }
@@ -1631,8 +1516,6 @@ pub fn get_all_tool_actions(
         generate_random_action(), // Put first - LLMs need this for mock data
         read_file_action(),
         read_documentation_action(), // Unified tool for both server and client docs
-        list_network_interfaces_action(),
-        list_models_action(),
     ];
 
     // Include web search tool for both ON and ASK modes (not for OFF)
@@ -1661,10 +1544,6 @@ pub fn get_network_event_tool_actions(
     let mut actions = vec![
         generate_random_action(), // Put first - LLMs need this for mock data
         read_file_action(),
-        // Explicitly exclude read_server_documentation_action() and read_client_documentation_action()
-        // These mention open_server/open_client in their descriptions and confuse the LLM
-        list_network_interfaces_action(),
-        list_models_action(),
     ];
 
     // Include web search tool for both ON and ASK modes (not for OFF)
@@ -1678,74 +1557,6 @@ pub fn get_network_event_tool_actions(
     }
 
     actions
-}
-
-/// Execute list_network_interfaces tool
-async fn execute_list_network_interfaces() -> ToolResult {
-    use tracing::info;
-
-    info!("🔧 Tool: list_network_interfaces");
-    debug!("Listing available network interfaces");
-
-    // Check if datalink feature is enabled (required for pcap)
-    #[cfg(not(feature = "datalink"))]
-    {
-        warn!("DataLink feature not enabled, cannot list network interfaces");
-        info!("  ✗ DataLink feature not enabled");
-        ToolResult::error(
-            "list_network_interfaces",
-            "list interfaces",
-            "DataLink feature not enabled. Rebuild with --features datalink to use this tool."
-                .to_string(),
-        )
-    }
-
-    #[cfg(feature = "datalink")]
-    {
-        // Use the DataLinkServer to list devices
-        match crate::server::datalink::DataLinkServer::list_devices() {
-            Ok(devices) => {
-                if devices.is_empty() {
-                    info!("  ⚠ No network interfaces found");
-                    return ToolResult::success(
-                        "list_network_interfaces",
-                        "list interfaces",
-                        "No network interfaces found. This may be due to permissions or pcap not being installed.",
-                    );
-                }
-
-                // Format device information
-                let mut result = String::from("Available network interfaces:\n\n");
-                for (i, device) in devices.iter().enumerate() {
-                    result.push_str(&format!("{}. {}\n", i + 1, device.name));
-                    if let Some(ref desc) = device.desc {
-                        if !desc.is_empty() {
-                            result.push_str(&format!("   Description: {}\n", desc));
-                        }
-                    }
-                    result.push('\n');
-                }
-
-                // Add helpful note
-                result
-                    .push_str("Note: Use these interface names when starting DataLink servers.\n");
-                result.push_str("Example: \"listen on interface eth0 via datalink\"\n");
-
-                debug!("Found {} network interfaces", devices.len());
-                info!("  ✓ Found {} network interfaces", devices.len());
-                ToolResult::success("list_network_interfaces", "list interfaces", result)
-            }
-            Err(e) => {
-                error!("Failed to list network interfaces: {}", e);
-                info!("  ✗ Failed to list interfaces: {}", e);
-                ToolResult::error(
-                    "list_network_interfaces",
-                    "list interfaces",
-                    format!("Failed to list network interfaces: {}. This may be due to missing permissions or pcap not being installed.", e),
-                )
-            }
-        }
-    }
 }
 
 /// Execute a tool action
@@ -1857,7 +1668,6 @@ pub async fn execute_tool(
             let all_protocols = ToolAction::merge_protocols(protocols, protocol);
             execute_read_documentation(&all_protocols).await
         }
-        ToolAction::ListNetworkInterfaces => execute_list_network_interfaces().await,
         ToolAction::ListModels => execute_list_models().await,
         ToolAction::GenerateRandom {
             data_type,

@@ -453,7 +453,10 @@ pub fn open_server_action(
             Parameter {
                 name: "interface".to_string(),
                 type_hint: "string".to_string(),
-                description: "Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Examples: \"lo\" (loopback), \"eth0\", \"en0\". Port-based protocols (TCP, HTTP, DNS) don't use this.".to_string(),
+                description: "Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). \
+                    Common interface names: \"lo\" or \"lo0\" (loopback), \"eth0\" or \"en0\" (Ethernet), \"wlan0\" (WiFi). \
+                    NOTE: Only specify if the protocol specifically requires it (e.g., DataLink). Most port-based protocols (TCP, HTTP, DNS) don't use this. \
+                    If you need to discover available interfaces, you can try common names like \"lo\" for loopback or use the system's default interface by omitting this parameter.".to_string(),
                 required: false,
             },
             Parameter {
@@ -965,7 +968,7 @@ pub fn append_memory_action() -> ActionDefinition {
 pub fn append_to_log_action() -> ActionDefinition {
     ActionDefinition {
         name: "append_to_log".to_string(),
-        description: "Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.".to_string(),
+        description: "If you are asked to log information for the user, use this to append logs to a file. Use this to create access logs, audit trails, or any persistent logging.".to_string(),
         parameters: vec![
             Parameter {
                 name: "output_name".to_string(),
@@ -1348,7 +1351,7 @@ pub fn get_all_common_actions(
     actions.push(list_tasks_action());
 
     // === System/Utility ===
-    actions.push(change_model_action());
+    // actions.push(change_model_action());
     actions.push(show_message_action());
     actions.push(append_to_log_action());
 

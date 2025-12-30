@@ -313,11 +313,17 @@ pub struct Parameter {
     pub required: bool,
 }
 
-/// Response from LLM containing array of actions
+/// Response from LLM containing tools and/or actions
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ActionResponse {
-    /// Array of actions to execute in order
+    /// Array of protocol-specific actions to execute in order
+    #[serde(default)]
     pub actions: Vec<serde_json::Value>,
+
+    /// Array of tool calls (read_file, web_search, generate_random, etc.)
+    /// Tools are executed before actions and their results feed back to the LLM
+    #[serde(default)]
+    pub tools: Vec<serde_json::Value>,
 }
 
 impl ActionResponse {
@@ -345,25 +351,123 @@ impl ActionResponse {
             trimmed
         };
 
-        // Strip any extra characters before the JSON object
+        // Strip any extra characters before the JSON object or array
         // Sometimes LLMs add extra text like "Y{" instead of just "{"
-        let json_start = json_str.find('{').unwrap_or(0);
+        let json_start = json_str.find('{').or_else(|| json_str.find('[')).unwrap_or(0);
         let clean_json = &json_str[json_start..];
 
-        serde_json::from_str::<ActionResponse>(clean_json).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to parse action response: {}\n\n❌ Expected format:\n{{\n  \"actions\": [\n    {{ \"type\": \"...\", ... }}\n  ]\n}}\n\n❌ Actual response:\n{}",
-                e,
+        // Try parsing as a single object first (most common case)
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(clean_json) {
+            match json_value {
+                // Case 1: Full response object with tools and/or actions fields
+                serde_json::Value::Object(ref map) if map.contains_key("tools") || map.contains_key("actions") => {
+                    match serde_json::from_value::<ActionResponse>(json_value.clone()) {
+                        Ok(mut response) => {
+                            // Separate tools and actions if mixed (support cross-contamination)
+                            Self::separate_tools_and_actions(&mut response);
+                            return Ok(response);
+                        }
+                        Err(e) => {
+                            anyhow::bail!(
+                                "Failed to parse action response\n\n❌ Expected format:\n{{\n  \"tools\": [...],\n  \"actions\": [...]\n}}\n\n❌ Actual response:\n{}\n\nError: {}",
+                                clean_json,
+                                e
+                            )
+                        }
+                    }
+                }
+
+                // Case 2: Single action/tool object at top level {"type": "...", ...}
+                serde_json::Value::Object(ref map) if map.contains_key("type") => {
+                    use crate::llm::actions::tools::ToolAction;
+                    let mut response = ActionResponse::empty();
+
+                    if ToolAction::is_tool_action(&json_value) {
+                        response.tools.push(json_value);
+                    } else {
+                        response.actions.push(json_value);
+                    }
+                    return Ok(response);
+                }
+
+                // Case 3: Top-level array [{"type": "..."}, ...]
+                serde_json::Value::Array(items) => {
+                    use crate::llm::actions::tools::ToolAction;
+                    let mut response = ActionResponse::empty();
+
+                    for item in items {
+                        if ToolAction::is_tool_action(&item) {
+                            response.tools.push(item);
+                        } else {
+                            response.actions.push(item);
+                        }
+                    }
+                    return Ok(response);
+                }
+
+                // Case 4: Empty object {} - return empty response
+                serde_json::Value::Object(ref map) if map.is_empty() => {
+                    return Ok(ActionResponse::empty());
+                }
+
+                // Unrecognized format
+                _ => {
+                    anyhow::bail!(
+                        "Failed to parse action response: Unrecognized format\n\n❌ Expected one of:\n\
+                        1. {{\n     \"tools\": [...],\n     \"actions\": [...]\n   }}\n\
+                        2. {{\"type\": \"...\", ...}}\n\
+                        3. [{{\"type\": \"...\"}}, ...]\n\n❌ Actual response:\n{}",
+                        clean_json
+                    )
+                }
+            }
+        } else {
+            anyhow::bail!(
+                "Failed to parse action response: Invalid JSON\n\n❌ Actual response:\n{}",
                 clean_json
             )
-        })
+        }
+    }
+
+    /// Separate tools and actions if they are mixed (cross-contamination support)
+    /// This handles cases where tools are in the actions array or vice versa
+    fn separate_tools_and_actions(response: &mut ActionResponse) {
+        use crate::llm::actions::tools::ToolAction;
+
+        // Check tools array for misplaced actions
+        if !response.tools.is_empty() {
+            let (actual_tools, misplaced_actions): (Vec<_>, Vec<_>) =
+                response.tools.clone().into_iter()
+                    .partition(|item| ToolAction::is_tool_action(item));
+
+            response.tools = actual_tools;
+            response.actions.extend(misplaced_actions);
+        }
+
+        // Check actions array for misplaced tools
+        if !response.actions.is_empty() {
+            let (misplaced_tools, actual_actions): (Vec<_>, Vec<_>) =
+                response.actions.clone().into_iter()
+                    .partition(|item| ToolAction::is_tool_action(item));
+
+            response.actions = actual_actions;
+            response.tools.extend(misplaced_tools);
+        }
     }
 
     /// Create empty action response
     pub fn empty() -> Self {
         Self {
             actions: Vec::new(),
+            tools: Vec::new(),
         }
+    }
+
+    /// Get all actions (combining tools and actions for backward compatibility)
+    pub fn all_actions(&self) -> Vec<serde_json::Value> {
+        let mut all = self.tools.clone();
+        all.extend(self.actions.clone());
+        all
     }
 }
 

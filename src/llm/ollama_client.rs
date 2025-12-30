@@ -441,12 +441,13 @@ impl OllamaClient {
 
         // TRACE: Full payload
         trace!("Full LLM prompt:\n{}", prompt);
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send("[TRACE] LLM prompt:".to_string());
-            for line in crate::llm::format_indented_dimmed_lines(prompt, 8) {
-                let _ = tx.send(format!("[TRACE] {}", line));
-            }
-        }
+        // Disable prompt logging, it's too much
+        // if let Some(ref tx) = self.status_tx {
+        //     let _ = tx.send("[TRACE] LLM prompt:".to_string());
+        //     for line in crate::llm::format_indented_dimmed_lines(prompt, 8) {
+        //         let _ = tx.send(format!("[TRACE] {}", line));
+        //     }
+        // }
         if let Some(ref schema) = format {
             trace!(
                 "JSON schema:\n{}",
@@ -524,6 +525,20 @@ impl OllamaClient {
                 token_usage.completion_tokens,
                 token_usage.total_tokens
             ));
+        }
+
+        // Check for empty response (model may be incompatible with JSON format)
+        if api_response.response.is_empty() || api_response.response.trim().is_empty() {
+            let error_msg = format!(
+                "Model '{}' returned empty response (used {} completion tokens).",
+                model,
+                token_usage.completion_tokens
+            );
+            error!("{}", error_msg);
+            if let Some(ref tx) = self.status_tx {
+                let _ = tx.send(format!("[ERROR] {}", error_msg));
+            }
+            return Err(anyhow::anyhow!(error_msg));
         }
 
         // TRACE: Full payload with pretty-printed JSON if possible

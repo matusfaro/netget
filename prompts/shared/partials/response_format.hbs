@@ -6,14 +6,22 @@
 
 ## Required Format
 
-```
-{"actions": [{"type": "read_file", "path": "config.json"}]}
+```json
+{
+  "tools": [{"type": "read_file", "path": "config.json"}],
+  "actions": [{"type": "open_server", "port": 8080, "base_stack": "http"}]
+}
 ```
 
 - Must start with `{` and end with `}`
-- The `actions` array contains one or more action objects
-- Actions execute in order
-- You can mix tools and actions in the same response
+- **`tools`** (optional): Array of tool calls (read_file, web_search, generate_random, etc.)
+  - Tools are executed FIRST and their results feed back to you before actions execute
+  - Use tools to gather information before deciding on actions
+- **`actions`** (optional): Array of protocol-specific actions (open_server, close_server, etc.)
+  - Actions execute AFTER tools complete
+  - Actions execute in order
+- You can use `tools` only, `actions` only, or BOTH in the same response
+- Both arrays are optional - you can omit either if empty
 
 ## Optional Reasoning
 
@@ -41,42 +49,85 @@ Brief explanation of your understanding and decision (1-3 sentences)
 
 ## Examples
 
-✓ **Valid (simple):**
+✓ **Valid (tools only):**
 ```json
-{"actions": [{"type": "show_message", "message": "Hello"}]}
+{
+  "tools": [
+    {"type": "read_file", "path": "config.json", "mode": "full"}
+  ]
+}
+```
+
+✓ **Valid (actions only):**
+```json
+{
+  "actions": [
+    {"type": "show_message", "message": "Hello"}
+  ]
+}
+```
+
+✓ **Valid (both tools and actions):**
+```json
+{
+  "tools": [
+    {"type": "read_file", "path": "config.json"},
+    {"type": "generate_random", "data_type": "uuid"}
+  ],
+  "actions": [
+    {"type": "open_server", "port": 8080, "base_stack": "http"},
+    {"type": "show_message", "message": "Server started"}
+  ]
+}
 ```
 
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
+{
+  "tools": [{"type": "read_documentation", "protocols": ["http"]}]
+}
+```
+
+✓ **Valid (multiple tools):**
+```json
+{
+  "tools": [
+    {"type": "web_search", "query": "https://datatracker.ietf.org/doc/html/rfc7231"},
+    {"type": "generate_random", "data_type": "uuid"}
+  ]
+}
 ```
 
 ✓ **Valid (multiple actions):**
 ```json
-{"actions": [
-  {"type": "read_file", "path": "config.json", "mode": "full"},
-  {"type": "show_message", "message": "Config loaded successfully"}
-]}
+{
+  "actions": [
+    {"type": "close_server", "server_id": 1},
+    {"type": "open_server", "port": 9090, "base_stack": "http"}
+  ]
+}
 ```
 
 ✗ **Invalid** (explanation before JSON):
 ```
 Here's what I'll do:
-{"actions": [...]}
+{"tools": [...]}
 ```
 
 ✗ **Invalid** (markdown code block):
 ```
 ```json
-{"actions": [...]}
+{"tools": [...]}
 ```
 ```
 
 ## JSON Rules
 
 1. **Valid JSON required** - Must be valid JSON after reasoning tag removed
-2. **Actions array required** - Even if empty: `{"actions": []}`
-3. **One action per object** - Each action in a separate object in the array
-4. **Exact parameter names** - Use the parameter names exactly as documented
-5. **Appropriate types** - Numbers should be numbers, not strings
+2. **Use appropriate keys** - `tools` for tool calls, `actions` for protocol actions
+3. **Tools execute first** - Tools gather information, then actions execute based on results
+4. **Both keys optional** - Omit empty arrays: `{"tools": [...]}` or `{"actions": [...]}` or both
+5. **One action per object** - Each tool/action in a separate object in the array
+6. **Exact parameter names** - Use the parameter names exactly as documented
+7. **Appropriate types** - Numbers should be numbers, not strings
