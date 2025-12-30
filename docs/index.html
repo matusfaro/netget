@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetGet - LLM-Controlled Network Protocols</title>
+    <meta name="description" content="Spin up any network server or client in seconds using natural language. NetGet lets an LLM control 50+ protocols - no code required.">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="NetGet - LLM-Controlled Network Protocols">
+    <meta property="og:description" content="Spin up any network server or client in seconds using natural language. 50+ protocols, zero boilerplate.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://matusfaro.github.io/netget">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <pre class="ascii-logo">
+ _   _      _    ____      _
+| \ | | ___| |_ / ___| ___| |_
+|  \| |/ _ \ __| |  _ / _ \ __|
+| |\  |  __/ |_| |_| |  __/ |_
+|_| \_|\___|\__|\____|\___|\__|
+        </pre>
+        <p class="tagline">Speak network. Skip the boilerplate.<span class="cursor">_</span></p>
+    </header>
+
+    <main>
+        <!-- Hero -->
+        <section class="section">
+            <p class="hero-text">
+                Spin up network servers and clients using plain English.
+                50+ protocols. LLM figures out the rest.
+            </p>
+
+            <div class="terminal">
+                <div class="terminal-header">
+                    <span class="terminal-dot red"></span>
+                    <span class="terminal-dot yellow"></span>
+                    <span class="terminal-dot green"></span>
+                    <span class="terminal-title">netget</span>
+                </div>
+                <div class="terminal-body">
+                    <div class="terminal-line"><span class="prompt">&gt;</span> listen on 8080 via HTTP, serve sassy responses</div>
+                    <div class="terminal-line output"><span class="cyan">[INFO]</span> HTTP server listening on 0.0.0.0:8080</div>
+                    <div class="terminal-line output"><span class="cyan">[INFO]</span> GET /api/status from 127.0.0.1</div>
+                    <div class="terminal-line output"><span class="dim">[LLM]</span> "Oh, you want status? Server's up. You're welcome."</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Response Modes -->
+        <section class="section">
+            <h2>Three Response Modes</h2>
+            <p class="section-subtitle">Pick your tradeoff: intelligence vs speed vs predictability</p>
+
+            <div class="mode-grid">
+                <div class="mode-card">
+                    <h4>LLM Mode</h4>
+                    <p class="mode-desc">Dynamic, context-aware responses. Can read files and search the web.</p>
+                    <div class="terminal terminal-small">
+                        <div class="terminal-body">
+                            <div class="terminal-line"><span class="prompt">&gt;</span> DNS server on 5353</div>
+                            <div class="terminal-line"><span class="prompt">&gt;</span> look up RFC 1035 and respond correctly</div>
+                            <div class="terminal-line"><span class="prompt">&gt;</span> resolve *.local to 127.0.0.1</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mode-card">
+                    <h4>Static Mode</h4>
+                    <p class="mode-desc">Fixed responses. Zero latency, zero LLM calls after setup.</p>
+                    <div class="terminal terminal-small">
+                        <div class="terminal-body">
+                            <div class="terminal-line"><span class="prompt">&gt;</span> HTTP server on 3000</div>
+                            <div class="terminal-line"><span class="prompt">&gt;</span> /health returns {"status": "ok"}</div>
+                            <div class="terminal-line"><span class="prompt">&gt;</span> /version returns {"v": "1.2.3"}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mode-card">
+                    <h4>Scripting Mode</h4>
+                    <p class="mode-desc">Python/JavaScript handlers. Full control, deterministic.</p>
+                    <div class="terminal terminal-small">
+                        <div class="terminal-body">
+                            <div class="terminal-line"><span class="prompt">&gt;</span> HTTP server on 4000, use scripting</div>
+                            <div class="terminal-line"><span class="prompt">&gt;</span> /time returns: new Date().toISOString()</div>
+                            <div class="terminal-line"><span class="prompt">&gt;</span> /random returns: Math.random()</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Examples -->
+        <section class="section">
+            <h2>Examples</h2>
+
+            <div class="example">
+                <h4>SSH Honeypot</h4>
+                <div class="terminal terminal-small">
+                    <div class="terminal-body">
+                        <div class="terminal-line"><span class="prompt">&gt;</span> SSH server on 2222, pretend to be Ubuntu 22.04</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> accept any password, log everything</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> when they run "cat /etc/passwd", show fake users</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="example">
+                <h4>Mock Database</h4>
+                <div class="terminal terminal-small">
+                    <div class="terminal-body">
+                        <div class="terminal-line"><span class="prompt">&gt;</span> MySQL server, read schema.json for structure</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> answer SELECT queries with realistic fake data</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> reject DROP and DELETE with "nice try"</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="example">
+                <h4>Protocol from RFC</h4>
+                <div class="terminal terminal-small">
+                    <div class="terminal-body">
+                        <div class="terminal-line"><span class="prompt">&gt;</span> TCP server on 4545</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> search for RFC 959 (FTP) and implement it</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> serve files from ./public directory</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="example">
+                <h4>API with Personality</h4>
+                <div class="terminal terminal-small">
+                    <div class="terminal-body">
+                        <div class="terminal-line"><span class="prompt">&gt;</span> HTTP on 8080, you're a grumpy sysadmin</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> answer questions about Linux but complain about it</div>
+                        <div class="terminal-line"><span class="prompt">&gt;</span> if asked about Windows, refuse dramatically</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Capabilities -->
+        <section class="section">
+            <h2>Capabilities</h2>
+            <div class="capabilities">
+                <div class="capability">
+                    <strong>Web Search</strong> - LLM can look up RFCs, docs, or any info to respond correctly
+                </div>
+                <div class="capability">
+                    <strong>File Access</strong> - Read local files to serve content or use as context
+                </div>
+                <div class="capability">
+                    <strong>Memory</strong> - Remembers conversation context across requests
+                </div>
+                <div class="capability">
+                    <strong>Scheduled Tasks</strong> - Cron-like actions: broadcast, cleanup, keepalives
+                </div>
+                <div class="capability">
+                    <strong>Both Directions</strong> - Run as server OR client for any protocol
+                </div>
+            </div>
+        </section>
+
+        <!-- Protocols -->
+        <section class="section">
+            <h2>Protocols</h2>
+            <div class="osi-stack">
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">7</span>
+                        <span class="osi-name">Application</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>HTTP</span><span>SSH</span><span>DNS</span><span>FTP</span><span>SMTP</span><span>IMAP</span><span>LDAP</span><span>SNMP</span><span>NTP</span><span>DHCP</span><span>Telnet</span><span>IRC</span><span>XMPP</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">7</span>
+                        <span class="osi-name">Databases</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>MySQL</span><span>PostgreSQL</span><span>Redis</span><span>MongoDB</span><span>Elasticsearch</span><span>Cassandra</span><span>etcd</span><span>Kafka</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">7</span>
+                        <span class="osi-name">Web & RPC</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>HTTP/2</span><span>HTTP/3</span><span>WebSocket</span><span>gRPC</span><span>GraphQL</span><span>REST</span><span>JSON-RPC</span><span>XML-RPC</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">7</span>
+                        <span class="osi-name">Auth & Identity</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>OAuth2</span><span>SAML</span><span>OpenID</span><span>Kerberos</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">7</span>
+                        <span class="osi-name">Messaging</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>MQTT</span><span>AMQP</span><span>STOMP</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">6</span>
+                        <span class="osi-name">Presentation</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>TLS</span><span>SSL</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">5</span>
+                        <span class="osi-name">Session</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>SOCKS5</span><span>RPC</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">4</span>
+                        <span class="osi-name">Transport</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>TCP</span><span>UDP</span><span>QUIC</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">3</span>
+                        <span class="osi-name">Network</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>BGP</span><span>OSPF</span><span>IS-IS</span><span>RIP</span><span>ICMP</span><span>WireGuard</span><span>OpenVPN</span><span>IPSec</span><span>Tor</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">2</span>
+                        <span class="osi-name">Data Link</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>ARP</span><span>Ethernet</span>
+                    </div>
+                </div>
+                <div class="osi-layer">
+                    <div class="osi-label">
+                        <span class="osi-number">1</span>
+                        <span class="osi-name">Physical</span>
+                    </div>
+                    <div class="osi-protocols">
+                        <span>Bluetooth BLE</span><span>USB/IP</span><span>NFC</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Get Started -->
+        <section class="section">
+            <h2>Get Started</h2>
+
+            <div class="code-block">
+                <button class="copy-btn" data-target="quickstart">Copy</button>
+                <pre id="quickstart"><code><span class="comment"># Install Ollama</span>
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama pull qwen3-coder:30b
+
+<span class="comment"># Build NetGet</span>
+git clone https://github.com/matusfaro/netget.git
+cd netget && cargo build --release --features tcp,http,ssh,dns
+
+<span class="comment"># Run</span>
+./target/release/netget</code></pre>
+            </div>
+
+            <p class="note">
+                <strong>Requirements:</strong> Rust, ~8GB RAM for LLM<br>
+                <strong>Tip:</strong> Use <code>--features X,Y,Z</code> for faster builds
+            </p>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="https://github.com/matusfaro/netget" class="github-link">
+                <svg class="github-icon" viewBox="0 0 16 16" width="20" height="20">
+                    <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                </svg>
+                GitHub
+            </a>
+        </div>
+        <div class="footer-info">
+            <a href="https://github.com/matusfaro/netget/blob/master/LICENSE" class="license-link">AGPL-3.0</a>
+            <span class="separator">|</span>
+            <span>Built with Claude</span>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
