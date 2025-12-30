@@ -14,6 +14,11 @@ use crate::llm::{execute_actions, CommonAction, Server};
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
 
+/// Whether to require documentation reading before enabling open_server/open_client actions
+/// Set to `false` to allow opening servers/clients immediately without reading docs first
+/// Set to `true` to require calling read_documentation tool before these actions are available
+const REQUIRE_DOCS_FOR_OPEN_ACTIONS: bool = false;
+
 /// Log detailed open_server action summary to the status channel
 fn log_open_server_summary(
     status_tx: &mpsc::UnboundedSender<String>,
@@ -21,7 +26,7 @@ fn log_open_server_summary(
     interface: &Option<String>,
     host: &Option<String>,
     port: Option<u16>,
-    base_stack: &str,
+    protocol: &str,
     send_first: bool,
     initial_memory: &Option<String>,
     instruction: &str,
@@ -34,7 +39,7 @@ fn log_open_server_summary(
     let _ = status_tx.send("[INFO] ═══ open_server ═══".to_string());
 
     // Basic server configuration
-    let _ = status_tx.send(format!("[INFO]   Protocol: {}", base_stack));
+    let _ = status_tx.send(format!("[INFO]   Protocol: {}", protocol));
     if let Some(p) = port {
         let _ = status_tx.send(format!("[INFO]   Port: {}", p));
     }
@@ -569,9 +574,17 @@ impl EventHandler {
         // Get conversation history from persistent state
         let conversation_history = self.state.get_user_conversation_history().await;
 
-        // Check if documentation has been read (enables open_server/open_client)
-        let is_open_server_enabled = self.state.is_server_docs_read().await;
-        let is_open_client_enabled = self.state.is_client_docs_read().await;
+        // Check if open_server/open_client should be enabled based on configuration
+        let is_open_server_enabled = if REQUIRE_DOCS_FOR_OPEN_ACTIONS {
+            self.state.is_server_docs_read().await
+        } else {
+            true
+        };
+        let is_open_client_enabled = if REQUIRE_DOCS_FOR_OPEN_ACTIONS {
+            self.state.is_client_docs_read().await
+        } else {
+            true
+        };
 
         // Build system prompt (without user input - that's added as a message)
         let system_prompt = PromptBuilder::build_user_input_system_prompt_with_docs(
@@ -768,7 +781,7 @@ impl EventHandler {
                 interface,
                 host,
                 port,
-                base_stack,
+                protocol,
                 send_first,
                 initial_memory,
                 instruction,
@@ -777,6 +790,58 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
+                // Check if documentation has been read for this protocol
+                // If not, return DocumentationRequired error which will trigger a retry with docs
+                if !self.state.is_server_docs_read().await {
+                    // Fetch documentation for this protocol
+                    use crate::llm::actions::tools::{ToolAction, execute_tool};
+                    let doc_tool = ToolAction::ReadDocumentation {
+                        protocols: vec![protocol.clone()],
+                        protocol: None,
+                    };
+
+                    // Execute the tool to get documentation
+                    let approval_tx = self.state.get_web_approval_channel().await;
+                    let web_search_mode = self.state.get_web_search_mode().await;
+                    let tool_result = execute_tool(&doc_tool, approval_tx.as_ref(), web_search_mode, Some(&self.state)).await;
+
+                    if tool_result.success {
+                        // Mark docs as read so we don't loop forever
+                        self.state.mark_server_protocols_documented(&[protocol.clone()]).await;
+
+                        // Build the original action JSON for reference
+                        let original_action = serde_json::json!({
+                            "type": "open_server",
+                            "mac_address": mac_address,
+                            "interface": interface,
+                            "host": host,
+                            "port": port,
+                            "protocol": protocol,
+                            "send_first": send_first,
+                            "initial_memory": initial_memory,
+                            "instruction": instruction,
+                            "startup_params": startup_params,
+                            "event_handlers": event_handlers,
+                            "scheduled_tasks": scheduled_tasks,
+                            "feedback_instructions": feedback_instructions,
+                        });
+
+                        // Return DocumentationRequired error with the documentation
+                        return Err(ActionExecutionError::DocumentationRequired {
+                            action_type: "open_server".to_string(),
+                            protocol: protocol.clone(),
+                            documentation: tool_result.result,
+                            original_action,
+                        });
+                    } else {
+                        // If documentation fetch fails, log warning but proceed
+                        let _ = status_tx.send(format!(
+                            "[WARN] Failed to fetch documentation for {}: {}. Proceeding anyway.",
+                            protocol, tool_result.result
+                        ));
+                    }
+                }
+
                 // Log detailed summary of the open_server action
                 log_open_server_summary(
                     status_tx,
@@ -784,7 +849,7 @@ impl EventHandler {
                     &interface,
                     &host,
                     port,
-                    &base_stack,
+                    &protocol,
                     send_first,
                     &initial_memory,
                     &instruction,
@@ -802,7 +867,7 @@ impl EventHandler {
                     interface,
                     host,
                     port,
-                    &base_stack,
+                    &protocol,
                     send_first,
                     initial_memory,
                     instruction,
@@ -832,7 +897,7 @@ impl EventHandler {
                             // Port conflict - create retryable error
                             return Err(ActionExecutionError::PortConflict {
                                 port: port.unwrap(),
-                                protocol: base_stack.to_string(),
+                                protocol: protocol.to_string(),
                                 underlying_error: error_msg,
                             });
                         } else {
@@ -1080,17 +1145,6 @@ impl EventHandler {
                     let _ = status_tx.send(format!("[WARN] Task '{}' not found", task_id));
                 }
             }
-            CommonAction::ListTasks => {
-                let tasks = self.state.get_all_tasks().await;
-                if tasks.is_empty() {
-                    let _ = status_tx.send("[TASK] No scheduled tasks".to_string());
-                } else {
-                    let _ = status_tx.send(format!("[TASK] {} scheduled task(s):", tasks.len()));
-                    for task in tasks {
-                        let _ = status_tx.send(format!("  {}", task.format_for_prompt()));
-                    }
-                }
-            }
             CommonAction::OpenClient {
                 protocol,
                 remote_addr,
@@ -1101,6 +1155,54 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
+                // Check if documentation has been read for this protocol
+                // If not, return DocumentationRequired error which will trigger a retry with docs
+                if !self.state.is_client_docs_read().await {
+                    // Fetch documentation for this protocol
+                    use crate::llm::actions::tools::{ToolAction, execute_tool};
+                    let doc_tool = ToolAction::ReadDocumentation {
+                        protocols: vec![protocol.clone()],
+                        protocol: None,
+                    };
+
+                    // Execute the tool to get documentation
+                    let approval_tx = self.state.get_web_approval_channel().await;
+                    let web_search_mode = self.state.get_web_search_mode().await;
+                    let tool_result = execute_tool(&doc_tool, approval_tx.as_ref(), web_search_mode, Some(&self.state)).await;
+
+                    if tool_result.success {
+                        // Mark docs as read so we don't loop forever
+                        self.state.mark_client_protocols_documented(&[protocol.clone()]).await;
+
+                        // Build the original action JSON for reference
+                        let original_action = serde_json::json!({
+                            "type": "open_client",
+                            "protocol": protocol,
+                            "remote_addr": remote_addr,
+                            "instruction": instruction,
+                            "startup_params": startup_params,
+                            "initial_memory": initial_memory,
+                            "event_handlers": event_handlers,
+                            "scheduled_tasks": scheduled_tasks,
+                            "feedback_instructions": feedback_instructions,
+                        });
+
+                        // Return DocumentationRequired error with the documentation
+                        return Err(ActionExecutionError::DocumentationRequired {
+                            action_type: "open_client".to_string(),
+                            protocol: protocol.clone(),
+                            documentation: tool_result.result,
+                            original_action,
+                        });
+                    } else {
+                        // If documentation fetch fails, log warning but proceed
+                        let _ = status_tx.send(format!(
+                            "[WARN] Failed to fetch documentation for {}: {}. Proceeding anyway.",
+                            protocol, tool_result.result
+                        ));
+                    }
+                }
+
                 // Log detailed summary of the open_client action
                 log_open_client_summary(
                     status_tx,
@@ -1448,47 +1550,6 @@ impl EventHandler {
             }
 
             #[cfg(feature = "sqlite")]
-            CommonAction::ExecuteSql {
-                database_id,
-                query,
-            } => {
-                let db_id = crate::state::DatabaseId::new(database_id);
-
-                match self.state.execute_sql(db_id, &query).await {
-                    Ok(result) => {
-                        let formatted = result.format();
-                        let _ = status_tx.send(format!("[DB] Query result:\n{}", formatted));
-
-                        // Show updated row counts
-                        if let Some(db) = self.state.get_database(db_id).await {
-                            let _ = status_tx.send(format!("[DB] Database: {}", db.schema_summary()));
-                        }
-                    }
-                    Err(e) => {
-                        // Return SqlError to allow LLM retry with error context
-                        return Err(crate::events::ActionExecutionError::SqlError {
-                            database_id,
-                            query: query.clone(),
-                            error: e.to_string(),
-                        });
-                    }
-                }
-            }
-
-            #[cfg(feature = "sqlite")]
-            CommonAction::ListDatabases => {
-                let databases = self.state.get_all_databases().await;
-                if databases.is_empty() {
-                    let _ = status_tx.send("[DB] No databases".to_string());
-                } else {
-                    let _ = status_tx.send(format!("[DB] {} database(s):", databases.len()));
-                    for db in databases {
-                        let _ = status_tx.send(format!("  {}", db.schema_summary()));
-                    }
-                }
-            }
-
-            #[cfg(feature = "sqlite")]
             CommonAction::DeleteDatabase { database_id } => {
                 let db_id = crate::state::DatabaseId::new(database_id);
 
@@ -1544,7 +1605,15 @@ impl EventHandler {
                 .ok_or_else(|| anyhow::anyhow!("Missing 'type' field in handler configuration"))?;
 
             let handler_type = match handler_type_str {
-                "llm" => EventHandlerType::Llm,
+                "llm" => {
+                    let instruction = handler_type_json
+                        .get("instruction")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Missing 'instruction' field for llm handler - instruction is required for LLM event handlers")
+                        })?;
+                    EventHandlerType::llm(instruction)
+                }
                 "script" => {
                     let language = handler_type_json
                         .get("language")
@@ -2044,7 +2113,7 @@ impl EventHandler {
                         interface,
                         host,
                         port,
-                        base_stack,
+                        protocol,
                         send_first,
                         initial_memory,
                         instruction,
@@ -2064,7 +2133,7 @@ impl EventHandler {
                             interface.clone(),
                             host,
                             port,
-                            &base_stack,
+                            &protocol,
                             send_first,
                             initial_memory,
                             instruction.clone(),
@@ -2078,11 +2147,11 @@ impl EventHandler {
                         {
                             Ok(server_id) => {
                                 let binding_desc = if let Some(iface) = &interface {
-                                    format!("interface {} ({})", iface, base_stack)
+                                    format!("interface {} ({})", iface, protocol)
                                 } else if let Some(p) = port {
-                                    format!("port {} ({})", p, base_stack)
+                                    format!("port {} ({})", p, protocol)
                                 } else {
-                                    format!("({})", base_stack)
+                                    format!("({})", protocol)
                                 };
                                 ui.add_llm_message(format!(
                                     "[LOAD] Opened server #{} on {}",

@@ -31,15 +31,15 @@ Understand what the user wants and respond with the appropriate actions to make 
 **IMPORTANT**: The server and client actions are DISABLED until you read protocol documentation. Use `read_documentation` first!
 
 {{else}}
-1. **Use built-in protocols**: When users ask to start servers, use the `open_server` action with the appropriate `base_stack` (e.g., `http`, `ssh`, `dns`, `s3`). NetGet has 50+ protocols built-in - leverage them!
+1. **Use built-in protocols**: When users ask to start servers, use the `open_server` action with the appropriate `protocol` (e.g., `http`, `ssh`, `dns`, `s3`). NetGet has 50+ protocols built-in - leverage them!
 
-2. **Base stack naming**: Always use the **application-layer protocol name** for `base_stack`. Use simple names like `"http"`, `"dns"`, `"tcp"` - NOT full protocol stacks like `"ETH>IP>UDP>DNS"`.
+2. **Protocol naming**: Always use the **application-layer protocol name** for `protocol`. Use simple names like `"http"`, `"dns"`, `"tcp"` - NOT full protocol stacks like `"ETH>IP>UDP>DNS"`.
 
 3. **Include user instructions**: When users provide instructions or describe behavior, always include the `instruction` field in the `open_server` or `open_client` action. The instruction is how the server/client will behave.
    ```json
    {
      "actions": [
-       {"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Echo server that returns Hello World"}
+       {"type": "open_server", "port": 8080, "protocol": "http", "instruction": "Echo server that returns Hello World"}
      ]
    }
    ```
@@ -51,7 +51,7 @@ Understand what the user wants and respond with the appropriate actions to make 
        {
          "type": "open_server",
          "port": 8080,
-         "base_stack": "http",
+         "protocol": "http",
          "scheduled_tasks": [
            {
              "task_id": "heartbeat",
@@ -69,7 +69,7 @@ Understand what the user wants and respond with the appropriate actions to make 
    ```json
    {
      "actions": [
-       {"type": "open_client", "host": "localhost", "port": 6379, "base_stack": "redis"}
+       {"type": "open_client", "host": "localhost", "port": 6379, "protocol": "redis"}
      ]
    }
    ```

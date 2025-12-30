@@ -59,7 +59,10 @@ impl From<&str> for EventPattern {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventHandlerType {
     /// Handle with LLM (default behavior)
-    Llm,
+    Llm {
+        /// Instruction for how the LLM should handle this event
+        instruction: String,
+    },
 
     /// Handle with inline script
     Script {
@@ -91,8 +94,10 @@ impl EventHandlerType {
     }
 
     /// Create an LLM handler
-    pub fn llm() -> Self {
-        EventHandlerType::Llm
+    pub fn llm(instruction: impl Into<String>) -> Self {
+        EventHandlerType::Llm {
+            instruction: instruction.into(),
+        }
     }
 }
 

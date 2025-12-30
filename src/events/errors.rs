@@ -31,6 +31,15 @@ pub enum ActionExecutionError {
         query: String,
         error: String,
     },
+
+    /// Documentation required before opening server/client
+    /// This error includes the documentation content to show the LLM
+    DocumentationRequired {
+        action_type: String,  // "open_server" or "open_client"
+        protocol: String,
+        documentation: String,
+        original_action: serde_json::Value,
+    },
 }
 
 impl fmt::Display for ActionExecutionError {
@@ -62,6 +71,17 @@ impl fmt::Display for ActionExecutionError {
             } => {
                 write!(f, "SQL error in database {}: {}", database_id, error)
             }
+            Self::DocumentationRequired {
+                action_type,
+                protocol,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Documentation required for {} with protocol {}",
+                    action_type, protocol
+                )
+            }
         }
     }
 }
@@ -76,6 +96,7 @@ impl ActionExecutionError {
             Self::PortConflict { .. } => true,
             #[cfg(feature = "sqlite")]
             Self::SqlError { .. } => true,
+            Self::DocumentationRequired { .. } => true,
             _ => false,
         }
     }
@@ -155,6 +176,26 @@ Common issues:
 
 Please provide a corrected execute_sql action with valid SQL."#,
                     database_id, query, error
+                )
+            }
+            Self::DocumentationRequired {
+                action_type,
+                protocol,
+                documentation,
+                ..
+            } => {
+                format!(
+                    r#"Before executing {} for protocol '{}', you must first read the documentation.
+
+Here is the documentation for '{}':
+
+{}
+
+Now that you have read the documentation, please confirm your {} action by providing it again.
+If you need to modify the action based on the documentation, please do so.
+
+IMPORTANT: You must provide the action again - it will not be automatically retried."#,
+                    action_type, protocol, protocol, documentation, action_type
                 )
             }
         }

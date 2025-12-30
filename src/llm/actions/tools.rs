@@ -121,6 +121,23 @@ pub enum ToolAction {
         #[serde(default)]
         count: Option<usize>,
     },
+
+    /// List all scheduled tasks
+    ListTasks,
+
+    /// Execute a SQL query on a database
+    #[cfg(feature = "sqlite")]
+    ExecuteSql {
+        /// Database ID (from create_database response or list_databases)
+        database_id: u32,
+
+        /// SQL query to execute
+        query: String,
+    },
+
+    /// List all active SQLite databases with their schemas
+    #[cfg(feature = "sqlite")]
+    ListDatabases,
 }
 
 fn default_read_mode() -> String {
@@ -153,8 +170,11 @@ impl ToolAction {
                     | "read_documentation"
                     | "list_models"
                     | "generate_random"
+                    | "list_tasks"
+                    | "execute_sql"
+                    | "list_databases"
             ) {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_documentation, list_models, generate_random", action_type);
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_documentation, list_models, generate_random, list_tasks, execute_sql, list_databases", action_type);
             }
         }
 
@@ -174,6 +194,9 @@ impl ToolAction {
                     | "read_documentation"
                     | "list_models"
                     | "generate_random"
+                    | "list_tasks"
+                    | "execute_sql"
+                    | "list_databases"
             )
         } else {
             false
@@ -247,6 +270,16 @@ impl ToolAction {
                 }
                 desc
             }
+            ToolAction::ListTasks => "list_tasks: list all scheduled tasks".to_string(),
+            #[cfg(feature = "sqlite")]
+            ToolAction::ExecuteSql {
+                database_id,
+                query,
+            } => {
+                format!("execute_sql: db-{} query=\"{}\"", database_id, query)
+            }
+            #[cfg(feature = "sqlite")]
+            ToolAction::ListDatabases => "list_databases: list all databases".to_string(),
         }
     }
 }
@@ -1506,6 +1539,62 @@ pub fn generate_random_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for list_tasks
+pub fn list_tasks_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_tasks".to_string(),
+        description: "List all currently scheduled tasks. Returns information about all one-shot and recurring tasks, including their status, next execution time, and configuration.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_tasks"
+        }),
+        log_template: None,
+    }
+}
+
+/// Get action definition for execute_sql
+#[cfg(feature = "sqlite")]
+pub fn execute_sql_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "execute_sql".to_string(),
+        description: "Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "database_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Database ID (from create_database response or list_databases). Format: db-N → use N.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "query".to_string(),
+                type_hint: "string".to_string(),
+                description: "SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "execute_sql",
+            "database_id": 1,
+            "query": "SELECT * FROM files WHERE path LIKE '/home/%'"
+        }),
+        log_template: None,
+    }
+}
+
+/// Get action definition for list_databases
+#[cfg(feature = "sqlite")]
+pub fn list_databases_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_databases".to_string(),
+        description: "List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_databases"
+        }),
+        log_template: None,
+    }
+}
+
 /// Get all tool action definitions
 pub fn get_all_tool_actions(
     web_search_mode: crate::state::app_state::WebSearchMode,
@@ -1516,7 +1605,15 @@ pub fn get_all_tool_actions(
         generate_random_action(), // Put first - LLMs need this for mock data
         read_file_action(),
         read_documentation_action(), // Unified tool for both server and client docs
+        list_tasks_action(),
     ];
+
+    // Add SQLite tools if feature is enabled
+    #[cfg(feature = "sqlite")]
+    {
+        actions.push(execute_sql_action());
+        actions.push(list_databases_action());
+    }
 
     // Include web search tool for both ON and ASK modes (not for OFF)
     match web_search_mode {
@@ -1544,7 +1641,15 @@ pub fn get_network_event_tool_actions(
     let mut actions = vec![
         generate_random_action(), // Put first - LLMs need this for mock data
         read_file_action(),
+        list_tasks_action(),
     ];
+
+    // Add SQLite tools if feature is enabled
+    #[cfg(feature = "sqlite")]
+    {
+        actions.push(execute_sql_action());
+        actions.push(list_databases_action());
+    }
 
     // Include web search tool for both ON and ASK modes (not for OFF)
     match web_search_mode {
@@ -1689,6 +1794,44 @@ pub async fn execute_tool(
             )
             .await
         }
+        ToolAction::ListTasks => {
+            if let Some(state) = _state {
+                execute_list_tasks(state).await
+            } else {
+                ToolResult::error(
+                    "list_tasks",
+                    "".to_string(),
+                    "State not available".to_string(),
+                )
+            }
+        }
+        #[cfg(feature = "sqlite")]
+        ToolAction::ExecuteSql {
+            database_id,
+            query,
+        } => {
+            if let Some(state) = _state {
+                execute_execute_sql(state, *database_id, query).await
+            } else {
+                ToolResult::error(
+                    "execute_sql",
+                    query.to_string(),
+                    "State not available".to_string(),
+                )
+            }
+        }
+        #[cfg(feature = "sqlite")]
+        ToolAction::ListDatabases => {
+            if let Some(state) = _state {
+                execute_list_databases(state).await
+            } else {
+                ToolResult::error(
+                    "list_databases",
+                    "".to_string(),
+                    "State not available".to_string(),
+                )
+            }
+        }
     }
 }
 
@@ -1747,8 +1890,7 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
     // Append open_server action description to inform LLM it's now enabled
     let mut result = rendered;
     result.push_str("\n\n---\n\n");
-    result.push_str("## open_server Action (Now Enabled)\n\n");
-    result.push_str("The `open_server` action is now enabled. You can use it to start a server with this protocol.\n\n");
+    result.push_str("## open_server Action\n\n");
     result.push_str("**Action:** `open_server`\n\n");
     result.push_str(
         "**Description:** Start a new server with the protocol you just read about.\n\n",
@@ -2328,4 +2470,95 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     );
 
     ToolResult::success("read_documentation", all_found.join(", "), result)
+}
+
+/// Execute list_tasks tool
+async fn execute_list_tasks(state: &crate::state::AppState) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: list_tasks - listing all scheduled tasks");
+
+    let tasks = state.get_all_tasks().await;
+    if tasks.is_empty() {
+        ToolResult::success(
+            "list_tasks",
+            "no tasks".to_string(),
+            "No scheduled tasks".to_string(),
+        )
+    } else {
+        let task_count = tasks.len();
+        let mut result = format!("{} scheduled task(s):\n", task_count);
+        for task in &tasks {
+            result.push_str(&format!("  {}\n", task.format_for_prompt()));
+        }
+
+        info!("  ✓ Listed {} task(s)", task_count);
+        ToolResult::success("list_tasks", task_count.to_string(), result)
+    }
+}
+
+/// Execute execute_sql tool
+#[cfg(feature = "sqlite")]
+async fn execute_execute_sql(
+    state: &crate::state::AppState,
+    database_id: u32,
+    query: &str,
+) -> ToolResult {
+    use tracing::info;
+
+    info!(
+        "🔧 Tool: execute_sql - db-{} query=\"{}\"",
+        database_id, query
+    );
+
+    let db_id = crate::state::DatabaseId::new(database_id);
+
+    match state.execute_sql(db_id, query).await {
+        Ok(result) => {
+            let formatted = result.format();
+
+            // Get updated database info
+            let db_info = if let Some(db) = state.get_database(db_id).await {
+                format!("\nDatabase: {}", db.schema_summary())
+            } else {
+                String::new()
+            };
+
+            let output = format!("Query result:\n{}{}", formatted, db_info);
+
+            info!("  ✓ Query executed successfully");
+            ToolResult::success("execute_sql", query.to_string(), output)
+        }
+        Err(e) => {
+            let error_msg = format!("SQL error: {}", e);
+            info!("  ✗ Query failed: {}", e);
+            ToolResult::error("execute_sql", query.to_string(), error_msg)
+        }
+    }
+}
+
+/// Execute list_databases tool
+#[cfg(feature = "sqlite")]
+async fn execute_list_databases(state: &crate::state::AppState) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: list_databases - listing all databases");
+
+    let databases = state.get_all_databases().await;
+    if databases.is_empty() {
+        ToolResult::success(
+            "list_databases",
+            "no databases".to_string(),
+            "No databases".to_string(),
+        )
+    } else {
+        let db_count = databases.len();
+        let mut result = format!("{} database(s):\n", db_count);
+        for db in &databases {
+            result.push_str(&format!("  {}\n", db.schema_summary()));
+        }
+
+        info!("  ✓ Listed {} database(s)", db_count);
+        ToolResult::success("list_databases", db_count.to_string(), result)
+    }
 }

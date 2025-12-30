@@ -47,7 +47,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::OpenServer {
             interface,
             port,
-            base_stack,
+            protocol,
             instruction,
             ..
         } => {
@@ -63,7 +63,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
             } else {
                 "default".to_string()
             };
-            format!("open_server: {} {} \"{}\"", base_stack, binding, instr_preview)
+            format!("open_server: {} {} \"{}\"", protocol, binding, instr_preview)
         }
         CommonAction::CloseServer { server_id } => {
             format!("close_server: #{}", server_id)
@@ -128,7 +128,6 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::CancelTask { task_id } => {
             format!("cancel_task: {}", task_id)
         }
-        CommonAction::ListTasks => "list_tasks".to_string(),
         CommonAction::OpenClient {
             protocol,
             remote_addr,
@@ -191,20 +190,6 @@ fn summarize_common_action(action: &CommonAction) -> String {
                 if schema_ddl.is_some() { "yes" } else { "no" }
             )
         }
-        #[cfg(feature = "sqlite")]
-        CommonAction::ExecuteSql {
-            database_id,
-            query,
-        } => {
-            let query_preview = if query.len() > 40 {
-                format!("{}...", &query[..37])
-            } else {
-                query.clone()
-            };
-            format!("execute_sql: db-{} \"{}\"", database_id, query_preview)
-        }
-        #[cfg(feature = "sqlite")]
-        CommonAction::ListDatabases => "list_databases".to_string(),
         #[cfg(feature = "sqlite")]
         CommonAction::DeleteDatabase { database_id } => {
             format!("delete_database: db-{}", database_id)

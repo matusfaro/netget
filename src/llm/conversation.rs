@@ -731,6 +731,11 @@ impl ConversationHandler {
                                 ToolAction::ReadDocumentation { .. } => "read_documentation",
                                 ToolAction::ListModels => "list_models",
                                 ToolAction::GenerateRandom { .. } => "generate_random",
+                                ToolAction::ListTasks => "list_tasks",
+                                #[cfg(feature = "sqlite")]
+                                ToolAction::ExecuteSql { .. } => "execute_sql",
+                                #[cfg(feature = "sqlite")]
+                                ToolAction::ListDatabases => "list_databases",
                             };
                             state.add_tool_call(tool_name.to_string(), tool_action.describe());
                         }

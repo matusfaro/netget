@@ -103,27 +103,7 @@ Example:
 {"type":"read_file","path":"schema.json","mode":"full"}
 ```
 
-## 2. list_network_interfaces
-
-List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.
-
-
-Example:
-```json
-{"type":"list_network_interfaces"}
-```
-
-## 3. list_models
-
-List all available Ollama models that can be used for LLM generation. Returns a list of model names that can be used with the change_model action. Use this to discover which models are available before switching models.
-
-
-Example:
-```json
-{"type":"list_models"}
-```
-
-## 4. web_search
+## 2. web_search
 
 Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 
@@ -297,29 +277,7 @@ Example:
 {"type":"cancel_task","task_id":"cleanup_logs"}
 ```
 
-## 12. list_tasks
-
-List all currently scheduled tasks. Returns information about all one-shot and recurring tasks, including their status, next execution time, and configuration.
-
-
-Example:
-```json
-{"type":"list_tasks"}
-```
-
-## 13. change_model
-
-Switch to a different LLM model
-
-Parameters:
-- `model` (string, required): Model name (e.g., 'llama3.2:latest')
-
-Example:
-```json
-{"type":"change_model","model":"llama3.2:latest"}
-```
-
-## 14. show_message
+## 12. show_message
 
 Display a message to the user controlling NetGet
 
@@ -331,9 +289,9 @@ Example:
 {"type":"show_message","message":"Server started successfully on port 8080"}
 ```
 
-## 15. append_to_log
+## 13. append_to_log
 
-Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.
+If you are asked to log information for the user, use this to append logs to a file. Use this to create access logs, audit trails, or any persistent logging.
 
 Parameters:
 - `output_name` (string, required): Name of the log output (e.g., 'access_logs'). Used to construct the log filename.
@@ -344,38 +302,82 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
+## 14. create_database
+
+Create a new SQLite database (in-memory or file-based). Use this to store protocol state (e.g., NFS file system, DNS cache, user sessions). The database persists for the lifetime of the owning server/client, or forever if global. You can execute DDL to create tables during creation.
+
+Parameters:
+- `name` (string, required): Database name (user-friendly identifier). This will be used to construct the filename as './netget_db_<name>.db' for file-based databases.
+- `is_memory` (boolean): true = in-memory database (fast, data lost on close), false = file-based database (persistent, saved to ./netget_db_<name>.db). Defaults to false (file-based).
+- `owner` (string): Owner scope: 'server-N' (auto-deleted when server closes), 'client-N' (auto-deleted when client disconnects), or 'global' (persists across servers/clients). Omit to default to current context.
+- `schema_ddl` (string): SQL DDL statements to create initial schema (e.g., 'CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB);'). Use semicolons to separate multiple statements.
+
+Example:
+```json
+{"type":"create_database","name":"nfs_storage","is_memory":true,"owner":"server-1","schema_ddl":"CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"}
+```
+
+## 15. delete_database
+
+Delete a database and remove its file (if file-based). This is permanent and cannot be undone. Server/client-owned databases are automatically deleted when the owner closes.
+
+Parameters:
+- `database_id` (number, required): Database ID to delete
+
+Example:
+```json
+{"type":"delete_database","database_id":1}
+```
+
 ## 16. read_documentation
 
-Get detailed protocol documentation. **REQUIRED before using open_server or open_client** - you must read documentation to enable these actions.
-
-**LIMIT**: Maximum 5 protocols per call. Request will fail if more than 5 are specified.
-
-## CRITICAL: When to Use Server vs Client Mode
-
-**Server Mode (open_server)** - Use when user wants to HOST/SERVE content:
-- Keywords: "serve", "host", "listen", "provide", "run server", "start server"
-- You LISTEN on a port and RESPOND to incoming requests
-- Examples: "host a website", "start HTTP server", "serve data on port 8080"
-
-**Client Mode (open_client)** - Use when user wants to CONNECT to existing remote server:
-- Keywords: "connect to", "fetch from", "query", "send to", "access remote"
-- You CONNECT to a remote server and SEND requests to it
-- Examples: "connect to Redis at localhost:6379", "send ping to host"
-
-**⚠️ IMPORTANT**: If user says "serve", "host", or "provide", use `open_server` even if they say "client". The ACTION matters more than the word choice!
+Get detailed protocol documentation. After you fetch documentation, you will be able to open a server or a client.
 
 ## Available Protocols
 
-**Server protocols** (use with open_server): DNS, HTTP, Proxy, SSH
+**Server protocols**: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, CouchDB, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP2, HTTP3, ICMP, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MSSQL, Maven, Mercurial, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TFTP, TLS, TURN, Telnet, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WebRTC, WebRTC Signaling, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
 
-**Client protocols** (use with open_client): DNS, HTTP, SSH
+**Client protocols**: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, CouchDB, DC, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP Proxy, HTTP2, HTTP3, ICMP, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kafka, Kubernetes, LDAP, MCP, MQTT, MSSQL, Maven, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, OpenAPI, OpenIDConnect, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SAML, SIP, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TLS, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
 
 Parameters:
 - `protocols` (array, required): Array of protocol names to get documentation for. Maximum 5 protocols per call. Returns both server and client docs if available for each protocol.
 
 Example:
 ```json
-{"type":"read_documentation","protocols":["DNS","HTTP","Proxy","SSH"]}
+{"type":"read_documentation","protocols":["AMQP","ARP","BGP","BLUETOOTH_BLE","BLUETOOTH_BLE_BATTERY","BLUETOOTH_BLE_BEACON","BLUETOOTH_BLE_CYCLING","BLUETOOTH_BLE_DATA_STREAM","BLUETOOTH_BLE_ENVIRONMENTAL","BLUETOOTH_BLE_FILE_TRANSFER","BLUETOOTH_BLE_GAMEPAD","BLUETOOTH_BLE_HEART_RATE","BLUETOOTH_BLE_KEYBOARD","BLUETOOTH_BLE_MOUSE","BLUETOOTH_BLE_PRESENTER","BLUETOOTH_BLE_PROXIMITY","BLUETOOTH_BLE_REMOTE","BLUETOOTH_BLE_RUNNING","BLUETOOTH_BLE_THERMOMETER","BLUETOOTH_BLE_WEIGHT_SCALE","BOOTP","BitTorrent DHT","BitTorrent Peer Wire","BitTorrent Tracker","Bitcoin","Bitcoin P2P","Bluetooth (BLE)","Cassandra","CouchDB","DC","DHCP","DNS","DNS-over-HTTPS","DataLink","DoH","DoT","DynamoDB","Elasticsearch","FTP","Git","HTTP","HTTP Proxy","HTTP2","HTTP3","ICMP","IGMP","IMAP","IPP","IPSec/IKEv2","IRC","IS-IS","ISIS","JSON-RPC","KAFKA","Kubernetes","LDAP","MCP","MQTT","MSSQL","Maven","Mercurial","MongoDB","MySQL","NFS","NNTP","NPM","NTP","OAuth2","OSPF","Ollama","OpenAI","OpenAPI","OpenID","OpenIDConnect","OpenVPN","POP3","PostgreSQL","Proxy","PyPI","RIP","RSS","Redis","S3","SAML","SIP","SMB","SMTP","SNMP","SOCKET_FILE","SOCKS5","SQS","SSH","SSH Agent","STUN","SVN","SamlIdp","SamlSp","SocketFile","Syslog","TCP","TFTP","TLS","TURN","Telnet","Tor","Tor Relay","Torrent-DHT","Torrent-Peer","Torrent-Tracker","UDP","USB","USB-Keyboard","USB-MassStorage","USB-Mouse","USB-Serial","VNC","WHOIS","WebDAV","WebRTC","WebRTC Signaling","WireGuard","XML-RPC","XMPP","ZooKeeper","etcd","gRPC","mDNS","nfc","usb-fido2"]}
+```
+
+## 17. list_tasks
+
+List all currently scheduled tasks. Returns information about all one-shot and recurring tasks, including their status, next execution time, and configuration.
+
+
+Example:
+```json
+{"type":"list_tasks"}
+```
+
+## 18. execute_sql
+
+Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.
+
+Parameters:
+- `database_id` (number, required): Database ID (from create_database response or list_databases). Format: db-N → use N.
+- `query` (string, required): SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).
+
+Example:
+```json
+{"type":"execute_sql","database_id":1,"query":"SELECT * FROM files WHERE path LIKE '/home/%'"}
+```
+
+## 19. list_databases
+
+List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.
+
+
+Example:
+```json
+{"type":"list_databases"}
 ```
 
 
@@ -387,14 +389,22 @@ Example:
 
 ## Required Format
 
-```
-{"actions": [{"type": "read_file", "path": "config.json"}]}
+```json
+{
+  "tools": [{"type": "read_file", "path": "config.json"}],
+  "actions": [{"type": "cancel_task", "task_id": "cleanup_logs"}]
+}
 ```
 
 - Must start with `{` and end with `}`
-- The `actions` array contains one or more action objects
-- Actions execute in order
-- You can mix tools and actions in the same response
+- **`tools`** (optional): Array of tool calls (read_file, web_search, generate_random, etc.)
+  - Tools are executed FIRST and their results feed back to you before actions execute
+  - Use tools to gather information before deciding on actions
+- **`actions`** (optional): Array of protocol-specific actions (open_server, close_server, etc.)
+  - Actions execute AFTER tools complete
+  - Actions execute in order
+- You can use `tools` only, `actions` only, or BOTH in the same response
+- Both arrays are optional - you can omit either if empty
 
 ## Optional Reasoning
 
@@ -422,45 +432,88 @@ Brief explanation of your understanding and decision (1-3 sentences)
 
 ## Examples
 
-✓ **Valid (simple):**
+✓ **Valid (tools only):**
 ```json
-{"actions": [{"type": "show_message", "message": "Hello"}]}
+{
+  "tools": [
+    {"type": "read_file", "path": "config.json", "mode": "full"}
+  ]
+}
+```
+
+✓ **Valid (actions only):**
+```json
+{
+  "actions": [
+    {"type": "show_message", "message": "Hello"}
+  ]
+}
+```
+
+✓ **Valid (both tools and actions):**
+```json
+{
+  "tools": [
+    {"type": "read_file", "path": "config.json"},
+    {"type": "generate_random", "data_type": "uuid"}
+  ],
+  "actions": [
+    {"type": "set_memory", "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"},
+    {"type": "show_message", "message": "Server started"}
+  ]
+}
 ```
 
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
+{
+  "tools": [{"type": "read_documentation", "protocols": ["http"]}]
+}
+```
+
+✓ **Valid (multiple tools):**
+```json
+{
+  "tools": [
+    {"type": "web_search", "query": "https://datatracker.ietf.org/doc/html/rfc7231"},
+    {"type": "generate_random", "data_type": "uuid"}
+  ]
+}
 ```
 
 ✓ **Valid (multiple actions):**
 ```json
-{"actions": [
-  {"type": "read_file", "path": "config.json", "mode": "full"},
-  {"type": "show_message", "message": "Config loaded successfully"}
-]}
+{
+  "actions": [
+    {"type": "close_server", "server_id": 1},
+    {"type": "cancel_task", "task_id": "cleanup_logs"}
+  ]
+}
 ```
 
 ✗ **Invalid** (explanation before JSON):
 ```
 Here's what I'll do:
-{"actions": [...]}
+{"tools": [...]}
 ```
 
 ✗ **Invalid** (markdown code block):
 ```
 ```json
-{"actions": [...]}
+{"tools": [...]}
 ```
 ```
 
 ## JSON Rules
 
 1. **Valid JSON required** - Must be valid JSON after reasoning tag removed
-2. **Actions array required** - Even if empty: `{"actions": []}`
-3. **One action per object** - Each action in a separate object in the array
-4. **Exact parameter names** - Use the parameter names exactly as documented
-5. **Appropriate types** - Numbers should be numbers, not strings
+2. **Use appropriate keys** - `tools` for tool calls, `actions` for protocol actions
+3. **Tools execute first** - Tools gather information, then actions execute based on results
+4. **Both keys optional** - Omit empty arrays: `{"tools": [...]}` or `{"actions": [...]}` or both
+5. **One action per object** - Each tool/action in a separate object in the array
+6. **Exact parameter names** - Use the parameter names exactly as documented
+7. **Appropriate types** - Numbers should be numbers, not strings
 
 # Current State
 
@@ -470,7 +523,7 @@ No servers currently running.
 
 - **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: User input: "start a DNS server on port 53"

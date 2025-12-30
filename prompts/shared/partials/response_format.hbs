@@ -9,7 +9,7 @@
 ```json
 {
   "tools": [{"type": "read_file", "path": "config.json"}],
-  "actions": [{"type": "open_server", "port": 8080, "base_stack": "http"}]
+  "actions": [{"type": "cancel_task", "task_id": "cleanup_logs"}]
 }
 ```
 
@@ -75,7 +75,7 @@ Brief explanation of your understanding and decision (1-3 sentences)
     {"type": "generate_random", "data_type": "uuid"}
   ],
   "actions": [
-    {"type": "open_server", "port": 8080, "base_stack": "http"},
+    {"type": "set_memory", "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"},
     {"type": "show_message", "message": "Server started"}
   ]
 }
@@ -104,7 +104,7 @@ Brief explanation of your understanding and decision (1-3 sentences)
 {
   "actions": [
     {"type": "close_server", "server_id": 1},
-    {"type": "open_server", "port": 9090, "base_stack": "http"}
+    {"type": "cancel_task", "task_id": "cleanup_logs"}
   ]
 }
 ```

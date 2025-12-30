@@ -62,9 +62,10 @@ pub async fn try_execute_event_handler(
     };
 
     match handler_type {
-        EventHandlerType::Llm => {
-            // LLM handler explicitly configured
-            debug!("LLM handler configured for event '{}'", event_type_id);
+        EventHandlerType::Llm { instruction } => {
+            // LLM handler explicitly configured with instruction
+            debug!("LLM handler configured for event '{}' with instruction: {}", event_type_id, instruction);
+            // TODO: Pass instruction to LLM call (currently just falls back to default LLM)
             Ok(EventHandlerResult::FallbackToLlm)
         }
 

@@ -213,7 +213,7 @@ pub async fn start_server_from_action(
     interface: Option<String>,
     host: Option<String>,
     port: Option<u16>,
-    base_stack: &str,
+    protocol: &str,
     _send_first: bool,
     initial_memory: Option<String>,
     instruction: String,
@@ -228,11 +228,11 @@ pub async fn start_server_from_action(
     // Get protocol from registry (supports case-insensitive lookup via parse_from_str)
     let registry = crate::protocol::server_registry::registry();
     let protocol_name = registry
-        .parse_from_str(base_stack)
-        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", base_stack))?;
-    let protocol = registry
+        .parse_from_str(protocol)
+        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol))?;
+    let protocol_impl = registry
         .get(&protocol_name)
-        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", base_stack))?;
+        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol))?;
 
     // === DUAL PATH LOGIC: Migrated vs Unmigrated Protocols ===
     //
@@ -240,7 +240,7 @@ pub async fn start_server_from_action(
     // Unmigrated protocols return None and use legacy listen_addr
     //
     let (final_mac, final_interface, final_host, final_port, _use_new_path, listen_addr) =
-        if let Some(defaults) = protocol.default_binding() {
+        if let Some(defaults) = protocol_impl.default_binding() {
             // NEW PATH: Protocol has been migrated, use flexible binding
             let (mac, iface, host_str, port_num) = defaults.apply(
                 mac_address.clone(),
@@ -289,7 +289,7 @@ pub async fn start_server_from_action(
             let port_value = port.ok_or_else(|| {
                 anyhow::anyhow!(
                     "Protocol '{}' requires 'port' parameter (unmigrated protocol)",
-                    base_stack
+                    protocol
                 )
             })?;
 
@@ -325,7 +325,7 @@ pub async fn start_server_from_action(
         };
 
     // Check privilege requirements
-    let metadata = protocol.metadata();
+    let metadata = protocol_impl.metadata();
     let system_caps = state.get_system_capabilities().await;
 
     // Determine if the actual port being used requires privileges
@@ -348,7 +348,7 @@ pub async fn start_server_from_action(
     if requires_privileges && !system_caps.can_bind_privileged_ports {
         let error_msg = format!(
             "Cannot start {} server: {}",
-            base_stack,
+            protocol,
             metadata.privilege_requirement.description()
         );
         return Err(anyhow::anyhow!(error_msg));
@@ -362,7 +362,7 @@ pub async fn start_server_from_action(
     let server = crate::state::server::ServerInstance {
         id: ServerId::new(0), // Will be assigned by add_server
         port: display_port,
-        protocol_name: base_stack.to_string(),
+        protocol_name: protocol.to_string(),
         instruction: instruction.clone(),
         memory: String::new(),
         status: ServerStatus::Starting,
@@ -453,7 +453,7 @@ pub async fn start_server_from_action(
 
     // Build startup params
     let startup_params_obj = if let Some(params_json) = startup_params {
-        let schema = protocol.get_startup_parameters();
+        let schema = protocol_impl.get_startup_parameters();
         Some(crate::protocol::StartupParams::new(params_json, schema))
     } else {
         None
@@ -484,13 +484,13 @@ pub async fn start_server_from_action(
     };
 
     // Spawn the server
-    match protocol.spawn(spawn_ctx).await {
+    match protocol_impl.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
             // Send startup message with actual address
             let msg = format!(
                 "[SERVER] Starting server #{} ({}) on {}",
                 server_id.as_u32(),
-                base_stack,
+                protocol,
                 actual_addr
             );
             let _ = status_tx.send(msg);
@@ -506,7 +506,7 @@ pub async fn start_server_from_action(
                 let update_msg = format!(
                     "[SERVER] Server #{} ({}) listening on {}",
                     server_id.as_u32(),
-                    base_stack,
+                    protocol,
                     actual_addr
                 );
                 let _ = status_tx.send(update_msg);

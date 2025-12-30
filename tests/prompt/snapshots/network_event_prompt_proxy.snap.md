@@ -81,27 +81,7 @@ Example:
 {"type":"read_file","path":"schema.json","mode":"full"}
 ```
 
-## 2. list_network_interfaces
-
-List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.
-
-
-Example:
-```json
-{"type":"list_network_interfaces"}
-```
-
-## 3. list_models
-
-List all available Ollama models that can be used for LLM generation. Returns a list of model names that can be used with the change_model action. Use this to discover which models are available before switching models.
-
-
-Example:
-```json
-{"type":"list_models"}
-```
-
-## 4. web_search
+## 2. web_search
 
 Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 
@@ -163,7 +143,7 @@ Example:
 
 ## 3. append_to_log
 
-Append content to a log file. Log files are named 'netget_<output_name>_<timestamp>.log' where timestamp is when the server was started. Each append operation adds the content to the end of the file with a newline. Use this to create access logs, audit trails, or any persistent logging.
+If you are asked to log information for the user, use this to append logs to a file. Use this to create access logs, audit trails, or any persistent logging.
 
 Parameters:
 - `output_name` (string, required): Name of the log output (e.g., 'access_logs'). Used to construct the log filename.
@@ -275,6 +255,39 @@ Example:
 {"type":"handle_https_connection_block","reason":"Destination blocked by security policy"}
 ```
 
+## 12. list_tasks
+
+List all currently scheduled tasks. Returns information about all one-shot and recurring tasks, including their status, next execution time, and configuration.
+
+
+Example:
+```json
+{"type":"list_tasks"}
+```
+
+## 13. execute_sql
+
+Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.
+
+Parameters:
+- `database_id` (number, required): Database ID (from create_database response or list_databases). Format: db-N → use N.
+- `query` (string, required): SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).
+
+Example:
+```json
+{"type":"execute_sql","database_id":1,"query":"SELECT * FROM files WHERE path LIKE '/home/%'"}
+```
+
+## 14. list_databases
+
+List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.
+
+
+Example:
+```json
+{"type":"list_databases"}
+```
+
 
 ## Understanding Memory
 
@@ -297,14 +310,22 @@ Memory lets you track state across network events (e.g., SSH current directory, 
 
 ## Required Format
 
-```
-{"actions": [{"type": "read_file", "path": "config.json"}]}
+```json
+{
+  "tools": [{"type": "read_file", "path": "config.json"}],
+  "actions": [{"type": "cancel_task", "task_id": "cleanup_logs"}]
+}
 ```
 
 - Must start with `{` and end with `}`
-- The `actions` array contains one or more action objects
-- Actions execute in order
-- You can mix tools and actions in the same response
+- **`tools`** (optional): Array of tool calls (read_file, web_search, generate_random, etc.)
+  - Tools are executed FIRST and their results feed back to you before actions execute
+  - Use tools to gather information before deciding on actions
+- **`actions`** (optional): Array of protocol-specific actions (open_server, close_server, etc.)
+  - Actions execute AFTER tools complete
+  - Actions execute in order
+- You can use `tools` only, `actions` only, or BOTH in the same response
+- Both arrays are optional - you can omit either if empty
 
 ## Optional Reasoning
 
@@ -332,45 +353,88 @@ Brief explanation of your understanding and decision (1-3 sentences)
 
 ## Examples
 
-✓ **Valid (simple):**
+✓ **Valid (tools only):**
 ```json
-{"actions": [{"type": "show_message", "message": "Hello"}]}
+{
+  "tools": [
+    {"type": "read_file", "path": "config.json", "mode": "full"}
+  ]
+}
+```
+
+✓ **Valid (actions only):**
+```json
+{
+  "actions": [
+    {"type": "show_message", "message": "Hello"}
+  ]
+}
+```
+
+✓ **Valid (both tools and actions):**
+```json
+{
+  "tools": [
+    {"type": "read_file", "path": "config.json"},
+    {"type": "generate_random", "data_type": "uuid"}
+  ],
+  "actions": [
+    {"type": "set_memory", "value": "session_id: abc123\nuser_preferences: dark_mode=true\nlast_command: LIST"},
+    {"type": "show_message", "message": "Server started"}
+  ]
+}
 ```
 
 ✓ **Valid (with reasoning):**
 ```
 <reasoning>User wants to learn about HTTP protocol before starting server.</reasoning>
-{"actions": [{"type": "read_documentation", "protocols": ["http"]}]}
+{
+  "tools": [{"type": "read_documentation", "protocols": ["http"]}]
+}
+```
+
+✓ **Valid (multiple tools):**
+```json
+{
+  "tools": [
+    {"type": "web_search", "query": "https://datatracker.ietf.org/doc/html/rfc7231"},
+    {"type": "generate_random", "data_type": "uuid"}
+  ]
+}
 ```
 
 ✓ **Valid (multiple actions):**
 ```json
-{"actions": [
-  {"type": "read_file", "path": "config.json", "mode": "full"},
-  {"type": "show_message", "message": "Config loaded successfully"}
-]}
+{
+  "actions": [
+    {"type": "close_server", "server_id": 1},
+    {"type": "cancel_task", "task_id": "cleanup_logs"}
+  ]
+}
 ```
 
 ✗ **Invalid** (explanation before JSON):
 ```
 Here's what I'll do:
-{"actions": [...]}
+{"tools": [...]}
 ```
 
 ✗ **Invalid** (markdown code block):
 ```
 ```json
-{"actions": [...]}
+{"tools": [...]}
 ```
 ```
 
 ## JSON Rules
 
 1. **Valid JSON required** - Must be valid JSON after reasoning tag removed
-2. **Actions array required** - Even if empty: `{"actions": []}`
-3. **One action per object** - Each action in a separate object in the array
-4. **Exact parameter names** - Use the parameter names exactly as documented
-5. **Appropriate types** - Numbers should be numbers, not strings
+2. **Use appropriate keys** - `tools` for tool calls, `actions` for protocol actions
+3. **Tools execute first** - Tools gather information, then actions execute based on results
+4. **Both keys optional** - Omit empty arrays: `{"tools": [...]}` or `{"actions": [...]}` or both
+5. **One action per object** - Each tool/action in a separate object in the array
+6. **Exact parameter names** - Use the parameter names exactly as documented
+7. **Appropriate types** - Numbers should be numbers, not strings
 
 # Current State
 
@@ -388,7 +452,7 @@ requests_intercepted: 5
 
 - **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: Event: Intercepted HTTP request:

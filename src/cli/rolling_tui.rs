@@ -2599,7 +2599,7 @@ async fn handle_load(
                     interface,
                     host,
                     port,
-                    base_stack,
+                    protocol,
                     send_first,
                     initial_memory,
                     instruction,
@@ -2619,7 +2619,7 @@ async fn handle_load(
                         interface.clone(),
                         host,
                         port,
-                        &base_stack,
+                        &protocol,
                         send_first,
                         initial_memory,
                         instruction.clone(),
@@ -2633,11 +2633,11 @@ async fn handle_load(
                     {
                         Ok(server_id) => {
                             let binding_desc = if let Some(iface) = &interface {
-                                format!("interface {} ({})", iface, base_stack)
+                                format!("interface {} ({})", iface, protocol)
                             } else if let Some(p) = port {
-                                format!("port {} ({})", p, base_stack)
+                                format!("port {} ({})", p, protocol)
                             } else {
-                                format!("({})", base_stack)
+                                format!("({})", protocol)
                             };
                             print_output_line(
                                 &format!(

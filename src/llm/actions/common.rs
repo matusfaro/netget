@@ -171,7 +171,7 @@ pub enum CommonAction {
         #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "flexible_deserializers::deserialize_option_u16_flexible")]
         port: Option<u16>,
 
-        base_stack: String,
+        protocol: String,
         #[serde(default)]
         send_first: bool,
         #[serde(default)]
@@ -304,9 +304,6 @@ pub enum CommonAction {
     /// Cancel a scheduled task
     CancelTask { task_id: String },
 
-    /// List all scheduled tasks
-    ListTasks,
-
     /// Provide feedback for automatic server/client adjustment
     /// This action accumulates feedback for later LLM processing (if feedback_instructions is set)
     ProvideFeedback {
@@ -325,17 +322,6 @@ pub enum CommonAction {
         #[serde(default)]
         schema_ddl: Option<String>, // Initial DDL statements to create tables
     },
-
-    /// Execute a SQL query (DDL, DML, or DQL)
-    #[cfg(feature = "sqlite")]
-    ExecuteSql {
-        database_id: u32, // Database ID (db-N → N)
-        query: String,
-    },
-
-    /// List all databases
-    #[cfg(feature = "sqlite")]
-    ListDatabases,
 
     /// Delete a database
     #[cfg(feature = "sqlite")]
@@ -419,8 +405,8 @@ pub fn open_server_action(
         3. For custom requirements (timeouts, special behavior, etc.):\n\
            - Put them in the 'instruction' field as natural language\n\n\
         EXAMPLE - User says 'open HTTP server with 30 second timeout':\n\
-        ❌ WRONG: {\"type\": \"open_server\", \"base_stack\": \"http\", \"timeout\": 30}\n\
-        ✅ RIGHT: {\"type\": \"open_server\", \"base_stack\": \"http\", \"instruction\": \"HTTP server with 30 second timeout\"}\n\n\
+        ❌ WRONG: {\"type\": \"open_server\", \"protocol\": \"http\", \"timeout\": 30}\n\
+        ✅ RIGHT: {\"type\": \"open_server\", \"protocol\": \"http\", \"instruction\": \"HTTP server with 30 second timeout\"}\n\n\
         TASK SCHEDULING RULES:\n\
         FOR PERIODIC TASKS (heartbeat, every X seconds/minutes):\n\
         - Use 'scheduled_tasks' parameter with interval_secs\n\
@@ -472,14 +458,14 @@ pub fn open_server_action(
                 required: false,
             },
             Parameter {
-                name: "base_stack".to_string(),
+                name: "protocol".to_string(),
                 type_hint: "string".to_string(),
                 description: format!(
-                    "Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: \
+                    "Protocol to use. ALWAYS prefer high-level protocols when user keywords match: \
                     if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), \
                     if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), \
                     if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). \
-                    Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. \
+                    Only use low-level protocols (tcp, udp) for custom protocols without a specific high-level match. \
                     Available: {}",
                     all_base_stacks(false).join(", ")
                 ),
@@ -541,7 +527,8 @@ Each handler has:\\n\
 - handler: Object with:\\n\
   - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n\
   - For script: language ({}), code (inline script)\\n\
-  - For static: actions (array of action objects)\\n\\n\
+  - For static: actions (array of action objects)\\n\
+  - For llm: instruction (REQUIRED - describes how the LLM should handle this event)\\n\\n\
 SCRIPT EVENT DATA STRUCTURE:\\n\
 Scripts receive JSON via stdin with this structure:\\n\
 {{\\n\
@@ -605,7 +592,7 @@ print(json.dumps({{\\n\
 Example static handler:\\n\
 {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_data\\\", \\\"data\\\": \\\"Welcome\\\"}}]}}}}\\n\\n\
 Example LLM handler:\\n\
-{{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\"}}}}",
+{{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"Respond to HTTP requests with a friendly greeting\\\"}}}}",
         handler_mode_guidance,
         available_runtimes
     );
@@ -627,7 +614,7 @@ Example LLM handler:\\n\
     let example = json!({
         "type": "open_server",
         "port": 21,
-        "base_stack": "tcp",
+        "protocol": "tcp",
         "send_first": true,
         "initial_memory": "login_count: 0\nfiles: data.txt,readme.md",
         "instruction": "You are an FTP server. Respond to FTP commands like USER, PASS, LIST, RETR, QUIT with appropriate FTP response codes."
@@ -744,11 +731,13 @@ Each handler has:\\n\
 - handler: Object with:\\n\
   - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n\
   - For script: language ({}), code (inline script)\\n\
-  - For static: actions (array of action objects)\\n\\n\
+  - For static: actions (array of action objects)\\n\
+  - For llm: instruction (REQUIRED - describes how the LLM should handle this event)\\n\\n\
 Note: Client scripts use the same event data structure as server scripts (see open_server documentation for details).\\n\
 Access pattern: data['event']['field_name'] (e.g., data['event']['status_code'] for HTTP responses)\\n\\n\
 Example script handler: {{\\\"event_pattern\\\": \\\"redis_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'execute_redis_command','command':'PING'}}]}}))\\\"}}}}\\n\\n\
-Example static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}",
+Example static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}\\n\\n\
+Example LLM handler: {{\\\"event_pattern\\\": \\\"http_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"Parse the HTTP response and decide next action based on status code\\\"}}}}",
         handler_mode_guidance,
         available_runtimes
     );
@@ -1178,19 +1167,6 @@ pub fn cancel_task_action() -> ActionDefinition {
     }
 }
 
-/// Get action definition for list_tasks
-pub fn list_tasks_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_tasks".to_string(),
-        description: "List all currently scheduled tasks. Returns information about all one-shot and recurring tasks, including their status, next execution time, and configuration.".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_tasks"
-        }),
-        log_template: None,
-    }
-}
-
 /// Get action definition for create_database
 #[cfg(feature = "sqlite")]
 pub fn create_database_action() -> ActionDefinition {
@@ -1229,49 +1205,6 @@ pub fn create_database_action() -> ActionDefinition {
             "is_memory": true,
             "owner": "server-1",
             "schema_ddl": "CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"
-        }),
-        log_template: None,
-    }
-}
-
-/// Get action definition for execute_sql
-#[cfg(feature = "sqlite")]
-pub fn execute_sql_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "execute_sql".to_string(),
-        description: "Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "database_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "Database ID (from create_database response or list_databases). Format: db-N → use N.".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "query".to_string(),
-                type_hint: "string".to_string(),
-                description: "SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "execute_sql",
-            "database_id": 1,
-            "query": "SELECT * FROM files WHERE path LIKE '/home/%'"
-        }),
-        log_template: None,
-    }
-}
-
-/// Get action definition for list_databases
-#[cfg(feature = "sqlite")]
-pub fn list_databases_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_databases".to_string(),
-        description: "List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_databases"
         }),
         log_template: None,
     }
@@ -1348,7 +1281,6 @@ pub fn get_all_common_actions(
     // === Task Management ===
     actions.push(schedule_task_action(selected_mode, env));
     actions.push(cancel_task_action());
-    actions.push(list_tasks_action());
 
     // === System/Utility ===
     // actions.push(change_model_action());
@@ -1359,8 +1291,6 @@ pub fn get_all_common_actions(
     #[cfg(feature = "sqlite")]
     {
         actions.push(create_database_action());
-        actions.push(execute_sql_action());
-        actions.push(list_databases_action());
         actions.push(delete_database_action());
     }
 

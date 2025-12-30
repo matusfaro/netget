@@ -232,9 +232,7 @@ async fn execute_common_action(
                 }
             }
         }
-        CommonAction::ScheduleTask { .. }
-        | CommonAction::CancelTask { .. }
-        | CommonAction::ListTasks => {
+        CommonAction::ScheduleTask { .. } | CommonAction::CancelTask { .. } => {
             // Task scheduling handled by event handler, not executor
         }
 
@@ -271,10 +269,7 @@ async fn execute_common_action(
         }
 
         #[cfg(feature = "sqlite")]
-        CommonAction::CreateDatabase { .. }
-        | CommonAction::ExecuteSql { .. }
-        | CommonAction::ListDatabases
-        | CommonAction::DeleteDatabase { .. } => {
+        CommonAction::CreateDatabase { .. } | CommonAction::DeleteDatabase { .. } => {
             // SQLite operations handled by event handler, not executor
         }
     }
