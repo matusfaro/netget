@@ -176,7 +176,8 @@ pub enum CommonAction {
         send_first: bool,
         #[serde(default)]
         initial_memory: Option<String>,
-        /// Server instruction for LLM (required)
+        /// Server instruction for LLM (optional - only required if not using event handlers)
+        #[serde(default)]
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
@@ -204,7 +205,8 @@ pub enum CommonAction {
     OpenClient {
         protocol: String,
         remote_addr: String,
-        /// Client instruction for LLM (required)
+        /// Client instruction for LLM (optional - only required if not using event handlers)
+        #[serde(default)]
         instruction: String,
         #[serde(default)]
         startup_params: Option<serde_json::Value>,
@@ -329,9 +331,20 @@ pub enum CommonAction {
 impl CommonAction {
     /// Parse from JSON value
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
-        // BACKWARD COMPATIBILITY: Convert old script_inline/script_handles format to new event_handlers format
+        // BACKWARD COMPATIBILITY: Handle old field names
         let mut value_mut = value.clone();
         if let Some(obj) = value_mut.as_object_mut() {
+            // BACKWARD COMPATIBILITY: Rename base_stack to protocol (if protocol doesn't exist)
+            if matches!(obj.get("type").and_then(|v| v.as_str()), Some("open_server") | Some("open_client")) {
+                if let Some(base_stack) = obj.remove("base_stack") {
+                    // Only set protocol if it doesn't already exist
+                    if !obj.contains_key("protocol") {
+                        obj.insert("protocol".to_string(), base_stack);
+                    }
+                }
+            }
+
+            // BACKWARD COMPATIBILITY: Convert old script_inline/script_handles format to new event_handlers format
             // Check if this is an open_server or open_client action with old script fields
             if matches!(obj.get("type").and_then(|v| v.as_str()), Some("open_server") | Some("open_client")) {
                 if let (Some(script_inline), Some(script_handles)) =
@@ -590,7 +603,7 @@ print(json.dumps({{\\n\
 Example static handler:\\n\
 {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_data\\\", \\\"data\\\": \\\"Welcome\\\"}}]}}}}\\n\\n\
 Example LLM handler:\\n\
-{{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"Respond to HTTP requests with a friendly greeting\\\"}}}}",
+{{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"You are a recipe website\\\"}}}}",
         handler_mode_guidance,
         available_runtimes
     );
@@ -735,7 +748,7 @@ Note: Client scripts use the same event data structure as server scripts (see op
 Access pattern: data['event']['field_name'] (e.g., data['event']['status_code'] for HTTP responses)\\n\\n\
 Example script handler: {{\\\"event_pattern\\\": \\\"redis_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'execute_redis_command','command':'PING'}}]}}))\\\"}}}}\\n\\n\
 Example static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}\\n\\n\
-Example LLM handler: {{\\\"event_pattern\\\": \\\"http_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"Parse the HTTP response and decide next action based on status code\\\"}}}}",
+Example LLM handler: {{\\\"event_pattern\\\": \\\"http_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\", \\\"instruction\\\": \\\"You are a recipe website\\\"}}}}",
         handler_mode_guidance,
         available_runtimes
     );

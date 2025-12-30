@@ -842,14 +842,6 @@ impl EventHandler {
                     }
                 }
 
-                // Validate that instruction is not empty
-                if instruction.trim().is_empty() {
-                    let _ = status_tx.send("[ERROR] open_server requires non-empty 'instruction' field".to_string());
-                    return Err(ActionExecutionError::Fatal(anyhow::anyhow!(
-                        "open_server action requires non-empty 'instruction' field"
-                    )));
-                }
-
                 // Log detailed summary of the open_server action
                 log_open_server_summary(
                     status_tx,
@@ -1209,14 +1201,6 @@ impl EventHandler {
                             protocol, tool_result.result
                         ));
                     }
-                }
-
-                // Validate that instruction is not empty
-                if instruction.trim().is_empty() {
-                    let _ = status_tx.send("[ERROR] open_client requires non-empty 'instruction' field".to_string());
-                    return Err(ActionExecutionError::Fatal(anyhow::anyhow!(
-                        "open_client action requires non-empty 'instruction' field"
-                    )));
                 }
 
                 // Log detailed summary of the open_client action
