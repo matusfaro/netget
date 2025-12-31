@@ -40,6 +40,14 @@ pub enum ActionExecutionError {
         documentation: String,
         original_action: serde_json::Value,
     },
+
+    /// Invalid action parameters - LLM should correct the parameters
+    InvalidActionParameters {
+        action_type: String,
+        parameter_name: String,
+        error_message: String,
+        original_action: serde_json::Value,
+    },
 }
 
 impl fmt::Display for ActionExecutionError {
@@ -82,6 +90,18 @@ impl fmt::Display for ActionExecutionError {
                     action_type, protocol
                 )
             }
+            Self::InvalidActionParameters {
+                action_type,
+                parameter_name,
+                error_message,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Invalid parameter '{}' for {}: {}",
+                    parameter_name, action_type, error_message
+                )
+            }
         }
     }
 }
@@ -97,6 +117,7 @@ impl ActionExecutionError {
             #[cfg(feature = "sqlite")]
             Self::SqlError { .. } => true,
             Self::DocumentationRequired { .. } => true,
+            Self::InvalidActionParameters { .. } => true,
             _ => false,
         }
     }
@@ -196,6 +217,32 @@ If you need to modify the action based on the documentation, please do so.
 
 IMPORTANT: You must provide the action again - it will not be automatically retried."#,
                     action_type, protocol, protocol, documentation, action_type
+                )
+            }
+            Self::InvalidActionParameters {
+                action_type,
+                parameter_name,
+                error_message,
+                original_action,
+            } => {
+                format!(
+                    r#"Your previous action failed validation.
+
+Action: {}
+Parameter: {}
+Error: {}
+
+Original action you provided:
+{}
+
+Please provide a corrected {} action with the proper parameters.
+
+CRITICAL: Make sure all required fields are included with valid values."#,
+                    action_type,
+                    parameter_name,
+                    error_message,
+                    serde_json::to_string_pretty(original_action).unwrap_or_else(|_| format!("{:?}", original_action)),
+                    action_type
                 )
             }
         }

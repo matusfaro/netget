@@ -859,6 +859,17 @@ impl EventHandler {
                     &feedback_instructions,
                 );
 
+                // Save copies for error handling before values are moved
+                let mac_address_clone = mac_address.clone();
+                let interface_clone = interface.clone();
+                let host_clone = host.clone();
+                let initial_memory_clone = initial_memory.clone();
+                let instruction_clone = instruction.clone();
+                let startup_params_clone = startup_params.clone();
+                let event_handlers_clone = event_handlers.clone();
+                let scheduled_tasks_clone = scheduled_tasks.clone();
+                let feedback_instructions_clone = feedback_instructions.clone();
+
                 // Use start_server_from_action which properly handles flexible binding
                 // (including interface, mac_address, host for migrated protocols)
                 match server_startup::start_server_from_action(
@@ -887,11 +898,18 @@ impl EventHandler {
                         ));
                     }
                     Err(e) => {
-                        // Check if it's a port binding error (retryable)
+                        // Check error type and provide appropriate retryable error
                         let error_msg = e.to_string();
+
+                        // Check if it's a port binding error (retryable)
                         let is_port_conflict = error_msg.contains("Address already in use")
                             || error_msg.contains("port conflict")
                             || error_msg.contains("bind");
+
+                        // Check if it's a validation error about missing or invalid parameters (retryable)
+                        let is_validation_error = error_msg.contains("Invalid event handler configuration")
+                            || error_msg.contains("Missing 'instruction' field")
+                            || error_msg.contains("instruction is required");
 
                         if is_port_conflict && port.is_some() {
                             // Port conflict - create retryable error
@@ -899,6 +917,39 @@ impl EventHandler {
                                 port: port.unwrap(),
                                 protocol: protocol.to_string(),
                                 underlying_error: error_msg,
+                            });
+                        } else if is_validation_error {
+                            // Build the original action JSON for reference
+                            let original_action = serde_json::json!({
+                                "type": "open_server",
+                                "mac_address": mac_address_clone,
+                                "interface": interface_clone,
+                                "host": host_clone,
+                                "port": port,
+                                "protocol": protocol,
+                                "send_first": send_first,
+                                "initial_memory": initial_memory_clone,
+                                "instruction": instruction_clone,
+                                "startup_params": startup_params_clone,
+                                "event_handlers": event_handlers_clone,
+                                "scheduled_tasks": scheduled_tasks_clone,
+                                "feedback_instructions": feedback_instructions_clone,
+                            });
+
+                            // Extract parameter name from error message if possible
+                            let parameter_name = if error_msg.contains("instruction") {
+                                "event_handlers[].handler.instruction"
+                            } else if error_msg.contains("event_handlers") {
+                                "event_handlers"
+                            } else {
+                                "unknown"
+                            };
+
+                            return Err(ActionExecutionError::InvalidActionParameters {
+                                action_type: "open_server".to_string(),
+                                parameter_name: parameter_name.to_string(),
+                                error_message: error_msg.clone(),
+                                original_action,
                             });
                         } else {
                             // Fatal error - propagate as fatal
@@ -1218,6 +1269,11 @@ impl EventHandler {
 
                 use crate::state::client::{ClientInstance, ClientStatus};
 
+                // Save copies for error handling before values are moved
+                let event_handlers_clone = event_handlers.clone();
+                let feedback_instructions_clone = feedback_instructions.clone();
+                let initial_memory_clone = initial_memory.clone();
+
                 // Create client instance with temporary ID (add_client will assign real ID)
                 let mut client = ClientInstance::new(
                     crate::state::ClientId::new(0),
@@ -1248,15 +1304,41 @@ impl EventHandler {
                             );
                         }
                         Err(e) => {
+                            // Build the original action JSON for reference
+                            let original_action = serde_json::json!({
+                                "type": "open_client",
+                                "protocol": protocol,
+                                "remote_addr": remote_addr,
+                                "instruction": instruction,
+                                "startup_params": startup_params,
+                                "initial_memory": initial_memory_clone,
+                                "event_handlers": event_handlers_clone,
+                                "scheduled_tasks": scheduled_tasks,
+                                "feedback_instructions": feedback_instructions_clone,
+                            });
+
+                            let error_msg = e.to_string();
+
+                            // Extract parameter name from error message
+                            let parameter_name = if error_msg.contains("instruction") {
+                                "event_handlers[].handler.instruction"
+                            } else if error_msg.contains("event_handlers") {
+                                "event_handlers"
+                            } else {
+                                "unknown"
+                            };
+
                             // Return error instead of just warning - invalid config should fail
                             let _ = status_tx.send(format!(
                                 "[ERROR] Invalid event handler configuration: {}",
-                                e
+                                error_msg
                             ));
-                            return Err(ActionExecutionError::Fatal(anyhow::anyhow!(
-                                "Invalid event handler configuration: {}",
-                                e
-                            )));
+                            return Err(ActionExecutionError::InvalidActionParameters {
+                                action_type: "open_client".to_string(),
+                                parameter_name: parameter_name.to_string(),
+                                error_message: error_msg,
+                                original_action,
+                            });
                         }
                     }
                 }
