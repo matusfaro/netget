@@ -920,19 +920,21 @@ pub async fn execute_generate_random(
         // Random string
         "string" => {
             let len = length.unwrap_or(16);
-            let chars = match charset.unwrap_or("alphanumeric") {
+            let chars: Vec<char> = match charset.unwrap_or("alphanumeric") {
                 "hex" => "0123456789abcdef",
                 "digits" => "0123456789",
                 "letters" => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
                 "lowercase" => "abcdefghijklmnopqrstuvwxyz",
                 "uppercase" => "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
                 _ => "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            };
+            }
+            .chars()
+            .collect();
 
             let result: String = (0..len)
                 .map(|_| {
                     let idx = rng.gen_range(0..chars.len());
-                    chars.chars().nth(idx).unwrap()
+                    chars[idx]
                 })
                 .collect();
             info!("  ✓ Generated string: {} chars", len);
@@ -1128,11 +1130,11 @@ pub async fn execute_generate_random(
         // Random email
         "email" => {
             let username_len = length.unwrap_or(8);
+            let chars: Vec<char> = "abcdefghijklmnopqrstuvwxyz0123456789".chars().collect();
             let username: String = (0..username_len)
                 .map(|_| {
-                    let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
                     let idx = rng.gen_range(0..chars.len());
-                    chars.chars().nth(idx).unwrap()
+                    chars[idx]
                 })
                 .collect();
             let domains = &["example.com", "test.com", "demo.org", "sample.net"];
@@ -1189,14 +1191,14 @@ pub async fn execute_generate_random(
             use std::time::{SystemTime, UNIX_EPOCH};
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
             // Generate random timestamp within ±1 year from now
             let one_year = 365 * 24 * 60 * 60;
             let min_time = min
                 .map(|m| m as u64)
                 .unwrap_or(now.saturating_sub(one_year));
-            let max_time = max.map(|m| m as u64).unwrap_or(now + one_year);
+            let max_time = max.map(|m| m as u64).unwrap_or(now.saturating_add(one_year));
             let timestamp = rng.gen_range(min_time..=max_time);
             info!("  ✓ Generated timestamp: {}", timestamp);
             timestamp.to_string()
@@ -1207,8 +1209,8 @@ pub async fn execute_generate_random(
             use std::time::{SystemTime, UNIX_EPOCH};
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
             let one_year = 365 * 24 * 60 * 60;
             let min_time = min
                 .map(|m| m as u64)
