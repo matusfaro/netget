@@ -177,11 +177,11 @@ impl TemplateEngine {
                     .map(|k| k.to_string())
                     .collect();
                 let error_msg = format!(
-                    "TEMPLATE RENDER PANIC\nTemplate: {}\nHandlebars Error: {}\nAvailable partials: {:#?}",
+                    "Template render failed\nTemplate: {}\nHandlebars Error: {}\nAvailable partials: {:#?}",
                     template_name, e, available_partials
                 );
                 error!("{}", error_msg);
-                std::process::exit(1);
+                Err(anyhow::anyhow!(error_msg))
             }
         }
     }
