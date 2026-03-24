@@ -1103,20 +1103,23 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - server no l
                     );
                 }
 
-                // Check if connection still exists
+                // Check if connection still exists and get connection info atomically
                 let server_instance = server.unwrap();
-                if !server_instance.connections.contains_key(cid) {
-                    // Connection closed - task should have been cleaned up, but just in case
-                    return format!(
-                        r#"ERROR: Connection {} on server #{} no longer exists. Task '{}' cannot execute.
+                let conn_info = match server_instance.connections.get(cid) {
+                    Some(info) => info.clone(),
+                    None => {
+                        // Connection closed - task should have been cleaned up, but just in case
+                        return format!(
+                            r#"ERROR: Connection {} on server #{} no longer exists. Task '{}' cannot execute.
 
 Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection closed"}}]"#,
-                        cid,
-                        sid.as_u32(),
-                        task.name,
-                        task.name
-                    );
-                }
+                            cid,
+                            sid.as_u32(),
+                            task.name,
+                            task.name
+                        );
+                    }
+                };
 
                 let mut actions = get_network_event_common_actions();
                 actions.extend(protocol_actions);
@@ -1125,8 +1128,8 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection 
                 let web_search_mode = state.get_web_search_mode().await;
                 actions.extend(get_network_event_tool_actions(web_search_mode));
 
-                // Get connection info for context
-                let conn_info = server_instance.connections.get(cid).unwrap();
+                // Use connection info obtained above
+                let conn_info = &conn_info;
                 let idle_duration = conn_info.last_activity.elapsed();
 
                 let trigger = format!(
@@ -1165,20 +1168,20 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection 
             }
             TaskScope::Client(cid) => {
                 // Client-scoped task: use client instruction + protocol actions
-                let client = state.get_client(*cid).await;
-                if client.is_none() {
-                    // Client no longer exists - return error prompt
-                    return format!(
-                        r#"ERROR: Client #{} no longer exists. Task '{}' cannot execute.
+                let client_instance = match state.get_client(*cid).await {
+                    Some(client) => client,
+                    None => {
+                        // Client no longer exists - return error prompt
+                        return format!(
+                            r#"ERROR: Client #{} no longer exists. Task '{}' cannot execute.
 
 Return: [{{"type": "show_message", "message": "Task '{}' cancelled - client no longer exists"}}]"#,
-                        cid.as_u32(),
-                        task.name,
-                        task.name
-                    );
-                }
-
-                let client_instance = client.unwrap();
+                            cid.as_u32(),
+                            task.name,
+                            task.name
+                        );
+                    }
+                };
 
                 let mut actions = get_network_event_common_actions();
                 actions.extend(protocol_actions);
