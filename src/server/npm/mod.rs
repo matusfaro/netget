@@ -223,7 +223,17 @@ async fn handle_npm_request(
         "NPM_TARBALL_REQUEST" => &actions::NPM_TARBALL_REQUEST,
         "NPM_LIST_REQUEST" => &actions::NPM_LIST_REQUEST,
         "NPM_SEARCH_REQUEST" => &actions::NPM_SEARCH_REQUEST,
-        _ => panic!("Unknown NPM event type: {}", event_type),
+        _ => {
+            error!("Unknown NPM event type: {}", event_type);
+            let error_response = json!({
+                "error": format!("Internal error: unknown event type '{}'", event_type)
+            });
+            return Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from(error_response.to_string())))
+                .unwrap());
+        }
     };
 
     let event = crate::protocol::Event::new(
