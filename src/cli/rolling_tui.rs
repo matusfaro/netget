@@ -60,10 +60,22 @@ pub async fn run_rolling_tui(
     // Determine configured model: args override settings
     let configured_model = args.model.clone().or(settings.lock().await.model.clone());
 
-    // Select or validate model from Ollama
-    let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
-    let (selected_model, model_messages) =
-        match crate::llm::select_or_validate_model(configured_model.clone(), true, ollama_url).await {
+    // Resolve the base URL for model selection and banner generation
+    let base_url = args.openai_url.as_deref()
+        .or(args.ollama_url.as_deref())
+        .unwrap_or("http://localhost:11434");
+
+    // Select or validate model
+    let is_openai = args.openai_url.is_some();
+    let (selected_model, model_messages) = if is_openai {
+        // OpenAI mode: model was already validated as required in create_llm_client
+        let model = configured_model.clone().unwrap_or_default();
+        let messages = vec![
+            format!("✓  Using OpenAI-compatible backend: {}", base_url),
+        ];
+        (model, messages)
+    } else {
+    match crate::llm::select_or_validate_model(configured_model.clone(), true, base_url).await {
             Ok(Some(model)) => {
                 info!("✓  Using model: {}", model);
                 let messages = if let Some(ref config_model) = configured_model {
@@ -100,7 +112,8 @@ pub async fn run_rolling_tui(
                 eprintln!("✗  Failed to initialize model: {}", e);
                 return Err(e);
             }
-        };
+        }
+    };
 
     state
         .set_ollama_model(if selected_model.is_empty() {
@@ -224,7 +237,7 @@ pub async fn run_rolling_tui(
     // This runs in the background and doesn't block TUI startup
     // The banner is sent through status_tx and appears in the TUI output
     if !args.suppress_art {
-        let ollama_url_clone = ollama_url.to_string();
+        let ollama_url_clone = base_url.to_string();
         let model_clone = selected_model.clone();
         let status_tx_clone = status_tx.clone();
         tokio::spawn(async move {
@@ -1638,6 +1651,61 @@ async fn handle_key_event(
                         // Start a simple protocol server
                         let llm = event_handler.get_llm_client();
                         handle_start_simple(&protocol, state, footer, &palette, &llm, status_tx.clone()).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::ShowBackend => {
+                        let llm = event_handler.get_llm_client();
+                        let backend_type = llm.backend_type();
+                        let backend_url = llm.backend_url();
+                        let current_model = state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
+                        print_output_line(&format!("LLM Backend: {}", backend_type), footer, &palette)?;
+                        print_output_line(&format!("  URL: {}", backend_url), footer, &palette)?;
+                        print_output_line(&format!("  Model: {}", current_model), footer, &palette)?;
+                        print_output_line("", footer, &palette)?;
+                        print_output_line("To switch backend:", footer, &palette)?;
+                        print_output_line("  /backend ollama [url]              - Switch to Ollama", footer, &palette)?;
+                        print_output_line("  /backend openai <url> [api-key]    - Switch to OpenAI-compatible", footer, &palette)?;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::SetBackend { args: backend_args } => {
+                        let parts: Vec<&str> = backend_args.splitn(3, ' ').collect();
+                        match parts.first().map(|s| s.to_lowercase()).as_deref() {
+                            Some("ollama") => {
+                                let url = parts.get(1).unwrap_or(&"http://localhost:11434");
+                                let new_client = crate::llm::OllamaClient::new(url.to_string())
+                                    .with_app_state(state.clone());
+                                event_handler.set_llm_client(new_client.clone());
+                                state.set_llm_client(new_client).await;
+                                print_output_line(&format!("✓ Switched to Ollama backend: {}", url), footer, &palette)?;
+                            }
+                            Some("openai") => {
+                                if parts.len() < 2 {
+                                    print_output_line("✗ Usage: /backend openai <url> [api-key]", footer, &palette)?;
+                                } else {
+                                    let url = parts[1];
+                                    let api_key = if parts.len() >= 3 {
+                                        parts[2].to_string()
+                                    } else {
+                                        std::env::var("NETGET_API_KEY")
+                                            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                                            .unwrap_or_default()
+                                    };
+                                    if api_key.is_empty() {
+                                        print_output_line("✗ API key required. Use third argument or set NETGET_API_KEY/OPENAI_API_KEY env var.", footer, &palette)?;
+                                    } else {
+                                        let new_client = crate::llm::OllamaClient::new_openai(url, &api_key)
+                                            .with_app_state(state.clone());
+                                        event_handler.set_llm_client(new_client.clone());
+                                        state.set_llm_client(new_client).await;
+                                        print_output_line(&format!("✓ Switched to OpenAI-compatible backend: {}", url), footer, &palette)?;
+                                    }
+                                }
+                            }
+                            _ => {
+                                print_output_line("✗ Unknown backend. Use: /backend ollama [url] or /backend openai <url> [api-key]", footer, &palette)?;
+                            }
+                        }
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }

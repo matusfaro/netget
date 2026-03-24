@@ -333,6 +333,11 @@ impl EventHandler {
         self.llm.clone()
     }
 
+    /// Replace the LLM client (used by /backend command to switch backends at runtime)
+    pub fn set_llm_client(&mut self, client: OllamaClient) {
+        self.llm = client;
+    }
+
     /// Handle an application event
     /// Returns Ok(true) if the application should quit
     pub async fn handle_event(&mut self, event: AppEvent, ui: &mut App) -> Result<bool> {
@@ -363,6 +368,14 @@ impl EventHandler {
             }
             UserCommand::ChangeModel { model } => {
                 self.handle_change_model(model, ui).await?;
+                Ok(false)
+            }
+            UserCommand::ShowBackend => {
+                self.handle_show_backend(ui).await?;
+                Ok(false)
+            }
+            UserCommand::SetBackend { args } => {
+                self.handle_set_backend(args, ui).await?;
                 Ok(false)
             }
             UserCommand::ShowLogLevel => {
@@ -1922,6 +1935,71 @@ impl EventHandler {
             }
         }
 
+        Ok(())
+    }
+
+    async fn handle_show_backend(&mut self, ui: &mut App) -> Result<()> {
+        let backend_type = self.llm.backend_type();
+        let backend_url = self.llm.backend_url();
+        let current_model = self
+            .state
+            .get_ollama_model()
+            .await
+            .unwrap_or_else(|| "None".to_string());
+
+        ui.add_llm_message(format!("LLM Backend: {}", backend_type));
+        ui.add_llm_message(format!("  URL: {}", backend_url));
+        ui.add_llm_message(format!("  Model: {}", current_model));
+        ui.add_llm_message("".to_string());
+        ui.add_llm_message("To switch backend:".to_string());
+        ui.add_llm_message("  /backend ollama [url]              - Switch to Ollama".to_string());
+        ui.add_llm_message("  /backend openai <url> [api-key]    - Switch to OpenAI-compatible".to_string());
+        Ok(())
+    }
+
+    async fn handle_set_backend(&mut self, args: String, ui: &mut App) -> Result<()> {
+        let parts: Vec<&str> = args.splitn(3, ' ').collect();
+
+        match parts.first().map(|s| s.to_lowercase()).as_deref() {
+            Some("ollama") => {
+                let url = parts.get(1).unwrap_or(&"http://localhost:11434");
+                let new_client = crate::llm::OllamaClient::new(url.to_string())
+                    .with_app_state(self.state.clone());
+                self.llm = new_client.clone();
+                self.state.set_llm_client(new_client).await;
+                ui.add_llm_message(format!("✓ Switched to Ollama backend: {}", url));
+                ui.add_llm_message("  Use /model to list and select a model.".to_string());
+            }
+            Some("openai") => {
+                if parts.len() < 2 {
+                    ui.add_llm_message("✗ Usage: /backend openai <url> [api-key]".to_string());
+                    ui.add_llm_message("  The API key can also be set via NETGET_API_KEY or OPENAI_API_KEY env vars.".to_string());
+                    return Ok(());
+                }
+                let url = parts[1];
+                let api_key = if parts.len() >= 3 {
+                    parts[2].to_string()
+                } else {
+                    // Try env vars
+                    std::env::var("NETGET_API_KEY")
+                        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                        .unwrap_or_default()
+                };
+                if api_key.is_empty() {
+                    ui.add_llm_message("✗ API key required. Provide as third argument or set NETGET_API_KEY/OPENAI_API_KEY env var.".to_string());
+                    return Ok(());
+                }
+                let new_client = crate::llm::OllamaClient::new_openai(url, &api_key)
+                    .with_app_state(self.state.clone());
+                self.llm = new_client.clone();
+                self.state.set_llm_client(new_client).await;
+                ui.add_llm_message(format!("✓ Switched to OpenAI-compatible backend: {}", url));
+                ui.add_llm_message("  Use /model <name> to set the model.".to_string());
+            }
+            _ => {
+                ui.add_llm_message("✗ Unknown backend. Use: /backend ollama [url] or /backend openai <url> [api-key]".to_string());
+            }
+        }
         Ok(())
     }
 

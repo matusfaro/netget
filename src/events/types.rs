@@ -78,6 +78,10 @@ pub enum UserCommand {
         db_id: Option<u32>,
         query: Option<String>,
     },
+    /// Show current LLM backend info (slash command: /backend)
+    ShowBackend,
+    /// Switch LLM backend (slash command: /backend ollama [url] or /backend openai <url> [api-key])
+    SetBackend { args: String },
     /// List available simple protocols (slash command: /simple)
     ListSimple,
     /// Start a simple protocol server (slash command: /simple <protocol>)
@@ -311,6 +315,17 @@ impl UserCommand {
                     query: Some(rest.to_string()),
                 };
             }
+        }
+
+        // /backend command - show or switch LLM backend
+        if input_lower.starts_with("/backend") {
+            let rest = trimmed[8..].trim();
+            if rest.is_empty() {
+                return UserCommand::ShowBackend;
+            }
+            return UserCommand::SetBackend {
+                args: rest.to_string(),
+            };
         }
 
         // /simple command - start simple protocol or list available protocols

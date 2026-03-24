@@ -340,6 +340,7 @@ impl App {
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
             "/web [on/off/ask] - Show/set web search mode",
             "/test_ask - Test web search approval prompt",
+            "/backend [ollama|openai <url>] - Show/switch LLM backend",
             "/docs [<protocol>] - Show protocol documentation",
         ];
 

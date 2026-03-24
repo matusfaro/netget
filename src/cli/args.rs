@@ -108,9 +108,27 @@ pub struct Args {
         long = "ollama-url",
         value_name = "URL",
         help = "Base URL for Ollama API (default: http://localhost:11434). Use this to point to a custom Ollama instance or mock server for testing.",
+        conflicts_with = "openai_url",
         hide = true  // Hidden from help output - primarily for testing
     )]
     pub ollama_url: Option<String>,
+
+    /// OpenAI-compatible API base URL (e.g., "https://api.openai.com", "http://localhost:1234")
+    #[clap(
+        long = "openai-url",
+        value_name = "URL",
+        help = "Base URL for an OpenAI-compatible API endpoint (e.g., https://api.openai.com, http://localhost:1234 for vLLM/LM Studio). Requires --model and --api-key (or NETGET_API_KEY/OPENAI_API_KEY env var).",
+        conflicts_with = "ollama_url"
+    )]
+    pub openai_url: Option<String>,
+
+    /// API key for OpenAI-compatible endpoint
+    #[clap(
+        long = "api-key",
+        value_name = "KEY",
+        help = "API key for the OpenAI-compatible endpoint. Also reads NETGET_API_KEY or OPENAI_API_KEY environment variables."
+    )]
+    pub api_key: Option<String>,
 
     /// Path to embedded GGUF model file (enables embedded LLM inference)
     #[cfg(feature = "embedded-llm")]
@@ -216,6 +234,13 @@ pub struct Args {
 }
 
 impl Args {
+    /// Resolve the API key from --api-key flag, NETGET_API_KEY, or OPENAI_API_KEY env vars
+    pub fn resolve_api_key(&self) -> Option<String> {
+        self.api_key.clone()
+            .or_else(|| std::env::var("NETGET_API_KEY").ok())
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+    }
+
     /// Get the effective log level from --log-level flag
     pub fn effective_log_level(&self) -> Level {
         match self.log_level.to_lowercase().as_str() {

@@ -13,6 +13,8 @@ use tracing::debug;
 pub enum LlmBackendType {
     /// Ollama HTTP API (external service)
     Ollama,
+    /// OpenAI-compatible HTTP API
+    OpenAI,
     /// Embedded llama.cpp inference
     #[cfg(feature = "embedded-llm")]
     Embedded,
@@ -22,8 +24,31 @@ impl std::fmt::Display for LlmBackendType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LlmBackendType::Ollama => write!(f, "Ollama"),
+            LlmBackendType::OpenAI => write!(f, "OpenAI-compatible"),
             #[cfg(feature = "embedded-llm")]
             LlmBackendType::Embedded => write!(f, "Embedded (llama.cpp)"),
+        }
+    }
+}
+
+/// OpenAI-specific configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIConfig {
+    /// OpenAI-compatible API base URL
+    #[serde(default)]
+    pub base_url: Option<String>,
+
+    /// Last used model name
+    #[serde(default)]
+    pub last_model: Option<String>,
+    // Note: API key is NOT stored in config for security — must come from env/CLI
+}
+
+impl Default for OpenAIConfig {
+    fn default() -> Self {
+        Self {
+            base_url: None,
+            last_model: None,
         }
     }
 }
@@ -38,6 +63,10 @@ pub struct NetGetConfig {
     /// Ollama configuration
     #[serde(default)]
     pub ollama: OllamaConfig,
+
+    /// OpenAI-compatible API configuration
+    #[serde(default)]
+    pub openai: OpenAIConfig,
 
     /// Embedded LLM configuration
     #[cfg(feature = "embedded-llm")]
@@ -118,6 +147,7 @@ impl Default for NetGetConfig {
         Self {
             last_backend: None,
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
             #[cfg(feature = "embedded-llm")]
             embedded: EmbeddedLlmConfig::default(),
             models_dir: default_models_dir(),

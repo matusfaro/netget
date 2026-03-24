@@ -25,8 +25,10 @@ pub async fn run_non_interactive(
     debug!("Prompt: {}", prompt);
 
     // Create application state
-    let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
+    let base_url = args.openai_url.clone()
+        .or_else(|| args.ollama_url.clone())
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
 
     // Configure rate limiter from CLI args
     let rate_limiter_config = args.build_rate_limiter_config();
@@ -35,11 +37,19 @@ pub async fn run_non_interactive(
     // Determine configured model: args override settings
     let configured_model = args.model.clone().or(settings.model.clone());
 
-    // Select or validate model from Ollama (non-interactive = exit on error)
-    let ollama_url_for_model = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
-    let selected_model = crate::llm::select_or_validate_model(configured_model, false, ollama_url_for_model)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("No model available"))?;
+    // Select or validate model
+    let is_openai = args.openai_url.is_some();
+    let selected_model = if is_openai {
+        // OpenAI mode: --model is required (validated in create_llm_client)
+        configured_model.ok_or_else(|| anyhow::anyhow!(
+            "--model is required when using --openai-url"
+        ))?
+    } else {
+        let ollama_url_for_model = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+        crate::llm::select_or_validate_model(configured_model, false, ollama_url_for_model)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No model available"))?
+    };
 
     info!("✓  Using model: {}", selected_model);
     state.set_ollama_model(Some(selected_model)).await;
@@ -95,8 +105,7 @@ pub async fn run_non_interactive(
 
     // Create event handler and LLM client
     let lock_enabled = state.get_ollama_lock_enabled().await;
-    let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
-    let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
+    let llm = super::create_llm_client(args, lock_enabled)?
         .with_mock_config_file(args.mock_config_file.clone());
 
     // Store the configured LLM client in state so spawned servers can use it
@@ -242,8 +251,10 @@ pub async fn run_with_actions(
     debug!("Loading {} actions", actions.len());
 
     // Create application state
-    let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
+    let base_url = args.openai_url.clone()
+        .or_else(|| args.ollama_url.clone())
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
 
     // Configure rate limiter from CLI args
     let rate_limiter_config = args.build_rate_limiter_config();
@@ -274,8 +285,7 @@ pub async fn run_with_actions(
 
     // Create LLM client
     let lock_enabled = state.get_ollama_lock_enabled().await;
-    let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
-    let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
+    let llm = super::create_llm_client(args, lock_enabled)?
         .with_mock_config_file(args.mock_config_file.clone());
 
     // Store the configured LLM client in state so spawned servers can use it

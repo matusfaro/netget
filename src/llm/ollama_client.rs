@@ -1,4 +1,4 @@
-//! Ollama client using ollama-rs library for LLM communication
+//! LLM client supporting Ollama and OpenAI-compatible endpoints
 
 use std::collections::HashMap;
 
@@ -12,6 +12,19 @@ use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
+
+/// Internal backend implementation for LLM communication
+#[derive(Clone)]
+enum LlmBackend {
+    /// Ollama HTTP API via ollama-rs
+    Ollama(Ollama),
+    /// OpenAI-compatible API via reqwest
+    OpenAI {
+        client: reqwest::Client,
+        base_url: String,
+        api_key: String,
+    },
+}
 
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
 /// This helps handle cases where the LLM wraps JSON responses in markdown formatting
@@ -319,10 +332,10 @@ impl std::str::FromStr for CommandInterpretation {
     }
 }
 
-/// Ollama API client using ollama-rs
+/// LLM API client supporting Ollama and OpenAI-compatible backends
 #[derive(Clone)]
 pub struct OllamaClient {
-    ollama: Ollama,
+    backend: LlmBackend,
     status_tx: Option<mpsc::UnboundedSender<String>>,
     mock_config_file: Option<std::path::PathBuf>,
     app_state: Option<crate::state::AppState>,
@@ -357,7 +370,7 @@ impl OllamaClient {
 
         let ollama = Ollama::new(host, port);
         Self {
-            ollama,
+            backend: LlmBackend::Ollama(ollama),
             status_tx: None,
             mock_config_file: None,
             app_state: None,
@@ -369,7 +382,7 @@ impl OllamaClient {
     pub fn default() -> Self {
         let ollama = Ollama::default();
         Self {
-            ollama,
+            backend: LlmBackend::Ollama(ollama),
             status_tx: None,
             mock_config_file: None,
             app_state: None,
@@ -380,6 +393,45 @@ impl OllamaClient {
     pub fn new_with_options(base_url: impl Into<String>, _lock_enabled: bool) -> Self {
         // Note: lock_enabled is ignored here as locking is handled at a different layer
         Self::new(base_url)
+    }
+
+    /// Create a new client for an OpenAI-compatible API endpoint
+    pub fn new_openai(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .expect("Failed to build HTTP client");
+        Self {
+            backend: LlmBackend::OpenAI {
+                client,
+                base_url: base_url.into().trim_end_matches('/').to_string(),
+                api_key: api_key.into(),
+            },
+            status_tx: None,
+            mock_config_file: None,
+            app_state: None,
+        }
+    }
+
+    /// Returns the backend type as a string ("ollama" or "openai")
+    pub fn backend_type(&self) -> &str {
+        match &self.backend {
+            LlmBackend::Ollama(_) => "ollama",
+            LlmBackend::OpenAI { .. } => "openai",
+        }
+    }
+
+    /// Returns the base URL of the current backend
+    pub fn backend_url(&self) -> String {
+        match &self.backend {
+            LlmBackend::Ollama(ollama) => {
+                // ollama-rs doesn't expose the URL directly, reconstruct from known state
+                // The URL was parsed in new(), but we can't easily get it back.
+                // For display purposes, use a best-effort approach.
+                format!("{}", ollama.uri())
+            }
+            LlmBackend::OpenAI { base_url, .. } => base_url.clone(),
+        }
     }
 
     /// Set the status channel for sending trace logs to TUI
@@ -463,46 +515,104 @@ impl OllamaClient {
             }
         }
 
-        let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
+        // Dispatch to the appropriate backend
+        let (response_text, token_usage) = match &self.backend {
+            LlmBackend::Ollama(ollama) => {
+                let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
 
-        // Set num_predict to allow longer responses (especially for binary protocol data)
-        use ollama_rs::models::ModelOptions;
-        let options = ModelOptions::default().num_predict(2048); // Allow up to 2048 tokens
-        request = request.options(options);
+                // Set num_predict to allow longer responses (especially for binary protocol data)
+                use ollama_rs::models::ModelOptions;
+                let options = ModelOptions::default().num_predict(2048);
+                request = request.options(options);
 
-        // Add format if provided
-        if let Some(_schema) = format {
-            // For now, use plain JSON format since we need to handle structured JSON differently
-            // The ollama-rs StructuredJson format requires a schemars Schema type
-            // We'll use the simpler JSON format and rely on prompt engineering
-            use ollama_rs::generation::parameters::FormatType;
-            request = request.format(FormatType::Json);
-        }
+                // Add format if provided
+                if let Some(_schema) = format {
+                    use ollama_rs::generation::parameters::FormatType;
+                    request = request.format(FormatType::Json);
+                }
 
-        let api_response = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            self.ollama.generate(request),
-        )
-        .await
-        .context("Ollama API call timed out after 120 seconds.\n   Please check:\n   1. Ollama is running (https://ollama.ai)\n   2. Model is loaded and ready\n   3. Use `/model` to list and select a model")?
-        .map_err(|e| {
-            // Check if it's a connection error
-            let error_str = e.to_string().to_lowercase();
-            if error_str.contains("connection") || error_str.contains("refused") || error_str.contains("connect") {
-                anyhow::anyhow!(
-                    "✗  Cannot connect to Ollama.\n   Please ensure:\n   1. Ollama is running: https://ollama.ai\n   2. Ollama is listening on http://localhost:11434\n   3. Use `/model` command to list and select a model\n\n   Original error: {}", e
+                let api_response = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    ollama.generate(request),
                 )
-            } else if error_str.contains("not found") || error_str.contains("404") {
-                anyhow::anyhow!(
-                    "✗  Model not found in Ollama.\n   Please:\n   1. Pull the model: ollama pull {}\n   2. Or use `/model` to select a different model\n\n   Original error: {}", model, e
-                )
-            } else {
-                anyhow::anyhow!("✗  Ollama request failed: {}\n   Use `/model` to check available models", e)
+                .await
+                .context("Ollama API call timed out after 120 seconds.\n   Please check:\n   1. Ollama is running (https://ollama.ai)\n   2. Model is loaded and ready\n   3. Use `/model` to list and select a model")?
+                .map_err(|e| {
+                    let error_str = e.to_string().to_lowercase();
+                    if error_str.contains("connection") || error_str.contains("refused") || error_str.contains("connect") {
+                        anyhow::anyhow!(
+                            "✗  Cannot connect to Ollama.\n   Please ensure:\n   1. Ollama is running: https://ollama.ai\n   2. Ollama is listening on http://localhost:11434\n   3. Use `/model` command to list and select a model\n\n   Original error: {}", e
+                        )
+                    } else if error_str.contains("not found") || error_str.contains("404") {
+                        anyhow::anyhow!(
+                            "✗  Model not found in Ollama.\n   Please:\n   1. Pull the model: ollama pull {}\n   2. Or use `/model` to select a different model\n\n   Original error: {}", model, e
+                        )
+                    } else {
+                        anyhow::anyhow!("✗  Ollama request failed: {}\n   Use `/model` to check available models", e)
+                    }
+                })?;
+
+                let usage = TokenUsage::from_response(&api_response);
+                (api_response.response, usage)
             }
-        })?;
 
-        // Extract token usage
-        let token_usage = TokenUsage::from_response(&api_response);
+            LlmBackend::OpenAI { client, base_url, api_key } => {
+                let mut body = serde_json::json!({
+                    "model": model,
+                    "messages": [{ "role": "user", "content": prompt }],
+                    "max_tokens": 2048,
+                });
+
+                if format.is_some() {
+                    body["response_format"] = serde_json::json!({ "type": "json_object" });
+                }
+
+                let url = format!("{}/v1/chat/completions", base_url);
+
+                let http_response = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    client.post(&url)
+                        .header("Authorization", format!("Bearer {}", api_key))
+                        .header("Content-Type", "application/json")
+                        .json(&body)
+                        .send(),
+                )
+                .await
+                .context("OpenAI API call timed out after 120 seconds")?
+                .context("OpenAI API request failed")?;
+
+                let status = http_response.status();
+                let response_body: serde_json::Value = http_response.json().await
+                    .context("Failed to parse OpenAI API response")?;
+
+                if !status.is_success() {
+                    let error_msg = response_body.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("Unknown error");
+
+                    match status.as_u16() {
+                        401 => anyhow::bail!("✗  Authentication failed. Check your API key.\n   Error: {}", error_msg),
+                        404 => anyhow::bail!("✗  Model '{}' not found.\n   Error: {}", model, error_msg),
+                        429 => anyhow::bail!("✗  Rate limited by API provider.\n   Error: {}", error_msg),
+                        _ => anyhow::bail!("✗  OpenAI API error ({}): {}", status, error_msg),
+                    }
+                }
+
+                let text = response_body["choices"][0]["message"]["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+
+                let usage = TokenUsage {
+                    prompt_tokens: response_body["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
+                    completion_tokens: response_body["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+                    total_tokens: response_body["usage"]["total_tokens"].as_u64().unwrap_or(0),
+                };
+
+                (text, usage)
+            }
+        };
 
         // Record tokens in app state if available (for /usage command)
         if let Some(ref state) = self.app_state {
@@ -512,7 +622,7 @@ impl OllamaClient {
         // DEBUG: Summary with token info
         debug!(
             "LLM response: response_len={} chars, tokens={}i/{}o/{}t",
-            api_response.response.len(),
+            response_text.len(),
             token_usage.prompt_tokens,
             token_usage.completion_tokens,
             token_usage.total_tokens
@@ -520,7 +630,7 @@ impl OllamaClient {
         if let Some(ref tx) = self.status_tx {
             let _ = tx.send(format!(
                 "[DEBUG] LLM response: response_len={} chars, tokens={} prompt + {} completion = {} total",
-                api_response.response.len(),
+                response_text.len(),
                 token_usage.prompt_tokens,
                 token_usage.completion_tokens,
                 token_usage.total_tokens
@@ -528,7 +638,7 @@ impl OllamaClient {
         }
 
         // Check for empty response (model may be incompatible with JSON format)
-        if api_response.response.is_empty() || api_response.response.trim().is_empty() {
+        if response_text.is_empty() || response_text.trim().is_empty() {
             let error_msg = format!(
                 "Model '{}' returned empty response (used {} completion tokens).",
                 model,
@@ -542,8 +652,8 @@ impl OllamaClient {
         }
 
         // TRACE: Full payload with pretty-printed JSON if possible
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&api_response.response) {
-            let pretty = serde_json::to_string_pretty(&json).unwrap_or(api_response.response.clone());
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            let pretty = serde_json::to_string_pretty(&json).unwrap_or(response_text.clone());
             trace!("Full LLM response (JSON):\n{}", pretty);
             if let Some(ref tx) = self.status_tx {
                 let _ = tx.send("[TRACE] LLM response (JSON):".to_string());
@@ -552,17 +662,17 @@ impl OllamaClient {
                 }
             }
         } else {
-            trace!("Full LLM response (text):\n{}", api_response.response);
+            trace!("Full LLM response (text):\n{}", response_text);
             if let Some(ref tx) = self.status_tx {
                 let _ = tx.send("[TRACE] LLM response (text):".to_string());
-                for line in crate::llm::format_indented_dimmed_lines(&api_response.response, 8) {
+                for line in crate::llm::format_indented_dimmed_lines(&response_text, 8) {
                     let _ = tx.send(format!("[TRACE] {}", line));
                 }
             }
         }
 
         Ok(GenerateResponse {
-            text: api_response.response,
+            text: response_text,
             token_usage,
         })
     }
@@ -853,21 +963,45 @@ impl OllamaClient {
         Ok(all_actions)
     }
 
-    /// Check if Ollama is available
+    /// Check if the LLM backend is available
     pub async fn is_available(&self) -> bool {
-        // Try to list models as a health check
         self.list_models().await.is_ok()
     }
 
-    /// List available models
+    /// List available models from the backend
     pub async fn list_models(&self) -> Result<Vec<String>> {
-        let models = self
-            .ollama
-            .list_local_models()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list models: {}", e))?;
+        match &self.backend {
+            LlmBackend::Ollama(ollama) => {
+                let models = ollama
+                    .list_local_models()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to list models: {}", e))?;
+                Ok(models.into_iter().map(|m| m.name).collect())
+            }
+            LlmBackend::OpenAI { client, base_url, api_key } => {
+                let url = format!("{}/v1/models", base_url);
+                let response = client.get(&url)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .timeout(std::time::Duration::from_secs(5))
+                    .send()
+                    .await
+                    .context("Failed to connect to OpenAI-compatible API")?;
 
-        Ok(models.into_iter().map(|m| m.name).collect())
+                if !response.status().is_success() {
+                    anyhow::bail!("OpenAI API returned error status: {}", response.status());
+                }
+
+                let body: serde_json::Value = response.json().await
+                    .context("Failed to parse model list response")?;
+
+                let models = body["data"].as_array()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                    .collect();
+                Ok(models)
+            }
+        }
     }
 }
 

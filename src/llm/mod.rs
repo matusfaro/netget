@@ -79,7 +79,7 @@ pub use model_selection::{
 pub use embedded_inference::{EmbeddedLLMBackend, InferenceConfig};
 
 // Configuration exports
-pub use config::{LlmBackendType, NetGetConfig, OllamaConfig};
+pub use config::{LlmBackendType, NetGetConfig, OllamaConfig, OpenAIConfig};
 #[cfg(feature = "embedded-llm")]
 pub use config::EmbeddedLlmConfig;
 
