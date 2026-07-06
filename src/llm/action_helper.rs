@@ -165,6 +165,7 @@ pub async fn call_llm_with_actions(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
+    .with_native_tools(&all_actions)
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -446,6 +447,7 @@ pub async fn call_llm(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
+    .with_native_tools(&all_actions)
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -585,6 +587,7 @@ pub async fn call_llm_for_client(
         rate_limiter,
         crate::llm::RequestSource::Network, // Client calls are network-initiated, discarded if rate limited
     )
+    .with_native_tools(&all_actions)
     .with_status_tx(status_tx.clone());
 
     // Add user message
@@ -715,6 +718,9 @@ pub async fn call_llm_for_feedback(
         }
     };
 
+    // Feedback processing has limited actions (just update_instruction, set_memory, etc.)
+    let feedback_actions: Vec<crate::llm::actions::ActionDefinition> = Vec::new();
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
@@ -722,6 +728,7 @@ pub async fn call_llm_for_feedback(
         rate_limiter,
         crate::llm::RequestSource::User, // Feedback is user-initiated (via debounce timer)
     )
+    .with_native_tools(&feedback_actions)
     .with_status_tx(status_tx.clone())
     .with_tracking(
         state.clone(),
@@ -741,7 +748,7 @@ pub async fn call_llm_for_feedback(
         .generate_with_tools_and_retry(
             state.get_web_approval_channel().await,
             web_search_mode,
-            Vec::new(), // No additional actions
+            feedback_actions,
         )
         .await
         .context("✗  LLM failed to generate feedback processing response after retries")?;

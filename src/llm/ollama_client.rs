@@ -24,6 +24,12 @@ enum LlmBackend {
         base_url: String,
         api_key: String,
     },
+    /// MCP Sampling - routes LLM calls through MCP client's sampling API
+    #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+    Sampling {
+        /// Channel to send sampling requests to the MCP STDIO transport
+        request_tx: tokio::sync::mpsc::UnboundedSender<crate::mcp_stdio::sampling::SamplingRequest>,
+    },
 }
 
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
@@ -53,6 +59,9 @@ fn strip_markdown_fences(text: &str) -> String {
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// Tool call ID for tool result messages (role="tool")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// Token usage statistics from an LLM response
@@ -89,12 +98,46 @@ pub struct GenerateResponse {
     pub token_usage: TokenUsage,
 }
 
+/// Request for chat_with_tools - structured messages with native tool definitions
+#[derive(Debug, Clone)]
+pub struct ChatRequest {
+    /// Conversation messages (system, user, assistant, tool)
+    pub messages: Vec<Message>,
+    /// Tool schemas in OpenAI/Ollama format (from ActionDefinition::to_tool_schema())
+    pub tools: Vec<serde_json::Value>,
+    /// Model name (e.g., "qwen3-coder:30b")
+    pub model: String,
+}
+
+/// Response from chat_with_tools - may contain text and/or tool calls
+#[derive(Debug, Clone)]
+pub struct ChatResponse {
+    /// Text content of the response (may be None if only tool calls)
+    pub content: Option<String>,
+    /// Native tool calls requested by the LLM
+    pub tool_calls: Vec<ToolCall>,
+    /// Token usage statistics
+    pub token_usage: TokenUsage,
+}
+
+/// A native tool call from the LLM
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    /// Unique ID for this tool call (used to match tool results)
+    pub id: String,
+    /// Name of the function/tool to call
+    pub function_name: String,
+    /// Arguments as a JSON object
+    pub arguments: serde_json::Value,
+}
+
 impl Message {
     /// Create a system message
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: "system".to_string(),
             content: content.into(),
+            tool_call_id: None,
         }
     }
 
@@ -103,6 +146,7 @@ impl Message {
         Self {
             role: "user".to_string(),
             content: content.into(),
+            tool_call_id: None,
         }
     }
 
@@ -111,14 +155,25 @@ impl Message {
         Self {
             role: "assistant".to_string(),
             content: content.into(),
+            tool_call_id: None,
         }
     }
 
-    /// Create a tool message
+    /// Create a tool message (legacy, without tool_call_id)
     pub fn tool(content: impl Into<String>) -> Self {
         Self {
             role: "tool".to_string(),
             content: content.into(),
+            tool_call_id: None,
+        }
+    }
+
+    /// Create a tool result message with tool_call_id for native tool calling
+    pub fn tool_result(tool_call_id: String, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_call_id: Some(tool_call_id),
         }
     }
 }
@@ -413,11 +468,26 @@ impl OllamaClient {
         }
     }
 
-    /// Returns the backend type as a string ("ollama" or "openai")
+    /// Create a new client that routes LLM calls through MCP sampling
+    #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+    pub fn new_sampling(
+        request_tx: tokio::sync::mpsc::UnboundedSender<crate::mcp_stdio::sampling::SamplingRequest>,
+    ) -> Self {
+        Self {
+            backend: LlmBackend::Sampling { request_tx },
+            status_tx: None,
+            mock_config_file: None,
+            app_state: None,
+        }
+    }
+
+    /// Returns the backend type as a string ("ollama", "openai", or "sampling")
     pub fn backend_type(&self) -> &str {
         match &self.backend {
             LlmBackend::Ollama(_) => "ollama",
             LlmBackend::OpenAI { .. } => "openai",
+            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+            LlmBackend::Sampling { .. } => "sampling",
         }
     }
 
@@ -431,6 +501,8 @@ impl OllamaClient {
                 format!("{}", ollama.uri())
             }
             LlmBackend::OpenAI { base_url, .. } => base_url.clone(),
+            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+            LlmBackend::Sampling { .. } => "mcp://sampling".to_string(),
         }
     }
 
@@ -612,6 +684,22 @@ impl OllamaClient {
 
                 (text, usage)
             }
+
+            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+            LlmBackend::Sampling { request_tx } => {
+                // Route through chat_with_tools by wrapping the prompt as a user message
+                let chat_request = ChatRequest {
+                    messages: vec![Message::user(prompt)],
+                    tools: Vec::new(), // No native tools for generate path
+                    model: model.to_string(),
+                };
+                let chat_response =
+                    crate::mcp_stdio::sampling::execute_sampling_request(request_tx, &chat_request)
+                        .await?;
+                let text = chat_response.content.unwrap_or_default();
+                let usage = chat_response.token_usage;
+                (text, usage)
+            }
         };
 
         // Record tokens in app state if available (for /usage command)
@@ -673,6 +761,310 @@ impl OllamaClient {
 
         Ok(GenerateResponse {
             text: response_text,
+            token_usage,
+        })
+    }
+
+    /// Chat with native tool calling support
+    ///
+    /// Sends structured messages with tool definitions to the LLM backend.
+    /// The LLM can respond with text content and/or tool calls.
+    ///
+    /// This is the preferred method for the chat completions migration.
+    /// For Ollama: uses /api/chat with tools parameter
+    /// For OpenAI: uses /v1/chat/completions with tools parameter
+    ///
+    /// # Arguments
+    /// * `request` - Chat request with messages, tools, and model
+    ///
+    /// # Returns
+    /// * `Ok(ChatResponse)` - Response with optional content and tool calls
+    pub(crate) async fn chat_with_tools(&self, request: &ChatRequest) -> Result<ChatResponse> {
+        debug!(
+            "Chat request: model={}, messages={}, tools={}",
+            request.model,
+            request.messages.len(),
+            request.tools.len()
+        );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[DEBUG] Chat request: model={}, messages={}, tools={}",
+                request.model,
+                request.messages.len(),
+                request.tools.len()
+            ));
+        }
+
+        trace!(
+            "Chat messages: {:?}",
+            request
+                .messages
+                .iter()
+                .map(|m| format!("[{}] {}...", m.role, &m.content[..m.content.len().min(100)]))
+                .collect::<Vec<_>>()
+        );
+
+        let chat_response = match &self.backend {
+            LlmBackend::Ollama(ollama) => {
+                self.chat_with_tools_ollama(ollama, request).await?
+            }
+            LlmBackend::OpenAI {
+                client,
+                base_url,
+                api_key,
+            } => {
+                self.chat_with_tools_openai(client, base_url, api_key, request)
+                    .await?
+            }
+            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+            LlmBackend::Sampling { request_tx } => {
+                crate::mcp_stdio::sampling::execute_sampling_request(request_tx, request)
+                    .await?
+            }
+        };
+
+        // Record tokens in app state if available
+        if let Some(ref state) = self.app_state {
+            state
+                .record_llm_tokens(
+                    chat_response.token_usage.prompt_tokens,
+                    chat_response.token_usage.completion_tokens,
+                )
+                .await;
+        }
+
+        debug!(
+            "Chat response: content={}, tool_calls={}, tokens={}i/{}o/{}t",
+            chat_response.content.as_ref().map(|c| c.len()).unwrap_or(0),
+            chat_response.tool_calls.len(),
+            chat_response.token_usage.prompt_tokens,
+            chat_response.token_usage.completion_tokens,
+            chat_response.token_usage.total_tokens
+        );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[DEBUG] Chat response: content_len={}, tool_calls={}, tokens={}i/{}o/{}t",
+                chat_response.content.as_ref().map(|c| c.len()).unwrap_or(0),
+                chat_response.tool_calls.len(),
+                chat_response.token_usage.prompt_tokens,
+                chat_response.token_usage.completion_tokens,
+                chat_response.token_usage.total_tokens
+            ));
+        }
+
+        Ok(chat_response)
+    }
+
+    /// Ollama backend: /api/chat with tools
+    async fn chat_with_tools_ollama(
+        &self,
+        ollama: &Ollama,
+        request: &ChatRequest,
+    ) -> Result<ChatResponse> {
+        // Build the request body manually since ollama-rs may not support tools natively
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let mut msg = serde_json::json!({
+                    "role": m.role,
+                    "content": m.content,
+                });
+                if let Some(ref tool_call_id) = m.tool_call_id {
+                    // This message is a tool result - it's not a standard Ollama field,
+                    // but some Ollama models support it. For now, embed in content.
+                    msg["tool_call_id"] = serde_json::json!(tool_call_id);
+                }
+                msg
+            })
+            .collect();
+
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": messages,
+            "stream": false,
+        });
+
+        // Add tools if any
+        if !request.tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(request.tools.clone());
+        }
+
+        // ollama-rs doesn't expose a chat-with-tools API, so we call the endpoint via reqwest.
+        // Preserve the client's full base URL (scheme, host, port, path prefix).
+        let url = format!("{}/api/chat", ollama.url_str().trim_end_matches('/'));
+
+        let http_client = reqwest::Client::new();
+        let http_response = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            http_client.post(&url).json(&body).send(),
+        )
+        .await
+        .context("Ollama chat API call timed out after 120 seconds")?
+        .context("Ollama chat API request failed")?;
+
+        let status = http_response.status();
+        let response_body: serde_json::Value = http_response
+            .json()
+            .await
+            .context("Failed to parse Ollama chat API response")?;
+
+        if !status.is_success() {
+            let error_msg = response_body["error"]
+                .as_str()
+                .unwrap_or("Unknown error");
+            anyhow::bail!("Ollama chat API error ({}): {}", status, error_msg);
+        }
+
+        // Parse response
+        let content = response_body["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+
+        let tool_calls = if let Some(calls) = response_body["message"]["tool_calls"].as_array() {
+            calls
+                .iter()
+                .enumerate()
+                .filter_map(|(i, tc)| {
+                    let function = tc.get("function")?;
+                    let name = function["name"].as_str()?.to_string();
+                    let arguments = function.get("arguments").cloned().unwrap_or_default();
+                    Some(ToolCall {
+                        id: format!("call_{}", i),
+                        function_name: name,
+                        arguments,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let token_usage = TokenUsage {
+            prompt_tokens: response_body["prompt_eval_count"].as_u64().unwrap_or(0),
+            completion_tokens: response_body["eval_count"].as_u64().unwrap_or(0),
+            total_tokens: response_body["prompt_eval_count"].as_u64().unwrap_or(0)
+                + response_body["eval_count"].as_u64().unwrap_or(0),
+        };
+
+        Ok(ChatResponse {
+            content,
+            tool_calls,
+            token_usage,
+        })
+    }
+
+    /// OpenAI backend: /v1/chat/completions with tools
+    async fn chat_with_tools_openai(
+        &self,
+        client: &reqwest::Client,
+        base_url: &str,
+        api_key: &str,
+        request: &ChatRequest,
+    ) -> Result<ChatResponse> {
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                if let Some(ref tool_call_id) = m.tool_call_id {
+                    serde_json::json!({
+                        "role": "tool",
+                        "content": m.content,
+                        "tool_call_id": tool_call_id,
+                    })
+                } else {
+                    serde_json::json!({
+                        "role": m.role,
+                        "content": m.content,
+                    })
+                }
+            })
+            .collect();
+
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": messages,
+            "max_tokens": 4096,
+        });
+
+        if !request.tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(request.tools.clone());
+            body["tool_choice"] = serde_json::json!("auto");
+        }
+
+        let url = format!("{}/v1/chat/completions", base_url);
+
+        let http_response = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send(),
+        )
+        .await
+        .context("OpenAI chat API call timed out after 120 seconds")?
+        .context("OpenAI chat API request failed")?;
+
+        let status = http_response.status();
+        let response_body: serde_json::Value = http_response
+            .json()
+            .await
+            .context("Failed to parse OpenAI chat API response")?;
+
+        if !status.is_success() {
+            let error_msg = response_body
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown error");
+            anyhow::bail!("OpenAI chat API error ({}): {}", status, error_msg);
+        }
+
+        let message = &response_body["choices"][0]["message"];
+
+        let content = message["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+
+        let tool_calls = if let Some(calls) = message["tool_calls"].as_array() {
+            calls
+                .iter()
+                .filter_map(|tc| {
+                    let id = tc["id"].as_str()?.to_string();
+                    let function = tc.get("function")?;
+                    let name = function["name"].as_str()?.to_string();
+                    let arguments_str = function["arguments"].as_str().unwrap_or("{}");
+                    let arguments = serde_json::from_str(arguments_str).unwrap_or_default();
+                    Some(ToolCall {
+                        id,
+                        function_name: name,
+                        arguments,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let token_usage = TokenUsage {
+            prompt_tokens: response_body["usage"]["prompt_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+            completion_tokens: response_body["usage"]["completion_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+            total_tokens: response_body["usage"]["total_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+        };
+
+        Ok(ChatResponse {
+            content,
+            tool_calls,
             token_usage,
         })
     }
@@ -1000,6 +1392,11 @@ impl OllamaClient {
                     .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
                     .collect();
                 Ok(models)
+            }
+            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
+            LlmBackend::Sampling { .. } => {
+                // Sampling backend doesn't have a model list - the MCP client chooses the model
+                Ok(vec!["(MCP sampling - model chosen by client)".to_string()])
             }
         }
     }

@@ -8,7 +8,7 @@
 
 use crate::llm::actions::{execute_tool, ActionDefinition, ActionResponse, ToolAction, ToolResult};
 use crate::llm::conversation_state::ConversationState;
-use crate::llm::ollama_client::{Message, OllamaClient};
+use crate::llm::ollama_client::{ChatRequest, ChatResponse, Message, OllamaClient};
 use crate::llm::{RateLimiter, RequestSource};
 use crate::state::app_state::{AppState, ConversationSource, WebApprovalRequest, WebSearchMode};
 use anyhow::{Context, Result};
@@ -100,6 +100,12 @@ pub struct ConversationHandler {
 
     /// Source of the request (User or Network) for rate limiting behavior
     request_source: RequestSource,
+
+    /// Native tool schemas for chat_with_tools() API (empty = use prompt-based fallback)
+    tool_schemas: Vec<serde_json::Value>,
+
+    /// Whether to use native tool calling (chat_with_tools) vs prompt-based (generate_with_format)
+    use_native_tools: bool,
 }
 
 impl ConversationHandler {
@@ -139,6 +145,8 @@ impl ConversationHandler {
             registered: false,
             rate_limiter,
             request_source,
+            tool_schemas: Vec::new(),
+            use_native_tools: false,
         }
     }
 
@@ -176,6 +184,119 @@ impl ConversationHandler {
         self.source = Some(source);
         self.details = Some(details);
         self
+    }
+
+    /// Enable native tool calling with the given action definitions
+    ///
+    /// When set, `generate_with_retry()` will use `chat_with_tools()` instead of
+    /// `generate_with_format()`, sending structured messages and tool schemas.
+    /// The response is converted back to ActionResponse text format so the existing
+    /// tool calling loop in `generate_with_tools_and_retry()` works unchanged.
+    ///
+    /// Also strips redundant action/tool descriptions and JSON format instructions from
+    /// the system message to reduce token usage (these are now handled by native tool schemas).
+    pub fn with_native_tools(mut self, actions: &[ActionDefinition]) -> Self {
+        self.tool_schemas = actions.iter().map(|a| a.to_tool_schema()).collect();
+        self.use_native_tools = !self.tool_schemas.is_empty();
+
+        // Strip redundant sections from system message when native tools are active
+        if self.use_native_tools && !self.messages.is_empty() && self.messages[0].role == "system" {
+            let content = &self.messages[0].content;
+            let mut cleaned = content.clone();
+
+            // Remove "# Available Tools" section (text descriptions of tools)
+            if let Some(start) = cleaned.find("# Available Tools") {
+                if let Some(next_section) = cleaned[start + 1..].find("\n# ") {
+                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[start + 1 + next_section..]);
+                }
+            }
+
+            // Remove "# Available Actions" section (text descriptions of actions)
+            if let Some(start) = cleaned.find("# Available Actions") {
+                if let Some(next_section) = cleaned[start + 1..].find("\n# ") {
+                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[start + 1 + next_section..]);
+                }
+            }
+
+            // Remove "# Response Format" section (JSON format instructions)
+            if let Some(start) = cleaned.find("# Response Format") {
+                if let Some(next_section) = cleaned[start + 1..].find("\n# ") {
+                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[start + 1 + next_section..]);
+                }
+            }
+
+            // Remove the "CRITICAL - READ THIS FIRST" JSON format block from task.hbs
+            if let Some(start) = cleaned.find("**⚠️  CRITICAL - READ THIS FIRST ⚠️**") {
+                // Find the end of this block (next "---" or "## ")
+                if let Some(end_marker) = cleaned[start..].find("\n---\n") {
+                    let end = start + end_marker + 5; // include the "---\n"
+                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[end..]);
+                }
+            }
+
+            if cleaned.len() < content.len() {
+                debug!(
+                    "Stripped {} chars of redundant action/format descriptions from system message (native tools active)",
+                    content.len() - cleaned.len()
+                );
+                self.messages[0] = Message::system(cleaned);
+            }
+        }
+
+        self
+    }
+
+    /// Update the native tool schemas (e.g., after documentation is read and new tools are enabled)
+    pub fn update_tool_schemas(&mut self, actions: &[ActionDefinition]) {
+        self.tool_schemas = actions.iter().map(|a| a.to_tool_schema()).collect();
+        self.use_native_tools = !self.tool_schemas.is_empty();
+    }
+
+    /// Convert a ChatResponse (native tool calls) into ActionResponse-compatible text
+    ///
+    /// This bridges native tool calling with the existing text-based parsing pipeline.
+    /// Each tool_call is converted to a JSON object with "type" field matching the function name,
+    /// then separated into tools vs actions arrays.
+    fn chat_response_to_action_text(response: &ChatResponse) -> String {
+        let mut tools = Vec::new();
+        let mut actions = Vec::new();
+
+        for tc in &response.tool_calls {
+            // Build action JSON: merge function_name as "type" with arguments
+            let obj = if let Some(map) = tc.arguments.as_object() {
+                let mut new_map = serde_json::Map::new();
+                new_map.insert(
+                    "type".to_string(),
+                    serde_json::Value::String(tc.function_name.clone()),
+                );
+                for (k, v) in map {
+                    new_map.insert(k.clone(), v.clone());
+                }
+                serde_json::Value::Object(new_map)
+            } else {
+                serde_json::json!({"type": tc.function_name})
+            };
+
+            // Separate into tools vs actions using existing classification
+            if ToolAction::is_tool_action(&obj) {
+                tools.push(obj);
+            } else {
+                actions.push(obj);
+            }
+        }
+
+        // If there's text content and no tool calls, convert to show_message
+        if let Some(content) = &response.content {
+            if !content.is_empty() && tools.is_empty() && actions.is_empty() {
+                actions.push(serde_json::json!({"type": "show_message", "message": content}));
+            }
+        }
+
+        serde_json::to_string(&serde_json::json!({
+            "tools": tools,
+            "actions": actions
+        }))
+        .unwrap_or_default()
     }
 
     /// Manually end conversation tracking (for error paths where generate_with_tools_and_retry doesn't complete)
@@ -1117,29 +1238,6 @@ impl ConversationHandler {
             // Update the last logged index (track what's been sent, don't re-log)
             self.last_logged_index = self.messages.len();
 
-            // Concatenate all messages into a single prompt for generate API
-            // This provides better JSON formatting than chat API
-            let mut full_prompt = String::new();
-            for msg in &self.messages {
-                match msg.role.as_str() {
-                    "system" => {
-                        full_prompt.push_str(&msg.content);
-                        full_prompt.push_str("\n\n");
-                    }
-                    "user" => {
-                        full_prompt.push_str(&msg.content);
-                        full_prompt.push_str("\n\n");
-                    }
-                    "assistant" => {
-                        // Include previous assistant responses in conversation
-                        full_prompt.push_str("Actions you have executed:\n");
-                        full_prompt.push_str(&msg.content);
-                        full_prompt.push_str("\n\n");
-                    }
-                    _ => {}
-                }
-            }
-
             // Acquire rate limiter permit (waits for user requests, discards network requests if limited)
             let permit = self
                 .rate_limiter
@@ -1147,32 +1245,92 @@ impl ConversationHandler {
                 .await
                 .context("Rate limit exceeded")?;
 
-            // Call generate API with concatenated prompt
-            // We rely on prompt engineering for JSON responses rather than format enforcement,
-            // as some models (e.g., gpt-oss) don't support Ollama's JSON format mode
-            let generate_response = self
-                .client
-                .generate_with_format(&self.model, &full_prompt, None)
-                .await
-                .context("Generate API call failed")?;
+            // Choose between native tool calling (chat API) and prompt-based (generate API)
+            let response_text = if self.use_native_tools {
+                // Native tool calling path: send structured messages with tool schemas
+                let chat_request = ChatRequest {
+                    messages: self.messages.clone(),
+                    tools: self.tool_schemas.clone(),
+                    model: self.model.clone(),
+                };
 
-            // Record token usage
-            permit
-                .record_usage(
-                    generate_response.token_usage.prompt_tokens,
-                    generate_response.token_usage.completion_tokens,
-                )
-                .await;
+                let chat_response = self
+                    .client
+                    .chat_with_tools(&chat_request)
+                    .await
+                    .context("Chat API call failed")?;
 
-            let response_text = generate_response.text;
+                // Record token usage
+                permit
+                    .record_usage(
+                        chat_response.token_usage.prompt_tokens,
+                        chat_response.token_usage.completion_tokens,
+                    )
+                    .await;
+
+                // Convert native tool_calls to ActionResponse text format
+                // so the existing parsing/validation pipeline works unchanged
+                if !chat_response.tool_calls.is_empty() {
+                    debug!(
+                        "Native tool calling: {} tool_calls received",
+                        chat_response.tool_calls.len()
+                    );
+                    Self::chat_response_to_action_text(&chat_response)
+                } else if let Some(ref content) = chat_response.content {
+                    // No tool calls, just text - try to use it as-is
+                    // (may be JSON actions from prompt-based models that ignore tools param)
+                    content.clone()
+                } else {
+                    // Empty response
+                    "{}".to_string()
+                }
+            } else {
+                // Prompt-based fallback: concatenate messages into single prompt
+                let mut full_prompt = String::new();
+                for msg in &self.messages {
+                    match msg.role.as_str() {
+                        "system" => {
+                            full_prompt.push_str(&msg.content);
+                            full_prompt.push_str("\n\n");
+                        }
+                        "user" => {
+                            full_prompt.push_str(&msg.content);
+                            full_prompt.push_str("\n\n");
+                        }
+                        "assistant" => {
+                            // Include previous assistant responses in conversation
+                            full_prompt.push_str("Actions you have executed:\n");
+                            full_prompt.push_str(&msg.content);
+                            full_prompt.push_str("\n\n");
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Call generate API with concatenated prompt
+                // We rely on prompt engineering for JSON responses rather than format enforcement,
+                // as some models (e.g., gpt-oss) don't support Ollama's JSON format mode
+                let generate_response = self
+                    .client
+                    .generate_with_format(&self.model, &full_prompt, None)
+                    .await
+                    .context("Generate API call failed")?;
+
+                // Record token usage
+                permit
+                    .record_usage(
+                        generate_response.token_usage.prompt_tokens,
+                        generate_response.token_usage.completion_tokens,
+                    )
+                    .await;
+
+                generate_response.text
+            };
 
             info!(
-                "LLM response received (attempt {}): {} chars, {}i/{}o/{}t tokens",
+                "LLM response received (attempt {}): {} chars",
                 attempt,
                 response_text.len(),
-                generate_response.token_usage.prompt_tokens,
-                generate_response.token_usage.completion_tokens,
-                generate_response.token_usage.total_tokens
             );
 
             // Extract reasoning if present (before normalization to preserve formatting)

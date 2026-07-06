@@ -634,6 +634,7 @@ impl EventHandler {
             rate_limiter,
             crate::llm::RequestSource::User, // User input always waits for rate limits
         )
+        .with_native_tools(&available_actions)
         .with_status_tx(status_tx.clone())
         .with_tracking(
             self.state.clone(),

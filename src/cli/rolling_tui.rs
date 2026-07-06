@@ -819,6 +819,9 @@ async fn execute_single_task(
     // Get rate limiter for scheduled tasks (discards if rate limited)
     let rate_limiter = state.get_rate_limiter().await;
 
+    // Scheduled tasks have limited actions
+    let task_actions: Vec<crate::llm::actions::ActionDefinition> = Vec::new();
+
     // Create conversation handler with tracking
     let mut conversation = crate::llm::ConversationHandler::new(
         prompt.clone(),
@@ -827,6 +830,7 @@ async fn execute_single_task(
         rate_limiter,
         crate::llm::RequestSource::Network, // Scheduled tasks are discarded if rate limited
     )
+    .with_native_tools(&task_actions)
     .with_status_tx(status_tx.clone())
     .with_tracking(state.clone(), conversation_source, truncated_instruction);
 
@@ -839,7 +843,7 @@ async fn execute_single_task(
         .generate_with_tools_and_retry(
             state.get_web_approval_channel().await,
             web_search_mode,
-            Vec::new(), // No additional actions for tasks
+            task_actions,
         )
         .await
     {

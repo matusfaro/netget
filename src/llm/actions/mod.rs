@@ -210,6 +210,20 @@ impl ParameterDefinition {
     }
 }
 
+/// Controls how this tool/action behaves in conversations and which paths expose it
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCategory {
+    /// Information-gathering tool: results returned to LLM for further processing
+    /// Examples: read_file, web_search, read_documentation, list_models
+    InformationTool,
+    /// Action: executed with acknowledgment, LLM may continue
+    /// Examples: open_server, close_server, set_memory, show_message
+    Action,
+    /// Protocol-specific sync action: executed during network event handling
+    /// Examples: send_http_response, send_tcp_data, send_dns_a_response
+    ProtocolAction,
+}
+
 /// Definition of an action for prompt generation
 ///
 /// This describes an action to the LLM, including its name,
@@ -294,6 +308,185 @@ impl ActionDefinition {
     pub fn with_log_template(mut self, template: LogTemplate) -> Self {
         self.log_template = Some(template);
         self
+    }
+
+    /// Derive the tool category from the action name
+    pub fn category(&self) -> ToolCategory {
+        if self.is_tool() || self.is_documentation_tool() {
+            ToolCategory::InformationTool
+        } else if self.is_common_action() {
+            ToolCategory::Action
+        } else {
+            ToolCategory::ProtocolAction
+        }
+    }
+
+    /// Whether this action should be exposed as an MCP tool in STDIO mode
+    pub fn mcp_visible(&self) -> bool {
+        match self.category() {
+            ToolCategory::InformationTool => {
+                // Expose information tools except generate_random (MCP clients can do this)
+                !matches!(self.name.as_str(), "generate_random" | "list_network_interfaces")
+            }
+            ToolCategory::Action => {
+                // Expose management actions, exclude internal-only ones
+                !matches!(
+                    self.name.as_str(),
+                    "show_message" | "append_to_log" | "provide_feedback"
+                )
+            }
+            ToolCategory::ProtocolAction => {
+                // Protocol-specific actions are not exposed via MCP
+                // (they are handled by the protocol server's internal LLM)
+                false
+            }
+        }
+    }
+
+    /// Check if this is a documentation/info-gathering tool
+    fn is_documentation_tool(&self) -> bool {
+        matches!(
+            self.name.as_str(),
+            "read_documentation"
+                | "read_server_documentation"
+                | "read_client_documentation"
+                | "read_base_stack_docs"
+                | "list_tasks"
+                | "list_databases"
+                | "execute_sql"
+        )
+    }
+
+    /// Check if this is a common (non-protocol-specific) action
+    fn is_common_action(&self) -> bool {
+        matches!(
+            self.name.as_str(),
+            "show_message"
+                | "open_server"
+                | "close_server"
+                | "close_all_servers"
+                | "open_client"
+                | "close_client"
+                | "close_all_clients"
+                | "reconnect_client"
+                | "update_client_instruction"
+                | "close_connection_by_id"
+                | "update_instruction"
+                | "set_memory"
+                | "append_memory"
+                | "append_to_log"
+                | "change_model"
+                | "schedule_task"
+                | "cancel_task"
+                | "provide_feedback"
+                | "create_database"
+                | "delete_database"
+        )
+    }
+
+    /// Convert to OpenAI/Ollama native tool calling schema
+    ///
+    /// Returns a JSON value in the format:
+    /// ```json
+    /// {
+    ///   "type": "function",
+    ///   "function": {
+    ///     "name": "action_name",
+    ///     "description": "What this action does",
+    ///     "parameters": {
+    ///       "type": "object",
+    ///       "properties": { ... },
+    ///       "required": [ ... ]
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    pub fn to_tool_schema(&self) -> serde_json::Value {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        for param in &self.parameters {
+            let mut prop = serde_json::Map::new();
+            // Map type_hint to JSON Schema type
+            let json_type = match param.type_hint.as_str() {
+                "number" | "integer" => "number",
+                "boolean" | "bool" => "boolean",
+                "array" => "array",
+                "object" => "object",
+                _ => "string",
+            };
+            prop.insert("type".to_string(), serde_json::Value::String(json_type.to_string()));
+            prop.insert(
+                "description".to_string(),
+                serde_json::Value::String(param.description.clone()),
+            );
+            properties.insert(param.name.clone(), serde_json::Value::Object(prop));
+            if param.required {
+                required.push(serde_json::Value::String(param.name.clone()));
+            }
+        }
+
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        })
+    }
+
+    /// Convert to MCP tool schema for rmcp
+    ///
+    /// Returns a JSON value in the format:
+    /// ```json
+    /// {
+    ///   "name": "action_name",
+    ///   "description": "What this action does",
+    ///   "inputSchema": {
+    ///     "type": "object",
+    ///     "properties": { ... },
+    ///     "required": [ ... ]
+    ///   }
+    /// }
+    /// ```
+    pub fn to_mcp_tool_schema(&self) -> serde_json::Value {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        for param in &self.parameters {
+            let mut prop = serde_json::Map::new();
+            let json_type = match param.type_hint.as_str() {
+                "number" | "integer" => "number",
+                "boolean" | "bool" => "boolean",
+                "array" => "array",
+                "object" => "object",
+                _ => "string",
+            };
+            prop.insert("type".to_string(), serde_json::Value::String(json_type.to_string()));
+            prop.insert(
+                "description".to_string(),
+                serde_json::Value::String(param.description.clone()),
+            );
+            properties.insert(param.name.clone(), serde_json::Value::Object(prop));
+            if param.required {
+                required.push(serde_json::Value::String(param.name.clone()));
+            }
+        }
+
+        serde_json::json!({
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": {
+                "type": "object",
+                "properties": properties,
+                "required": required
+            }
+        })
     }
 }
 
