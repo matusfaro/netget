@@ -228,6 +228,23 @@ pub struct Args {
     )]
     pub simple_list: bool,
 
+    /// Run as MCP STDIO server (for Claude Desktop/Code integration)
+    #[clap(
+        long = "mcp",
+        alias = "mcp-stdio",
+        help = "Run as an MCP server over stdin/stdout for integration with MCP clients like Claude Desktop"
+    )]
+    pub mcp_stdio: bool,
+
+    /// Run as an MCP server over HTTP/SSE on the given port (for remote/web MCP clients)
+    #[clap(
+        long = "mcp-http",
+        value_name = "PORT",
+        conflicts_with = "mcp_stdio",
+        help = "Run as an MCP server over HTTP/SSE on the given port (e.g. --mcp-http 8080). Bind address comes from --listen-addr (default 127.0.0.1)"
+    )]
+    pub mcp_http: Option<u16>,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,

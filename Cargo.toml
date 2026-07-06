@@ -238,6 +238,9 @@ torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-p
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # TLS server and client for custom protocols on top of encrypted transport
 embedded-llm = ["dep:llama-cpp-2", "dep:hf-hub"]  # Embedded LLM inference via llama.cpp (fallback when Ollama unavailable)
 sqlite = ["dep:rusqlite"]  # SQLite database support for protocols (in-memory or file-based)
+# The rmcp `client` feature is enabled so the in-process MCP smoke tests can drive the server.
+mcp-stdio = ["dep:rmcp", "dep:schemars", "rmcp/client"]  # MCP STDIO server mode for Claude Desktop/Code integration
+mcp-http = ["dep:rmcp", "dep:schemars", "dep:axum", "rmcp/client", "rmcp/transport-streamable-http-server"]  # MCP HTTP/SSE server mode for remote/web MCP clients
 all-protocols = [
     "tcp",
     "socket_file",
@@ -405,6 +408,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"  # YAML serialization for OpenAPI specs
 toml = "0.8"  # TOML serialization for config files
+
+# MCP STDIO server (Model Context Protocol)
+rmcp = { version = "1.2", optional = true, features = ["server", "transport-io"] }
+schemars = { version = "1.0", optional = true }
 
 # Error handling
 anyhow = "1.0"

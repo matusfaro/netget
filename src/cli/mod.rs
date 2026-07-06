@@ -25,7 +25,7 @@ use crate::state::app_state::AppState;
 use crate::ui::App;
 
 /// Create the LLM client from CLI args, branching on --openai-url vs --ollama-url
-fn create_llm_client(args: &Args, lock_enabled: bool) -> Result<OllamaClient> {
+pub fn create_llm_client(args: &Args, lock_enabled: bool) -> Result<OllamaClient> {
     if let Some(ref openai_url) = args.openai_url {
         let api_key = args.resolve_api_key().ok_or_else(|| {
             anyhow::anyhow!(
@@ -71,6 +71,34 @@ pub async fn run() -> Result<()> {
     // Handle --simple <protocol> flag (start simple protocol in non-interactive mode)
     if let Some(ref protocol) = args.simple_protocol {
         return run_simple_protocol(protocol, &args).await;
+    }
+
+    // Handle --mcp-stdio flag (run as MCP STDIO server)
+    #[cfg(feature = "mcp-stdio")]
+    if args.mcp_stdio {
+        let settings = Settings::load();
+        return crate::mcp_stdio::run_mcp_stdio(&args, settings).await;
+    }
+    #[cfg(not(feature = "mcp-stdio"))]
+    if args.mcp_stdio {
+        anyhow::bail!(
+            "MCP STDIO mode requires the 'mcp-stdio' feature.\n\
+             Build with: cargo build --features mcp-stdio"
+        );
+    }
+
+    // Handle --mcp-http flag (run as MCP HTTP/SSE server)
+    #[cfg(feature = "mcp-http")]
+    if let Some(port) = args.mcp_http {
+        let settings = Settings::load();
+        return crate::mcp_stdio::run_mcp_http(&args, settings, port).await;
+    }
+    #[cfg(not(feature = "mcp-http"))]
+    if args.mcp_http.is_some() {
+        anyhow::bail!(
+            "MCP HTTP mode requires the 'mcp-http' feature.\n\
+             Build with: cargo build --features mcp-http"
+        );
     }
 
     // Check for actions JSON first (--load flag or JSON input)

@@ -288,6 +288,57 @@ Tasks can be scoped to global (any server), server-specific, or connection-speci
 > model llama3.3:70b        # Switch to different LLM model
 ```
 
+## Control NetGet from Another LLM (MCP)
+
+NetGet can run as a [Model Context Protocol](https://modelcontextprotocol.io) server,
+exposing its protocol-server management as MCP tools. This lets an MCP client such as
+Claude Desktop or Claude Code start and drive network protocol servers directly.
+
+### STDIO transport (Claude Desktop / Claude Code)
+
+```bash
+# Build with the mcp-stdio feature (plus the protocols you want available)
+./cargo-isolated.sh build --release --no-default-features --features mcp-stdio,tcp,http,dns
+
+# Run as an MCP server over stdin/stdout
+netget --mcp
+```
+
+Claude Desktop config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "netget": {
+      "command": "/path/to/netget",
+      "args": ["--mcp", "--model", "qwen3-coder:30b"]
+    }
+  }
+}
+```
+
+### HTTP transport (remote / web clients)
+
+```bash
+# Build with the mcp-http feature
+./cargo-isolated.sh build --release --no-default-features --features mcp-http,tcp,http,dns
+
+# Serve MCP over HTTP/SSE (bind address from --listen-addr, default 127.0.0.1)
+netget --mcp-http 8080          # endpoint: http://127.0.0.1:8080/mcp
+```
+
+### Exposed tools
+
+`list_protocols`, `start_server`, `stop_server`, `list_servers`, `server_status`,
+`get_status`, `set_model`, `get_protocol_docs`, `update_server_instruction`, `stop_all`.
+
+### Sampling — let the client's own LLM run the servers
+
+If the MCP client advertises the `sampling` capability, call `start_server` with
+`llm_provider: "sampling"` and the protocol server's LLM calls are routed back to the
+**client's** model (e.g. Claude) instead of a local Ollama/OpenAI endpoint. Otherwise
+NetGet uses its own configured model.
+
 ## Testing
 
 NetGet has comprehensive test coverage with both unit tests and end-to-end tests.
