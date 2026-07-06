@@ -25,17 +25,15 @@ rmcp STDIO transport  /  rmcp StreamableHttpService
   |
   v
 NetGetMcpService (tools.rs)
-  |--- 10+ MCP tools (list_protocols, start_server, etc.)
+  |--- 10 MCP tools (list_protocols, start_server, etc.)
   |--- AppState (shared server/client state)
-  |--- Sampling forwarder (routes LLM calls to MCP client)
   v
 Protocol Servers (tcp, http, dns, ...)
   |
   v
-OllamaClient (3 backends)
+OllamaClient (2 backends)
   |--- Ollama /api/chat  (local)
   |--- OpenAI /v1/chat   (remote)
-  |--- Sampling (MCP client's LLM)
 ```
 
 ## Library
@@ -74,31 +72,17 @@ OllamaClient (3 backends)
 | `update_server_instruction` | Update server instruction | `AppState::with_server_mut()` |
 | `stop_all` | Stop all servers | Iterate + remove all |
 
-## Sampling Integration
+## LLM Backend
 
-When the MCP client supports sampling (`capabilities.sampling`):
+Protocol servers started via `start_server` are driven by NetGet's own configured
+LLM client (`SharedState.llm_client`), built once from the CLI args:
 
-1. A single sampling forwarder task is spawned once in `create_shared_state()`. It
-   reads the *current* peer from `SharedState.peer` (an `Arc<Mutex<Option<Peer>>>`)
-   on every request, so it always targets the most recently initialized client.
-   This supports client reconnects (STDIO) and multiple sessions (HTTP).
-2. During `initialize`, the server stores the peer into `SharedState.peer`.
-3. `start_server` with `llm_provider: "sampling"` creates `OllamaClient::new_sampling()`.
-4. Protocol servers make LLM calls via `OllamaClient.chat_with_tools()`.
-5. The Sampling backend sends requests through a channel to the forwarder task.
-6. The forwarder converts to `CreateMessageRequestParams` and calls `peer.send_request()`.
-7. Response flows back through a oneshot channel to the protocol server.
+- **Ollama** (default) - local Ollama instance, or
+- **OpenAI-compatible** - when `--openai-url` / `--api-key` are provided.
 
-This means the MCP client's LLM (e.g., Claude) directly controls protocol behavior.
-If no client is connected when a request arrives, the forwarder returns an error
-rather than hanging.
-
-## LLM Provider Selection
-
-The `start_server` tool's `llm_provider` parameter:
-- `"sampling"` (default when client supports it) - MCP client's LLM
-- `"ollama"` - Local Ollama instance
-- `"openai"` - OpenAI-compatible API (requires --openai-url and --api-key)
+MCP **sampling** (routing protocol-server LLM calls back to the MCP client's model)
+is intentionally **not** supported: the capability is being removed from the MCP
+spec, so NetGet always uses its own LLM backend.
 
 ## Logging
 
@@ -109,7 +93,7 @@ All logging goes to stderr (stdout is JSON-RPC). Status messages from protocol s
 - **STDIO is single-session**: one client at a time (HTTP supports many)
 - **No elicitation yet**: Interactive config gathering not implemented
 - **No dynamic tool list**: All tools exposed from start (no `tools/list_changed`)
-- **Sampling tool calls**: When using sampling, native tool_calls from the MCP client LLM are not forwarded back to protocol servers (text content only)
+- **No sampling**: protocol servers always use NetGet's own LLM backend, never the MCP client's model
 
 ## Testing
 

@@ -1,10 +1,9 @@
-//! MCP STDIO server mode
+//! MCP server mode (STDIO and HTTP transports)
 //!
-//! Runs NetGet as an MCP server over stdin/stdout, exposing network protocol
-//! management as MCP tools. Supports sampling (client's LLM controls protocols)
-//! and elicitation (interactive config gathering).
+//! Runs NetGet as an MCP server, exposing network protocol management as MCP
+//! tools. Protocol servers are driven by NetGet's own configured LLM backend
+//! (Ollama or an OpenAI-compatible endpoint).
 
-pub mod sampling;
 pub mod tools;
 
 use anyhow::Result;

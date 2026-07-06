@@ -332,12 +332,9 @@ netget --mcp-http 8080          # endpoint: http://127.0.0.1:8080/mcp
 `list_protocols`, `start_server`, `stop_server`, `list_servers`, `server_status`,
 `get_status`, `set_model`, `get_protocol_docs`, `update_server_instruction`, `stop_all`.
 
-### Sampling — let the client's own LLM run the servers
-
-If the MCP client advertises the `sampling` capability, call `start_server` with
-`llm_provider: "sampling"` and the protocol server's LLM calls are routed back to the
-**client's** model (e.g. Claude) instead of a local Ollama/OpenAI endpoint. Otherwise
-NetGet uses its own configured model.
+The protocol servers you start through MCP are driven by NetGet's own configured LLM
+(local Ollama, or an OpenAI-compatible endpoint via `--openai-url`/`--api-key`). The
+MCP client controls NetGet through the tools above; it does not supply the model.
 
 ## Testing
 

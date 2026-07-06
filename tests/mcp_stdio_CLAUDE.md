@@ -42,7 +42,6 @@ that path is covered by the protocol E2E suites.
 
 ## Not covered here
 
-- Sampling forwarder (`start_server` with `llm_provider=sampling`) — needs a
-  client that answers `sampling/createMessage`.
+- `start_server` end-to-end (it invokes the LLM) — covered by the protocol E2E suites.
 - HTTP transport (`--mcp-http`) wiring — smoke-testable by binding a port and
   issuing an `initialize` over HTTP; not yet automated.

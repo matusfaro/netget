@@ -24,12 +24,6 @@ enum LlmBackend {
         base_url: String,
         api_key: String,
     },
-    /// MCP Sampling - routes LLM calls through MCP client's sampling API
-    #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-    Sampling {
-        /// Channel to send sampling requests to the MCP STDIO transport
-        request_tx: tokio::sync::mpsc::UnboundedSender<crate::mcp_stdio::sampling::SamplingRequest>,
-    },
 }
 
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
@@ -468,26 +462,11 @@ impl OllamaClient {
         }
     }
 
-    /// Create a new client that routes LLM calls through MCP sampling
-    #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-    pub fn new_sampling(
-        request_tx: tokio::sync::mpsc::UnboundedSender<crate::mcp_stdio::sampling::SamplingRequest>,
-    ) -> Self {
-        Self {
-            backend: LlmBackend::Sampling { request_tx },
-            status_tx: None,
-            mock_config_file: None,
-            app_state: None,
-        }
-    }
-
-    /// Returns the backend type as a string ("ollama", "openai", or "sampling")
+    /// Returns the backend type as a string ("ollama" or "openai")
     pub fn backend_type(&self) -> &str {
         match &self.backend {
             LlmBackend::Ollama(_) => "ollama",
             LlmBackend::OpenAI { .. } => "openai",
-            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-            LlmBackend::Sampling { .. } => "sampling",
         }
     }
 
@@ -501,8 +480,6 @@ impl OllamaClient {
                 format!("{}", ollama.uri())
             }
             LlmBackend::OpenAI { base_url, .. } => base_url.clone(),
-            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-            LlmBackend::Sampling { .. } => "mcp://sampling".to_string(),
         }
     }
 
@@ -684,22 +661,6 @@ impl OllamaClient {
 
                 (text, usage)
             }
-
-            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-            LlmBackend::Sampling { request_tx } => {
-                // Route through chat_with_tools by wrapping the prompt as a user message
-                let chat_request = ChatRequest {
-                    messages: vec![Message::user(prompt)],
-                    tools: Vec::new(), // No native tools for generate path
-                    model: model.to_string(),
-                };
-                let chat_response =
-                    crate::mcp_stdio::sampling::execute_sampling_request(request_tx, &chat_request)
-                        .await?;
-                let text = chat_response.content.unwrap_or_default();
-                let usage = chat_response.token_usage;
-                (text, usage)
-            }
         };
 
         // Record tokens in app state if available (for /usage command)
@@ -814,11 +775,6 @@ impl OllamaClient {
                 api_key,
             } => {
                 self.chat_with_tools_openai(client, base_url, api_key, request)
-                    .await?
-            }
-            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-            LlmBackend::Sampling { request_tx } => {
-                crate::mcp_stdio::sampling::execute_sampling_request(request_tx, request)
                     .await?
             }
         };
@@ -1392,11 +1348,6 @@ impl OllamaClient {
                     .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
                     .collect();
                 Ok(models)
-            }
-            #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
-            LlmBackend::Sampling { .. } => {
-                // Sampling backend doesn't have a model list - the MCP client chooses the model
-                Ok(vec!["(MCP sampling - model chosen by client)".to_string()])
             }
         }
     }

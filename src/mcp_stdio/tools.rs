@@ -4,7 +4,7 @@
 //! Tools use rmcp's macro system for automatic schema generation.
 
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{
@@ -54,7 +54,6 @@ where
 
 use crate::cli::Args;
 use crate::llm::OllamaClient;
-use crate::mcp_stdio::sampling::SamplingRequest;
 use crate::settings::Settings;
 use crate::state::app_state::AppState;
 
@@ -66,15 +65,6 @@ pub(crate) struct SharedState {
     app_state: AppState,
     llm_client: OllamaClient,
     _status_tx: mpsc::UnboundedSender<String>,
-    /// Peer connection to the most recently initialized MCP client.
-    /// The sampling forwarder reads this on every request.
-    peer: Arc<Mutex<Option<rmcp::service::Peer<RoleServer>>>>,
-    /// Whether the MCP client supports sampling
-    client_supports_sampling: std::sync::atomic::AtomicBool,
-    /// Sampling request sender (given to OllamaClient::new_sampling for protocol servers)
-    sampling_tx: mpsc::UnboundedSender<SamplingRequest>,
-    /// Raw capabilities JSON from initialize request (for debugging - serde may drop unknown fields)
-    raw_capabilities: Mutex<String>,
 }
 
 /// NetGet MCP STDIO service - exposes NetGet capabilities as MCP tools
@@ -113,9 +103,6 @@ pub struct StartServerParams {
     /// Host address to bind to (default: 127.0.0.1)
     #[serde(default)]
     pub host: Option<String>,
-    /// LLM provider for the protocol server. Options: "ollama" (local Ollama, default), "openai" (OpenAI-compatible API), "sampling" (route LLM calls through MCP client - only if client supports sampling capability).
-    #[serde(default)]
-    pub llm_provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -173,7 +160,7 @@ impl NetGetMcpService {
     ) -> anyhow::Result<Arc<SharedState>> {
         let lock_enabled = args.ollama_lock;
 
-        // Create LLM client (Ollama/OpenAI - sampling added after init)
+        // Create the LLM client (Ollama or OpenAI-compatible) from CLI args
         let llm_client = crate::cli::create_llm_client(args, lock_enabled)?;
 
         // Create app state
@@ -182,27 +169,15 @@ impl NetGetMcpService {
         // Status channel (messages go to stderr in MCP mode)
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
-        // Sampling channel for forwarding LLM requests to MCP client
-        let (sampling_tx, sampling_rx) = mpsc::unbounded_channel();
-
         // Set up model if specified
         if let Some(ref model) = args.model {
             app_state.set_ollama_model(Some(model.clone())).await;
         }
 
-        let peer = Arc::new(Mutex::new(None));
-
-        // Forward sampling requests to whichever MCP client is currently connected
-        crate::mcp_stdio::sampling::spawn_sampling_forwarder(peer.clone(), sampling_rx);
-
         let state = Arc::new(SharedState {
             app_state,
             llm_client,
             _status_tx: status_tx,
-            peer,
-            client_supports_sampling: std::sync::atomic::AtomicBool::new(false),
-            sampling_tx,
-            raw_capabilities: Mutex::new("(not yet initialized)".to_string()),
         });
 
         // Drain status messages to stderr in background
@@ -272,7 +247,7 @@ impl NetGetMcpService {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Start a network protocol server controlled by an LLM. Set llm_provider to 'sampling' to use the MCP client's LLM (recommended), or 'ollama'/'openai' for a local LLM.")]
+    #[tool(description = "Start a network protocol server controlled by an LLM. The server is driven by NetGet's configured LLM (local Ollama or an OpenAI-compatible endpoint).")]
     async fn start_server(
         &self,
         Parameters(params): Parameters<StartServerParams>,
@@ -284,60 +259,11 @@ impl NetGetMcpService {
             )
         });
 
-        // Check sampling support from both the AtomicBool flag and the stored peer info
-        let supports_sampling_flag = self
-            .state
-            .client_supports_sampling
-            .load(std::sync::atomic::Ordering::SeqCst);
-
-        // Also check peer info directly (more reliable - covers case where initialize override wasn't called)
-        let supports_sampling_peer = if let Some(ref peer) = *self.state.peer.lock().await {
-            peer.peer_info()
-                .map(|info| {
-                    info.capabilities.sampling.is_some()
-                        || info
-                            .capabilities
-                            .tasks
-                            .as_ref()
-                            .and_then(|t| t.requests.as_ref())
-                            .and_then(|r| r.sampling.as_ref())
-                            .is_some()
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
-        let supports_sampling = supports_sampling_flag || supports_sampling_peer;
-
-        // Default to "ollama" unless explicitly set
-        let provider = params.llm_provider.as_deref().unwrap_or("ollama");
-
-        // Set the appropriate LLM client on the AppState for this server
-        match provider {
-            "sampling" if supports_sampling => {
-                let sampling_client =
-                    OllamaClient::new_sampling(self.state.sampling_tx.clone());
-                self.state
-                    .app_state
-                    .set_llm_client(sampling_client)
-                    .await;
-                info!("MCP: Using sampling (MCP client's LLM) for {} server", params.protocol);
-            }
-            "sampling" => {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "Cannot use 'sampling' provider: this MCP client does not advertise sampling support. Use 'ollama' or 'openai' instead.",
-                )]));
-            }
-            _ => {
-                // Use the default LLM client (Ollama/OpenAI from CLI args)
-                self.state
-                    .app_state
-                    .set_llm_client(self.state.llm_client.clone())
-                    .await;
-                info!("MCP: Using {} LLM for {} server", provider, params.protocol);
-            }
-        }
+        // Drive the new server with NetGet's configured LLM client (Ollama/OpenAI from CLI args)
+        self.state
+            .app_state
+            .set_llm_client(self.state.llm_client.clone())
+            .await;
 
         info!(
             "MCP: Starting {} server on {}:{}",
@@ -488,7 +414,7 @@ impl NetGetMcpService {
         }
     }
 
-    #[tool(description = "Get overall NetGet status including model, running servers count, MCP client capabilities, and configuration")]
+    #[tool(description = "Get overall NetGet status including the configured model and running servers")]
     async fn get_status(&self) -> Result<CallToolResult, McpError> {
         let servers = self.state.app_state.get_all_servers().await;
         let model = self
@@ -498,58 +424,14 @@ impl NetGetMcpService {
             .await
             .unwrap_or_else(|| "(auto-select)".to_string());
 
-        let supports_sampling_flag = self
-            .state
-            .client_supports_sampling
-            .load(std::sync::atomic::Ordering::SeqCst);
-
-        let (supports_sampling_peer, client_name, client_caps) = {
-            let peer_guard = self.state.peer.lock().await;
-            if let Some(ref peer) = *peer_guard {
-                let info = peer.peer_info();
-                let sampling = info
-                    .map(|i| {
-                        i.capabilities.sampling.is_some()
-                            || i.capabilities
-                                .tasks
-                                .as_ref()
-                                .and_then(|t| t.requests.as_ref())
-                                .and_then(|r| r.sampling.as_ref())
-                                .is_some()
-                    })
-                    .unwrap_or(false);
-                let name = info
-                    .map(|i| format!("{} v{}", i.client_info.name, i.client_info.version))
-                    .unwrap_or_else(|| "(no peer info)".to_string());
-                let caps = info
-                    .map(|i| {
-                        serde_json::to_string(&i.capabilities)
-                            .unwrap_or_else(|_| "?".to_string())
-                    })
-                    .unwrap_or_else(|| "(none)".to_string());
-                (sampling, name, caps)
-            } else {
-                (false, "(no peer)".to_string(), "(none)".to_string())
-            }
-        };
-
-        let raw_caps = self.state.raw_capabilities.lock().await.clone();
-
         let mut result = format!(
             "## NetGet Status\n\n\
              - **Model**: {}\n\
-             - **Running servers**: {}\n\
-             - **MCP client**: {}\n\
-             - **Sampling support**: flag={}, peer={}\n\
-             - **Client capabilities (deserialized)**: {}\n\
-             - **Client capabilities (raw from initialize)**: {}\n",
+             - **LLM backend**: {}\n\
+             - **Running servers**: {}\n",
             model,
+            self.state.llm_client.backend_type(),
             servers.len(),
-            client_name,
-            supports_sampling_flag,
-            supports_sampling_peer,
-            client_caps,
-            raw_caps,
         );
 
         if !servers.is_empty() {
@@ -693,48 +575,12 @@ impl ServerHandler for NetGetMcpService {
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
         async move {
-            // Store the peer so the sampling forwarder targets this client
-            *self.state.peer.lock().await = Some(context.peer.clone());
-
-            // Store raw capabilities for status tool
-            *self.state.raw_capabilities.lock().await =
-                serde_json::to_string(&request.capabilities).unwrap_or_else(|_| "?".to_string());
-
-            // Check if client supports sampling (two possible locations in MCP spec)
-            // 1. capabilities.sampling (SEP-1577 top-level)
-            // 2. capabilities.tasks.requests.sampling (task-augmented path)
-            let supports_sampling_top = request.capabilities.sampling.is_some();
-            let supports_sampling_tasks = request
-                .capabilities
-                .tasks
-                .as_ref()
-                .and_then(|t| t.requests.as_ref())
-                .and_then(|r| r.sampling.as_ref())
-                .is_some();
-            let supports_sampling = supports_sampling_top || supports_sampling_tasks;
-
-            let supports_elicitation_top = request.capabilities.elicitation.is_some();
-            let supports_elicitation_tasks = request
-                .capabilities
-                .tasks
-                .as_ref()
-                .and_then(|t| t.requests.as_ref())
-                .and_then(|r| r.elicitation.as_ref())
-                .is_some();
-            let supports_elicitation = supports_elicitation_top || supports_elicitation_tasks;
-            self.state
-                .client_supports_sampling
-                .store(supports_sampling, std::sync::atomic::Ordering::SeqCst);
-
             info!(
-                "MCP client '{}' v{} initialized (sampling: {}, elicitation: {})",
-                request.client_info.name,
-                request.client_info.version,
-                supports_sampling,
-                supports_elicitation,
+                "MCP client '{}' v{} initialized",
+                request.client_info.name, request.client_info.version,
             );
 
-            // Store peer info so it's available for capability checks later
+            // Retain peer info for the connection so rmcp can answer later requests
             if context.peer.peer_info().is_none() {
                 context.peer.set_peer_info(request);
             }
