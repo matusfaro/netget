@@ -227,6 +227,35 @@ pub enum WebApprovalResponse {
     AlwaysAllow,
 }
 
+/// A single request/response access-log entry.
+///
+/// Captured for every network event a protocol server handles: the request is
+/// the structured event data, the response is the action JSON the LLM (or a
+/// script/static handler) produced. Used by the `list_access_logs` /
+/// `get_access_log` MCP tools for debugging.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct AccessLogEntry {
+    /// Monotonic entry id (assigned in arrival order)
+    pub id: u64,
+    /// Unix time in milliseconds when the entry was recorded
+    pub unix_ms: u64,
+    /// Server that handled the request
+    pub server_id: u32,
+    /// Protocol name (e.g. "http", "dns")
+    pub protocol: String,
+    /// Connection the request arrived on, if the protocol is connection-oriented
+    pub connection_id: Option<u32>,
+    /// Event type id (e.g. "http_request")
+    pub event_type: String,
+    /// The request: structured event data
+    pub request: serde_json::Value,
+    /// The response: action JSON produced for this request
+    pub response: Vec<serde_json::Value>,
+}
+
+/// Maximum number of access-log entries retained in memory (ring buffer).
+const ACCESS_LOG_CAPACITY: usize = 200;
+
 /// Global application state
 #[derive(Clone)]
 pub struct AppState {
@@ -306,6 +335,10 @@ struct AppStateInner {
     documented_server_protocols: std::collections::HashSet<String>,
     /// Client protocols that have been documented (enables open_client for these protocols)
     documented_client_protocols: std::collections::HashSet<String>,
+    /// Recent request/response access-log entries (bounded ring buffer)
+    access_logs: std::collections::VecDeque<AccessLogEntry>,
+    /// Next access-log entry id to assign
+    next_access_log_id: u64,
 }
 
 impl AppState {
@@ -373,6 +406,8 @@ impl AppState {
                 _database_manager: crate::state::DatabaseManager::new(),
                 documented_server_protocols: std::collections::HashSet::new(),
                 documented_client_protocols: std::collections::HashSet::new(),
+                access_logs: std::collections::VecDeque::new(),
+                next_access_log_id: 1,
             })),
         }
     }
@@ -426,12 +461,35 @@ impl AppState {
         let mut inner = self.inner.write().await;
         let server = inner.servers.remove(&id);
 
+        // Abort the server's background task (the accept loop) so its listening
+        // socket is released immediately. Dropping a JoinHandle only DETACHES the
+        // task in Tokio — it keeps running and holds the port — so we must abort
+        // explicitly. Without this, stop_server leaks the listener until process exit.
+        if let Some(s) = &server {
+            if let Some(handle) = &s.handle {
+                handle.abort();
+            }
+        }
+
         // Set mode to Idle if no more servers and no clients
         if inner.servers.is_empty() && inner.clients.is_empty() {
             inner.mode = Mode::Idle;
         }
 
         server
+    }
+
+    /// Register the background task that owns a server's listening socket so it
+    /// can be aborted on stop. Protocol `spawn` implementations call this with the
+    /// `JoinHandle` of their accept loop right after spawning it. If the server was
+    /// already removed (raced with stop), the task is aborted immediately to avoid
+    /// leaking the listener.
+    pub async fn register_server_task(&self, id: ServerId, handle: tokio::task::JoinHandle<()>) {
+        let mut inner = self.inner.write().await;
+        match inner.servers.get_mut(&id) {
+            Some(server) => server.handle = Some(handle),
+            None => handle.abort(),
+        }
     }
 
     /// Get a server instance (cloned)
@@ -2097,6 +2155,61 @@ impl AppState {
             }
         }
         None
+    }
+
+    // ===== Access Log Methods =====
+
+    /// Record a request/response access-log entry (ring buffer, oldest dropped past capacity).
+    pub async fn record_access_log(
+        &self,
+        server_id: u32,
+        protocol: &str,
+        connection_id: Option<u32>,
+        event_type: &str,
+        request: serde_json::Value,
+        response: Vec<serde_json::Value>,
+    ) {
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let mut inner = self.inner.write().await;
+        let id = inner.next_access_log_id;
+        inner.next_access_log_id += 1;
+        inner.access_logs.push_back(AccessLogEntry {
+            id,
+            unix_ms,
+            server_id,
+            protocol: protocol.to_string(),
+            connection_id,
+            event_type: event_type.to_string(),
+            request,
+            response,
+        });
+        while inner.access_logs.len() > ACCESS_LOG_CAPACITY {
+            inner.access_logs.pop_front();
+        }
+    }
+
+    /// Return the most recent access-log entries, newest first (up to `limit`).
+    /// Pass `None` for the full retained buffer.
+    pub async fn list_access_logs(&self, limit: Option<usize>) -> Vec<AccessLogEntry> {
+        let inner = self.inner.read().await;
+        let take = limit.unwrap_or(ACCESS_LOG_CAPACITY);
+        inner
+            .access_logs
+            .iter()
+            .rev()
+            .take(take)
+            .cloned()
+            .collect()
+    }
+
+    /// Look up a single access-log entry by id.
+    pub async fn get_access_log(&self, id: u64) -> Option<AccessLogEntry> {
+        let inner = self.inner.read().await;
+        inner.access_logs.iter().find(|e| e.id == id).cloned()
     }
 
     // ===== LLM Token Tracking Methods =====

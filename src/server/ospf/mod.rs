@@ -143,7 +143,8 @@ impl OspfServer {
         // Wrap socket for async I/O
         let async_socket = AsyncFd::new(raw_socket)?;
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
 
             loop {
@@ -252,6 +253,10 @@ impl OspfServer {
 
             warn!("OSPF receive loop terminated");
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(SocketAddr::new(IpAddr::V4(interface_ip), 0))
     }

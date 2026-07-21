@@ -133,7 +133,8 @@ impl EtcdServer {
         console_info!(status_tx, "etcd server listening on {}", local_addr);
 
         // Spawn server task
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
@@ -169,6 +170,10 @@ impl EtcdServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

@@ -59,7 +59,8 @@ impl MercurialServer {
         let protocol = Arc::new(MercurialProtocol::new());
 
         // Spawn server loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
@@ -156,6 +157,11 @@ impl MercurialServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

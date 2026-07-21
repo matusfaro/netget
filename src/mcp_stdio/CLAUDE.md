@@ -70,7 +70,24 @@ OllamaClient (2 backends)
 | `set_model` | Change LLM model | `AppState::set_ollama_model()` |
 | `get_protocol_docs` | Protocol documentation | `generate_base_stack_documentation()` |
 | `update_server_instruction` | Update server instruction | `AppState::with_server_mut()` |
+| `list_access_logs` | Recent request/response entries (newest first) | `AppState::list_access_logs()` |
+| `get_access_log` | Full request + response for one entry by id | `AppState::get_access_log()` |
 | `stop_all` | Stop all servers | Iterate + remove all |
+
+## Access Logs
+
+Every network event a protocol server handles is recorded as an `AccessLogEntry`
+in a bounded ring buffer on `AppState` (last 200, oldest dropped). The **request**
+is the structured event data (e.g. HTTP method/path/headers); the **response** is
+the action JSON the LLM produced (e.g. `send_http_response`). Recording happens
+centrally in `action_helper::call_llm` after the event is handled, so it works for
+every protocol without per-protocol wiring.
+
+- `list_access_logs { limit? }` — newest-first summaries (id, age, server, protocol, request→response).
+- `get_access_log { id }` — full request and response JSON for one entry.
+
+Limitation: only successfully-handled events are logged; a request whose LLM call
+errors out does not produce an entry.
 
 ## LLM Backend
 

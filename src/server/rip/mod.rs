@@ -36,7 +36,8 @@ impl RipServer {
 
         let protocol = Arc::new(RipProtocol::new());
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             // Maximum RIP packet size: 4-byte header + up to 25 route entries (20 bytes each) = 504 bytes
             let mut buffer = vec![0u8; 512];
 
@@ -271,6 +272,11 @@ impl RipServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

@@ -52,6 +52,41 @@ where
     }
 }
 
+/// Deserialize u64 from either a number or a string
+fn deserialize_u64_flexible<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrString {
+        Number(u64),
+        String(String),
+    }
+    match NumOrString::deserialize(deserializer)? {
+        NumOrString::Number(n) => Ok(n),
+        NumOrString::String(s) => s.parse().map_err(serde::de::Error::custom),
+    }
+}
+
+/// Deserialize Option<u32> from either a number or a string
+fn deserialize_option_u32_flexible<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrString {
+        Number(u32),
+        String(String),
+    }
+    match Option::<NumOrString>::deserialize(deserializer)? {
+        Some(NumOrString::Number(n)) => Ok(Some(n)),
+        Some(NumOrString::String(s)) => s.parse().map(Some).map_err(serde::de::Error::custom),
+        None => Ok(None),
+    }
+}
+
 use crate::cli::Args;
 use crate::llm::OllamaClient;
 use crate::settings::Settings;
@@ -97,12 +132,48 @@ pub struct StartServerParams {
     /// Port to listen on (0 for OS-assigned)
     #[serde(default, deserialize_with = "deserialize_option_u16_flexible")]
     pub port: Option<u16>,
-    /// Natural language instruction for the LLM controlling this server
+    /// Natural language instruction for the LLM that handles each request.
+    /// This is the LLM FALLBACK path: every request/event triggers a (slow,
+    /// billable) model call. Use it only when responses genuinely require
+    /// reasoning or vary unpredictably. For deterministic behavior (echo,
+    /// fixed/canned responses, simple routing, high throughput) prefer
+    /// `event_handlers` with a script or static handler instead — see below.
     #[serde(default)]
     pub instruction: Option<String>,
     /// Host address to bind to (default: 127.0.0.1)
     #[serde(default)]
     pub host: Option<String>,
+    /// Event handlers that decide how incoming events are handled WITHOUT an LLM
+    /// call. Strongly preferred over `instruction` whenever the behavior is
+    /// deterministic — a script/static handler runs in-process (instant, free,
+    /// deterministic), while `instruction` pays a model round-trip per request.
+    ///
+    /// Array of objects: { "event_pattern": "<event id>" | "*", "handler": {...} }
+    /// matched in order, first match wins. `handler` is one of:
+    ///   - {"type":"script","language":"python"|"javascript","code":"..."} — runs
+    ///     the script per event. The event is JSON on stdin: read the payload via
+    ///     data['event'][<field>] and print {"actions":[ ... ]} to stdout. Field
+    ///     names vary by protocol (e.g. Telnet event `telnet_message_received` has
+    ///     `message`; HTTP `http_request` has `method`/`path`/`headers`/`body`).
+    ///   - {"type":"static","actions":[ ... ]} — always emit these fixed actions.
+    ///   - {"type":"llm","instruction":"..."} — fall back to the LLM (reasoning).
+    ///
+    /// Example — a Telnet echo server with ZERO LLM calls (echoes each line back
+    /// verbatim):
+    ///   [{"event_pattern":"telnet_message_received","handler":{"type":"script",
+    ///     "language":"python",
+    ///     "code":"import json,sys;d=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'send_telnet_message','message':d['event']['message']}]}))"}}]
+    /// Always confirm a protocol's exact event ids, field names, and action names
+    /// with get_protocol_docs before writing a handler.
+    #[serde(default)]
+    pub event_handlers: Option<Vec<serde_json::Value>>,
+    /// Optional protocol-specific startup parameters (JSON object). For example,
+    /// HTTP accepts a `request_filter` (array of {methods, path regex, headers}
+    /// rules — only matching requests reach the LLM; the rest get `filtered_response`,
+    /// default 404) and a `filtered_response` ({status, body, headers}). Use
+    /// get_protocol_docs for a protocol's available startup parameters.
+    #[serde(default)]
+    pub startup_params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -129,6 +200,20 @@ pub struct SetModelParams {
 pub struct GetProtocolDocsParams {
     /// Protocol name (e.g., "http", "dns", "tcp")
     pub protocol: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListAccessLogsParams {
+    /// Maximum number of recent entries to return (default 20)
+    #[serde(default, deserialize_with = "deserialize_option_u32_flexible")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetAccessLogParams {
+    /// Access-log entry id (from list_access_logs)
+    #[serde(deserialize_with = "deserialize_u64_flexible")]
+    pub id: u64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -247,7 +332,7 @@ impl NetGetMcpService {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Start a network protocol server controlled by an LLM. The server is driven by NetGet's configured LLM (local Ollama or an OpenAI-compatible endpoint).")]
+    #[tool(description = "Start a network protocol server. Choose HOW it responds: for DETERMINISTIC behavior (echo, fixed/canned responses, simple routing, high throughput) pass `event_handlers` with a script or static handler — these run in-process with NO LLM call (instant, free, reproducible). Only use the natural-language `instruction` when responses genuinely need reasoning or vary unpredictably; it invokes NetGet's LLM on every request. Prefer event_handlers whenever the logic is fixed.")]
     async fn start_server(
         &self,
         Parameters(params): Parameters<StartServerParams>,
@@ -282,9 +367,9 @@ impl NetGetMcpService {
             &params.protocol,    // protocol
             false,               // send_first
             None,                // initial_memory
-            instruction,         // instruction
-            None,                // startup_params
-            None,                // event_handlers
+            instruction,           // instruction
+            params.startup_params, // startup_params
+            params.event_handlers, // event_handlers
             None,                // scheduled_tasks
             None,                // feedback_instructions
             status_tx,           // status_tx
@@ -541,6 +626,89 @@ impl NetGetMcpService {
         }
     }
 
+    #[tool(description = "List recent request/response access-log entries across all servers (newest first). Use get_access_log with an entry id to see the full request and response.")]
+    async fn list_access_logs(
+        &self,
+        Parameters(params): Parameters<ListAccessLogsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(20) as usize;
+        let entries = self.state.app_state.list_access_logs(Some(limit)).await;
+
+        if entries.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No requests logged yet. Access logs are recorded as servers handle requests.",
+            )]));
+        }
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let mut out = format!("## Recent requests ({} shown)\n\n", entries.len());
+        for e in &entries {
+            let age = now_ms.saturating_sub(e.unix_ms) / 1000;
+            out.push_str(&format!(
+                "- **#{}** [{}s ago] server #{} ({}) — {} — {} → {}\n",
+                e.id,
+                age,
+                e.server_id,
+                e.protocol,
+                e.event_type,
+                summarize_request(&e.request),
+                summarize_response(&e.response),
+            ));
+        }
+        out.push_str("\nUse `get_access_log` with an id for the full request and response.");
+
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(description = "Get the full request and response for a single access-log entry by id (from list_access_logs)")]
+    async fn get_access_log(
+        &self,
+        Parameters(params): Parameters<GetAccessLogParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.state.app_state.get_access_log(params.id).await {
+            Some(e) => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let age = now_ms.saturating_sub(e.unix_ms) / 1000;
+                let request = serde_json::to_string_pretty(&e.request)
+                    .unwrap_or_else(|_| e.request.to_string());
+                let response = serde_json::to_string_pretty(&e.response)
+                    .unwrap_or_else(|_| "[]".to_string());
+                let result = format!(
+                    "## Access log #{}\n\n\
+                     - **Server**: #{} ({})\n\
+                     - **Connection**: {}\n\
+                     - **Event**: {}\n\
+                     - **When**: {}s ago (unix_ms {})\n\n\
+                     ### Request\n```json\n{}\n```\n\n\
+                     ### Response (actions)\n```json\n{}\n```\n",
+                    e.id,
+                    e.server_id,
+                    e.protocol,
+                    e.connection_id
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "(connectionless)".to_string()),
+                    e.event_type,
+                    age,
+                    e.unix_ms,
+                    request,
+                    response,
+                );
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            None => Ok(CallToolResult::error(vec![Content::text(format!(
+                "No access-log entry #{} (it may have aged out of the buffer). Use list_access_logs to see current entries.",
+                params.id
+            ))])),
+        }
+    }
+
     #[tool(description = "Stop all running servers and connections")]
     async fn stop_all(&self) -> Result<CallToolResult, McpError> {
         let server_ids = self.state.app_state.get_all_server_ids().await;
@@ -565,7 +733,15 @@ impl ServerHandler for NetGetMcpService {
             .with_instructions(
                 "NetGet - LLM-controlled network protocol server. \
                  Use list_protocols to discover available protocols, then start_server to \
-                 create protocol servers controlled by an LLM.",
+                 create one. \
+                 IMPORTANT — choose the handling mode deliberately: for deterministic \
+                 behavior (echo servers, fixed/canned responses, simple routing, high \
+                 throughput) pass `event_handlers` with a script or static handler, which \
+                 run in-process with NO LLM call (instant, free, reproducible). Reserve the \
+                 natural-language `instruction` (the LLM fallback, one model call per \
+                 request) for responses that genuinely need reasoning or vary \
+                 unpredictably. Use get_protocol_docs to see a protocol's event ids and \
+                 actions before writing a handler.",
             )
     }
 
@@ -588,4 +764,47 @@ impl ServerHandler for NetGetMcpService {
             Ok(self.get_info())
         }
     }
+}
+
+/// Build a short one-line summary of a request (event data) for the log list.
+fn summarize_request(request: &serde_json::Value) -> String {
+    // HTTP-style requests: method + path
+    let method = request.get("method").and_then(|v| v.as_str());
+    let path = request.get("path").and_then(|v| v.as_str());
+    if let (Some(m), Some(p)) = (method, path) {
+        return format!("{} {}", m, p);
+    }
+    if let Some(p) = path {
+        return p.to_string();
+    }
+    // Fall back to a compact, truncated form of the request JSON
+    let compact = request.to_string();
+    if compact.len() > 80 {
+        format!("{}…", &compact[..79])
+    } else {
+        compact
+    }
+}
+
+/// Build a short one-line summary of the response action array for the log list.
+fn summarize_response(response: &[serde_json::Value]) -> String {
+    if response.is_empty() {
+        return "(no response)".to_string();
+    }
+    let parts: Vec<String> = response
+        .iter()
+        .map(|a| {
+            let ty = a.get("type").and_then(|v| v.as_str()).unwrap_or("action");
+            // Surface an HTTP status code if present
+            match a
+                .get("status_code")
+                .or_else(|| a.get("status"))
+                .and_then(|v| v.as_u64())
+            {
+                Some(code) => format!("{}({})", ty, code),
+                None => ty.to_string(),
+            }
+        })
+        .collect();
+    parts.join(", ")
 }

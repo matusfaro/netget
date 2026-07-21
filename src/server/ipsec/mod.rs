@@ -99,13 +99,18 @@ impl IpsecServer {
 
         // Spawn packet handler
         let socket_clone = socket.clone();
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             if let Err(e) =
                 Self::handle_packets(socket_clone, llm_client, app_state, status_tx).await
             {
                 error!("IPSec/IKEv2 honeypot error: {}", e);
             }
         });
+
+        task_registrar
+            .register_server_task(_server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

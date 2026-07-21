@@ -330,7 +330,9 @@ netget --mcp-http 8080          # endpoint: http://127.0.0.1:8080/mcp
 ### Exposed tools
 
 `list_protocols`, `start_server`, `stop_server`, `list_servers`, `server_status`,
-`get_status`, `set_model`, `get_protocol_docs`, `update_server_instruction`, `stop_all`.
+`get_status`, `set_model`, `get_protocol_docs`, `update_server_instruction`, `stop_all`,
+and for debugging: `list_access_logs` (recent requests) / `get_access_log` (full
+request + response for one entry).
 
 The protocol servers you start through MCP are driven by NetGet's own configured LLM
 (local Ollama, or an OpenAI-compatible endpoint via `--openai-url`/`--api-key`). The

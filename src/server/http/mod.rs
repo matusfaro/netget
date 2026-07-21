@@ -60,7 +60,8 @@ impl HttpServer {
         let tls_acceptor = tls_config.map(|config| tokio_rustls::TlsAcceptor::from(config));
 
         // Spawn server loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
@@ -172,6 +173,10 @@ impl HttpServer {
             }
         });
 
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
+
         Ok(local_addr)
     }
 
@@ -191,12 +196,26 @@ impl HttpServer {
         let status_for_service = status_tx.clone();
         let app_state_for_service = app_state.clone();
 
+        // Build the per-server request filter once per connection (compiles path
+        // regexes once, not per request). A request only reaches the LLM if it
+        // matches; non-matching requests get a cheap auto-response.
+        let startup_params = app_state
+            .get_server(server_id)
+            .await
+            .and_then(|s| s.startup_params);
+        let filter = std::sync::Arc::new(
+            crate::server::http_common::handler::RequestFilter::from_startup_params(
+                startup_params.as_ref(),
+            ),
+        );
+
         // Create a service that handles requests with LLM
         let service = service_fn(move |req: Request<Incoming>| {
             let llm_clone = llm_client.clone();
             let state_clone = app_state_for_service.clone();
             let status_clone = status_for_service.clone();
             let protocol_clone = protocol.clone();
+            let filter_clone = filter.clone();
             handle_http_request_with_llm_actions(
                 req,
                 connection_id,
@@ -205,6 +224,7 @@ impl HttpServer {
                 state_clone,
                 status_clone,
                 protocol_clone,
+                filter_clone,
             )
         });
 
@@ -228,6 +248,7 @@ async fn handle_http_request_with_llm_actions(
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<HttpProtocol>,
+    filter: Arc<crate::server::http_common::handler::RequestFilter>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Check for HTTP/2 upgrade request (h2c) - only when http2 feature is enabled
     #[cfg(feature = "http2")]
@@ -346,6 +367,20 @@ async fn handle_http_request_with_llm_actions(
     } else {
         (request_data.uri.clone(), None)
     };
+
+    // Apply the per-server request filter: only forward matching requests to the
+    // LLM; everything else gets the configured auto-response (default 404) with
+    // no LLM call. With no filter configured this is a no-op (pass-through).
+    if !filter.is_pass_through() && !filter.allows(&request_data, &path) {
+        let resp = filter.rejection();
+        let _ = status_tx.send(format!(
+            "↩ HTTP filtered {} {} → {} (no LLM call)",
+            request_data.method,
+            path,
+            resp.status().as_u16()
+        ));
+        return Ok(resp);
+    }
 
     // Parse query parameters into structured object
     let query = if let Some(ref qs) = query_string {

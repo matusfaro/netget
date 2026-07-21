@@ -47,7 +47,7 @@ impl AmqpServer {
         let state_clone = state.clone();
         let status_tx_clone = status_tx.clone();
 
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
@@ -82,6 +82,9 @@ impl AmqpServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        state.register_server_task(server_id, accept_handle).await;
 
         Ok(local_addr)
     }

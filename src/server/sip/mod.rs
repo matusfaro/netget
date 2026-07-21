@@ -39,7 +39,8 @@ impl SipServer {
 
         let protocol = Arc::new(SipProtocol::new());
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535]; // Max UDP packet size
 
             loop {
@@ -186,6 +187,11 @@ impl SipServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

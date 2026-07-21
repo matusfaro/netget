@@ -37,7 +37,8 @@ impl StunServer {
 
         let protocol = Arc::new(StunProtocol::new());
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 2048]; // STUN messages are typically < 2KB
 
             let _ = status_tx.send("[DEBUG] STUN receive loop started, waiting for packets...".to_string());
@@ -216,6 +217,10 @@ impl StunServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

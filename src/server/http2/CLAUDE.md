@@ -178,6 +178,17 @@ If LLM doesn't provide a response or response parsing fails:
 
 This ensures the server always responds (no hanging connections).
 
+### Request Filtering (which requests reach the LLM)
+
+HTTP/2 shares the same per-server `request_filter` / `filtered_response`
+mechanism as HTTP/1.1 (`RequestFilter` in `src/server/http_common/handler.rs`,
+built once per connection in this module's `serve_connection`). A request reaches
+the LLM only if it matches a rule; the rest get the configured auto-response
+(default 404) with no LLM call. See `src/server/http/CLAUDE.md` → "Request
+Filtering" for the full schema, semantics, and examples. Note: this applies to the
+hyper HTTP/2 path (`http2/mod.rs`); the h2-crate push server (`h2_server.rs`) does
+not yet share it.
+
 ## Connection Management
 
 ### Connection Lifecycle

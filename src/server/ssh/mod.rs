@@ -113,7 +113,8 @@ impl SshServer {
         ));
 
         // Spawn accept loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             debug!("SSH: Accept loop started on {}", actual_addr);
             let _ = status_tx.send(format!("[DEBUG] SSH: Accept loop started on {}", actual_addr));
 
@@ -204,6 +205,13 @@ impl SshServer {
 
             debug!("SSH: Accept loop ended");
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        if let Some(server_id_val) = server_id {
+            task_registrar
+                .register_server_task(server_id_val, accept_handle)
+                .await;
+        }
 
         Ok(actual_addr)
     }

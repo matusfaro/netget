@@ -44,7 +44,7 @@ impl MqttServer {
         let app_state_clone = app_state.clone();
         let status_tx_clone = status_tx.clone();
 
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
@@ -79,6 +79,11 @@ impl MqttServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        app_state
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

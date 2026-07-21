@@ -39,7 +39,8 @@ impl WhoisServer {
 
         let protocol = Arc::new(actions::WhoisProtocol::new());
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
@@ -103,6 +104,10 @@ impl WhoisServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

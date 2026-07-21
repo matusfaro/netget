@@ -104,7 +104,8 @@ impl SmbServer {
         let _ = status_tx.send(format!("→ SMB server listening on {}", actual_addr));
 
         // Spawn connection acceptor
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             info!("SMB server connection acceptor started");
 
             loop {
@@ -149,6 +150,11 @@ impl SmbServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(actual_addr)
     }

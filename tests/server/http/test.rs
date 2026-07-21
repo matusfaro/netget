@@ -655,5 +655,8 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
     Ok(())
 }
 
+// Request-filter behavior (which requests reach the LLM) is covered by pure unit
+// tests in tests/http_request_filter_test.rs — no LLM/server harness needed.
+
 // Remove the ctor/dtor functions to avoid the panic issue
 // Tests will handle their own cleanup

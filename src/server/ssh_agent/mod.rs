@@ -87,7 +87,8 @@ impl SshAgentServer {
         let socket_path_clone = socket_path.clone();
 
         // Spawn accept loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
@@ -221,6 +222,10 @@ impl SshAgentServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(socket_path)
     }

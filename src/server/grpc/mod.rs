@@ -148,7 +148,8 @@ impl GrpcServer {
 
         // Spawn server loop
         let service = Arc::new(dynamic_service);
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
@@ -224,6 +225,10 @@ impl GrpcServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(actual_addr)
     }

@@ -29,7 +29,9 @@ impl HttpProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for HttpProtocol {
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        crate::server::tls_cert_manager::get_tls_startup_parameters()
+        let mut params = crate::server::tls_cert_manager::get_tls_startup_parameters();
+        params.extend(crate::server::http_common::handler::request_handling_startup_parameters());
+        params
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // HTTP has no async actions - it's purely request-response

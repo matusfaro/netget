@@ -95,6 +95,7 @@ impl McpServer {
         let protocol = Arc::new(McpProtocol::new());
         let sessions = Arc::new(Mutex::new(HashMap::new()));
 
+        let task_registrar = app_state.clone();
         let server_state = McpServerState {
             llm_client,
             app_state,
@@ -111,11 +112,16 @@ impl McpServer {
             .with_state(server_state);
 
         // Spawn server
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
                 console_error!(status_tx, "MCP server error: {}", e);
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

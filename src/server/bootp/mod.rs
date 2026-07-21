@@ -41,7 +41,8 @@ impl BootpServer {
 
         let protocol = Arc::new(BootpProtocol::new());
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 1500];
 
             loop {
@@ -234,6 +235,11 @@ impl BootpServer {
                 }
             }
         });
+
+        // Register the recv loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

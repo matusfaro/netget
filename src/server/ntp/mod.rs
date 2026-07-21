@@ -36,7 +36,8 @@ impl NtpServer {
 
         let protocol = Arc::new(NtpProtocol::new());
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 48];
 
             loop {
@@ -252,6 +253,10 @@ impl NtpServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

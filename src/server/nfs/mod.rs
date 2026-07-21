@@ -62,7 +62,7 @@ impl NfsServer {
         let _ = status_tx.send(format!("→ NFS server listening on {}", actual_addr));
 
         // Spawn server handler
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             info!("NFS server handler started");
 
             // Handle connections forever (nfsserve manages connections internally)
@@ -71,6 +71,11 @@ impl NfsServer {
                 let _ = status_tx.send(format!("✗ NFS server error: {}", e));
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        app_state
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(actual_addr)
     }

@@ -151,6 +151,57 @@ If LLM doesn't provide a response or response parsing fails:
 
 This ensures the server always responds (no hanging connections).
 
+## Request Filtering (which requests reach the LLM)
+
+By default every HTTP request triggers an LLM call. Browsers and scanners send a
+lot of noise (favicon probes, CORS `OPTIONS` preflights, `HEAD`, asset/XHR
+requests, vuln scans), and each one would otherwise cost a slow, billable LLM
+round-trip. A server can declare a **`request_filter`** in its `startup_params`:
+an allowlist of match rules. A request is forwarded to the LLM only if it matches
+at least one rule; requests matching no rule get **`filtered_response`** (default
+`404`) with **no LLM call**.
+
+Implementation is shared with HTTP/2 in `src/server/http_common/handler.rs`
+(`RequestFilter`), built once per connection in `serve_connection` (path regexes
+compile once, not per request) and applied in the request handler before the
+event is built. Pure and unit-tested in `tests/http_request_filter_test.rs`.
+
+### Config
+
+```json
+"startup_params": {
+  "request_filter": [
+    { "methods": ["GET"], "path": "^/$", "headers": { "accept": "text/html" } },
+    { "methods": ["POST"], "path": "^/api/" }
+  ],
+  "filtered_response": { "status": 404, "body": "Not Found",
+                         "headers": { "content-type": "text/plain" } }
+}
+```
+
+- **Rules are OR'd**; **conditions within a rule are AND'd**; an omitted condition is a wildcard.
+  - `methods`: request method ∈ list, case-insensitive. Omit for any.
+  - `path`: a **regular expression** matched against the path (portion before `?`),
+    e.g. `"^/$"`, `"^/api/"`. Omit for any. An invalid regex drops that rule (logged), never fatal.
+  - `headers`: object of header-name → matcher; name is case-insensitive; value
+    `true` = must be present, string = value must **contain** that substring
+    (case-insensitive), e.g. `{ "accept": "text/html" }`.
+- **No `request_filter` (or empty)** ⇒ pass-through: every request reaches the LLM (default, unchanged).
+- Filtered requests are **not** logged to the access log — they never enter the LLM path.
+
+### Handling noise generically
+
+The favicon/CORS problem falls out of a single sensible filter — favicon.ico
+requests carry `Accept: image/*` and OPTIONS preflights aren't `GET`, so both are
+excluded by:
+
+```json
+"request_filter": [ { "methods": ["GET"], "headers": { "accept": "text/html" } } ]
+```
+
+This replaces the earlier hardcoded favicon bypass. The same schema applies to
+HTTP/2 (see `src/server/http2/CLAUDE.md`).
+
 ## Connection Management
 
 ### Connection Lifecycle

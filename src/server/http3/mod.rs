@@ -90,7 +90,8 @@ impl Http3Server {
         let protocol = Arc::new(Http3Protocol::new());
 
         // Spawn accept loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             while let Some(connecting) = endpoint.accept().await {
                 let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                 let llm_client_clone = llm_client.clone();
@@ -237,6 +238,10 @@ impl Http3Server {
                 });
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

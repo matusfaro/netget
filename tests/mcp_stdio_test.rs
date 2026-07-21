@@ -49,7 +49,14 @@ async fn initialize_and_list_tools() {
     // Core management tools must be advertised.
     let tools = client.list_all_tools().await.expect("list tools");
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    for expected in ["list_protocols", "start_server", "stop_server", "get_status"] {
+    for expected in [
+        "list_protocols",
+        "start_server",
+        "stop_server",
+        "get_status",
+        "list_access_logs",
+        "get_access_log",
+    ] {
         assert!(
             names.contains(&expected),
             "expected tool '{}' in {:?}",

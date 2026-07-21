@@ -80,9 +80,10 @@ impl PostgresqlServer {
         ));
 
         let status_tx_clone = status_tx.clone();
+        let task_registrar = app_state.clone();
 
         // Spawn the accept loop
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
@@ -139,6 +140,10 @@ impl PostgresqlServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         Ok(actual_addr)

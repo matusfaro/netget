@@ -179,7 +179,7 @@ impl OpenvpnServer {
         let server_clone = server.clone();
         let status_clone = status_tx.clone();
         let app_state_clone = app_state.clone();
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             if let Err(e) = server_clone
                 .handle_udp_packets(app_state_clone, server_id, status_clone)
                 .await
@@ -187,6 +187,11 @@ impl OpenvpnServer {
                 error!("UDP packet handler error: {}", e);
             }
         });
+
+        // Register the primary UDP network listener so stop_server can abort it.
+        app_state
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         // Spawn TUN packet handler
         let server_clone = server.clone();

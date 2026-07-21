@@ -81,7 +81,7 @@ impl TftpServer {
         let protocol_clone = protocol.clone();
         let transfers_clone = transfers.clone();
 
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             Self::handle_main_requests(
                 main_socket_clone,
                 llm_clone,
@@ -93,6 +93,10 @@ impl TftpServer {
             )
             .await;
         });
+
+        app_state
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

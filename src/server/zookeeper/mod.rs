@@ -68,7 +68,8 @@ impl ZookeeperServer {
         let status_tx_clone = status_tx.clone();
 
         // Spawn the accept loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
@@ -105,6 +106,10 @@ impl ZookeeperServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(actual_addr)
     }

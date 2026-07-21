@@ -222,7 +222,8 @@ impl ProxyServer {
 
         // Spawn proxy handler task
         let _ = status_tx.send("[INFO] >>> Spawning proxy accept loop...".to_string());
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let _ = status_tx.send("[INFO] >>> Proxy accept loop STARTED".to_string());
             loop {
                 let _ = status_tx.send("[DEBUG] >>> Waiting for proxy connection...".to_string());
@@ -308,6 +309,11 @@ impl ProxyServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(actual_addr)
     }

@@ -95,7 +95,7 @@ impl CassandraServer {
         ));
 
         // Spawn the accept loop
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
@@ -120,6 +120,11 @@ impl CassandraServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        app_state
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(actual_addr)
     }

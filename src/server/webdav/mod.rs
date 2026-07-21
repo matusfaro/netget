@@ -43,7 +43,8 @@ impl WebDavServer {
 
         let dav_server = Arc::new(dav_server);
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let listener = match tokio::net::TcpListener::bind(listen_addr).await {
                 Ok(l) => l,
                 Err(e) => {
@@ -127,6 +128,10 @@ impl WebDavServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(listen_addr)
     }

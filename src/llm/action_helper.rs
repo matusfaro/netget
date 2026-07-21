@@ -301,6 +301,31 @@ pub async fn call_llm_with_custom_actions(
 ///     &http_protocol,
 /// ).await?;
 /// ```
+/// Record a request/response access-log entry for a handled network event.
+///
+/// The request is the structured event data; the response is the action JSON
+/// (e.g. `send_http_response`) the LLM or handler produced. Surfaced via the
+/// `list_access_logs` / `get_access_log` MCP tools.
+async fn record_event_access_log(
+    state: &AppState,
+    server_id: ServerId,
+    connection_id: Option<crate::server::connection::ConnectionId>,
+    protocol: &dyn Server,
+    event: &Event,
+    result: &ExecutionResult,
+) {
+    state
+        .record_access_log(
+            server_id.as_u32(),
+            protocol.protocol_name(),
+            connection_id.map(|c| c.as_u32()),
+            event.id(),
+            event.data.clone(),
+            result.raw_actions.clone(),
+        )
+        .await;
+}
+
 pub async fn call_llm(
     llm_client: &OllamaClient,
     state: &AppState,
@@ -361,6 +386,8 @@ pub async fn call_llm(
 
                 // Log event completion
                 log_ctx.log_complete(None, &result.protocol_results);
+                record_event_access_log(state, server_id, connection_id, protocol, event, &result)
+                    .await;
                 return Ok(result);
             }
         }
@@ -381,6 +408,8 @@ pub async fn call_llm(
         crate::llm::event_handler_executor::EventHandlerResult::Handled(result) => {
             // Handler executed successfully (script or static)
             log_ctx.log_complete(None, &result.protocol_results);
+            record_event_access_log(state, server_id, connection_id, protocol, event, &result)
+                .await;
             return Ok(result);
         }
         crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm => {
@@ -492,6 +521,7 @@ pub async fn call_llm(
 
     // Log event completion with timing and results
     log_ctx.log_complete(None, &result.protocol_results);
+    record_event_access_log(state, server_id, connection_id, protocol, event, &result).await;
 
     Ok(result)
 }

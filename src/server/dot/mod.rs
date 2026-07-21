@@ -42,7 +42,7 @@ impl DotServer {
         app_state: Arc<AppState>,
         server_id: ServerId,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<tokio::task::JoinHandle<()>> {
+    ) -> Result<()> {
         let server = Self::new(bind_addr);
 
         // Generate TLS configuration (use default self-signed cert)
@@ -51,6 +51,7 @@ impl DotServer {
 
         console_info!(status_tx, "Starting DoT server on {}", bind_addr);
 
+        let task_registrar = app_state.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = server
                 .run(tls_config, llm_client, app_state, server_id, status_tx)
@@ -60,7 +61,10 @@ impl DotServer {
             }
         });
 
-        Ok(handle)
+        // Register the accept loop so stop_server can abort it and release the port.
+        task_registrar.register_server_task(server_id, handle).await;
+
+        Ok(())
     }
 
     /// Run the DoT server

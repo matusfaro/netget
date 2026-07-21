@@ -192,7 +192,8 @@ impl IgmpServer {
         let std_socket: std::net::UdpSocket = socket.into();
         let socket = Arc::new(tokio::net::UdpSocket::from_std(std_socket)?);
 
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
 
             loop {
@@ -534,6 +535,10 @@ impl IgmpServer {
                 }
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }

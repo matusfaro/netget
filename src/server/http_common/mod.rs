@@ -7,4 +7,4 @@ pub mod actions;
 pub mod handler;
 
 pub use actions::{execute_http_response_action, HttpResponseData};
-pub use handler::{build_response, extract_request_data, RequestData};
+pub use handler::{build_response, extract_request_data, RequestData, RequestFilter};
