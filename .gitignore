@@ -10,6 +10,10 @@ netget.log
 /tmp/
 /test-results/
 
+# Local MCP server config — contains a machine-specific path and an API key.
+# Use .mcp.json.example as a template; never commit the real one.
+/.mcp.json
+
 logs
 *.log
 

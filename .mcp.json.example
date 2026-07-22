@@ -1,0 +1,18 @@
+{
+  "_comment": "Template for the repository-level netget MCP server. Copy to .mcp.json (which is gitignored) and fill in the values below. Do NOT put the API key here — set NETGET_API_KEY in your shell/env and it is expanded via ${NETGET_API_KEY}.",
+  "mcpServers": {
+    "netget": {
+      "command": "./target/release/netget",
+      "args": [
+        "--mcp",
+        "--openai-url",
+        "http://127.0.0.1:3625",
+        "--model",
+        "qwen3:8b"
+      ],
+      "env": {
+        "NETGET_API_KEY": "${NETGET_API_KEY}"
+      }
+    }
+  }
+}
