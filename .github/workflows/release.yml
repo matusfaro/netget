@@ -1,0 +1,178 @@
+name: Release
+
+# Tag push (v*) builds all targets, creates the GitHub Release, and publishes
+# the npm packages. workflow_dispatch runs the build matrix only (validation).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            features: dist-darwin
+            key: darwin-arm64
+            ext: tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            features: dist-darwin
+            key: darwin-x64
+            ext: tar.gz
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            features: dist
+            key: linux-x64
+            ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            features: dist
+            key: linux-arm64
+            ext: tar.gz
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+            features: dist
+            key: linux-x64-musl
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            features: dist-windows
+            key: win32-x64
+            ext: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert tag matches Cargo.toml version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          cargo_version=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$cargo_version" != "$tag_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $cargo_version" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --locked \
+            --no-default-features --features ${{ matrix.features }} \
+            --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          bin=netget
+          [ "${{ matrix.key }}" = "win32-x64" ] && bin=netget.exe
+          archive="netget-${{ matrix.target }}.${{ matrix.ext }}"
+          mkdir -p out
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            7z a "out/$archive" "./target/${{ matrix.target }}/release/$bin"
+          else
+            tar czf "out/$archive" -C "target/${{ matrix.target }}/release" "$bin"
+          fi
+          cd out
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netget-${{ matrix.key }}
+          path: out/*
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/*
+
+  npm-publish:
+    name: Publish npm packages
+    needs: github-release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Extract binaries
+        run: |
+          mkdir -p binaries
+          for key in darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl win32-x64; do
+            mkdir -p "binaries/$key"
+            case "$key" in
+              darwin-arm64)   triple=aarch64-apple-darwin ;;
+              darwin-x64)     triple=x86_64-apple-darwin ;;
+              linux-x64)      triple=x86_64-unknown-linux-gnu ;;
+              linux-arm64)    triple=aarch64-unknown-linux-gnu ;;
+              linux-x64-musl) triple=x86_64-unknown-linux-musl ;;
+              win32-x64)      triple=x86_64-pc-windows-msvc ;;
+            esac
+            if [ "$key" = "win32-x64" ]; then
+              unzip -o "artifacts/netget-$triple.zip" -d "binaries/$key"
+            else
+              tar xzf "artifacts/netget-$triple.tar.gz" -C "binaries/$key"
+            fi
+          done
+      - name: Generate packages
+        run: node scripts/npm/prepare-packages.mjs "${GITHUB_REF_NAME#v}" --binaries binaries
+      - name: Publish (platform packages first, main last)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for dir in dist/npm/netget-*; do
+            (cd "$dir" && npm publish --provenance --access public)
+          done
+          (cd dist/npm/netget && npm publish --provenance --access public)

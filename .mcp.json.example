@@ -1,5 +1,5 @@
 {
-  "_comment": "Template for the repository-level netget MCP server. Copy to .mcp.json (which is gitignored) and fill in the values below. Do NOT put the API key here — set NETGET_API_KEY in your shell/env and it is expanded via ${NETGET_API_KEY}.",
+  "_comment": "Template for the repository-level netget MCP server. Copy to .mcp.json (which is gitignored) and fill in the values below. Do NOT put the API key here — set NETGET_API_KEY in your shell/env and it is expanded via ${NETGET_API_KEY}. Alternative without a local build: use the npm prebuilt binary with \"command\": \"npx\" and args [\"-y\", \"@smotana/netget\", \"--mcp\", ...].",
   "mcpServers": {
     "netget": {
       "command": "./target/release/netget",

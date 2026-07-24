@@ -32,3 +32,6 @@ netget-ollama.lock
 *.sw?
 target-etcd-build/
 .aider*
+
+# Generated npm packages
+/dist/

@@ -3,6 +3,7 @@ name = "netget"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
+repository = "https://github.com/smotanacom/netget"
 
 [features]
 default = ["all-protocols"]
@@ -241,6 +242,141 @@ sqlite = ["dep:rusqlite"]  # SQLite database support for protocols (in-memory or
 # The rmcp `client` feature is enabled so the in-process MCP smoke tests can drive the server.
 mcp-stdio = ["dep:rmcp", "dep:schemars", "rmcp/client"]  # MCP STDIO server mode for Claude Desktop/Code integration
 mcp-http = ["dep:rmcp", "dep:schemars", "dep:axum", "rmcp/client", "rmcp/transport-streamable-http-server"]  # MCP HTTP/SSE server mode for remote/web MCP clients
+
+# Prebuilt-binary release sets (GitHub Releases / npm @smotana/netget).
+# Trim policy: a feature stays in a target's set iff it compiles for that target in CI
+# AND adds no runtime dynamic-link dependency users may lack.
+# Excluded everywhere: stun/turn (ancient nix 0.8 dep), smb-client (libsmbclient),
+# embedded-llm (LLM backend, not a protocol; heavy llama.cpp build).
+# Excluded on Linux: bluetooth-ble* (libdbus), nfc* (libpcsclite), datalink (libpcap).
+dist = [
+    "android-termux",
+    "mcp-stdio",
+    "mcp-http",
+    # Pure-Rust protocols absent from android-termux for historical reasons only
+    "ftp",
+    "tftp",
+    "ospf",
+    "openidconnect",
+    "saml",
+    "usb",
+    # Unix-only VPNs; move out of dist if they break musl/windows legs
+    "wireguard",
+    "openvpn",
+]
+# macOS ships CoreBluetooth, PC/SC, and libpcap with the OS, so these are safe to bundle.
+dist-darwin = [
+    "dist",
+    "bluetooth-ble",
+    "bluetooth-ble-client",
+    "bluetooth-ble-keyboard",
+    "bluetooth-ble-mouse",
+    "bluetooth-ble-beacon",
+    "bluetooth-ble-remote",
+    "bluetooth-ble-battery",
+    "bluetooth-ble-heart-rate",
+    "bluetooth-ble-thermometer",
+    "bluetooth-ble-environmental",
+    "bluetooth-ble-proximity",
+    "bluetooth-ble-gamepad",
+    "bluetooth-ble-presenter",
+    "bluetooth-ble-file-transfer",
+    "bluetooth-ble-data-stream",
+    "bluetooth-ble-cycling",
+    "bluetooth-ble-running",
+    "bluetooth-ble-weight-scale",
+    "nfc",
+    "nfc-client",
+    "datalink",
+]
+# Windows set: dist minus unix-gated features; refined by CI validation builds.
+dist-windows = [
+    "mcp-stdio",
+    "mcp-http",
+    "tcp",
+    "http",
+    "http2",
+    "http3",
+    "pypi",
+    "maven",
+    "udp",
+    "dc",
+    "dns",
+    "dot",
+    "doh",
+    "dhcp",
+    "bootp",
+    "ntp",
+    "tftp",
+    "ftp",
+    "whois",
+    "snmp",
+    "igmp",
+    "syslog",
+    "ssh",
+    "svn",
+    "irc",
+    "xmpp",
+    "telnet",
+    "smtp",
+    "mdns",
+    "mysql",
+    "mssql",
+    "ipp",
+    "postgresql",
+    "mongodb-server",
+    "mongodb",
+    "redis",
+    "rss",
+    "webdav",
+    "cassandra",
+    "smb",
+    "webrtc",
+    "sip",
+    "ldap",
+    "imap",
+    "pop3",
+    "nntp",
+    "mqtt",
+    "amqp",
+    "socks5",
+    "elasticsearch",
+    "couchdb",
+    "dynamo",
+    "s3",
+    "sqs",
+    "npm",
+    "openai",
+    "ollama",
+    "oauth2",
+    "jsonrpc",
+    "ipsec",
+    "bgp",
+    "isis",
+    "rip",
+    "bitcoin",
+    "mcp",
+    "grpc",
+    "xmlrpc",
+    "vnc",
+    "openapi",
+    "openid",
+    "openidconnect",
+    "git",
+    "mercurial",
+    "kafka",
+    "kubernetes",
+    "etcd",
+    "zookeeper",
+    "torrent-tracker",
+    "torrent-dht",
+    "torrent-peer",
+    "tls",
+    "saml",
+    "saml-idp",
+    "saml-sp",
+    "usb",
+]
 all-protocols = [
     "tcp",
     "socket_file",
@@ -789,3 +925,8 @@ sha1 = "0.10"  # For info_hash calculation
 # Protocol buffer compiler for etcd gRPC service
 prost-build = "0.13"
 tonic-build = "0.12"
+
+[profile.release]
+# Keep prebuilt binaries small: symbols stripped, thin LTO.
+strip = "symbols"
+lto = "thin"

@@ -94,8 +94,23 @@ See the `/docs` command in the TUI for full protocol details and metadata.
 
 ### Installation
 
+**Option 1: npm (prebuilt binary, no Rust needed)**
+
 ```bash
-git clone https://github.com/matusfaro/netget.git
+# Run directly (downloads the binary for your platform on first use)
+npx @smotana/netget
+
+# Or install globally
+npm i -g @smotana/netget
+netget
+```
+
+Prebuilt binaries cover macOS (arm64/x64), Linux (x64/arm64 glibc, x64 musl), and Windows x64, built with a portable feature set (no Bluetooth/NFC/packet-capture on Linux, no SMB client). Tarballs are also on [GitHub Releases](https://github.com/smotanacom/netget/releases).
+
+**Option 2: Build from source (all protocols)**
+
+```bash
+git clone https://github.com/smotanacom/netget.git
 cd netget
 
 # Build specific protocols (fast: 10-30s)
@@ -296,6 +311,14 @@ Claude Desktop or Claude Code start and drive network protocol servers directly.
 
 ### STDIO transport (Claude Desktop / Claude Code)
 
+Quickest path — npm prebuilt binary:
+
+```bash
+claude mcp add netget -- npx -y @smotana/netget --mcp
+```
+
+Or build from source with the `mcp-stdio` feature:
+
 ```bash
 # Build with the mcp-stdio feature (plus the protocols you want available)
 ./cargo-isolated.sh build --release --no-default-features --features mcp-stdio,tcp,http,dns
@@ -310,12 +333,14 @@ Claude Desktop config (`claude_desktop_config.json`):
 {
   "mcpServers": {
     "netget": {
-      "command": "/path/to/netget",
-      "args": ["--mcp", "--model", "qwen3-coder:30b"]
+      "command": "npx",
+      "args": ["-y", "@smotana/netget", "--mcp", "--model", "qwen3-coder:30b"]
     }
   }
 }
 ```
+
+(For a source build, set `"command"` to the binary path instead. First `npx` run downloads the package, so the initial MCP startup takes longer.)
 
 ### HTTP transport (remote / web clients)
 

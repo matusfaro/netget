@@ -1,0 +1,40 @@
+{
+  "name": "@smotana/netget",
+  "version": "0.0.0-dev",
+  "description": "LLM-controlled network protocol server & client (50+ protocols) with an MCP server mode. Launcher that runs the platform-native netget binary.",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smotanacom/netget.git"
+  },
+  "homepage": "https://github.com/smotanacom/netget",
+  "bugs": "https://github.com/smotanacom/netget/issues",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "llm",
+    "network",
+    "protocol",
+    "server",
+    "honeypot",
+    "ollama"
+  ],
+  "bin": {
+    "netget": "bin/netget.js"
+  },
+  "files": [
+    "bin/netget.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@smotana/netget-darwin-arm64": "0.0.0-dev",
+    "@smotana/netget-darwin-x64": "0.0.0-dev",
+    "@smotana/netget-linux-x64": "0.0.0-dev",
+    "@smotana/netget-linux-arm64": "0.0.0-dev",
+    "@smotana/netget-linux-x64-musl": "0.0.0-dev",
+    "@smotana/netget-win32-x64": "0.0.0-dev"
+  }
+}
