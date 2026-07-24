@@ -15,9 +15,14 @@ terminal-snapshot = []
 gpu = ["dep:gfxinfo"]
 
 # Android Termux: Pure-Rust protocols compatible with Android/Termux environment
-# Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root), STUN/TURN (old nix crate), WireGuard/OpenVPN (not gated for Android)
-# Uses vendored OpenSSL to compile from source (no system OpenSSL needed)
-android-termux = [
+# (portable-base plus isis, which sniffs L2 frames via libpcap — available on Termux).
+android-termux = ["portable-base", "isis"]
+
+# Portable base: pure-Rust protocols with NO system-library dependency at link
+# or runtime. Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP),
+# packet capture / isis (needs libpcap), STUN/TURN (old nix crate),
+# WireGuard/OpenVPN (not gated for Android). Uses vendored OpenSSL.
+portable-base = [
     "dep:openssl-sys",  # Force vendored OpenSSL compilation from source
     "tcp",
     "socket_file",
@@ -83,7 +88,7 @@ android-termux = [
     "ipsec",
     "bgp",
     # OSPF excluded (requires raw sockets/root)
-    "isis",
+    # isis moved to android-termux wrapper (needs libpcap)
     "rip",
     "bitcoin",
     "mcp",
@@ -118,8 +123,8 @@ http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:
 pypi = ["http", "urlencoding"]  # PyPI (Python Package Index) uses HTTP and URL encoding for search (PEP 503 Simple Repository API)
 maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
-datalink = []  # DataLink uses only pcap, no extra deps
-arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
+datalink = ["dep:pcap"]  # DataLink sniffs L2 frames via libpcap
+arp = ["pnet", "dep:pcap"]  # ARP (Address Resolution Protocol) uses pnet for packet handling + libpcap for capture
 icmp = ["pnet", "socket2/all"]  # ICMP (Internet Control Message Protocol) uses pnet for packet handling + raw sockets (requires socket2 'all' feature for Type::RAW)
 dc = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots"]  # DC (Direct Connect) - supports TLS (DCCS)
 dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
@@ -207,7 +212,7 @@ openvpn = ["dep:tun", "dep:aes-gcm", "dep:chacha20poly1305", "dep:rustls", "dep:
 ipsec = []  # IPSec/IKEv2 honeypot (packet detection only, no full crypto)
 bgp = ["netgauze-bgp-pkt"]  # BGP routing protocol
 ospf = ["udp"]  # OSPF routing protocol (IP protocol 89, raw sockets, requires root/CAP_NET_RAW, tests use UDP)
-isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
+isis = ["dep:pcap"]  # IS-IS routing protocol (Intermediate System to Intermediate System) - sniffs L2 frames via libpcap
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
 mcp = ["dep:axum", "dep:tower-http"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
@@ -248,9 +253,9 @@ mcp-http = ["dep:rmcp", "dep:schemars", "dep:axum", "rmcp/client", "rmcp/transpo
 # AND adds no runtime dynamic-link dependency users may lack.
 # Excluded everywhere: stun/turn (ancient nix 0.8 dep), smb-client (libsmbclient),
 # embedded-llm (LLM backend, not a protocol; heavy llama.cpp build).
-# Excluded on Linux: bluetooth-ble* (libdbus), nfc* (libpcsclite), datalink (libpcap).
+# Excluded on Linux: bluetooth-ble* (libdbus), nfc* (libpcsclite), datalink/arp/isis (libpcap).
 dist = [
-    "android-termux",
+    "portable-base",
     "mcp-stdio",
     "mcp-http",
     # Pure-Rust protocols absent from android-termux for historical reasons only
@@ -267,6 +272,7 @@ dist = [
 # macOS ships CoreBluetooth, PC/SC, and libpcap with the OS, so these are safe to bundle.
 dist-darwin = [
     "dist",
+    "isis",   # libpcap ships with macOS
     "bluetooth-ble",
     "bluetooth-ble-client",
     "bluetooth-ble-keyboard",
@@ -352,7 +358,7 @@ dist-windows = [
     "jsonrpc",
     "ipsec",
     "bgp",
-    "isis",
+    # isis excluded: needs libpcap (not present on Windows runners)
     "rip",
     "bitcoin",
     "mcp",
@@ -592,8 +598,10 @@ clap = { version = "4.5", features = ["derive"] }
 # Home directory
 dirs = "5.0"
 
-# Packet capture (libpcap)
-pcap = "2.2"
+# Packet capture (libpcap) - optional: only linked by features that sniff L2
+# (datalink/arp/isis). Kept out of portable release binaries to avoid a
+# libpcap runtime dependency.
+pcap = { version = "2.2", optional = true }
 
 # ARP (Address Resolution Protocol) packet handling
 pnet = { version = "0.35", optional = true }
