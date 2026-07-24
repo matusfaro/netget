@@ -316,7 +316,7 @@ dist-windows = [
     "ssh",
     "svn",
     "irc",
-    "xmpp",
+    # xmpp excluded: tokio-xmpp uses std::os::fd (unix-only)
     "telnet",
     "smtp",
     "mdns",
