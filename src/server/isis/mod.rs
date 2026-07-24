@@ -635,7 +635,10 @@ impl IsisServer {
     }
 
     /// Get MAC address of interface (platform-specific)
-    fn get_interface_mac(_interface: &str) -> Result<[u8; 6]> {
+    fn get_interface_mac(interface: &str) -> Result<[u8; 6]> {
+        // Only the Linux path reads the interface name; other platforms fall through.
+        #[cfg(not(target_os = "linux"))]
+        let _ = interface;
         // Try to get MAC from system
         #[cfg(target_os = "linux")]
         {
