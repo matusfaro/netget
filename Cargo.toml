@@ -311,7 +311,7 @@ dist-windows = [
     "ftp",
     "whois",
     "snmp",
-    "igmp",
+    # igmp excluded: raw libc sockets (AF_INET/SOCK_RAW), unix-only
     "syslog",
     "ssh",
     "svn",

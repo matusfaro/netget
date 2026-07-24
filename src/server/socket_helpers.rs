@@ -2,17 +2,23 @@
 
 use anyhow::Result;
 use socket2::{Domain, Socket, Type};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
+#[cfg(unix)]
+use std::net::Ipv4Addr;
+#[cfg(unix)]
 use std::os::unix::io::FromRawFd;
 use tokio::net::{TcpListener, UdpSocket};
 
 /// OSPF protocol number (IPPROTO_OSPFIGP)
+#[cfg(unix)]
 const IPPROTO_OSPF: i32 = 89;
 
 /// AllSPFRouters multicast group
+#[cfg(unix)]
 const OSPF_ALL_SPF_ROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 5);
 
 /// AllDRouters multicast group
+#[cfg(unix)]
 const OSPF_ALL_DROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 6);
 
 /// Create a TCP listener with SO_REUSEADDR enabled
@@ -79,6 +85,7 @@ pub async fn create_reusable_udp_socket(addr: SocketAddr) -> Result<UdpSocket> {
 ///
 /// # Returns
 /// A non-blocking raw socket configured for OSPF
+#[cfg(unix)]
 pub fn create_ospf_raw_socket(
     interface_addr: Ipv4Addr,
     join_all_routers: bool,
