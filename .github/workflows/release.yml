@@ -92,8 +92,11 @@ jobs:
           [ "${{ matrix.key }}" = "win32-x64" ] && bin=netget.exe
           archive="netget-${{ matrix.target }}.${{ matrix.ext }}"
           mkdir -p out
+          # Archive the bare binary at the archive root (cd in, like tar -C),
+          # so both the npm platform packages and the launcher's extraction
+          # find netget[.exe] without a nested path.
           if [ "${{ matrix.ext }}" = "zip" ]; then
-            7z a "out/$archive" "./target/${{ matrix.target }}/release/$bin"
+            (cd "target/${{ matrix.target }}/release" && 7z a "$GITHUB_WORKSPACE/out/$archive" "$bin")
           else
             tar czf "out/$archive" -C "target/${{ matrix.target }}/release" "$bin"
           fi
