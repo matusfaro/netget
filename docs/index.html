@@ -3,173 +3,166 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NetGet - LLM-Controlled Network Protocols</title>
-    <meta name="description" content="Spin up any network server or client in seconds using natural language. NetGet lets an LLM control 50+ protocols - no code required.">
+    <title>NetGet: Describe a server. Get a server.</title>
+    <meta name="description" content="NetGet puts an LLM behind 50+ network protocols. Describe a mock server in plain English and it runs. Works standalone or as an MCP server for LLM agents.">
 
-    <!-- Open Graph -->
-    <meta property="og:title" content="NetGet - LLM-Controlled Network Protocols">
-    <meta property="og:description" content="Spin up any network server or client in seconds using natural language. 50+ protocols, zero boilerplate.">
+    <meta property="og:title" content="NetGet: Describe a server. Get a server.">
+    <meta property="og:description" content="Put an LLM behind 50+ network protocols. Plain English in, mock servers out. MCP built in.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://matusfaro.github.io/netget">
+    <meta property="og:url" content="https://smotanacom.github.io/netget">
 
-    <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
-    <!-- Fonts -->
+    <script>try { var t = localStorage.getItem('theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
-        <pre class="ascii-logo">
- _   _      _    ____      _
-| \ | | ___| |_ / ___| ___| |_
-|  \| |/ _ \ __| |  _ / _ \ __|
-| |\  |  __/ |_| |_| |  __/ |_
-|_| \_|\___|\__|\____|\___|\__|
-        </pre>
-        <p class="tagline">Speak network. Skip the boilerplate.<span class="cursor">_</span></p>
+
+    <nav class="nav">
+        <span class="logo">net<span class="logo-accent">get</span></span>
+        <span class="nav-right">
+            <a class="nav-link" href="https://github.com/smotanacom/netget">GitHub &nearr;</a>
+            <button class="theme-btn" id="theme-toggle" aria-label="Toggle color theme">◐</button>
+        </span>
+    </nav>
+
+    <!-- Hero -->
+    <header class="hero">
+        <h1>Describe a server.<br><span class="accent">Get a server.</span></h1>
+        <p class="hero-sub">
+            NetGet puts an LLM behind 50+ network protocols.<br>
+            Plain English in, a mock HTTP, SSH, DNS or MySQL server out.
+        </p>
+
+        <div class="term term-hero">
+            <div class="term-bar">
+                <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+                <span class="term-title">netget</span>
+            </div>
+            <div class="term-body" id="hero-term">
+                <div class="line"><span class="prompt">&gt;</span> <span class="typed">http server on 8080, mock a payments API</span><span class="caret"></span></div>
+                <div class="line out"><span class="tag-info">INFO</span> HTTP listening on :8080</div>
+                <div class="line out"><span class="tag-req">REQ</span>  POST /charge {"amount": 4200}</div>
+                <div class="line out"><span class="tag-llm">LLM</span>  200 {"status": "paid", "id": "ch_8f3k2"}</div>
+            </div>
+        </div>
     </header>
 
     <main>
-        <!-- Hero -->
+
+        <!-- How it works -->
         <section class="section">
-            <p class="hero-text">
-                Spin up network servers and clients using plain English.
-                50+ protocols. LLM figures out the rest.
+            <h2>How it works</h2>
+
+            <div class="diagram">
+                <svg class="dg" viewBox="0 0 940 440" role="img" aria-label="Diagram: you or an LLM agent tell netget to open a server port; the network sends requests; netget answers via a static response, an external script runtime, or an external LLM">
+                    <defs>
+                        <marker id="arw" markerWidth="8" markerHeight="8" viewBox="0 0 10 10" refX="8" refY="5" orient="auto-start-reverse">
+                            <path d="M0,0 L10,5 L0,10 z" class="arw"/>
+                        </marker>
+                    </defs>
+
+                    <!-- left: who talks to netget -->
+                    <rect class="box" x="20" y="50" width="200" height="62" rx="10"/>
+                    <text class="icon" x="36" y="90">💻</text>
+                    <text class="t" x="68" y="77">you</text>
+                    <text class="s" x="68" y="95">netget CLI · TUI</text>
+
+                    <rect class="box" x="20" y="140" width="200" height="62" rx="10"/>
+                    <text class="icon" x="36" y="180">🤖</text>
+                    <text class="t" x="68" y="167">LLM agent</text>
+                    <text class="s" x="68" y="185">Claude · MCP STDIO</text>
+
+                    <rect class="box dashed" x="20" y="330" width="200" height="62" rx="10"/>
+                    <text class="icon" x="36" y="370">🌐</text>
+                    <text class="t" x="68" y="357">the network</text>
+                    <text class="s" x="68" y="375">curl · browser · dig</text>
+
+                    <!-- netget process -->
+                    <rect class="ngbox" x="350" y="40" width="270" height="380" rx="14"/>
+                    <text class="mg" x="374" y="70">netget</text>
+
+                    <rect class="box" x="395" y="120" width="200" height="62" rx="10"/>
+                    <text class="icon" x="411" y="160">⚡</text>
+                    <text class="t" x="443" y="147">static response</text>
+                    <text class="s" x="443" y="165">canned · zero latency</text>
+
+                    <!-- port on the process boundary -->
+                    <circle class="port" cx="350" cy="361" r="28"/>
+                    <text class="mc" x="350" y="358" text-anchor="middle">:8080</text>
+                    <text class="xs" x="350" y="374" text-anchor="middle">HTTP</text>
+                    <circle class="pulse-dot" cx="314" cy="404" r="4"/>
+                    <text class="lst" x="324" y="408">LISTENING</text>
+
+                    <!-- right: external handlers -->
+                    <rect class="box" x="710" y="150" width="210" height="62" rx="10"/>
+                    <text class="icon" x="722" y="190">📜</text>
+                    <text class="t" x="752" y="177">script runtime</text>
+                    <text class="s" x="752" y="195">JS / Python · deterministic</text>
+
+                    <rect class="box" x="710" y="330" width="210" height="62" rx="10"/>
+                    <text class="icon" x="722" y="370">✨</text>
+                    <text class="t" x="752" y="357">LLM</text>
+                    <text class="s" x="752" y="375">Ollama · any OpenAI API</text>
+
+                    <!-- arrows -->
+                    <path class="ln" d="M220,81 C280,81 305,90 344,98"/>
+                    <text class="m" x="284" y="66" text-anchor="middle">“http server on 8080”</text>
+
+                    <path class="ln" d="M220,171 C280,171 305,160 344,150"/>
+                    <text class="m" x="284" y="140" text-anchor="middle">start_server(...)</text>
+
+                    <path class="ln" d="M220,361 L314,361"/>
+                    <text class="m" x="268" y="351" text-anchor="middle">request</text>
+
+                    <path class="ln" d="M377,350 C430,320 465,240 488,186"/>
+                    <text class="m" x="412" y="270" text-anchor="end">static</text>
+
+                    <path class="ln" d="M377,352 C520,310 610,230 705,185"/>
+                    <text class="m" x="560" y="240" text-anchor="middle">script</text>
+
+                    <path class="ln" d="M378,368 C490,385 600,372 705,362"/>
+                    <text class="m" x="560" y="393" text-anchor="middle">prompt</text>
+                </svg>
+            </div>
+
+            <p class="caption">
+                Real sockets, real wire formats. NetGet handles the bytes, the handler writes the content.
             </p>
-
-            <div class="terminal">
-                <div class="terminal-header">
-                    <span class="terminal-dot red"></span>
-                    <span class="terminal-dot yellow"></span>
-                    <span class="terminal-dot green"></span>
-                    <span class="terminal-title">netget</span>
-                </div>
-                <div class="terminal-body">
-                    <div class="terminal-line"><span class="prompt">&gt;</span> listen on 8080 via HTTP, serve sassy responses</div>
-                    <div class="terminal-line output"><span class="cyan">[INFO]</span> HTTP server listening on 0.0.0.0:8080</div>
-                    <div class="terminal-line output"><span class="cyan">[INFO]</span> GET /api/status from 127.0.0.1</div>
-                    <div class="terminal-line output"><span class="dim">[LLM]</span> "Oh, you want status? Server's up. You're welcome."</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Response Modes -->
-        <section class="section">
-            <h2>Three Response Modes</h2>
-            <p class="section-subtitle">Pick your tradeoff: intelligence vs speed vs predictability</p>
-
-            <div class="mode-grid">
-                <div class="mode-card">
-                    <h4>LLM Mode</h4>
-                    <p class="mode-desc">Dynamic, context-aware responses. Can read files and search the web.</p>
-                    <div class="terminal terminal-small">
-                        <div class="terminal-body">
-                            <div class="terminal-line"><span class="prompt">&gt;</span> DNS server on 5353</div>
-                            <div class="terminal-line"><span class="prompt">&gt;</span> look up RFC 1035 and respond correctly</div>
-                            <div class="terminal-line"><span class="prompt">&gt;</span> resolve *.local to 127.0.0.1</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mode-card">
-                    <h4>Static Mode</h4>
-                    <p class="mode-desc">Fixed responses. Zero latency, zero LLM calls after setup.</p>
-                    <div class="terminal terminal-small">
-                        <div class="terminal-body">
-                            <div class="terminal-line"><span class="prompt">&gt;</span> HTTP server on 3000</div>
-                            <div class="terminal-line"><span class="prompt">&gt;</span> /health returns {"status": "ok"}</div>
-                            <div class="terminal-line"><span class="prompt">&gt;</span> /version returns {"v": "1.2.3"}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mode-card">
-                    <h4>Scripting Mode</h4>
-                    <p class="mode-desc">Python/JavaScript handlers. Full control, deterministic.</p>
-                    <div class="terminal terminal-small">
-                        <div class="terminal-body">
-                            <div class="terminal-line"><span class="prompt">&gt;</span> HTTP server on 4000, use scripting</div>
-                            <div class="terminal-line"><span class="prompt">&gt;</span> /time returns: new Date().toISOString()</div>
-                            <div class="terminal-line"><span class="prompt">&gt;</span> /random returns: Math.random()</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </section>
 
         <!-- Examples -->
         <section class="section">
-            <h2>Examples</h2>
-
-            <div class="example">
-                <h4>SSH Honeypot</h4>
-                <div class="terminal terminal-small">
-                    <div class="terminal-body">
-                        <div class="terminal-line"><span class="prompt">&gt;</span> SSH server on 2222, pretend to be Ubuntu 22.04</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> accept any password, log everything</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> when they run "cat /etc/passwd", show fake users</div>
-                    </div>
+            <h2>What you can build</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-icon">🧪</div>
+                    <h3>HTTP mock API</h3>
+                    <code class="card-prompt">"HTTP on 3000. GET /users returns fake JSON, POST /login always succeeds."</code>
+                    <p>Test frontends without a backend.</p>
                 </div>
-            </div>
-
-            <div class="example">
-                <h4>Mock Database</h4>
-                <div class="terminal terminal-small">
-                    <div class="terminal-body">
-                        <div class="terminal-line"><span class="prompt">&gt;</span> MySQL server, read schema.json for structure</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> answer SELECT queries with realistic fake data</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> reject DROP and DELETE with "nice try"</div>
-                    </div>
+                <div class="card">
+                    <div class="card-icon">🗄️</div>
+                    <h3>Dummy database</h3>
+                    <code class="card-prompt">"MySQL server. Answer any SELECT with realistic data."</code>
+                    <p>No schema, no seed scripts.</p>
                 </div>
-            </div>
-
-            <div class="example">
-                <h4>Protocol from RFC</h4>
-                <div class="terminal terminal-small">
-                    <div class="terminal-body">
-                        <div class="terminal-line"><span class="prompt">&gt;</span> TCP server on 4545</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> search for RFC 959 (FTP) and implement it</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> serve files from ./public directory</div>
-                    </div>
+                <div class="card">
+                    <div class="card-icon">🍯</div>
+                    <h3>Honeypot</h3>
+                    <code class="card-prompt">"SSH on 2222. Act like Ubuntu, accept any password, log everything."</code>
+                    <p>Watch attackers talk to an LLM.</p>
                 </div>
-            </div>
-
-            <div class="example">
-                <h4>API with Personality</h4>
-                <div class="terminal terminal-small">
-                    <div class="terminal-body">
-                        <div class="terminal-line"><span class="prompt">&gt;</span> HTTP on 8080, you're a grumpy sysadmin</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> answer questions about Linux but complain about it</div>
-                        <div class="terminal-line"><span class="prompt">&gt;</span> if asked about Windows, refuse dramatically</div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Capabilities -->
-        <section class="section">
-            <h2>Capabilities</h2>
-            <div class="capabilities">
-                <div class="capability">
-                    <strong>Web Search</strong> - LLM can look up RFCs, docs, or any info to respond correctly
-                </div>
-                <div class="capability">
-                    <strong>File Access</strong> - Read local files to serve content or use as context
-                </div>
-                <div class="capability">
-                    <strong>Memory</strong> - Remembers conversation context across requests
-                </div>
-                <div class="capability">
-                    <strong>Scheduled Tasks</strong> - Cron-like actions: broadcast, cleanup, keepalives
-                </div>
-                <div class="capability">
-                    <strong>Both Directions</strong> - Run as server OR client for any protocol
+                <div class="card">
+                    <div class="card-icon">⚡</div>
+                    <h3>Instant infra</h3>
+                    <code class="card-prompt">"DNS on 5353. Resolve *.local to 127.0.0.1."</code>
+                    <p>DNS, NTP, DHCP. One sentence each.</p>
                 </div>
             </div>
         </section>
@@ -177,149 +170,88 @@
         <!-- Protocols -->
         <section class="section">
             <h2>Protocols</h2>
-            <div class="osi-stack">
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">7</span>
-                        <span class="osi-name">Application</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>HTTP</span><span>SSH</span><span>DNS</span><span>FTP</span><span>SMTP</span><span>IMAP</span><span>LDAP</span><span>SNMP</span><span>NTP</span><span>DHCP</span><span>Telnet</span><span>IRC</span><span>XMPP</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">7</span>
-                        <span class="osi-name">Databases</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>MySQL</span><span>PostgreSQL</span><span>Redis</span><span>MongoDB</span><span>Elasticsearch</span><span>Cassandra</span><span>etcd</span><span>Kafka</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">7</span>
-                        <span class="osi-name">Web & RPC</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>HTTP/2</span><span>HTTP/3</span><span>WebSocket</span><span>gRPC</span><span>GraphQL</span><span>REST</span><span>JSON-RPC</span><span>XML-RPC</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">7</span>
-                        <span class="osi-name">Auth & Identity</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>OAuth2</span><span>SAML</span><span>OpenID</span><span>Kerberos</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">7</span>
-                        <span class="osi-name">Messaging</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>MQTT</span><span>AMQP</span><span>STOMP</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">6</span>
-                        <span class="osi-name">Presentation</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>TLS</span><span>SSL</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">5</span>
-                        <span class="osi-name">Session</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>SOCKS5</span><span>RPC</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">4</span>
-                        <span class="osi-name">Transport</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>TCP</span><span>UDP</span><span>QUIC</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">3</span>
-                        <span class="osi-name">Network</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>BGP</span><span>OSPF</span><span>IS-IS</span><span>RIP</span><span>ICMP</span><span>WireGuard</span><span>OpenVPN</span><span>IPSec</span><span>Tor</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">2</span>
-                        <span class="osi-name">Data Link</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>ARP</span><span>Ethernet</span>
-                    </div>
-                </div>
-                <div class="osi-layer">
-                    <div class="osi-label">
-                        <span class="osi-number">1</span>
-                        <span class="osi-name">Physical</span>
-                    </div>
-                    <div class="osi-protocols">
-                        <span>Bluetooth BLE</span><span>USB/IP</span><span>NFC</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Get Started -->
-        <section class="section">
-            <h2>Get Started</h2>
-
-            <div class="code-block">
-                <button class="copy-btn" data-target="quickstart">Copy</button>
-                <pre id="quickstart"><code><span class="comment"># Install Ollama</span>
-curl -fsSL https://ollama.ai/install.sh | sh
-ollama pull qwen3-coder:30b
-
-<span class="comment"># Build NetGet</span>
-git clone https://github.com/matusfaro/netget.git
-cd netget && cargo build --release --features tcp,http,ssh,dns
-
-<span class="comment"># Run</span>
-./target/release/netget</code></pre>
-            </div>
-
-            <p class="note">
-                <strong>Requirements:</strong> Rust, ~8GB RAM for LLM<br>
-                <strong>Tip:</strong> Use <code>--features X,Y,Z</code> for faster builds
+            <p class="section-sub">
+                Every protocol is a Cargo feature. Build with exactly what you need:
+                <code>--features tcp,http,dns</code>
             </p>
+            <div class="proto-table">
+                <div class="proto-row"><span class="proto-cat">transport</span><span class="proto-list">tcp udp tftp socket_file datalink arp icmp igmp</span></div>
+                <div class="proto-row"><span class="proto-cat">web</span><span class="proto-list">http http2 http3 tls proxy http_proxy socks5 openapi rss</span></div>
+                <div class="proto-row"><span class="proto-cat">naming &amp; time</span><span class="proto-list">dns dot doh mdns dhcp bootp ntp whois</span></div>
+                <div class="proto-row"><span class="proto-cat">remote access</span><span class="proto-list">ssh ssh-agent telnet vnc</span></div>
+                <div class="proto-row"><span class="proto-cat">mail &amp; news</span><span class="proto-list">smtp imap pop3 nntp</span></div>
+                <div class="proto-row"><span class="proto-cat">chat &amp; voice</span><span class="proto-list">irc xmpp sip webrtc stun turn</span></div>
+                <div class="proto-row"><span class="proto-cat">queues</span><span class="proto-list">mqtt amqp kafka sqs zookeeper</span></div>
+                <div class="proto-row"><span class="proto-cat">databases</span><span class="proto-list">mysql postgresql mssql sqlite redis mongodb couchdb cassandra elasticsearch dynamodb etcd</span></div>
+                <div class="proto-row"><span class="proto-cat">files &amp; storage</span><span class="proto-list">ftp s3 nfs smb webdav ipp</span></div>
+                <div class="proto-row"><span class="proto-cat">auth</span><span class="proto-list">oauth2 openid openidconnect saml-idp saml-sp ldap</span></div>
+                <div class="proto-row"><span class="proto-cat">rpc</span><span class="proto-list">grpc jsonrpc xmlrpc mcp</span></div>
+                <div class="proto-row"><span class="proto-cat">vpn &amp; tunnels</span><span class="proto-list">wireguard openvpn ipsec tor</span></div>
+                <div class="proto-row"><span class="proto-cat">routing</span><span class="proto-list">bgp ospf isis rip</span></div>
+                <div class="proto-row"><span class="proto-cat">vcs &amp; packages</span><span class="proto-list">git mercurial svn npm pypi maven</span></div>
+                <div class="proto-row"><span class="proto-cat">p2p</span><span class="proto-list">bitcoin torrent-tracker torrent-dht torrent-peer</span></div>
+                <div class="proto-row"><span class="proto-cat">hardware</span><span class="proto-list">usb usb-keyboard usb-mouse usb-serial usb-fido2 usb-smartcard bluetooth-ble nfc</span></div>
+                <div class="proto-row"><span class="proto-cat">observability</span><span class="proto-list">snmp syslog</span></div>
+                <div class="proto-row"><span class="proto-cat">llm backends</span><span class="proto-list">ollama openai embedded-llm</span></div>
+            </div>
+            <p class="caption">Most protocols run as server and client. Maturity varies, see the README for status.</p>
         </section>
+
+        <!-- Install -->
+        <section class="section">
+            <h2>Install</h2>
+
+            <h3 class="sub-h">MCP server for LLM agents (STDIO)</h3>
+            <p class="caption">Add to <code>claude_desktop_config.json</code> or any MCP client config:</p>
+            <div class="code-block">
+                <button class="copy-btn" data-target="mcp-json">Copy</button>
+                <pre id="mcp-json"><code>{
+  <span class="str">"mcpServers"</span>: {
+    <span class="str">"netget"</span>: {
+      <span class="str">"command"</span>: <span class="str">"npx"</span>,
+      <span class="str">"args"</span>: [<span class="str">"-y"</span>, <span class="str">"@smotana/netget"</span>, <span class="str">"--mcp"</span>]
+    }
+  }
+}</code></pre>
+            </div>
+            <p class="caption">Claude Code: <code>claude mcp add netget -- npx -y @smotana/netget --mcp</code></p>
+
+            <h3 class="sub-h">CLI</h3>
+            <div class="code-block">
+                <button class="copy-btn" data-target="cli">Copy</button>
+                <pre id="cli"><code><span class="c"># install</span>
+npm install -g @smotana/netget            <span class="c"># or grab a binary from GitHub Releases</span>
+
+<span class="c"># run with local Ollama</span>
+ollama pull qwen3-coder:30b
+netget
+
+<span class="c"># or run against any OpenAI-compatible API</span>
+netget --openai-url https://api.openai.com --model gpt-4o --api-key $OPENAI_API_KEY</code></pre>
+            </div>
+
+            <h3 class="sub-h">From source</h3>
+            <div class="code-block">
+                <button class="copy-btn" data-target="src">Copy</button>
+                <pre id="src"><code>git clone https://github.com/smotanacom/netget.git
+cd netget
+
+<span class="c"># build only the protocols you need</span>
+cargo build --release --no-default-features --features tcp,http,ssh,dns,mcp-stdio
+
+./target/release/netget          <span class="c"># interactive TUI</span>
+./target/release/netget --mcp    <span class="c"># MCP STDIO server</span></code></pre>
+            </div>
+        </section>
+
     </main>
 
-    <!-- Footer -->
     <footer class="footer">
-        <div class="footer-links">
-            <a href="https://github.com/matusfaro/netget" class="github-link">
-                <svg class="github-icon" viewBox="0 0 16 16" width="20" height="20">
-                    <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                </svg>
-                GitHub
-            </a>
-        </div>
-        <div class="footer-info">
-            <a href="https://github.com/matusfaro/netget/blob/master/LICENSE" class="license-link">AGPL-3.0</a>
-            <span class="separator">|</span>
-            <span>Built with Claude</span>
-        </div>
+        <a href="https://github.com/smotanacom/netget">GitHub</a>
+        <span class="sep">&middot;</span>
+        <a href="https://github.com/smotanacom/netget/blob/master/LICENSE">AGPL-3.0</a>
+        <span class="sep">&middot;</span>
+        <span>Built with Claude</span>
     </footer>
 
     <script src="js/main.js"></script>
