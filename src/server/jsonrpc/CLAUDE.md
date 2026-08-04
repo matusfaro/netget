@@ -2,311 +2,166 @@
 
 ## Overview
 
-JSON-RPC 2.0 server over HTTP POST where the LLM controls all RPC method execution and response generation. Supports
-single requests, batch requests, and notifications per the JSON-RPC 2.0 specification.
+JSON-RPC 2.0 over HTTP POST. The LLM (or a script/static handler) implements every
+method; there is no method registry and no response cache in Rust.
 
-## Protocol Version
+**Maturity**: `Experimental`. Single requests, batches and notifications work and are
+verified against `curl`; the gaps below are known and listed.
+
+## Protocol
 
 - **JSON-RPC**: 2.0 (https://www.jsonrpc.org/specification)
-- **Transport**: HTTP/1.1 POST with JSON request/response bodies
-- **Content-Type**: `application/json`
+- **Transport**: HTTP/1.1 POST, `hyper` 1, one tokio task per TCP connection
+- **Content-Type**: `application/json` on responses
 
-## Library Choices
+## Library choices
 
-### Core Dependencies
+- **hyper** v1 — HTTP/1.1 framing, `Content-Length` and keep-alive
+- **serde_json** — request parsing and response building
+- **tokio** — runtime
 
-- **hyper** (v1) - HTTP/1.1 server implementation
-    - Chosen for: async/await support, efficient connection handling
-    - Used for: HTTP request/response processing
-- **serde_json** - JSON serialization/deserialization
-    - Chosen for: Standard Rust JSON library
-    - Used for: Parsing JSON-RPC requests and building responses
-- **tokio** - Async runtime
-    - Chosen for: Concurrent connection handling
+No JSON-RPC crate: the specification is small, and a server-side implementation with
+this action model would have to be written anyway.
 
-### Why No JSON-RPC Library?
+## Request handling
 
-- JSON-RPC 2.0 specification is simple (request/response format)
-- Direct implementation provides full control over LLM integration
-- No suitable Rust library for *server-side* JSON-RPC 2.0 with LLM control
+### Correlation id — the response id always comes from the request
 
-## Architecture Decisions
+`call_llm_for_method` overwrites `id` on the outgoing response with the id parsed from
+the request, unconditionally, preserving its JSON type. A numeric id comes back numeric,
+a string id comes back a string. Neither the model nor a script can override it: an
+invented id produces a reply the client cannot match, and over keep-alive that failure
+is silent. `jsonrpc` is likewise forced to `"2.0"` on every response.
 
-### Request Types
+For this reason `jsonrpc_success` and `jsonrpc_error` **do not take an `id` parameter**.
+They used to, described as "only set this explicitly if you need to override the default
+behavior" — there is no such need.
 
-**Three JSON-RPC Message Types**:
+### Notifications
 
-1. **Single Request** - Object with `jsonrpc`, `method`, `params`, `id`
-    - Expects response with matching `id`
-2. **Batch Request** - Array of request objects
-    - Returns array of responses (order not guaranteed per spec)
-3. **Notification** - Request without `id` field (or `id: null`)
-    - No response expected (HTTP 204 No Content)
+Spec §4: a Notification is a request *without an `id` member*. An explicit `"id": null`
+is a Request (discouraged, but valid) and is answered with `"id": null`.
 
-### LLM Control Points
+- Single notification → HTTP 204, empty body.
+- Notification inside a batch → no entry in the response array.
+- A batch of nothing but notifications → HTTP 204, **not** `[]` (spec §6).
 
-**Complete Method Control** - LLM implements all RPC methods:
+The event carries `is_notification` explicitly, because `id` cannot express the
+difference: a missing id and an explicit null both serialise to `null` in event data.
+A handler that answers a notification does no harm — the response is discarded.
 
-1. **Method Call**: Parse JSON-RPC request → send to LLM
-2. **LLM Decision**: Implement method logic or return error
-3. **Response Generation**: LLM returns JSON-RPC success or error
+### Response selection
 
-**Action-Based Responses**:
+`call_llm` executes every action the handler produced and returns them in
+`protocol_results`. The server then **scans** those results for the one named
+`jsonrpc_response` (unwrapping `ActionResult::Multiple`), rather than taking the first
+raw action.
+
+This matters: `raw_actions` includes common actions, so a response that leads with
+`show_message` or `update_memory` — the exact shape this very document used to
+recommend, and the shape the notification E2E test uses — was rejected as a "non-JSON-RPC
+action" and turned into `-32603 Internal error`. Scanning also means the chosen action is
+no longer executed a second time, which previously rendered every action log template
+twice and recorded the pre-id-fill action in the MCP access log.
+
+If no `jsonrpc_response` is produced, the client gets `-32603` with a message naming the
+two actions it should have used.
+
+### Batch requests
+
+Processed sequentially, response order preserved. Non-object members (`[1,2,3]`) get
+their own `-32600 / "id": null` entry per spec §6; they used to be dropped silently.
+
+**Each batch member is a separate model call and batch length is not capped.** A 10 000
+element batch is 10 000 sequential model calls on one held-open connection. Use a script
+or static handler for anything batch-heavy.
+
+## Actions
+
+### `jsonrpc_success`
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `result` | yes | Any JSON value |
 
 ```json
-{
-  "actions": [
-    {
-      "type": "jsonrpc_success",
-      "result": {"sum": 8},
-      "id": 1
-    }
-  ]
-}
+{"type": "jsonrpc_success", "result": 8}
 ```
 
-Or for errors:
+### `jsonrpc_error`
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `code` | yes | Integer, kept as `i64`. -32700 parse, -32600 invalid request, -32601 method not found, -32602 invalid params, -32603 internal, -32000..-32099 server |
+| `message` | yes | Human-readable |
+| `data` | no | Any JSON value |
 
 ```json
-{
-  "actions": [
-    {
-      "type": "jsonrpc_error",
-      "code": -32601,
-      "message": "Method not found",
-      "id": 1
-    }
-  ]
-}
+{"type": "jsonrpc_error", "code": -32601, "message": "Method not found"}
 ```
 
-### Error Code Handling
+There are no async actions. `list_rpc_methods` used to be declared; it ignored its input,
+always returned an empty list, and its result was consumed by nobody.
 
-**Standard JSON-RPC 2.0 Error Codes**:
+## Event: `jsonrpc_method_call`
 
-- `-32700` - Parse error (invalid JSON)
-- `-32600` - Invalid Request (malformed JSON-RPC)
-- `-32601` - Method not found
-- `-32602` - Invalid params
-- `-32603` - Internal error
-- `-32000 to -32099` - Server error (reserved range)
+| Field | Type | Notes |
+|---|---|---|
+| `method` | string | Method name |
+| `params` | any | Array, object, or absent |
+| `id` | string/number/null | Correlation id, original JSON type. Never needs echoing |
+| `is_notification` | boolean | True when the request had no `id` member |
 
-LLM can return any error code with custom message and optional `data` field.
+Static handlers can interpolate any of these with `{{event.field}}`.
 
-### Connection Management
+## Examples
 
-- Each HTTP connection spawned as separate tokio task
-- Connections tracked in `ProtocolConnectionInfo::JsonRpc` with `recent_methods` Vec
-- HTTP/1.1 keep-alive handled by hyper
-- No session state (each request is independent)
+### Static handler (no model call)
 
-### Batch Request Processing
-
-**Sequential Execution**:
-
-- Process each request in batch sequentially
-- Collect responses in array
-- Notifications in batch produce no response entry
-- Empty batch returns error (per spec)
-
-## State Management
-
-### Per-Connection State
-
-```rust
-ProtocolConnectionInfo::JsonRpc {
-    recent_methods: Vec<String>,  // Track last 10 method calls
-}
+```json
+{"type": "open_server", "port": 8000, "base_stack": "jsonrpc",
+ "event_handlers": [{"event_pattern": "jsonrpc_method_call",
+   "handler": {"type": "static", "actions": [{"type": "jsonrpc_success", "result": {"ok": true}}]}}]}
 ```
 
-### No Session State
+Verified with `curl`:
 
-- Each JSON-RPC call is stateless
-- No method call history maintained across requests
-- Methods cannot access previous call results
+```
+$ curl -s -X POST http://127.0.0.1:8000/ -d '{"jsonrpc":"2.0","method":"add","params":[5,3],"id":"abc-123"}'
+{"jsonrpc":"2.0","result":{"ok":true},"id":"abc-123"}
+
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8000/ -d '{"jsonrpc":"2.0","method":"log"}'
+204
+```
+
+### LLM mode
+
+```
+open_server port 8000 base_stack jsonrpc. JSON-RPC 2.0 server.
+Implement add(a,b), greet(name) and version(). Return error -32601 for anything else.
+```
+
+The model answers each call with `jsonrpc_success` or `jsonrpc_error`; the id is handled
+for it.
 
 ## Limitations
 
-### Not Implemented
-
-- **Transport negotiation** - Only HTTP POST supported (no WebSocket, TCP, etc.)
-- **Authentication** - No API key or token validation
-- **Rate limiting** - No request throttling
-- **Method discovery** - No standard way to list available methods
-- **JSON-RPC 1.0 compatibility** - Only version 2.0 supported
-
-### Specification Deviations
-
-- **Response order** - Batch responses may not match request order
-    - Spec allows this, but some clients expect order preservation
-- **Notification handling** - Returns 204 instead of 200 with empty body
-    - Both are acceptable per HTTP, but non-standard for JSON-RPC
-
-### LLM Interpretation Challenges
-
-- **Error code selection** - LLM must choose appropriate error codes
-- **Type handling** - JSON types must match method expectations
-- **Batch complexity** - LLM sees each batch item individually
-
-## Example Prompts and Responses
-
-### Startup
-
-```
-open_server port 8080 base_stack jsonrpc. This is a JSON-RPC 2.0 server.
-
-Implement these methods:
-- add(a, b): Return the sum of a and b
-- greet(name): Return "Hello, {name}!"
-- version(): Return "1.0.0"
-
-For unknown methods, return error code -32601 (Method not found).
-```
-
-### Network Event (Single Request)
-
-**Received**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "add",
-  "params": [5, 3],
-  "id": 1
-}
-```
-
-**LLM Response**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Calculating 5 + 3"
-    },
-    {
-      "type": "jsonrpc_success",
-      "result": 8,
-      "id": 1
-    }
-  ]
-}
-```
-
-**Client Receives**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "result": 8,
-  "id": 1
-}
-```
-
-### Network Event (Notification)
-
-**Received**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "log_event",
-  "params": {"event": "user_login", "user_id": 123}
-}
-```
-
-**LLM Response**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Logged event: user_login for user 123"
-    }
-  ]
-}
-```
-
-**Client Receives**: HTTP 204 No Content (no body)
-
-### Network Event (Batch Request)
-
-**Received**:
-
-```json
-[
-  {"jsonrpc": "2.0", "method": "add", "params": [1, 2], "id": 1},
-  {"jsonrpc": "2.0", "method": "greet", "params": ["Alice"], "id": 2},
-  {"jsonrpc": "2.0", "method": "unknown", "params": [], "id": 3}
-]
-```
-
-**LLM Processes Each Individually** (3 separate LLM calls)
-
-**Client Receives**:
-
-```json
-[
-  {"jsonrpc": "2.0", "result": 3, "id": 1},
-  {"jsonrpc": "2.0", "result": "Hello, Alice!", "id": 2},
-  {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": 3}
-]
-```
-
-### Error Response
-
-**Received**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "divide",
-  "params": [10, 0],
-  "id": 4
-}
-```
-
-**LLM Response**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "jsonrpc_error",
-      "code": -32000,
-      "message": "Division by zero",
-      "data": {"dividend": 10, "divisor": 0},
-      "id": 4
-    }
-  ]
-}
-```
-
-**Client Receives**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "error": {
-    "code": -32000,
-    "message": "Division by zero",
-    "data": {"dividend": 10, "divisor": 0}
-  },
-  "id": 4
-}
-```
+- **HTTP only** — no WebSocket or raw TCP transport.
+- **No authentication, no rate limiting, no batch-size cap.**
+- **No routing** — every path is a JSON-RPC endpoint; there is no 404.
+- **Non-POST** returns HTTP 200 with an `-32600` body rather than `405 Method Not
+  Allowed`, so a plain `GET /` looks like a working endpoint to a scanner.
+- **No `Content-Type` validation** on requests; any body is parsed as JSON.
+- **No request body size limit** — the whole body is buffered.
+- **Notifications still cost a model call** whose output is discarded. Deliberate (it
+  keeps logging and memory updates working), but it is not free.
+- **Per-connection tasks are untracked**, so `stop_server` does not abort in-flight
+  requests. Only the accept loop is registered with `AppState::register_server_task`.
+- `track_method_call` maintains a `recent_methods` ring in connection state that
+  **nothing reads**, at the cost of a write lock per request. Byte and packet counters
+  are never updated, so connection stats read zero.
 
 ## References
 
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
-- [JSON Schema](https://json-schema.org/)
-
-## Key Design Principles
-
-1. **Strict Spec Compliance** - Follows JSON-RPC 2.0 exactly
-2. **LLM Method Implementation** - All business logic in LLM
-3. **Stateless Design** - No cross-request state
-4. **Error Code Precision** - Uses standard error codes
-5. **Batch Support** - Handles single and batch requests uniformly
+- Testing notes: `tests/server/jsonrpc/CLAUDE.md`

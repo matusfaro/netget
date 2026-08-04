@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
-use crate::llm::actions::protocol_trait::{ActionResult, Server};
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
@@ -243,6 +243,17 @@ async fn handle_jsonrpc_request(
                 }
             }
 
+            // Spec §6: "If there are no Response objects contained within the
+            // Response array as it is to be sent to the client, the server MUST NOT
+            // return an empty Array and should return nothing at all." A batch of
+            // nothing but notifications used to answer HTTP 200 with `[]`.
+            if responses.is_empty() {
+                return Ok(Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap());
+            }
+
             // Return batch response
             let response_json = json!(responses);
             Ok(Response::builder()
@@ -310,14 +321,31 @@ async fn process_single_request(
     protocol: &Arc<JsonRpcProtocol>,
     server_id: crate::state::ServerId,
 ) -> Option<Value> {
+    // A batch member that is not an object is not a request at all. Spec §6
+    // requires an Invalid Request response for each such member, with a null id;
+    // it used to be dropped silently, so `[1,2,3]` produced an empty array.
+    if !request.is_object() {
+        return Some(json!({
+            "jsonrpc": "2.0",
+            "error": {
+                "code": INVALID_REQUEST,
+                "message": "Request must be a JSON object"
+            },
+            "id": Value::Null
+        }));
+    }
+
     // Extract fields
     let jsonrpc_version = request.get("jsonrpc").and_then(|v| v.as_str());
     let method = request.get("method").and_then(|v| v.as_str());
     let params = request.get("params").cloned();
     let id = request.get("id").cloned();
 
-    // Check if it's a notification (no id field or id is null)
-    let is_notification = id.is_none() || id.as_ref().map(|v| v.is_null()).unwrap_or(false);
+    // Spec §4: "A Notification is a Request object without an 'id' member."
+    // An explicit `"id": null` is a Request (discouraged, but valid) and must be
+    // answered with `"id": null`. Only the absence of the member makes it a
+    // notification.
+    let is_notification = id.is_none();
 
     // Validate JSON-RPC version
     if jsonrpc_version != Some("2.0") {
@@ -421,17 +449,24 @@ async fn call_llm_for_method(
     connection_id: ConnectionId,
     server_id: crate::state::ServerId,
 ) -> anyhow::Result<Value> {
-    // Create JSON-RPC method call event
+    // Create JSON-RPC method call event.
+    //
+    // `is_notification` is explicit because `id` cannot carry the distinction: a
+    // missing id and an explicit `"id": null` both serialise to null here, yet the
+    // first must not be answered and the second must be. Without this field a
+    // script handler had no way to tell them apart.
     let event_data = if let Some(params_val) = params {
         json!({
             "method": method,
             "params": params_val,
-            "id": request_id
+            "id": request_id,
+            "is_notification": request_id.is_none(),
         })
     } else {
         json!({
             "method": method,
-            "id": request_id
+            "id": request_id,
+            "is_notification": request_id.is_none(),
         })
     };
 
@@ -451,50 +486,59 @@ async fn call_llm_for_method(
     )
     .await?;
 
-    trace!("LLM actions for JSON-RPC: {:?}", llm_result.raw_actions.len());
+    trace!(
+        "LLM actions for JSON-RPC: {:?}",
+        llm_result.raw_actions.len()
+    );
 
-    // Execute the first action
-    if let Some(action) = llm_result.raw_actions.first() {
-        // Clone the action so we can modify it
-        let mut action = action.clone();
+    // Pick the response out of everything the handler produced.
+    //
+    // call_llm has already executed every action, so we read the results rather
+    // than re-executing (which used to render each log template twice and record
+    // the pre-id-fill action in the access log). Crucially we *scan* instead of
+    // taking raw_actions.first(): raw_actions includes common actions, so a
+    // perfectly reasonable response that leads with show_message or update_memory
+    // used to be rejected as a "non-JSON-RPC action" and turned into -32603. The
+    // protocol's own documentation and its notification test both used that shape.
+    let response = llm_result.protocol_results.iter().find_map(|result| {
+        collect_jsonrpc_response(result)
+    });
 
-        // Auto-fill the id if not provided by LLM
-        let action_type = action.get("type").and_then(|v| v.as_str());
-        if action_type == Some("jsonrpc_success") || action_type == Some("jsonrpc_error") {
-            let has_id = action.get("id").map(|v| !v.is_null()).unwrap_or(false);
+    let Some(mut response) = response else {
+        return Ok(json!({
+            "jsonrpc": "2.0",
+            "error": {
+                "code": INTERNAL_ERROR,
+                "message": "Handler did not produce a jsonrpc_success or jsonrpc_error action"
+            },
+            "id": request_id.unwrap_or(Value::Null)
+        }));
+    };
 
-            if !has_id {
-                if let Some(action_obj) = action.as_object_mut() {
-                    if let Some(req_id) = &request_id {
-                        debug!("Auto-filling id field with request id: {:?}", req_id);
-                        action_obj.insert("id".to_string(), req_id.clone());
-                    }
-                }
-            }
-        }
-
-        match protocol.execute_action(action) {
-            Ok(ActionResult::Custom { name, data }) if name == "jsonrpc_response" => {
-                return Ok(data);
-            }
-            Ok(_) => {
-                return Err(anyhow::anyhow!("LLM returned non-JSON-RPC action"));
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!("Failed to execute action: {}", e));
-            }
-        }
+    // The correlation id belongs to the request, not to the model. JSON-RPC 2.0
+    // §5 requires it to equal the request id, preserving type (a string id must
+    // come back as a string), so it is overwritten unconditionally: a handler that
+    // invents an id would otherwise produce a reply the client cannot match, and
+    // over keep-alive that failure is silent.
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert(
+            "id".to_string(),
+            request_id.clone().unwrap_or(Value::Null),
+        );
+        obj.insert("jsonrpc".to_string(), Value::String("2.0".to_string()));
     }
 
-    // If no response found, return a default error
-    Ok(json!({
-        "jsonrpc": "2.0",
-        "error": {
-            "code": INTERNAL_ERROR,
-            "message": "LLM did not generate a valid JSON-RPC response"
-        },
-        "id": request_id
-    }))
+    Ok(response)
+}
+
+/// Extract a JSON-RPC response object from one action result, if it is one.
+/// Handles `Multiple` so a nested result is not silently dropped.
+fn collect_jsonrpc_response(result: &ActionResult) -> Option<Value> {
+    match result {
+        ActionResult::Custom { name, data } if name == "jsonrpc_response" => Some(data.clone()),
+        ActionResult::Multiple(inner) => inner.iter().find_map(collect_jsonrpc_response),
+        _ => None,
+    }
 }
 
 /// Track method call in connection state

@@ -23,19 +23,18 @@ impl JsonRpcProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for JsonRpcProtocol {
+    /// None. `send_first` used to be declared here and was bound as `_send_first`
+    /// in the server, i.e. accepted and ignored: JSON-RPC over HTTP is strictly
+    /// client-initiated, so there is nothing to send first.
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-                crate::llm::actions::ParameterDefinition {
-                    name: "send_first".to_string(),
-                    type_hint: "boolean".to_string(),
-                    description: "Whether the server should send the first message after connection (not typically needed for JSON-RPC over HTTP)".to_string(),
-                    required: false,
-                    example: json!(false),
-                },
-            ]
+        vec![]
     }
+    /// None. `list_rpc_methods` used to be declared here; it ignored its input,
+    /// always returned an empty list, and its result was consumed by nobody, so it
+    /// cost prompt tokens to advertise a method-discovery feature that does not
+    /// exist. There is no method registry: the model answers every call.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_rpc_methods_action()]
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![jsonrpc_success_action(), jsonrpc_error_action()]
@@ -57,10 +56,17 @@ impl Protocol for JsonRpcProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual JSON-RPC 2.0")
-            .llm_control("Method responses")
-            .e2e_testing("JSON-RPC client libs")
-            .notes("RPC over JSON")
+            .implementation("Manual JSON-RPC 2.0 over HTTP POST (hyper 1)")
+            .llm_control("Every method call: result value or error code/message/data")
+            .e2e_testing("curl and mocked in-process HTTP")
+            .notes(
+                "Single requests, batches and notifications. The response id is taken \
+                 from the request, never from the model. Notifications (no id member) \
+                 get HTTP 204 and, in a batch, no array entry. Every batch member is a \
+                 separate model call and batch length is not capped, so a large batch is \
+                 expensive. Any path is accepted; there is no routing, auth or rate \
+                 limiting, and non-POST gets an Invalid Request body rather than 405.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -130,7 +136,9 @@ impl Server for JsonRpcProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             JsonRpcServer::spawn_with_llm_actions(
@@ -153,7 +161,6 @@ impl Server for JsonRpcProtocol {
         match action_type {
             "jsonrpc_success" => self.execute_jsonrpc_success(action),
             "jsonrpc_error" => self.execute_jsonrpc_error(action),
-            "list_rpc_methods" => self.execute_list_rpc_methods(action),
             _ => Err(anyhow::anyhow!("Unknown JSON-RPC action: {}", action_type)),
         }
     }
@@ -187,10 +194,12 @@ impl JsonRpcProtocol {
     }
 
     fn execute_jsonrpc_error(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Kept as i64: the spec says "integer", and `as i32` silently wrapped, so
+        // a model emitting 4294967296 produced code 0.
         let code = action
             .get("code")
             .and_then(|v| v.as_i64())
-            .context("Missing 'code' field")? as i32;
+            .context("Missing or non-integer 'code' field (JSON-RPC error codes are integers, e.g. -32601)")?;
 
         let message = action
             .get("message")
@@ -231,40 +240,23 @@ impl JsonRpcProtocol {
         })
     }
 
-    fn execute_list_rpc_methods(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("JSON-RPC list methods");
-
-        // This is an async action - LLM can decide what methods to list
-        // Return a placeholder that shows no predefined methods
-        Ok(ActionResult::Custom {
-            name: "list_rpc_methods".to_string(),
-            data: json!({
-                "methods": [],
-                "note": "Methods are dynamically handled by the LLM"
-            }),
-        })
-    }
 }
 
 /// Action definition: Send JSON-RPC success response
 pub fn jsonrpc_success_action() -> ActionDefinition {
     ActionDefinition {
         name: "jsonrpc_success".to_string(),
-        description: "Send a JSON-RPC 2.0 success response".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "result".to_string(),
-                type_hint: "any".to_string(),
-                description: "The result value (can be any JSON type: object, array, string, number, boolean, null)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "id".to_string(),
-                type_hint: "string|number|null".to_string(),
-                description: "Optional: Request ID (will be automatically set from the event context if not provided). Only set this explicitly if you need to override the default behavior.".to_string(),
-                required: false,
-            },
-        ],
+        description: "Answer a JSON-RPC method call with a result. The response id is \
+                      copied from the request automatically, so do not set one."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "result".to_string(),
+            type_hint: "any".to_string(),
+            description: "Whatever the method returns. Any JSON type: an object, an \
+                          array, a string, a number, a boolean, or null."
+                .to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "jsonrpc_success",
             "result": {"status": "ok", "data": [1, 2, 3]}
@@ -281,7 +273,9 @@ pub fn jsonrpc_success_action() -> ActionDefinition {
 pub fn jsonrpc_error_action() -> ActionDefinition {
     ActionDefinition {
         name: "jsonrpc_error".to_string(),
-        description: "Send a JSON-RPC 2.0 error response".to_string(),
+        description: "Answer a JSON-RPC method call with an error. The response id is \
+                      copied from the request automatically, so do not set one."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "code".to_string(),
@@ -298,13 +292,9 @@ pub fn jsonrpc_error_action() -> ActionDefinition {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "any".to_string(),
-                description: "Optional additional error data".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "id".to_string(),
-                type_hint: "string|number|null".to_string(),
-                description: "Optional: Request ID (will be automatically set from the event context if not provided). Only set this explicitly if you need to override the default behavior.".to_string(),
+                description: "Optional extra detail about the failure, e.g. which \
+                              parameter was wrong. Any JSON value."
+                    .to_string(),
                 required: false,
             },
         ],
@@ -321,54 +311,52 @@ pub fn jsonrpc_error_action() -> ActionDefinition {
     }
 }
 
-/// Action definition: List available RPC methods
-pub fn list_rpc_methods_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_rpc_methods".to_string(),
-        description: "List all available RPC methods (async action, no network context needed)"
-            .to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_rpc_methods"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> JSON-RPC list methods")
-                .with_debug("JSON-RPC list_rpc_methods"),
-        ),
-    }
-}
-
 /// JSON-RPC method call event - triggered when client sends a JSON-RPC request
 pub static JSONRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("jsonrpc_method_call", "JSON-RPC 2.0 method call received", json!({"type": "placeholder", "event_id": "jsonrpc_method_call"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "The RPC method name being called".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "params".to_string(),
-                type_hint: "any".to_string(),
-                description: "Method parameters (can be array, object, or omitted)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "id".to_string(),
-                type_hint: "string|number|null".to_string(),
-                description: "Request ID (null for notifications)".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![jsonrpc_success_action(), jsonrpc_error_action()])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("JSON-RPC {method}")
-                .with_debug("JSON-RPC method={method}, id={id}")
-                .with_trace("JSON-RPC: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "jsonrpc_method_call",
+        "JSON-RPC 2.0 method call received",
+        json!({"actions": [{"type": "jsonrpc_success", "result": 8}]}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "The RPC method name being called".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "params".to_string(),
+            type_hint: "any".to_string(),
+            description: "Method parameters (can be array, object, or omitted)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "id".to_string(),
+            type_hint: "string|number|null".to_string(),
+            description: "The request's correlation id, with its original JSON type. \
+                          You never need to echo it: it is copied into the response for \
+                          you. Null when the request carried no id."
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "is_notification".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "True when the request had no id member. A notification must \
+                          not be answered: anything you return is discarded and the \
+                          client gets HTTP 204."
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![jsonrpc_success_action(), jsonrpc_error_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("JSON-RPC {method}")
+            .with_debug("JSON-RPC method={method}, id={id}")
+            .with_trace("JSON-RPC: {json_pretty(.)}"),
+    )
 });
 
 /// Get JSON-RPC event types
