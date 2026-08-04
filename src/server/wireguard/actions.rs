@@ -13,31 +13,19 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
-/// WireGuard peer authorization request event
-pub static WIREGUARD_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "wireguard_peer_request",
-        "WireGuard peer requesting authorization",
-        json!({
-            "type": "authorize_peer",
-            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
-            "allowed_ips": ["10.20.30.2/32"],
-            "message": "Peer authorized"
-        }),
-    )
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("WireGuard {client_ip} handshake")
-            .with_debug("WireGuard from {client_ip}:{client_port}")
-            .with_trace("WireGuard: {json_pretty(.)}"),
-    )
-});
-
-/// WireGuard peer connected event
+/// WireGuard peer connected event.
+///
+/// Raised by the peer monitoring loop the first time a peer shows up on the
+/// WireGuard interface, i.e. *after* its cryptographic handshake has already
+/// succeeded (WireGuard performs the handshake in the kernel/userspace backend,
+/// so it cannot be gated beforehand). Event data fields:
+/// `public_key`, `endpoint`, `allowed_ips`, `server_public_key`, `listen_port`.
 pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "wireguard_peer_connected",
-        "WireGuard peer successfully connected",
+        "WireGuard peer completed its handshake and appeared on the interface. \
+         Respond with authorize_peer to (re)configure its allowed IPs, \
+         disconnect_peer/reject_peer to remove it, or no_action to leave it as-is.",
         json!({
             "type": "no_action"
         }),
@@ -52,10 +40,7 @@ pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
 
 /// Get all WireGuard event types
 pub fn get_wireguard_event_types() -> Vec<EventType> {
-    vec![
-        WIREGUARD_PEER_REQUEST_EVENT.clone(),
-        WIREGUARD_PEER_CONNECTED_EVENT.clone(),
-    ]
+    vec![WIREGUARD_PEER_CONNECTED_EVENT.clone()]
 }
 
 /// WireGuard protocol implementation
@@ -71,12 +56,16 @@ impl WireguardProtocol {
 
 // Implement Protocol trait (base trait for all protocols)
 impl Protocol for WireguardProtocol {
+    /// No user-triggered actions are advertised.
+    ///
+    /// `list_peers`, `remove_peer` and `get_server_info` used to be listed here,
+    /// but the action executor calls [`Server::execute_action`] on a *stateless*
+    /// protocol struct that has no handle to the running `WireguardServer`, so
+    /// they could never return peer data or touch the interface. They are still
+    /// accepted by `execute_action` (as no-ops) for backwards compatibility, but
+    /// advertising them to the LLM would promise data that never arrives.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            list_peers_action(),
-            remove_peer_action(),
-            get_server_info_action(),
-        ]
+        vec![]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -112,10 +101,21 @@ impl Protocol for WireguardProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Stable)
             .privilege_requirement(PrivilegeRequirement::Root)
-            .implementation("defguard_wireguard_rs v0.7 - creates real TUN interfaces")
-            .llm_control("Peer authorization + allowed IPs configuration")
-            .e2e_testing("wg CLI or WireGuard client libraries")
-            .notes("ONLY functional VPN - production-ready")
+            .implementation(
+                "defguard_wireguard_rs v0.7 - real WireGuard interfaces (kernel on \
+                 Linux/FreeBSD/Windows, userspace wireguard-go on macOS)",
+            )
+            .llm_control(
+                "Post-handshake peer policy: on wireguard_peer_connected the LLM can \
+                 set allowed IPs (authorize_peer) or remove the peer \
+                 (disconnect_peer/reject_peer). The handshake itself happens inside \
+                 WireGuard and cannot be gated.",
+            )
+            .e2e_testing("wg CLI or WireGuard client libraries (requires root)")
+            .notes(
+                "The only VPN protocol in NetGet with a real, working data plane. \
+                 Requires root/CAP_NET_ADMIN. Traffic limits are not enforced.",
+            )
             .build()
     }
 
@@ -149,7 +149,7 @@ impl Protocol for WireguardProtocol {
                 "port": 51820,
                 "base_stack": "wireguard",
                 "event_handlers": [{
-                    "event_pattern": "wireguard_peer_request",
+                    "event_pattern": "wireguard_peer_connected",
                     "handler": {
                         "type": "script",
                         "language": "python",
@@ -164,7 +164,7 @@ impl Protocol for WireguardProtocol {
                 "base_stack": "wireguard",
                 "event_handlers": [
                     {
-                        "event_pattern": "wireguard_peer_request",
+                        "event_pattern": "wireguard_peer_connected",
                         "handler": {
                             "type": "static",
                             "actions": [{
@@ -320,7 +320,12 @@ impl WireguardProtocol {
 fn authorize_peer_action() -> ActionDefinition {
     ActionDefinition {
         name: "authorize_peer".to_string(),
-        description: "Authorize a WireGuard peer to connect and establish VPN tunnel".to_string(),
+        description: "Configure a WireGuard peer on the live interface with the given allowed \
+                      IPs. Use this in response to wireguard_peer_connected to pin which VPN \
+                      addresses the peer may use. Note: the peer's handshake has already \
+                      succeeded by the time this runs - this sets policy, it does not grant \
+                      or deny the initial connection."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "public_key".to_string(),
@@ -368,7 +373,10 @@ fn authorize_peer_action() -> ActionDefinition {
 fn reject_peer_action() -> ActionDefinition {
     ActionDefinition {
         name: "reject_peer".to_string(),
-        description: "Reject a WireGuard peer connection request".to_string(),
+        description: "Remove a WireGuard peer from the interface, refusing it access to the \
+                      VPN. Identical in effect to disconnect_peer; use this when the peer \
+                      should never have been allowed on."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "public_key".to_string(),
@@ -400,7 +408,10 @@ fn reject_peer_action() -> ActionDefinition {
 fn set_peer_traffic_limit_action() -> ActionDefinition {
     ActionDefinition {
         name: "set_peer_traffic_limit".to_string(),
-        description: "Configure traffic rate limiting for a specific peer".to_string(),
+        description: "Record an intended traffic limit for a peer. NOT ENFORCED: NetGet only \
+                      logs the limit, it does not configure tc/iptables, so the peer's traffic \
+                      is unaffected. Use disconnect_peer if the peer must actually be stopped."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "public_key".to_string(),
@@ -439,7 +450,9 @@ fn set_peer_traffic_limit_action() -> ActionDefinition {
 fn disconnect_peer_action() -> ActionDefinition {
     ActionDefinition {
         name: "disconnect_peer".to_string(),
-        description: "Immediately disconnect a WireGuard peer".to_string(),
+        description: "Immediately remove a WireGuard peer from the interface, tearing down its \
+                      tunnel. The peer can re-handshake unless it is also kept out by policy."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "public_key".to_string(),
@@ -463,63 +476,6 @@ fn disconnect_peer_action() -> ActionDefinition {
             LogTemplate::new()
                 .with_info("-> WG disconnect {public_key}")
                 .with_debug("WG disconnect_peer: pubkey={public_key} reason={reason}"),
-        ),
-    }
-}
-
-/// Action: List all connected peers (async)
-fn list_peers_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_peers".to_string(),
-        description: "List all currently connected WireGuard peers".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_peers"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> WG list peers")
-                .with_debug("WG list_peers"),
-        ),
-    }
-}
-
-/// Action: Remove peer permanently (async)
-fn remove_peer_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "remove_peer".to_string(),
-        description: "Permanently remove a peer from the server configuration".to_string(),
-        parameters: vec![Parameter {
-            name: "public_key".to_string(),
-            type_hint: "string".to_string(),
-            description: "Peer's public key (base64)".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "remove_peer",
-            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> WG remove {public_key}")
-                .with_debug("WG remove_peer: pubkey={public_key}"),
-        ),
-    }
-}
-
-/// Action: Get server information (async)
-fn get_server_info_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "get_server_info".to_string(),
-        description: "Get WireGuard server public key and configuration details".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "get_server_info"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> WG server info")
-                .with_debug("WG get_server_info"),
         ),
     }
 }

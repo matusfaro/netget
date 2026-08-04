@@ -2,10 +2,15 @@
 
 ## Overview
 
-Full-featured WireGuard VPN server implementing the WireGuard protocol with actual tunnel support. This is NetGet's *
-*only fully-functional VPN protocol** - it creates real TUN interfaces and establishes encrypted tunnels for clients.
+Full-featured WireGuard VPN server implementing the WireGuard protocol with actual tunnel support. This is NetGet's
+**only fully-functional VPN protocol** - it creates real TUN interfaces and establishes encrypted tunnels for clients.
 
-**Status**: Production-ready, fully implemented
+Use WireGuard as the reference for what a NetGet VPN protocol should look like. The other two VPN protocols do not
+meet this bar: OpenVPN (`src/server/openvpn/`) has a stubbed control channel with hardcoded key material and is marked
+`Incomplete`; IPSec (`src/server/ipsec/`) is a parse-and-log honeypot that never replies.
+
+**Status**: `DevelopmentState::Stable`, fully implemented data plane
+**Privileges**: `PrivilegeRequirement::Root` (interface creation needs root / CAP_NET_ADMIN)
 **Protocol Spec**: [WireGuard White Paper](https://www.wireguard.com/papers/wireguard.pdf)
 **Port**: UDP 51820 (default)
 
@@ -77,32 +82,49 @@ WireGuard handles its own state machine internally. NetGet tracks:
 
 ## LLM Integration
 
+### Event flow
+
+The monitoring loop (`monitor_peers`) polls `read_interface_data()` every 5 seconds. The first time a peer appears it:
+
+1. Registers a `ConnectionState` in `AppState`
+2. Builds a `wireguard_peer_connected` `Event`
+3. Calls `crate::llm::action_helper::call_llm(...)`
+
+`call_llm` tries any configured script/static event handler first and only performs a real LLM call when none is
+configured, so a scripted WireGuard server costs zero model calls. Exactly one event is raised per peer connect (not
+per poll), so LLM traffic is bounded by peer churn.
+
+The returned `raw_actions` are applied to the live interface in `handle_peer_connected`.
+
 ### Async Actions (User-triggered)
 
-Available anytime, no network context required:
+**None.** `get_async_actions()` returns an empty list.
 
-1. **list_peers**: View all connected peers
-2. **remove_peer**: Permanently remove peer from configuration
-3. **get_server_info**: View server public key and config
+`list_peers` / `remove_peer` / `get_server_info` were previously advertised, but the action executor calls
+`Server::execute_action()` on a *stateless* `WireguardProtocol` struct that holds no handle to the running
+`WireguardServer`, so those actions could never return peer data or reconfigure the interface. They are still accepted
+by `execute_action` as no-ops for backwards compatibility but are no longer offered to the LLM. Re-enabling them needs
+a server-instance registry in `llm/actions/protocol_trait.rs` or `state/`, which is outside this module.
 
-### Sync Actions (Network event triggered)
+### Sync Actions (raised by `wireguard_peer_connected`)
 
-Require peer connection context:
-
-1. **authorize_peer**: Allow peer to connect with specific allowed IPs
-    - Parameters: `peer_public_key`, `allowed_ips` (e.g., `["10.20.30.2/32"]`)
-    - Creates peer configuration via `wgapi.configure_peer()`
-2. **reject_peer**: Deny peer connection request
-3. **set_peer_traffic_limit**: Configure bandwidth/data limits (placeholder)
-4. **disconnect_peer**: Immediately disconnect a peer
+1. **authorize_peer**: (re)configure the peer with specific allowed IPs via `wgapi.configure_peer()`
+    - Parameters: `public_key` (required), `allowed_ips` (required, CIDR list), `endpoint`, `message`
+    - Defaults to the event's own public key / allowed IPs if omitted
+2. **reject_peer**: remove the peer from the interface (same effect as `disconnect_peer`)
+3. **set_peer_traffic_limit**: **NOT ENFORCED** - logged only. No tc/iptables configuration is performed.
+4. **disconnect_peer**: remove the peer from the interface, tearing down its tunnel
 
 ### Event Types
 
-- `wireguard_peer_request`: Peer requesting authorization (future feature)
-- `wireguard_peer_connected`: Peer successfully connected
+- `wireguard_peer_connected`: peer completed its handshake and appeared on the interface
 
-**Note**: Current implementation auto-detects peers via monitoring loop. Future versions may require explicit LLM
-authorization before peer handshake completes.
+Data fields: `public_key`, `endpoint`, `allowed_ips`, `server_public_key`, `listen_port`.
+
+**Important**: WireGuard performs its Noise handshake inside the kernel (or wireguard-go) backend. NetGet observes
+peers *after* the handshake succeeds and therefore **cannot gate a handshake before it completes**. `authorize_peer`
+sets post-connection policy; `disconnect_peer`/`reject_peer` remove a peer that already got on. A `wireguard_peer_request`
+event was previously declared but never emitted by any code path - it has been removed rather than left as a false promise.
 
 ## Connection Management
 
@@ -194,9 +216,16 @@ ProtocolConnectionInfo::Wireguard {
 
 ### Peer Management
 
-- **Max 100 peers**: Hard-coded limit to prevent resource exhaustion
-- **No traffic limiting**: `set_peer_traffic_limit` action is placeholder
+- **Max 100 peers**: Hard-coded limit, enforced in `add_peer` only
+- **No traffic limiting**: `set_peer_traffic_limit` is logged but never enforced
 - **No QoS**: All peers treated equally
+- **Up to 5s detection latency**: peers are discovered by polling, not by handshake callback
+
+### Task Lifecycle
+
+The monitoring task's `JoinHandle` is registered with `AppState::register_server_task()`, so `stop_server` aborts it.
+Note that `register_server_task` stores a *single* handle per server - a protocol that needs several long-lived loops
+must combine them into one task (e.g. `tokio::select!`) rather than calling it twice.
 
 ## Examples
 
