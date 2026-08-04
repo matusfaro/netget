@@ -424,21 +424,24 @@ impl TcpServer {
                 return; // Connection not found
             };
 
-            // Format data for event parameter
-            let data_str = if all_data
+            // Format data for event parameter. Printable ASCII is passed through as text,
+            // anything else is hex-encoded. `encoding` tells the LLM which one it got, so it
+            // can echo the payload back with a matching `encoding` on send_tcp_data.
+            let (data_str, data_encoding) = if all_data
                 .iter()
                 .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
             {
-                String::from_utf8_lossy(&all_data).to_string()
+                (String::from_utf8_lossy(&all_data).to_string(), "utf8")
             } else {
-                hex::encode(&all_data)
+                (hex::encode(&all_data), "hex")
             };
 
             // Create data received event
             let event = Event::new(
                 &TCP_DATA_RECEIVED_EVENT,
                 serde_json::json!({
-                    "data": data_str
+                    "data": data_str,
+                    "encoding": data_encoding
                 }),
             );
 

@@ -86,7 +86,8 @@ The LLM responds to TCP events with actions:
 
 **Available Actions**:
 
-- `send_tcp_data` - Send raw bytes to client (text or hex)
+- `send_tcp_data` - Send raw bytes to client (`data` plus an explicit `encoding`, see
+  [Data Format](#data-format))
 - `close_connection` - Close the connection
 - `wait_for_more` - Enter Accumulating state to buffer more data
 - Common actions: `show_message`, `update_instruction`, etc.
@@ -98,7 +99,8 @@ The LLM responds to TCP events with actions:
   "actions": [
     {
       "type": "send_tcp_data",
-      "data": "220 Welcome to NetGet FTP Server\r\n"
+      "data": "220 Welcome to NetGet FTP Server\r\n",
+      "encoding": "utf8"
     },
     {
       "type": "show_message",
@@ -110,9 +112,30 @@ The LLM responds to TCP events with actions:
 
 ### Data Format
 
-- **Text data**: Sent as-is in the `data` field
-- **Binary data**: Sent as hex string (e.g., `"48656c6c6f"` for "Hello")
-- **Received data**: Formatted as text if all bytes are ASCII printable, otherwise hex
+Outbound (`send_tcp_data`, `send_to_connection`) uses an **explicit** `encoding` field next to
+`data`. There is no heuristic sniffing: `"48656c6c6f"` is simultaneously valid text and valid
+hex, so the sender must declare which it means.
+
+| `encoding`          | Bytes written to the socket                                   |
+| ------------------- | ------------------------------------------------------------- |
+| omitted (default)   | `data.as_bytes()` — the string's characters, unchanged         |
+| `"utf8"`            | same as omitted                                               |
+| `"hex"`             | `hex::decode(data)` — `"48656c6c6f"` sends the 5 bytes `Hello` |
+| anything else       | action fails with an error naming the valid values            |
+
+Invalid hex (odd digit count, non-hex characters) returns an `anyhow` error rather than
+panicking; the connection stays open. `encoding: "hex"` tolerates whitespace, `:` separators
+and a leading `0x`. Defaulting to `utf8` keeps every pre-existing prompt, handler and test
+working unchanged.
+
+Inbound (`tcp_data_received`) carries the same pair of fields:
+
+- `data` — the received bytes as text if **all** of them are ASCII graphic/whitespace,
+  otherwise hex-encoded (`src/server/tcp/mod.rs`)
+- `encoding` — `"utf8"` or `"hex"`, saying which of the two the `data` field is
+
+Echoing is therefore symmetric: pass the event's `data` **and** its `encoding` straight into
+`send_tcp_data` and the exact received bytes go back out.
 
 ## Connection Management
 
@@ -194,7 +217,7 @@ When you receive any data, echo it back with "ACK: " prefix
 ```
 listen on port 9000 via tcp
 When you receive a 4-byte big-endian integer, respond with the integer + 1
-Use hex encoding for binary data
+Reply with send_tcp_data using "encoding": "hex" so the digits are decoded into bytes
 ```
 
 ### Stateful Protocol

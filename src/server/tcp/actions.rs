@@ -239,7 +239,7 @@ impl Server for TcpProtocol {
 
                 // Return the data with connection ID embedded
                 // The caller will need to handle actually sending it
-                Ok(ActionResult::Output(data.as_bytes().to_vec()))
+                Ok(ActionResult::Output(decode_outbound_data(data, &action)?))
             }
             "close_connection" => {
                 // Async action - signal that connection should be closed
@@ -273,7 +273,66 @@ impl TcpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        Ok(ActionResult::Output(decode_outbound_data(data, &action)?))
+    }
+}
+
+/// Turn the `data` field of an outbound action into the exact bytes to put on the wire,
+/// honouring the action's optional `encoding` field.
+///
+/// - `encoding` absent or `"utf8"`: the string's UTF-8 bytes are sent verbatim (default,
+///   backwards compatible).
+/// - `encoding` = `"hex"`: `data` is decoded as hex, so `"48656c6c6f"` sends the 5 bytes
+///   `Hello`.
+///
+/// There is deliberately no auto-detection: `"48656c6c6f"` is both valid text and valid
+/// hex, so the caller must say which it means.
+fn decode_outbound_data(data: &str, action: &serde_json::Value) -> Result<Vec<u8>> {
+    let encoding = action
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf8");
+
+    match encoding {
+        "utf8" => Ok(data.as_bytes().to_vec()),
+        "hex" => {
+            // Tolerate whitespace/`0x` grouping that models frequently emit.
+            let cleaned: String = data
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace() && *c != ':')
+                .collect();
+            let cleaned = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
+
+            if cleaned.len() % 2 != 0 {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex in 'data': expected an even number of hex digits, got {} \
+                     ({data:?}). Each byte is two hex digits, e.g. \"48656c6c6f\" = \"Hello\".",
+                    cleaned.len()
+                ));
+            }
+
+            hex::decode(cleaned).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid hex in 'data' ({data:?}): {e}. Use only 0-9/a-f, two digits per \
+                     byte, e.g. \"48656c6c6f\" = \"Hello\". To send this string as literal \
+                     text, omit 'encoding' or set it to \"utf8\"."
+                )
+            })
+        }
+        other => Err(anyhow::anyhow!(
+            "Invalid 'encoding' value {other:?}. Valid values are \"utf8\" (default, send the \
+             string's characters as-is) and \"hex\" (decode the string as hex-encoded bytes)."
+        )),
+    }
+}
+
+/// Shared `encoding` parameter for every action that carries an outbound `data` field.
+fn encoding_parameter() -> Parameter {
+    Parameter {
+        name: "encoding".to_string(),
+        type_hint: "string".to_string(),
+        description: "How to convert 'data' into the bytes put on the wire. \"utf8\" (the default when omitted) sends the characters of 'data' unchanged - use it for text protocols such as FTP/SMTP/HTTP. \"hex\" decodes 'data' as hex-encoded bytes, two hex digits per byte - use it for binary protocols, e.g. {\"data\": \"48656c6c6f\", \"encoding\": \"hex\"} sends the 5 bytes 'Hello', whereas the same 'data' without \"encoding\": \"hex\" sends the 10 characters 4-8-6-5-6-c-6-c-6-f. No other values are accepted".to_string(),
+        required: false,
     }
 }
 
@@ -292,14 +351,16 @@ fn send_to_connection_action() -> ActionDefinition {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "string".to_string(),
-                description: "Data to send".to_string(),
+                description: "Data to send. Interpreted according to 'encoding': by default the characters of this string are sent as-is (UTF-8)".to_string(),
                 required: true,
             },
+            encoding_parameter(),
         ],
         example: json!({
             "type": "send_to_connection",
             "connection_id": "conn_12345",
-            "data": "Hello from TCP"
+            "data": "Hello from TCP",
+            "encoding": "utf8"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -352,16 +413,20 @@ fn list_connections_action() -> ActionDefinition {
 fn send_tcp_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_tcp_data".to_string(),
-        description: "IMPORTANT: Use this action to send data over TCP connections. This is the ONLY correct action for TCP responses - do NOT use generic 'send_data' or 'show_message' actions. The 'data' field contains the exact bytes to send to the client (text or hex-encoded binary).".to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Data to send over TCP connection (text string or hex-encoded for binary data)".to_string(),
-            required: true,
-        }],
+        description: "IMPORTANT: Use this action to send data over TCP connections. This is the ONLY correct action for TCP responses - do NOT use generic 'send_data' or 'show_message' actions. The 'data' field holds the payload and the optional 'encoding' field says how to turn it into bytes: omit 'encoding' (or use \"utf8\") to send the string's characters as-is, or set \"encoding\": \"hex\" to send 'data' decoded from hex. There is no auto-detection - a string like \"48656c6c6f\" is sent literally unless you set \"encoding\": \"hex\".".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Payload to send over the TCP connection. Interpreted according to 'encoding': as literal text by default, or as hex-encoded bytes when \"encoding\": \"hex\"".to_string(),
+                required: true,
+            },
+            encoding_parameter(),
+        ],
         example: json!({
             "type": "send_tcp_data",
-            "data": "220 Welcome\r\n"
+            "data": "220 Welcome\r\n",
+            "encoding": "utf8"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -450,15 +515,24 @@ pub static TCP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Data received on TCP connection",
         serde_json::json!({
             "type": "send_tcp_data",
-            "data": "48656c6c6f"
+            "data": "48656c6c6f",
+            "encoding": "hex"
         }),
     )
-    .with_parameters(vec![Parameter {
-        name: "data".to_string(),
-        type_hint: "string".to_string(),
-        description: "The data received (as hex string or UTF-8 if printable)".to_string(),
-        required: true,
-    }])
+    .with_parameters(vec![
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "The data received from the client. Read it according to the 'encoding' field of this event".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How to read 'data': \"utf8\" means 'data' is the received bytes as literal text, \"hex\" means 'data' is the received bytes hex-encoded (two hex digits per byte, used whenever the bytes are not all printable ASCII). To echo the received bytes back unchanged, pass the same 'data' and 'encoding' to send_tcp_data".to_string(),
+            required: true,
+        },
+    ])
     .with_actions(vec![
         SEND_TCP_DATA_ACTION.clone(),
         WAIT_FOR_MORE_ACTION.clone(),
