@@ -2,6 +2,19 @@
 //!
 //! These tests verify the FIDO2/U2F virtual security key implementation
 //! using real-world client tools (libfido2, browsers) and LLM integration.
+//!
+//! ## BLOCKED: `usb-fido2` does not compile (src/ bug, out of test-owner scope)
+//!
+//! Enabling the `usb-fido2` feature currently fails to build the `netget` lib
+//! itself (not just this test file) with 8x E0277 errors: `ring::error::Unspecified`
+//! and `ring::error::KeyRejected` do not implement `std::error::Error`, so the `?`
+//! operator cannot convert them into `anyhow::Error`. Locations:
+//!   - src/server/usb/fido2/ctap2.rs:287, 289, 298
+//!   - src/server/usb/fido2/u2f.rs:187, 189, 205, 310, 312
+//! Fix (in src/, out of scope for this test-wiring change): replace the bare `?`
+//! with `.map_err(|e| anyhow::anyhow!("{:?}", e))?` (or similar) at each site.
+//! This suite is wired into `tests/server/mod.rs` per the "no orphaned test dirs"
+//! policy, but no test here can run (or even compile) until that src/ bug is fixed.
 
 #[cfg(all(test, feature = "usb-fido2"))]
 mod tests {

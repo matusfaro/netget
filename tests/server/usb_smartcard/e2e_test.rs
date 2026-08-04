@@ -27,7 +27,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -78,7 +77,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -137,7 +135,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -194,7 +191,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -254,7 +250,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -314,7 +309,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -383,7 +377,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -439,7 +432,6 @@ mod usb_smartcard_e2e {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("USB smart card")
-                .or_instruction_containing("smart card reader")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

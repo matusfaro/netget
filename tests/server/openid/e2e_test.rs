@@ -1,6 +1,19 @@
 //! E2E tests for OpenID Connect server
 //!
 //! Tests the full OIDC flow using HTTP requests.
+//!
+//! ## BLOCKED: `openid` does not compile standalone (Cargo.toml/src bug, out of test-owner scope)
+//!
+//! `Cargo.toml` declares `openid = []` (no dependencies), but
+//! `src/server/openid/mod.rs` uses `urlencoding::decode`/`urlencoding::encode`
+//! unconditionally (e.g. lines 74, 88, 89, 151, 154, 157, 164), which fails with
+//! E0433 "cannot find module or crate `urlencoding`" whenever `openid` is built
+//! without another feature that happens to also pull in `urlencoding` (e.g.
+//! `http`, `npm`, `oauth2`). Fix (out of scope here): add `"urlencoding"` to the
+//! `openid` feature's dependency list in `Cargo.toml`, matching how `http`,
+//! `pypi`, `npm`, `oauth2`, `saml-sp`, `openidconnect`, and `mercurial` already do.
+//! This suite is wired into `tests/server/mod.rs` per the "no orphaned test dirs"
+//! policy, but cannot compile — even alone — until that Cargo.toml/src fix lands.
 
 #![cfg(all(test, feature = "openid"))]
 
