@@ -1,39 +1,68 @@
-//! OpenVPN VPN server implementation
+//! OpenVPN-shaped tunnel server - **INCOMPLETE AND CRYPTOGRAPHICALLY INSECURE**
 //!
-//! This is a FULL OpenVPN VPN server that creates actual tunnels for clients.
-//! It implements a simplified OpenVPN protocol supporting:
-//! - UDP transport only
-//! - TLS 1.3 control channel
-//! - AES-256-GCM or ChaCha20-Poly1305 data channel
-//! - TUN interface for IP packet tunneling
+//! # ⚠️ Read this before deploying anything
 //!
-//! The LLM controls:
-//! - Peer authorization (approve/reject new peers)
-//! - Traffic inspection policies
-//! - Routing decisions
-//! - Connection limits
+//! This is **not** a working OpenVPN server and **must not be used to carry real
+//! traffic**. It speaks enough of the OpenVPN packet format to look like one, but
+//! the security-critical half of the protocol is missing:
+//!
+//! - **The TLS control channel does not exist.** `create_tls_config()` builds a
+//!   `rustls::ServerConfig` that is stored and never used. No TLS handshake is
+//!   ever performed, no client certificate is ever verified, and no peer is ever
+//!   authenticated. Any host that sends a HARD_RESET is accepted.
+//! - **The data-channel keys are hardcoded constants.** `initialize_data_channel()`
+//!   derives every peer's AES-256-GCM / ChaCha20-Poly1305 key with HKDF over the
+//!   fixed literals `b"simplified_master_secret_for_mvp"` and fixed client/server
+//!   "random" values. There is no per-session entropy, so **every peer on every
+//!   run of every installation derives the identical key**. The keys are in this
+//!   source file and in the public git history. The encryption provides no
+//!   confidentiality whatsoever against anyone who can read this repository.
+//! - **`handle_control_message()` and `handle_ack_packet()` are empty stubs**, so
+//!   control-channel reliability, rekeying and configuration push do not work.
+//!
+//! What *is* genuinely implemented is the data plane mechanics: OpenVPN V1/V2
+//! packet parsing and serialization, a TUN interface, an IP address pool, per-peer
+//! packet-ID sequencing, and real AEAD encrypt/decrypt calls. Those are correct
+//! code operating on worthless keys.
+//!
+//! Because of this the protocol is marked [`DevelopmentState::Incomplete`], which
+//! hides it from the LLM entirely (see
+//! `ProtocolMetadataV2::is_available_to_llm`). It is retained as a packet-format
+//! testbed and as a honeypot that speaks plausible OpenVPN, not as a VPN.
+//!
+//! [`DevelopmentState::Incomplete`]: crate::protocol::metadata::DevelopmentState::Incomplete
+//!
+//! # Future work (large, not a patch)
+//!
+//! Making this real means implementing the full OpenVPN TLS control channel:
+//! wrapping a genuine TLS 1.3 session over the reliability layer, exchanging key
+//! material through it, deriving per-session keys from the negotiated master
+//! secret via the OpenVPN PRF, verifying client certificates, and implementing
+//! control-channel retransmission and rekeying. That is a project in its own
+//! right and is deliberately out of scope here.
 
 pub mod actions;
 pub mod crypto;
 pub mod packet;
 pub mod peer;
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
 use crate::{console_error, console_info};
-use actions::OPENVPN_PEER_CONNECTED_EVENT;
+use actions::{OpenvpnProtocol, OPENVPN_PEER_CONNECTED_EVENT};
 use anyhow::{Context, Result};
 use packet::{ControlPacket, DataPacket, Opcode, PacketHeader};
 use peer::{Peer, PeerManager, PeerState};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
 /// Maximum number of peers to allow
@@ -45,20 +74,30 @@ const VPN_SERVER_IP: &str = "10.8.0.1";
 
 /// OpenVPN server state
 pub struct OpenvpnServer {
-    /// TUN interface
-    tun: Arc<RwLock<tun::AsyncDevice>>,
+    /// Write half of the TUN interface.
+    ///
+    /// The device is split so the read loop never holds a lock while parked in
+    /// `read()`. Holding a single `RwLock<AsyncDevice>` across the read await
+    /// deadlocked every client-to-TUN write for as long as the TUN was idle.
+    tun_writer: Arc<Mutex<WriteHalf<tun::AsyncDevice>>>,
     /// Interface name
     interface_name: String,
     /// UDP socket for OpenVPN protocol
     socket: Arc<UdpSocket>,
+    /// Local address the UDP socket is bound to
+    local_addr: SocketAddr,
     /// Peer manager
     peer_manager: Arc<PeerManager>,
     /// Server session ID
     server_session_id: u64,
     /// IP address pool
     ip_pool: Arc<RwLock<IpPool>>,
-    /// Server private key and certificate (for TLS)
+    /// Server certificate config. Built at startup and **never used** - no TLS
+    /// handshake is performed. Retained so the eventual real control channel has
+    /// something to attach to. See the module docs.
     _tls_config: Arc<rustls::ServerConfig>,
+    /// LLM client used to raise peer events
+    llm_client: Arc<OllamaClient>,
 }
 
 /// IP address pool for assigning VPN IPs to clients
@@ -99,16 +138,26 @@ impl OpenvpnServer {
     /// Spawn OpenVPN VPN server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
         bind_addr: SocketAddr,
-        _llm_client: Arc<OllamaClient>,
+        llm_client: Arc<OllamaClient>,
         app_state: Arc<AppState>,
         server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        info!("Starting OpenVPN VPN server on {}", bind_addr);
+        info!("Starting OpenVPN-shaped tunnel server on {}", bind_addr);
+        warn!(
+            "OpenVPN server is INCOMPLETE: no TLS handshake is performed and all peers share \
+             hardcoded data-channel keys. Do not carry real traffic over it."
+        );
         let _ = status_tx.send(format!(
-            "[INFO] Starting OpenVPN VPN server on {} (full VPN tunnel support)",
+            "[INFO] Starting OpenVPN server on {} (INCOMPLETE - see below)",
             bind_addr
         ));
+        let _ = status_tx.send(
+            "[WARN] OpenVPN is INSECURE and INCOMPLETE: no TLS handshake, no peer \
+             authentication, and every peer derives the same hardcoded encryption key. \
+             Use WireGuard for a real VPN."
+                .to_string(),
+        );
 
         // Generate server session ID
         let server_session_id = rand::random::<u64>();
@@ -165,54 +214,66 @@ impl OpenvpnServer {
         let _ = status_tx.send(format!("[INFO] OpenVPN listening on {}", local_addr));
         let _ = status_tx.send(format!("[INFO] VPN subnet: {}", VPN_NETWORK));
 
+        // Split the TUN device so the read loop does not hold a lock across its
+        // blocking read (which would starve every write to the tunnel).
+        let (tun_reader, tun_writer) = tokio::io::split(tun_device);
+
         let server = Arc::new(OpenvpnServer {
-            tun: Arc::new(RwLock::new(tun_device)),
+            tun_writer: Arc::new(Mutex::new(tun_writer)),
             interface_name: interface_name.clone(),
             socket: Arc::new(socket),
+            local_addr,
             peer_manager: Arc::new(PeerManager::new()),
             server_session_id,
             ip_pool: Arc::new(RwLock::new(IpPool::new())),
             _tls_config: Arc::new(tls_config),
+            llm_client,
         });
 
-        // Spawn UDP packet handler
+        // Run the UDP listener and the TUN reader inside a single task.
+        //
+        // `register_server_task` stores exactly one handle per server, so
+        // registering two tasks would silently drop the first and leak it past
+        // stop_server. `select!` keeps both loops owned by the one handle that is
+        // registered, so aborting it cancels both.
         let server_clone = server.clone();
-        let status_clone = status_tx.clone();
+        let status_udp = status_tx.clone();
+        let status_tun = status_tx.clone();
         let app_state_clone = app_state.clone();
         let accept_handle = tokio::spawn(async move {
-            if let Err(e) = server_clone
-                .handle_udp_packets(app_state_clone, server_id, status_clone)
-                .await
-            {
-                error!("UDP packet handler error: {}", e);
+            tokio::select! {
+                res = server_clone.handle_udp_packets(app_state_clone, server_id, status_udp) => {
+                    if let Err(e) = res {
+                        error!("OpenVPN UDP packet handler error: {}", e);
+                    }
+                }
+                res = server_clone.handle_tun_packets(tun_reader, status_tun) => {
+                    if let Err(e) = res {
+                        error!("OpenVPN TUN packet handler error: {}", e);
+                    }
+                }
             }
         });
 
-        // Register the primary UDP network listener so stop_server can abort it.
         app_state
             .register_server_task(server_id, accept_handle)
             .await;
 
-        // Spawn TUN packet handler
-        let server_clone = server.clone();
-        let status_clone = status_tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = server_clone.handle_tun_packets(status_clone).await {
-                error!("TUN packet handler error: {}", e);
-            }
-        });
-
-        info!("OpenVPN VPN server ready on {}", local_addr);
-        let _ = status_tx.send(format!("→ OpenVPN VPN server ready on {}", local_addr));
+        info!("OpenVPN server ready on {}", local_addr);
+        let _ = status_tx.send(format!("→ OpenVPN server ready on {}", local_addr));
         let _ = status_tx.send(format!(
-            "[INFO] Clients can connect to {} with VPN subnet {}",
-            local_addr, VPN_NETWORK
+            "[INFO] VPN subnet {} on {} (INSECURE: shared hardcoded keys, no authentication)",
+            VPN_NETWORK, local_addr
         ));
 
         Ok(local_addr)
     }
 
-    /// Create TLS configuration for control channel
+    /// Build a self-signed server certificate config.
+    ///
+    /// **This config is never used.** It is stored in `_tls_config` and no TLS
+    /// handshake is ever performed against it - see the module docs. It exists so
+    /// that a future real control channel has certificate material ready.
     fn create_tls_config() -> Result<rustls::ServerConfig> {
         use rcgen::{CertificateParams, DistinguishedName, KeyPair};
         use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -325,7 +386,12 @@ impl OpenvpnServer {
         }
     }
 
-    /// Handle handshake initiation from client
+    /// Handle handshake initiation from client.
+    ///
+    /// **This is not a real OpenVPN handshake.** No TLS is negotiated and the peer
+    /// is never authenticated - any host that sends a HARD_RESET is accepted, given
+    /// a VPN IP and a data-channel cipher keyed from module-level constants. See
+    /// the module docs.
     async fn handle_handshake_initiation(
         &self,
         control_packet: ControlPacket,
@@ -380,7 +446,7 @@ impl OpenvpnServer {
         let conn_state = ConnectionState {
             id: connection_id,
             remote_addr: peer_addr,
-            local_addr: self.socket.local_addr().unwrap(),
+            local_addr: self.local_addr,
             bytes_sent: 0,
             bytes_received: 0,
             packets_sent: 0,
@@ -396,17 +462,42 @@ impl OpenvpnServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Trigger LLM event
-        let _event = Event::new(
+        info!("OpenVPN peer connected: {} (VPN IP: {})", peer_addr, vpn_ip);
+
+        // Raise the peer-connected event. This runs any configured script/static
+        // handler in-process and only falls back to a model call when none is set.
+        let event = Event::new(
             &OPENVPN_PEER_CONNECTED_EVENT,
             serde_json::json!({
                 "peer_addr": peer_addr.to_string(),
                 "vpn_ip": vpn_ip.to_string(),
                 "session_id": format!("{:016x}", peer.session_id),
+                "authenticated": false,
             }),
         );
 
-        info!("OpenVPN peer connected: {} (VPN IP: {})", peer_addr, vpn_ip);
+        let protocol = OpenvpnProtocol::new();
+        match call_llm(
+            &self.llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            &protocol,
+        )
+        .await
+        {
+            Ok(result) => {
+                for message in &result.messages {
+                    info!("{}", message);
+                    let _ = status_tx.send(format!("[INFO] {}", message));
+                }
+            }
+            Err(e) => {
+                error!("OpenVPN peer event handling failed: {}", e);
+                let _ = status_tx.send(format!("[ERROR] OpenVPN peer event failed: {}", e));
+            }
+        }
     }
 
     /// Send handshake response to client
@@ -438,16 +529,32 @@ impl OpenvpnServer {
         }
     }
 
-    /// Initialize data channel for peer (simplified key exchange)
+    /// Initialize the data channel cipher for a peer.
+    ///
+    /// # ⚠️ The keys derived here are public constants
+    ///
+    /// A real OpenVPN server derives data-channel keys from the TLS master secret
+    /// negotiated during the control-channel handshake, mixed with per-session
+    /// client and server randoms. **This function has none of those inputs**,
+    /// because no handshake takes place. It instead runs HKDF over the three fixed
+    /// literals below.
+    ///
+    /// Consequences:
+    /// - Every peer, on every run, on every machine derives the *same* key.
+    /// - The inputs are in this file and in the public git history, so anyone can
+    ///   reproduce the key and decrypt the tunnel.
+    /// - Peers are mutually indistinguishable at the crypto layer.
+    ///
+    /// The AEAD calls themselves are correct; the key material is worthless. This
+    /// is the single biggest reason the protocol is marked `Incomplete`.
     async fn initialize_data_channel(
         &self,
         peer: &Peer,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
-        // In a full implementation, this would derive keys from TLS master secret
-        // For MVP, we use a simplified approach with hardcoded keys
         use crypto::derive_data_keys;
 
+        // SECURITY: fixed inputs - see this function's doc comment. Not a secret.
         let master_secret = b"simplified_master_secret_for_mvp";
         let client_random = b"client_random_data_12345678";
         let server_random = b"server_random_data_87654321";
@@ -466,17 +573,30 @@ impl OpenvpnServer {
                 if let Err(e) = p.init_data_cipher(&keys, true) {
                     error!("Failed to initialize cipher: {}", e);
                 } else {
-                    debug!("Data channel initialized for {}", peer.addr);
-                    let _ = status_tx.send(format!("[DEBUG] Data channel ready for {}", peer.addr));
+                    debug!(
+                        "Data channel initialized for {} using hardcoded keys (insecure)",
+                        peer.addr
+                    );
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] Data channel ready for {} (hardcoded key - insecure)",
+                        peer.addr
+                    ));
                 }
             })
             .await;
     }
 
-    /// Handle control message (key exchange, config push)
-    async fn handle_control_message(&self, _control_packet: ControlPacket, _peer_addr: SocketAddr) {
-        // Simplified for MVP
-        trace!("Control message handling (simplified)");
+    /// Handle a CONTROL_V1 message (key exchange, config push).
+    ///
+    /// **NOT IMPLEMENTED.** A real implementation would feed the packet's TLS
+    /// payload into the control-channel TLS session, drive key exchange and push
+    /// client configuration. This drops the packet on the floor, which is why
+    /// clients can never complete a genuine negotiation.
+    async fn handle_control_message(&self, _control_packet: ControlPacket, peer_addr: SocketAddr) {
+        trace!(
+            "Dropping CONTROL_V1 from {}: control channel not implemented",
+            peer_addr
+        );
     }
 
     /// Handle data packet (encrypted tunnel traffic)
@@ -524,9 +644,12 @@ impl OpenvpnServer {
         trace!("Decrypted {} bytes from {}", plaintext.len(), peer_addr);
 
         // Write decrypted IP packet to TUN
-        if let Err(e) = self.tun.write().await.write(&plaintext).await {
-            error!("Failed to write to TUN: {}", e);
-            let _ = status_tx.send(format!("[ERROR] TUN write failed: {}", e));
+        {
+            let mut tun = self.tun_writer.lock().await;
+            if let Err(e) = tun.write_all(&plaintext).await {
+                error!("Failed to write to TUN: {}", e);
+                let _ = status_tx.send(format!("[ERROR] TUN write failed: {}", e));
+            }
         }
 
         // Update stats
@@ -537,25 +660,39 @@ impl OpenvpnServer {
             .await;
     }
 
-    /// Handle ACK packet
-    async fn handle_ack_packet(&self, _packet: &[u8], _peer_addr: SocketAddr) {
-        // Simplified for MVP
-        trace!("ACK packet handling (simplified)");
+    /// Handle an ACK_V1 packet.
+    ///
+    /// **NOT IMPLEMENTED.** Control-channel reliability (retransmission windows,
+    /// ACK tracking) does not exist; incoming ACKs are ignored.
+    async fn handle_ack_packet(&self, _packet: &[u8], peer_addr: SocketAddr) {
+        trace!(
+            "Ignoring ACK from {}: control-channel reliability not implemented",
+            peer_addr
+        );
     }
 
-    /// Handle outgoing packets from TUN (to be sent to VPN clients)
-    async fn handle_tun_packets(&self, _status_tx: mpsc::UnboundedSender<String>) -> Result<()> {
+    /// Handle outgoing packets from TUN (to be sent to VPN clients).
+    ///
+    /// Takes the owned read half so it never blocks writers: the previous version
+    /// held a write lock on the whole device while parked in `read()`, which meant
+    /// no client packet could ever be written to the TUN while the TUN was idle.
+    async fn handle_tun_packets(
+        &self,
+        mut tun_reader: ReadHalf<tun::AsyncDevice>,
+        _status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
         let mut buf = vec![0u8; 2048];
 
         loop {
-            let len = self.tun.write().await.read(&mut buf).await?;
-            let ip_packet = &buf[..len];
+            let len = tun_reader.read(&mut buf).await?;
 
-            // Parse IP header to get destination
+            // Parse IP header to get destination. Bounds-check before indexing:
+            // `len` is attacker-influenced (it is whatever the kernel hands us).
             if len < 20 {
-                continue; // Too short for IP header
+                continue; // Too short for an IPv4 header
             }
 
+            let ip_packet = &buf[..len];
             let dst_ip = Ipv4Addr::new(ip_packet[16], ip_packet[17], ip_packet[18], ip_packet[19]);
 
             trace!("TUN packet to {}: {} bytes", dst_ip, len);

@@ -172,7 +172,7 @@ pub struct ControlPacket {
 impl ControlPacket {
     /// Parse control packet from bytes
     pub fn parse(data: &[u8]) -> Result<Self> {
-        let (header, mut offset) = PacketHeader::parse(data)?;
+        let (header, offset) = PacketHeader::parse(data)?;
 
         if !header.opcode.is_control() && !header.opcode.is_ack() {
             anyhow::bail!("Not a control packet: {:?}", header.opcode);
@@ -191,7 +191,6 @@ impl ControlPacket {
             let ack_id = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
             ack_packet_ids.push(ack_id);
             buf = &buf[4..];
-            offset += 4;
         }
 
         // Read remote session ID (if present, 8 bytes)

@@ -1,6 +1,12 @@
 //! OpenVPN protocol actions implementation
 //!
-//! Defines LLM-controllable actions for OpenVPN honeypot
+//! Defines the actions for the OpenVPN-shaped tunnel server.
+//!
+//! **The protocol is marked `DevelopmentState::Incomplete` and is therefore hidden
+//! from the LLM.** Peers are auto-accepted with no authentication and all share a
+//! hardcoded encryption key - see `src/server/openvpn/mod.rs` for the full
+//! explanation. The actions below are observation/logging hooks; none of them
+//! gates a connection.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -13,11 +19,18 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
-/// OpenVPN peer connected event
+/// OpenVPN peer connected event.
+///
+/// Raised after a peer sends a HARD_RESET and is assigned a VPN IP. The peer is
+/// **not authenticated** - no handshake verifies it - so treat this as "a host
+/// started talking to us", not "a trusted client connected". Data fields:
+/// `peer_addr`, `vpn_ip`, `session_id`, `authenticated` (always `false`).
 pub static OPENVPN_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "openvpn_peer_connected",
-        "OpenVPN peer successfully connected and authenticated",
+        "An OpenVPN peer was accepted and assigned a VPN IP. The peer is NOT \
+         authenticated (no TLS handshake is performed). Respond with inspect_traffic \
+         or show_message to record it; the connection cannot be refused from here.",
         json!({
             "type": "inspect_traffic",
             "inspect": true
@@ -31,31 +44,15 @@ pub static OPENVPN_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     )
 });
 
-/// OpenVPN peer request event (for LLM authorization)
-pub static OPENVPN_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "openvpn_peer_request",
-        "OpenVPN peer requesting connection authorization",
-        json!({
-            "type": "authorize_peer",
-            "peer_addr": "203.0.113.45:1194",
-            "vpn_ip": "10.8.0.5"
-        }),
-    )
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("{client_ip} OpenVPN auth request")
-            .with_debug("OpenVPN peer auth request from {client_ip}")
-            .with_trace("OpenVPN auth request: {json_pretty(.)}"),
-    )
-});
-
-/// Get all OpenVPN event types
+/// Get all OpenVPN event types.
+///
+/// Only `openvpn_peer_connected` is emitted. An `openvpn_peer_request`
+/// authorization event used to be declared here, but nothing ever raised it -
+/// peers are auto-accepted inside `handle_handshake_initiation` - so handlers
+/// subscribed to it would never fire. It was removed rather than left as a false
+/// promise of pre-connection authorization.
 pub fn get_openvpn_event_types() -> Vec<EventType> {
-    vec![
-        OPENVPN_PEER_CONNECTED_EVENT.clone(),
-        OPENVPN_PEER_REQUEST_EVENT.clone(),
-    ]
+    vec![OPENVPN_PEER_CONNECTED_EVENT.clone()]
 }
 
 /// OpenVPN protocol implementation
@@ -69,13 +66,21 @@ impl OpenvpnProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OpenvpnProtocol {
+    /// No user-triggered actions are advertised.
+    ///
+    /// `list_peers`, `remove_peer` and `get_server_info` were previously listed.
+    /// The action executor calls `Server::execute_action()` on a stateless
+    /// `OpenvpnProtocol` struct with no handle to the running `OpenvpnServer`, so
+    /// they returned `NoAction` unconditionally and could never list or remove a
+    /// peer. They remain accepted by `execute_action` for backwards compatibility.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            list_peers_action(),
-            remove_peer_action(),
-            get_server_info_action(),
-        ]
+        vec![]
     }
+    /// Observation actions only.
+    ///
+    /// `authorize_peer` and `reject_peer` are kept because scripts may already
+    /// emit them, but their descriptions now say plainly that they do not gate
+    /// anything: peers are accepted before this event is raised.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             authorize_peer_action(),
@@ -97,20 +102,40 @@ impl Protocol for OpenvpnProtocol {
         vec!["openvpn"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
+        // Incomplete, and deliberately so: `is_available_to_llm()` returns false
+        // for this state, which keeps the protocol out of LLM prompts. Advertising
+        // it as usable would invite someone to route real traffic over a tunnel
+        // whose keys are public constants. See src/server/openvpn/mod.rs.
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Stable)
+            .state(DevelopmentState::Incomplete)
+            .privilege_requirement(PrivilegeRequirement::Root)
             .implementation(
-                "Full OpenVPN server with TUN interface, AES-256-GCM/ChaCha20-Poly1305 encryption",
+                "Partial: OpenVPN packet format, TUN interface, IP pool and real AEAD \
+                 encrypt/decrypt are implemented. The TLS control channel is NOT - \
+                 create_tls_config() is never used, no handshake occurs, no peer is \
+                 authenticated, and handle_control_message/handle_ack_packet are stubs.",
             )
-            .llm_control("Peer authorization, traffic inspection, connection limits")
-            .e2e_testing("OpenVPN client (full tunnel support)")
-            .notes("Production-ready VPN server with simplified TLS for MVP")
+            .llm_control(
+                "openvpn_peer_connected event only (observation/logging). Peers are \
+                 auto-accepted; authorize_peer and reject_peer do not gate anything.",
+            )
+            .e2e_testing(
+                "Not interoperable with the real openvpn client - it cannot complete a \
+                 handshake against a server that has no TLS control channel.",
+            )
+            .notes(
+                "INSECURE - NOT A VPN. Every peer derives the same data-channel key from \
+                 hardcoded constants committed to this repository, so the tunnel offers no \
+                 confidentiality. Never carry real traffic over it. Use WireGuard instead.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "OpenVPN VPN server"
+        "OpenVPN-shaped tunnel server (INCOMPLETE/INSECURE: no TLS handshake, hardcoded keys)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start an OpenVPN VPN server on port 1194"
@@ -128,7 +153,7 @@ impl Protocol for OpenvpnProtocol {
                 "type": "open_server",
                 "port": 1194,
                 "base_stack": "openvpn",
-                "instruction": "OpenVPN server. Authorize all incoming peers and assign VPN IPs from 10.8.0.0/24 pool. Log connection events."
+                "instruction": "OpenVPN server. Log every peer that connects, including its assigned VPN IP from the 10.8.0.0/24 pool."
             }),
             // Script mode: Scripted peer handling
             json!({
@@ -136,11 +161,11 @@ impl Protocol for OpenvpnProtocol {
                 "port": 1194,
                 "base_stack": "openvpn",
                 "event_handlers": [{
-                    "event_pattern": "openvpn_peer_request",
+                    "event_pattern": "openvpn_peer_connected",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "return {type='authorize_peer', peer_addr=event.peer_addr}"
+                        "code": "return {type='inspect_traffic', inspect=True}"
                     }
                 }]
             }),
@@ -260,7 +285,10 @@ impl OpenvpnProtocol {
 fn authorize_peer_action() -> ActionDefinition {
     ActionDefinition {
         name: "authorize_peer".to_string(),
-        description: "Authorize a peer to connect and establish VPN tunnel".to_string(),
+        description: "Record that a peer is considered authorized. NOT ENFORCED: peers are \
+                      auto-accepted and given a VPN IP before openvpn_peer_connected is \
+                      raised, so this does not grant access that was withheld."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "peer_addr".to_string(),
@@ -293,7 +321,10 @@ fn authorize_peer_action() -> ActionDefinition {
 fn reject_peer_action() -> ActionDefinition {
     ActionDefinition {
         name: "reject_peer".to_string(),
-        description: "Reject a peer connection request".to_string(),
+        description: "Record that a peer should be refused. NOT ENFORCED: the peer already \
+                      holds a VPN IP and an active data channel by the time this runs, and \
+                      nothing tears it down. Logging only."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "peer_addr".to_string(),
@@ -325,7 +356,9 @@ fn reject_peer_action() -> ActionDefinition {
 fn set_peer_limit_action() -> ActionDefinition {
     ActionDefinition {
         name: "set_peer_limit".to_string(),
-        description: "Configure bandwidth or data limits for a peer".to_string(),
+        description: "Record an intended bandwidth limit for a peer. NOT ENFORCED: no traffic \
+                      shaping is configured, so the peer's throughput is unaffected."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "peer_addr".to_string(),
@@ -357,7 +390,9 @@ fn set_peer_limit_action() -> ActionDefinition {
 fn inspect_traffic_action() -> ActionDefinition {
     ActionDefinition {
         name: "inspect_traffic".to_string(),
-        description: "Enable/disable traffic inspection for decrypted VPN traffic".to_string(),
+        description: "Flag this peer's decrypted tunnel traffic for logging. The tunnel \
+                      payload is already logged at TRACE level; this records the intent."
+            .to_string(),
         parameters: vec![Parameter {
             name: "inspect".to_string(),
             type_hint: "boolean".to_string(),
@@ -373,54 +408,5 @@ fn inspect_traffic_action() -> ActionDefinition {
                 .with_info("-> OpenVPN inspect={inspect}")
                 .with_debug("OpenVPN traffic inspection: {inspect}"),
         ),
-    }
-}
-
-/// Action: List all peers (async)
-fn list_peers_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_peers".to_string(),
-        description: "List all connected OpenVPN peers".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_peers"
-        }),
-        log_template: Some(LogTemplate::new().with_debug("OpenVPN list peers")),
-    }
-}
-
-/// Action: Remove peer (async)
-fn remove_peer_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "remove_peer".to_string(),
-        description: "Permanently remove a peer from the VPN".to_string(),
-        parameters: vec![Parameter {
-            name: "peer_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Peer address to remove".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "remove_peer",
-            "peer_addr": "203.0.113.45:1194"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> OpenVPN remove {peer_addr}")
-                .with_debug("OpenVPN remove peer: {peer_addr}"),
-        ),
-    }
-}
-
-/// Action: Get server info (async)
-fn get_server_info_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "get_server_info".to_string(),
-        description: "Get OpenVPN server configuration and status".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "get_server_info"
-        }),
-        log_template: Some(LogTemplate::new().with_debug("OpenVPN get server info")),
     }
 }

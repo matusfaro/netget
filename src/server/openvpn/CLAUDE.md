@@ -1,415 +1,170 @@
-# OpenVPN VPN Server Implementation
+# OpenVPN Server Implementation — INCOMPLETE AND INSECURE
 
-## Overview
+## ⚠️ Read this first
 
-Full-featured OpenVPN VPN server implementing a simplified but functional OpenVPN protocol with actual tunnel support.
-This is a **production-ready MVP** that creates real TUN interfaces and establishes encrypted tunnels for clients.
+**This is not a working OpenVPN server and must not be used to carry real traffic.**
 
-**Status**: Stable (MVP), fully implemented
-**Protocol Spec**: [OpenVPN Protocol](https://openvpn.net/community-resources/reference-manual-for-openvpn-2-4/)
-**Port**: UDP 1194 (default)
+It implements the OpenVPN *packet format* and a real TUN data path, but the security-critical half of the protocol is
+absent:
+
+| Component                        | Status                                                                       |
+|----------------------------------|------------------------------------------------------------------------------|
+| TLS control channel              | ❌ **Does not exist.** `create_tls_config()` builds a config that is never used |
+| Peer authentication              | ❌ **None.** Any host sending a HARD_RESET is accepted                          |
+| Client certificate verification  | ❌ None                                                                        |
+| Data-channel key derivation      | ❌ **Hardcoded constants** — every peer derives the same key                    |
+| `handle_control_message()`       | ❌ Empty stub                                                                  |
+| `handle_ack_packet()`            | ❌ Empty stub                                                                  |
+| Packet parse/serialize (V1/V2)   | ✅ Implemented                                                                 |
+| TUN interface + IP pool          | ✅ Implemented                                                                 |
+| AES-256-GCM / ChaCha20-Poly1305  | ✅ Correct AEAD calls — operating on worthless keys                            |
+
+### The key problem, specifically
+
+`initialize_data_channel()` (`mod.rs`) derives every peer's cipher key with HKDF over three fixed literals:
+
+```rust
+let master_secret = b"simplified_master_secret_for_mvp";
+let client_random = b"client_random_data_12345678";
+let server_random = b"server_random_data_87654321";
+```
+
+There is no per-session entropy. **Every peer, on every run, on every installation derives the identical key**, and
+the inputs are in this repository and its public git history. Anyone who can read the source can decrypt the tunnel.
+The encryption is decorative.
+
+A real OpenVPN server derives these keys from the TLS master secret negotiated during the control-channel handshake.
+No handshake happens here, so there is no master secret to derive from.
+
+**Status**: `DevelopmentState::Incomplete` — hidden from the LLM by `ProtocolMetadataV2::is_available_to_llm()`
+**Privileges**: `PrivilegeRequirement::Root` (TUN device creation)
+**Use instead**: WireGuard (`src/server/wireguard/`), NetGet's only functional VPN
+
+### Why it is kept
+
+As a packet-format testbed and as a honeypot that speaks plausible-looking OpenVPN to a scanner. Not as a VPN.
 
 ## Library Choices
 
-### Custom Implementation
+Custom implementation — no viable Rust OpenVPN *server* library exists (the reference C++ implementation is 500k+
+LOC; `openvpn-parser` is read-only and unmaintained; `libopenvpn3` FFI is client-only).
 
-**Why custom**:
+Dependencies used:
 
-- No viable Rust OpenVPN server library exists
-- Reference C++ implementation is 500K+ lines and extremely complex
-- MVP approach: implement simplified but functional subset of protocol
+- `tun` v0.7 — TUN interface creation
+- `aes-gcm` v0.10, `chacha20poly1305` v0.10 — data-channel AEAD
+- `rustls` + `rcgen` — certificate generation (**generated, then unused**)
+- `hkdf` + `sha2` — key derivation (**over constants, see above**)
 
-**What we implement**:
+## Architecture
 
-- UDP transport only (no TCP)
-- OpenVPN packet format (opcodes, headers, session IDs)
-- Simplified TLS handshake for control channel
-- AES-256-GCM and ChaCha20-Poly1305 for data channel encryption
-- TUN interface for IP packet tunneling
-- Packet ID-based replay protection
+### TUN interface
 
-**Dependencies used**:
+Platform-specific naming: `netget_ovpn0` (Linux/Windows), `utun11` (macOS). Server takes `10.8.0.1` on `10.8.0.0/24`;
+clients get `10.8.0.2`–`10.8.0.254` from `IpPool`.
 
-- `tun` v0.7 - TUN/TAP interface creation and management
-- `aes-gcm` v0.10 - AES-256-GCM encryption for data channel
-- `chacha20poly1305` v0.10 - ChaCha20-Poly1305 encryption alternative
-- `rustls` + `rcgen` - TLS configuration and certificate generation
-- `hkdf` + `sha2` - Key derivation from TLS master secret
+The device is **split** with `tokio::io::split()`. The read loop owns the `ReadHalf`; the write side is an
+`Arc<Mutex<WriteHalf>>`. This matters: an earlier version held a single `RwLock<AsyncDevice>` write guard while parked
+in `read()`, so no decrypted client packet could ever be written to the TUN while the TUN was idle — a deadlock that
+silently broke the client-to-network direction. Per the project rule: never hold a lock across I/O.
 
-### Why Not Alternatives
+### Task lifecycle
 
-- **openvpn-parser** - Read-only parser, cannot serialize packets, not maintained
-- **libopenvpn3** FFI - Client-only library, not suitable for server
-- **Full OpenVPN reimplementation** - Would take 3-6 months, out of scope for MVP
+`AppState::register_server_task()` stores exactly **one** handle per server, so the UDP listener and the TUN reader are
+run inside a single task joined by `tokio::select!`. Registering them as two tasks would silently drop the first
+handle and leak that loop past `stop_server`. Aborting the one registered handle cancels both loops.
 
-## Architecture Decisions
-
-### TUN Interface Creation
-
-Platform-specific interface naming (following WireGuard pattern):
-
-- **Linux**: `netget_ovpn0` (kernel TUN)
-- **macOS**: `utun11` (userspace TUN)
-- **Windows**: `netget_ovpn0` (kernel TUN)
-
-Server assigns itself `10.8.0.1` on the VPN subnet `10.8.0.0/24`.
-
-### OpenVPN Protocol Subset (MVP)
-
-**Implemented**:
-
-- ✅ UDP transport (port 1194)
-- ✅ V2 packet format (with session IDs)
-- ✅ Control channel handshake (HARD_RESET_CLIENT_V2 → HARD_RESET_SERVER_V2)
-- ✅ Data channel encryption (AES-256-GCM, ChaCha20-Poly1305)
-- ✅ Packet ID replay protection
-- ✅ VPN IP address assignment (10.8.0.2 - 10.8.0.254)
-- ✅ TUN interface packet forwarding
-- ✅ Peer connection tracking
-
-**Simplified for MVP**:
-
-- TLS handshake (simplified, no full TLS state machine)
-- Key derivation (using HKDF instead of TLS PRF)
-- Control channel reliability (basic ACKs, no retransmission)
-
-**Not implemented** (out of scope):
-
-- TCP transport
-- TLS 1.2 full state machine
-- Compression (LZO, LZ4)
-- Legacy cipher suites
-- Push/pull configuration options
-- Client certificate verification
-- Dynamic routing
-- IPv6 support
-
-### Packet Structure
-
-#### Control Packets
-
-```
-┌────────────────────────────────────────────────────┐
-│ Opcode (5 bits) │ Key ID (3 bits)                  │
-├────────────────────────────────────────────────────┤
-│ Session ID (8 bytes, V2 only)                      │
-├────────────────────────────────────────────────────┤
-│ Packet ID Array Length (1 byte)                    │
-├────────────────────────────────────────────────────┤
-│ Packet ID (4 bytes)                                │
-├────────────────────────────────────────────────────┤
-│ ACK Array (variable)                               │
-├────────────────────────────────────────────────────┤
-│ Remote Session ID (8 bytes)                        │
-├────────────────────────────────────────────────────┤
-│ TLS Payload (variable)                             │
-└────────────────────────────────────────────────────┘
-```
-
-#### Data Packets
-
-```
-┌────────────────────────────────────────────────────┐
-│ Opcode (5 bits) │ Key ID (3 bits)                  │
-├────────────────────────────────────────────────────┤
-│ Session ID (8 bytes, V2 only)                      │
-├────────────────────────────────────────────────────┤
-│ Packet ID (4 bytes, in encrypted payload)          │
-├────────────────────────────────────────────────────┤
-│ Encrypted IP Packet (variable)                     │
-└────────────────────────────────────────────────────┘
-```
-
-### Data Channel Encryption
-
-Two cipher suites supported:
-
-- **AES-256-GCM** - Default, hardware-accelerated on most platforms
-- **ChaCha20-Poly1305** - Alternative for platforms without AES-NI
-
-**Encryption process**:
-
-1. Packet ID used as nonce (IV) - ensures uniqueness and replay protection
-2. IP packet encrypted with AEAD cipher
-3. Authentication tag appended (16 bytes)
-4. Encrypted payload sent over UDP
-
-**Key derivation**:
-
-- Uses HKDF-SHA256 with TLS master secret (simplified for MVP)
-- Derives separate keys for client→server and server→client directions
-- 32 bytes for encryption key, 32 bytes for HMAC key (each direction)
-
-### Connection Flow
+### Connection flow (what actually happens)
 
 ```
 Client                                    Server
-  │                                         │
-  ├──── HARD_RESET_CLIENT_V2 ──────────────>│
-  │     (Session ID, Packet ID=0)           │
-  │                                         │
-  │                                         ├─ Allocate VPN IP (10.8.0.2)
-  │                                         ├─ Create peer state
-  │                                         ├─ Initialize cipher
-  │                                         │
-  │<─────── HARD_RESET_SERVER_V2 ──────────┤
-  │     (ACK client packet, server session) │
-  │                                         │
-  ├──── DATA_V2 (encrypted) ───────────────>│
-  │                                         ├─ Decrypt IP packet
-  │                                         ├─ Write to TUN interface
-  │                                         │
-  │<─────── DATA_V2 (encrypted) ────────────┤
-  ├─ Decrypt IP packet                      │
-  └─ Process IP packet                      │
+  ├──── HARD_RESET_CLIENT_V2 ─────────────>│
+  │                                        ├─ (no authentication of any kind)
+  │                                        ├─ Allocate VPN IP
+  │                                        ├─ Initialize cipher from CONSTANTS
+  │<─────── HARD_RESET_SERVER_V2 ──────────┤   (empty TLS payload)
+  │                                        ├─ raise openvpn_peer_connected
+  ├──── DATA_V2 ──────────────────────────>│
+  │                                        ├─ Decrypt, write to TUN
 ```
+
+A real `openvpn` client will not interoperate: it expects a TLS session inside the control channel and gets an empty
+payload, so it never reaches the data phase.
 
 ## LLM Integration
 
-### Async Actions (User-triggered)
+### Event flow
 
-Available anytime, no network context required:
+`openvpn_peer_connected` is raised from `handle_handshake_initiation` via `crate::llm::action_helper::call_llm`,
+which runs any configured script/static handler first and only falls back to a real model call when none is set.
 
-1. **list_peers**: View all connected peers with VPN IPs
-2. **remove_peer**: Permanently remove peer from VPN
-3. **get_server_info**: View server configuration and session ID
-
-### Sync Actions (Network event triggered)
-
-Require peer connection context:
-
-1. **authorize_peer**: Approve peer connection (currently auto-authorized)
-    - Parameters: `peer_addr`, optional `vpn_ip`
-2. **reject_peer**: Deny peer connection request
-    - Parameters: `peer_addr`, `reason`
-3. **set_peer_limit**: Configure bandwidth limits (placeholder for MVP)
-    - Parameters: `peer_addr`, `limit_mbps`
-4. **inspect_traffic**: Enable/disable traffic inspection logging
+Because the protocol is `Incomplete`, it is **not offered to the LLM** during server selection; it can still be
+started explicitly (e.g. tests using `with_include_disabled_protocols`).
 
 ### Event Types
 
-- `openvpn_peer_connected`: Peer successfully connected and authenticated
-- `openvpn_peer_request`: Peer requesting authorization (future feature)
+- `openvpn_peer_connected` — a peer was accepted and assigned a VPN IP
 
-**Current behavior**: Auto-authorization for MVP. Future versions will require explicit LLM authorization before
-completing handshake.
+Data fields: `peer_addr`, `vpn_ip`, `session_id`, `authenticated` (always `false`).
+
+An `openvpn_peer_request` authorization event was previously declared but **never emitted** — peers are auto-accepted
+inside `handle_handshake_initiation` — so it has been removed rather than left as a false promise of pre-connection
+authorization.
+
+### Sync Actions
+
+All are **observation/logging hooks**. None gates a connection, because the peer is already accepted, addressed and
+keyed before the event fires.
+
+1. **authorize_peer** — NOT ENFORCED; records that a peer is considered authorized
+2. **reject_peer** — NOT ENFORCED; nothing tears the peer down
+3. **set_peer_limit** — NOT ENFORCED; no traffic shaping is configured
+4. **inspect_traffic** — flags the peer's traffic for logging
+
+### Async Actions
+
+**None.** `get_async_actions()` returns an empty list.
+
+`list_peers` / `remove_peer` / `get_server_info` were previously advertised, but the action executor calls
+`Server::execute_action()` on a stateless `OpenvpnProtocol` struct with no handle to the running `OpenvpnServer`, so
+they returned `NoAction` unconditionally. They remain accepted by `execute_action` for backwards compatibility.
 
 ## Peer Management
 
-### Peer State Machine
+- `PeerState`: WaitingForHandshake → TlsHandshaking → KeyExchange → Connected → Disconnecting
+  (in practice peers jump straight to Connected)
+- Max 100 peers
+- Packet IDs tracked per peer for basic replay rejection; `received_packet_ids` grows without bound for long-lived
+  peers (no window eviction)
 
-```
-WaitingForHandshake → TlsHandshaking → KeyExchange → Connected → Disconnecting
-```
+## Storage
 
-### IP Address Pool
+None, per NetGet's protocol rules. Peer state is in-memory runtime state only — no database, no filesystem, no
+persistence.
 
-- Server: `10.8.0.1`
-- Client pool: `10.8.0.2` - `10.8.0.254` (253 addresses)
-- Automatic allocation on connection
-- Deallocated when peer disconnects
+## Future Work (large — not a patch)
 
-### Connection Tracking
+Making this a real OpenVPN server requires the whole control channel:
 
-Each peer tracked with:
+1. Wrap a genuine TLS 1.3 session over the OpenVPN reliability layer
+2. Implement control-channel retransmission, ACK windows and sequencing
+3. Exchange key material through the TLS session
+4. Derive per-session keys from the negotiated master secret via the OpenVPN PRF (replacing the constants)
+5. Verify client certificates
+6. Implement configuration push/pull, then compression and TCP transport
 
-- `session_id`: Unique 64-bit identifier
-- `vpn_ip`: Assigned VPN IP address
-- `cipher`: Active encryption cipher
-- `bytes_sent` / `bytes_received`: Traffic statistics
-- `last_activity`: Last packet timestamp
-- `connected_at`: Connection establishment time
-
-### Replay Protection
-
-- Packet IDs tracked per peer
-- Duplicate packet IDs rejected
-- Simple window-based replay protection
-
-## Limitations
-
-### MVP Simplifications
-
-**TLS Control Channel**:
-
-- Simplified handshake (not full TLS state machine)
-- No client certificate verification
-- Self-signed server certificate only
-
-**Protocol Support**:
-
-- UDP only (no TCP transport)
-- IPv4 only (no IPv6)
-- Static VPN subnet (no dynamic configuration)
-- No compression support
-
-**Scalability**:
-
-- Max 100 peers (hard limit)
-- No traffic shaping or QoS
-- No multi-threading for packet processing
-
-**Network Configuration**:
-
-- No automatic routing setup
-- No DNS push to clients
-- No NAT/firewall traversal
-- Manual IP forwarding configuration required on host
-
-### Requires Elevated Privileges
-
-- **Linux**: Root or `CAP_NET_ADMIN` capability
-- **macOS**: Root for TUN interface creation
-- **Windows**: Administrator privileges
-
-### Not OpenVPN Compatible (Yet)
-
-This is a **simplified OpenVPN-like protocol**. It uses OpenVPN packet structures but:
-
-- Does not implement full TLS handshake
-- Uses simplified key derivation
-- Missing many OpenVPN features
-
-**Future work** to achieve full OpenVPN compatibility:
-
-1. Implement complete TLS 1.3 control channel
-2. Add client certificate verification
-3. Implement configuration push/pull
-4. Add compression support
-5. Add TCP transport
-6. Implement proper control channel reliability
-
-## Examples
-
-### Server Startup
-
-```
-netget> Start an OpenVPN VPN server on port 1194
-```
-
-Server output:
-
-```
-[INFO] Starting OpenVPN VPN server on 0.0.0.0:1194 (full VPN tunnel support)
-[INFO] TLS configuration created
-[INFO] Creating TUN interface: netget_ovpn0
-[INFO] TUN interface created: netget_ovpn0
-[INFO] OpenVPN listening on 0.0.0.0:1194
-[INFO] VPN subnet: 10.8.0.0/24
-→ OpenVPN VPN server ready on 0.0.0.0:1194
-[INFO] Clients can connect to 0.0.0.0:1194 with VPN subnet 10.8.0.0/24
-```
-
-### Peer Connection
-
-When peer connects:
-
-```
-[INFO] OpenVPN handshake from 203.0.113.45:52891
-[INFO] Allocated VPN IP 10.8.0.2 to 203.0.113.45:52891
-[DEBUG] Data channel ready for 203.0.113.45:52891
-[INFO] OpenVPN peer connected: 203.0.113.45:52891 (VPN IP: 10.8.0.2)
-```
-
-LLM receives event:
-
-```json
-{
-  "event": "openvpn_peer_connected",
-  "data": {
-    "peer_addr": "203.0.113.45:52891",
-    "vpn_ip": "10.8.0.2",
-    "session_id": "a1b2c3d4e5f67890"
-  }
-}
-```
-
-### Data Channel Traffic
-
-```
-[TRACE] Received 128 bytes from 203.0.113.45:52891
-[TRACE] Decrypted 84 bytes from 203.0.113.45:52891
-[TRACE] TUN packet to 10.8.0.2: 84 bytes
-```
-
-### LLM Actions
-
-List peers:
-
-```json
-{
-  "actions": [
-    {
-      "type": "list_peers"
-    }
-  ]
-}
-```
-
-Remove peer:
-
-```json
-{
-  "actions": [
-    {
-      "type": "remove_peer",
-      "peer_addr": "203.0.113.45:52891"
-    },
-    {
-      "type": "show_message",
-      "message": "Peer removed from VPN"
-    }
-  ]
-}
-```
+Steps 1–4 are the minimum for the protocol to stop being insecure. This is a project in its own right and is
+deliberately out of scope.
 
 ## Testing
 
-### Host Configuration
-
-Before running OpenVPN server, enable IP forwarding:
-
-**Linux**:
-
-```bash
-sudo sysctl -w net.ipv4.ip_forward=1
-sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -j MASQUERADE
-```
-
-**macOS**:
-
-```bash
-sudo sysctl -w net.inet.ip.forwarding=1
-```
-
-### Client Configuration (Future)
-
-Once a compatible OpenVPN client is implemented:
-
-```ovpn
-client
-dev tun
-proto udp
-remote <server_ip> 1194
-cipher AES-256-GCM
-```
-
-### Current Testing
-
-For MVP, testing requires:
-
-1. Build with `./cargo-isolated.sh build --release --features openvpn`
-2. Run with elevated privileges: `sudo ./target/release/netget`
-3. Start server: `Start an OpenVPN VPN server on port 1194`
-4. Monitor logs for handshake and data channel activity
-
-Full E2E testing with actual OpenVPN clients will be added in future iterations.
+`tests/server/openvpn/e2e_test.rs` requires the `openvpn` binary and root, and skips otherwise. It cannot verify a
+successful tunnel — a real client cannot complete a handshake against a server with no control channel.
 
 ## References
 
 - [OpenVPN Protocol Documentation](https://openvpn.net/community-resources/openvpn-protocol/)
 - [OpenVPN Source Code](https://github.com/OpenVPN/openvpn)
-- [TUN/TAP Interface](https://www.kernel.org/doc/Documentation/networking/tuntap.txt)
 - [AES-GCM](https://datatracker.ietf.org/doc/html/rfc5116)
 - [ChaCha20-Poly1305](https://datatracker.ietf.org/doc/html/rfc8439)
 - [HKDF](https://datatracker.ietf.org/doc/html/rfc5869)
