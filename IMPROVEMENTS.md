@@ -282,14 +282,32 @@ protocol" from "compiled out of this build" in its error.
 produce good install hints, but no protocol overrides `get_dependencies()` and nothing calls
 the checks before `spawn()`. Adopt or delete.
 
-### 21. Nine protocols expose zero actions **[static]**
+### 21. Five protocols expose zero actions — and the grep that found them was misleading **[verified]**
 
-`amqp`, `mqtt`, `doh`, `dot`, and five `bluetooth_ble_*` profiles return empty vectors from
-`get_sync_actions()`/`get_event_types()` — `amqp` and `mqtt` say `// Placeholder` in source.
-`bluetooth_ble_proximity` ships `get_startup_examples()` referencing an event and action it
-does not define. They are registered and offered to the LLM as if functional.
+Corrected: an earlier version of this item listed nine, including `doh` and `dot`. Those two
+are fine. They **delegate** — `get_sync_actions()` forwards `DnsProtocol`'s set verbatim, so
+the model sees the full DNS vocabulary on every query. A grep for `vec![]` cannot tell
+delegation from hollowness; measure both:
 
-Fix: mark them `Incomplete` so `is_available_to_llm()` hides them, or implement them.
+```
+grep -A3 "fn get_sync_actions" src/server/<p>/actions.rs | grep -c 'vec!\[\]'   # hollow
+grep -c "DnsProtocol\|BluetoothBle::" src/server/<p>/actions.rs                  # delegating
+```
+
+The genuinely hollow ones are `bluetooth_ble_proximity`, `_presenter`, `_gamepad`,
+`_environmental` and `_file_transfer`: literally `vec![]` for both actions and events, zero
+delegation, so the LLM gets nothing it can act on — while they are registered `Experimental`
+and therefore offered. `bluetooth_ble_proximity` compounds it by shipping
+`get_startup_examples()` referencing an event (`ble_proximity_detected`) and an action
+(`wait_for_more`) it does not define, so the example is unusable copy-paste.
+
+`amqp` and `mqtt` were the same shape (`// Placeholder` in source) and are being addressed
+separately.
+
+The rule worth keeping: a protocol the model can select but cannot control is worse than one
+that is not offered — it will be chosen, accept connections, and never respond. Either
+delegate like `doh`/`dot`, implement, or mark `Incomplete` so `is_available_to_llm()` hides it.
+
 
 ### 22. Documentation drift **[verified]**
 
