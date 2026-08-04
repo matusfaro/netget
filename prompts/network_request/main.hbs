@@ -32,10 +32,15 @@ Output: {{{this.output}}}
 
 {{> shared/partials/memory }}
 
-{{#if scripting_enabled}}
-{{> shared/partials/scripting selected_mode=selected_scripting_mode }}
-
-{{/if}}
+{{!-- The scripting partial is deliberately NOT included here. It teaches how to
+      CONFIGURE event handlers (static vs script vs llm, script stdin/stdout
+      contract, XML code references), which only applies when a server is being
+      set up — see prompts/user_input/main.hbs. By the time a network event is
+      being handled the handlers are already fixed, and no handler-configuration
+      action is offered in this context. It is also unreachable by construction:
+      when a script or static handler matches an event the LLM is never called,
+      so any prompt rendered here means no script handler applied. Including it
+      added ~9.6KB (81%) to every per-request prompt. --}}
 {{> shared/partials/response_format }}
 
 {{> shared/partials/current_state active_server=active_server can_bind_privileged_ports=can_bind_privileged_ports has_raw_socket_access=has_raw_socket_access }}
