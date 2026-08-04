@@ -30,37 +30,52 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, warn};
 
 /// DNS-over-HTTPS server
-pub struct DohServer {
-    bind_addr: SocketAddr,
-}
+pub struct DohServer;
 
 impl DohServer {
-    /// Create a new DoH server
-    pub fn new(bind_addr: SocketAddr) -> Self {
-        Self { bind_addr }
-    }
-
-    /// Spawn the DoH server
+    /// Spawn the DoH server.
+    ///
+    /// The listener is bound here, *before* the accept loop is spawned, so that
+    /// a bind failure (port in use, permission denied) is returned to the
+    /// caller instead of being swallowed by the background task - otherwise the
+    /// server would be reported as `Running` while nothing is listening.
+    /// Binding here also means the returned address carries the real port when
+    /// the caller asked for port 0.
     pub async fn spawn(
         bind_addr: SocketAddr,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         server_id: ServerId,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        let server = Self::new(bind_addr);
-
+    ) -> Result<SocketAddr> {
         // Generate TLS configuration (use default self-signed cert)
         let tls_config = crate::server::tls_cert_manager::generate_default_tls_config()
             .context("Failed to generate TLS configuration")?;
 
         console_info!(status_tx, "Starting DoH server on {}", bind_addr);
 
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .context("Failed to bind DoH TCP listener")?;
+
+        // Actual bound address (important for port 0 dynamic allocation)
+        let local_addr = listener
+            .local_addr()
+            .context("Failed to get DoH listener local address")?;
+
+        console_info!(status_tx, "DoH server listening on {}", local_addr);
+
         let task_registrar = app_state.clone();
         let handle = tokio::spawn(async move {
-            if let Err(e) = server
-                .run(tls_config, llm_client, app_state, server_id, status_tx)
-                .await
+            if let Err(e) = Self::run(
+                listener,
+                tls_config,
+                llm_client,
+                app_state,
+                server_id,
+                status_tx,
+            )
+            .await
             {
                 error!("DoH server error: {}", e);
             }
@@ -69,30 +84,19 @@ impl DohServer {
         // Register the accept loop so stop_server can abort it and release the port.
         task_registrar.register_server_task(server_id, handle).await;
 
-        Ok(())
+        Ok(local_addr)
     }
 
-    /// Run the DoH server
+    /// Run the DoH accept loop on an already-bound listener
     async fn run(
-        self,
+        listener: TcpListener,
         tls_config: Arc<rustls::ServerConfig>,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         server_id: ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let listener = TcpListener::bind(self.bind_addr)
-            .await
-            .context("Failed to bind DoH TCP listener")?;
-
-        // Get the actual bound address (important for port 0 dynamic allocation)
-        let local_addr = listener
-            .local_addr()
-            .context("Failed to get DoH listener local address")?;
-
         let acceptor = TlsAcceptor::from(tls_config);
-
-        console_info!(status_tx, "DoH server listening on {}", local_addr);
 
         loop {
             match listener.accept().await {
@@ -354,13 +358,11 @@ impl DohServer {
 
                     console_trace!(status_tx, "DoH response hex: {}", hex::encode(bytes));
 
-                    // Return DNS response with correct Content-Type
-                    return Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/dns-message")
-                        .header("Content-Length", bytes.len())
-                        .body(Full::new(Bytes::from(bytes.clone())))
-                        .unwrap());
+                    // Return DNS response with correct Content-Type.
+                    // Content-Length is left to hyper, which derives it from the
+                    // Full<Bytes> body - keeping every builder input constant so
+                    // this cannot panic on model-supplied data.
+                    return Ok(dns_message_response(bytes.clone()));
                 }
                 ActionResult::Custom { data, .. } => {
                     if let Some(output_data) = data.get("output_data").and_then(|v| v.as_str()) {
@@ -375,12 +377,7 @@ impl DohServer {
                             console_trace!(status_tx, "DoH response hex: {}", output_data);
 
                             // Return DNS response with correct Content-Type
-                            return Ok(Response::builder()
-                                .status(StatusCode::OK)
-                                .header("Content-Type", "application/dns-message")
-                                .header("Content-Length", response_bytes.len())
-                                .body(Full::new(Bytes::from(response_bytes)))
-                                .unwrap());
+                            return Ok(dns_message_response(response_bytes));
                         }
                     }
                 }
@@ -412,11 +409,23 @@ fn base64_url_decode(encoded: &str) -> Result<Vec<u8>> {
         .context("Failed to decode base64url")
 }
 
+/// Build a `200 application/dns-message` response carrying a DNS wire-format body.
+///
+/// Every header passed to the builder is a constant, so the `expect` below is
+/// unreachable regardless of what the model or the network produced.
+fn dns_message_response(body: Vec<u8>) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/dns-message")
+        .body(Full::new(Bytes::from(body)))
+        .expect("constant status and headers always build a valid response")
+}
+
 /// Create an error response
 fn error_response(status: StatusCode, message: &str) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
         .header("Content-Type", "text/plain")
         .body(Full::new(Bytes::from(message.to_string())))
-        .unwrap()
+        .expect("constant status and headers always build a valid response")
 }

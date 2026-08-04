@@ -7,7 +7,17 @@ while NetGet handles HTTPS server operations, TLS encryption, and HTTP/2 protoco
 
 **Status**: Beta (Core Protocol)
 **RFC**: RFC 8484 (DNS Queries over HTTPS), RFC 1035 (DNS), RFC 7540 (HTTP/2)
-**Port**: 443 (HTTPS, typically)
+**Port**: 443 (HTTPS, typically), declared as `PrivilegeRequirement::PrivilegedPort(443)`
+
+### What "Beta" covers here
+
+DoH contributes the HTTPS/HTTP2 transport and the RFC 8484 request encodings;
+every DNS semantic - the action set, action execution, response construction -
+is the DNS protocol's, reached through delegation (see below). Both the GET
+(base64url `?dns=`) and POST (`application/dns-message` body) paths are
+exercised by `tests/server/doh/e2e_test.rs` against a real hyper/rustls client.
+Not covered: HTTP/1.1, CA-signed or custom certificates, rate limiting, caching,
+EDNS0.
 
 ## Library Choices
 
@@ -35,12 +45,21 @@ handle HTTP and encryption.
 
 ### 1. Delegation to DNS Protocol
 
-DoH delegates all DNS logic to the standard DNS protocol implementation:
+DoH defines **no actions of its own**. `DohProtocol` wraps a `DnsProtocol` and
+forwards everything DNS-shaped to it:
 
-- `DohProtocol` wraps `DnsProtocol`
-- All action definitions come from DNS actions
-- Action execution forwards to DNS implementation
-- Ensures consistency between DNS, DoT, and DoH responses
+- `get_sync_actions()` / `get_async_actions()` return the DNS action definitions
+  verbatim
+- `execute_action()` forwards to `DnsProtocol::execute_action`
+- `DOH_QUERY_EVENT` is built by calling `DnsProtocol::get_sync_actions()` and
+  attaching that list to the event
+
+The only thing DoH owns is the event type (`doh_query`, one event, carrying
+extra `peer_addr` and `method` fields) and the transport. So "DoH has zero
+actions defined in `src/server/doh/actions.rs`" is true as a grep result and
+misleading as a statement about capability: the LLM sees the full DNS action set
+on every `doh_query`, and this delegation is what keeps DNS, DoT and DoH
+answering identically.
 
 ### 2. HTTP/2 Transport Layer
 
@@ -113,18 +132,26 @@ Event parameters:
 
 ### Available Actions
 
-DoH reuses all DNS actions:
+DoH reuses all DNS actions, and only those:
 
-- `dns_response` - Send DNS response as hex-encoded packet
 - `send_dns_a_response` - Return IPv4 address (A record)
 - `send_dns_aaaa_response` - Return IPv6 address (AAAA record)
 - `send_dns_mx_response` - Return mail exchange record
 - `send_dns_txt_response` - Return text record
 - `send_dns_cname_response` - Return canonical name alias
 - `send_dns_nxdomain` - Domain does not exist
-- `ignore_query` - Don't send response
+- `send_dns_response` - Hand-assembled response, hex-encoded (escape hatch)
+- `ignore_query` - Answered as HTTP 404 rather than by dropping the request,
+  since HTTP requires a response
 
 See `src/server/dns/CLAUDE.md` for detailed action documentation.
+
+`dns_response` was previously listed here; no such action exists - the real name
+is `send_dns_response`.
+
+As with plain DNS, a **static** event handler cannot serve DoH answers: it
+cannot echo the client's random transaction ID or the queried name. Use script
+mode for deterministic answers; static mode is only useful for `ignore_query`.
 
 ### Example LLM Response
 
@@ -148,12 +175,24 @@ See `src/server/dns/CLAUDE.md` for detailed action documentation.
 
 ## Connection Management
 
+### Startup
+
+`DohServer::spawn` binds the `TcpListener` **before** spawning the accept loop
+and returns the bound `SocketAddr`. That ordering matters: if the bind were done
+inside the spawned task, a port conflict or permission error would be swallowed
+by the background task while `open_server` reported the server as `Running`, and
+a caller that asked for port 0 would be told the port was 0. The accept loop's
+`JoinHandle` is registered with `AppState::register_server_task` so
+`stop_server` can abort it and release the port.
+
 ### Connection Lifecycle
 
 1. **Accept**: TCP listener accepts connection on port 443
 2. **TLS Handshake**: `TlsAcceptor::accept()` performs TLS negotiation
 3. **HTTP/2 Setup**: hyper establishes HTTP/2 connection
-4. **Request Loop**: Handle multiple HTTP requests over same connection
+4. **Request Loop**: Handle multiple HTTP requests over same connection. DoH
+   adds no entry to `ServerInstance.connections`, so DoH connections are
+   invisible to the TUI connection list and to per-connection scheduled tasks
 5. **Close**: Connection ends when client closes or error occurs
 
 ### State Management
@@ -174,13 +213,13 @@ See `src/server/dns/CLAUDE.md` for detailed action documentation.
 
 **Workaround**: For production, modify `tls_cert_manager` to load custom certificates.
 
-### 2. Fixed Endpoint Path
+### 2. No Path Routing At All
 
-- Only `/dns-query` endpoint supported
-- No custom endpoint configuration
-- No path-based routing
-
-**Workaround**: Modify code to support configurable paths if needed.
+The request path is never examined. `/dns-query` is the conventional RFC 8484
+endpoint and is what clients will use, but any path - `/`, `/foo` - is served
+identically, and there is no way to configure or reject one. This is lenient
+rather than broken (RFC 8484 treats the path as discovered from a URI template,
+not fixed), but it does mean the server cannot host anything else alongside DoH.
 
 ### 3. No HTTP/1.1 Support
 
@@ -194,7 +233,7 @@ See `src/server/dns/CLAUDE.md` for detailed action documentation.
 
 All limitations from standard DNS protocol apply:
 
-- Single answer per action (use `dns_response` for multiple)
+- Single answer per action (use `send_dns_response` for multiple)
 - Limited record type support
 - No DNSSEC
 - No recursive resolution
