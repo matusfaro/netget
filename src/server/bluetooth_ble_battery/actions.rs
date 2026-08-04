@@ -13,14 +13,17 @@ use std::sync::LazyLock;
 
 /// Battery level changed event
 pub static BATTERY_LEVEL_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("battery_level_changed", "Battery level was updated", json!({"type": "placeholder", "event_id": "battery_level_changed"})).with_parameters(vec![
-        Parameter {
-            name: "level".to_string(),
-            type_hint: "string".to_string(),
-            description: "Battery level percentage (0-100)".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "battery_level_changed",
+        "Battery level was updated",
+        json!({"type": "placeholder", "event_id": "battery_level_changed"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "level".to_string(),
+        type_hint: "string".to_string(),
+        description: "Battery level percentage (0-100)".to_string(),
+        required: true,
+    }])
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE battery level: {level}%")
@@ -179,13 +182,17 @@ impl Server for BluetoothBleBatteryProtocol {
             let device_name = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
                 .unwrap_or_else(|| "NetGet-Battery".to_string());
 
             let initial_level = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_u64("initial_level"))
+                .map(|p| p.get_optional_u64("initial_level"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(100) as u8;
 
             crate::server::bluetooth_ble_battery::BluetoothBleBattery::spawn_with_llm_actions(
@@ -265,7 +272,9 @@ fn simulate_drain_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> BLE battery drain: {amount}%")
-                .with_debug("BLE battery simulate_drain: amount={amount}, interval_ms={interval_ms}"),
+                .with_debug(
+                    "BLE battery simulate_drain: amount={amount}, interval_ms={interval_ms}",
+                ),
         ),
     }
 }
@@ -296,7 +305,9 @@ fn simulate_charge_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> BLE battery charge: {amount}%")
-                .with_debug("BLE battery simulate_charge: amount={amount}, interval_ms={interval_ms}"),
+                .with_debug(
+                    "BLE battery simulate_charge: amount={amount}, interval_ms={interval_ms}",
+                ),
         ),
     }
 }

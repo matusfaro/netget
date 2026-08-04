@@ -314,24 +314,24 @@ pub fn extract_tls_config_from_params(
     params: &crate::protocol::StartupParams,
 ) -> Result<Option<Arc<ServerConfig>>> {
     // Check if TLS is enabled
-    let tls_enabled = params.get_optional_bool("tls_enabled").unwrap_or(false);
+    let tls_enabled = params.get_optional_bool("tls_enabled")?.unwrap_or(false);
 
     if !tls_enabled {
         return Ok(None);
     }
 
     // Extract TLS parameters
-    let cert_path = params.get_optional_string("cert_path");
-    let key_path = params.get_optional_string("key_path");
-    let common_name = params.get_optional_string("common_name");
-    let san_dns_names = params.get_optional_array("san_dns_names").map(|arr| {
+    let cert_path = params.get_optional_string("cert_path")?;
+    let key_path = params.get_optional_string("key_path")?;
+    let common_name = params.get_optional_string("common_name")?;
+    let san_dns_names = params.get_optional_array("san_dns_names")?.map(|arr| {
         arr.iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect()
     });
-    let validity_days = params.get_optional_i64("validity_days");
-    let organization = params.get_optional_string("organization");
-    let organizational_unit = params.get_optional_string("organizational_unit");
+    let validity_days = params.get_optional_i64("validity_days")?;
+    let organization = params.get_optional_string("organization")?;
+    let organizational_unit = params.get_optional_string("organizational_unit")?;
 
     // Create TLS config
     create_tls_config(

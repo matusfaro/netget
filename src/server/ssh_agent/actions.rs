@@ -518,7 +518,9 @@ impl Server for SshAgentProtocol {
             let socket_path = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("socket_path"))
+                .map(|p| p.get_optional_string("socket_path"))
+                .transpose()?
+                .flatten()
                 .unwrap_or_else(|| "./netget-ssh-agent.sock".to_string());
 
             let socket_path_buf = std::path::PathBuf::from(socket_path);

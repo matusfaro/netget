@@ -157,20 +157,21 @@ impl Server for TlsProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             // Extract custom TLS config if provided
             let tls_config = if let Some(ref params) = ctx.startup_params {
-                let cert_path = params.get_optional_string("cert_path");
-                let key_path = params.get_optional_string("key_path");
+                let cert_path = params.get_optional_string("cert_path")?;
+                let key_path = params.get_optional_string("key_path")?;
 
                 match (cert_path, key_path) {
                     (Some(cert), Some(key)) => {
                         // Load custom certificates from files
                         Some(crate::server::tls_cert_manager::load_tls_config_from_files(
-                            &cert,
-                            &key,
+                            &cert, &key,
                         )?)
                     }
                     (Some(_), None) | (None, Some(_)) => {

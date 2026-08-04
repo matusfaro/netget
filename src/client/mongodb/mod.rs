@@ -16,11 +16,10 @@ use mongodb::{
     Client as MongoClient, Database,
 };
 
-
 use crate::client::mongodb::actions::{
     MONGODB_CLIENT_CONNECTED_EVENT, MONGODB_CLIENT_RESULT_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -64,16 +63,22 @@ impl MongodbClient {
         // Parse startup parameters
         let database_name = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("database"))
+            .map(|p| p.get_optional_string("database"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "admin".to_string());
 
         let username = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("username"));
+            .map(|p| p.get_optional_string("username"))
+            .transpose()?
+            .flatten();
 
         let password = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("password"));
+            .map(|p| p.get_optional_string("password"))
+            .transpose()?
+            .flatten();
 
         // Build MongoDB connection string
         let connection_string = if let (Some(user), Some(pass)) = (username, password) {
@@ -101,7 +106,9 @@ impl MongodbClient {
 
         // Parse socket address (MongoDB connection string to SocketAddr)
         let socket_addr: SocketAddr = if remote_addr.contains(':') {
-            remote_addr.parse().context("Failed to parse socket address")?
+            remote_addr
+                .parse()
+                .context("Failed to parse socket address")?
         } else {
             format!("{}:27017", remote_addr)
                 .parse()
@@ -509,7 +516,11 @@ impl MongodbClient {
                 for action in actions {
                     // Note: We'd need to pass db_arc here in a real implementation
                     // For now, just log the actions
-                    trace!("MongoDB client {} follow-up action: {:?}", client_id, action);
+                    trace!(
+                        "MongoDB client {} follow-up action: {:?}",
+                        client_id,
+                        action
+                    );
                 }
             }
             Err(e) => {

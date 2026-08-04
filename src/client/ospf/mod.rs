@@ -22,7 +22,7 @@ use crate::client::ospf::actions::{
     OSPF_CLIENT_CONNECTED_EVENT, OSPF_CLIENT_DD_RECEIVED_EVENT, OSPF_CLIENT_HELLO_RECEIVED_EVENT,
     OSPF_CLIENT_LSU_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::{Event, StartupParams};
@@ -95,10 +95,10 @@ impl OspfClient {
         // Extract configuration
         let (router_id, area_id) = if let Some(ref params) = startup_params {
             let router_id = params
-                .get_optional_string("router_id")
+                .get_optional_string("router_id")?
                 .unwrap_or_else(|| interface_ip.to_string());
             let area_id = params
-                .get_optional_string("area_id")
+                .get_optional_string("area_id")?
                 .unwrap_or_else(|| "0.0.0.0".to_string());
             (router_id, area_id)
         } else {

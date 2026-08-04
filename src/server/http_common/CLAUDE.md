@@ -123,8 +123,9 @@ If a new protocol reuses this module:
 
 1. Call `extract_request_data` for logging + parsing consistency.
 2. Add `request_handling_startup_parameters()` to `get_startup_parameters()` —
-   `StartupParams` panics on an undeclared key, so a caller passing
-   `request_filter` to a protocol that didn't declare it kills the request task.
+   `StartupParams` rejects an undeclared key, so a caller passing
+   `request_filter` to a protocol that didn't declare it gets a startup error
+   (and no server) rather than the behaviour it asked for.
 3. Build the `RequestFilter` **once**, not per request, and forward `warnings()`.
 4. Route responses through `build_safe_response` (or an equivalent that cannot
    panic). Never `unwrap()` a builder fed with model output.

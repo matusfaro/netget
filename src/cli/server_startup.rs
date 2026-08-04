@@ -113,11 +113,25 @@ pub async fn start_server_by_id(
     }
 
     // Build type-safe startup params if provided
+    //
+    // The JSON comes from the LLM or an MCP client, so a bad key must become a
+    // reported error (and an `Error` server status), never a panic.
     let startup_params = if let Some(params_json) = server.startup_params.clone() {
         // Get the parameter schema from the protocol
         let schema = protocol.get_startup_parameters();
         // Create validated StartupParams
-        Some(crate::protocol::StartupParams::new(params_json, schema))
+        match crate::protocol::StartupParams::new(params_json, schema) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                let msg = format!("Invalid startup_params for {}: {}", protocol_name, e);
+                state
+                    .update_server_status(server_id, ServerStatus::Error(msg.clone()))
+                    .await;
+                let _ = status_tx.send(format!("[ERROR] {}", msg));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                return Err(ActionExecutionError::Fatal(anyhow::anyhow!(msg)));
+            }
+        }
     } else {
         None
     };
@@ -279,6 +293,23 @@ pub async fn start_server_from_action(
         startup_params
     };
 
+    // === Validate startup params BEFORE registering the server ===
+    //
+    // This JSON comes straight from the LLM (`open_server`) or an MCP client
+    // (`start_server`), so it is untrusted. Validating here means a malformed
+    // request returns an error to the caller and leaves no `ServerInstance`
+    // stranded in `ServerStatus::Starting`.
+    let startup_params_obj = match startup_params.clone() {
+        Some(params_json) => {
+            let schema = protocol_impl.get_startup_parameters();
+            Some(
+                crate::protocol::StartupParams::new(params_json, schema)
+                    .map_err(|e| anyhow::anyhow!("Invalid startup_params for {}: {}", protocol, e))?,
+            )
+        }
+        None => None,
+    };
+
     // === DUAL PATH LOGIC: Migrated vs Unmigrated Protocols ===
     //
     // Migrated protocols return Some(...) from default_binding()
@@ -287,12 +318,8 @@ pub async fn start_server_from_action(
     let (final_mac, final_interface, final_host, final_port, _use_new_path, listen_addr) =
         if let Some(defaults) = protocol_impl.default_binding() {
             // NEW PATH: Protocol has been migrated, use flexible binding
-            let (mac, iface, host_str, port_num) = defaults.apply(
-                mac_address.clone(),
-                interface.clone(),
-                host.clone(),
-                port,
-            );
+            let (mac, iface, host_str, port_num) =
+                defaults.apply(mac_address.clone(), interface.clone(), host.clone(), port);
 
             // For port-based protocols with port 0, find available port
             let final_port_num = if let Some(p) = port_num {
@@ -319,11 +346,9 @@ pub async fn start_server_from_action(
             // Construct legacy listen_addr for backwards compatibility
             // (protocols still receive this field, but new protocols should ignore it)
             let legacy_addr = match (&host_str, final_port_num) {
-                (Some(h), Some(p)) => {
-                    format!("{}:{}", h, p)
-                        .parse()
-                        .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap())
-                }
+                (Some(h), Some(p)) => format!("{}:{}", h, p)
+                    .parse()
+                    .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
                 _ => "127.0.0.1:0".parse().unwrap(),
             };
 
@@ -498,13 +523,7 @@ pub async fn start_server_from_action(
         }
     }
 
-    // Build startup params
-    let startup_params_obj = if let Some(params_json) = startup_params {
-        let schema = protocol_impl.get_startup_parameters();
-        Some(crate::protocol::StartupParams::new(params_json, schema))
-    } else {
-        None
-    };
+    // `startup_params_obj` was built and validated above, before `add_server`.
 
     // Build spawn context
     // Use the configured LLM client from state (includes mock config, lock settings, etc.)

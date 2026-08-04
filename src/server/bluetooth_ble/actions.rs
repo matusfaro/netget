@@ -28,7 +28,7 @@ pub static BLUETOOTH_BLE_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 "permissions": ["readable"],
                 "initial_value": "0048"
             }]
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -59,7 +59,7 @@ pub static BLUETOOTH_STATE_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(||
         "Bluetooth adapter state changed (powered on/off, advertising started/stopped, etc.)",
         json!({
             "type": "start_advertising"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "state".to_string(),
@@ -82,7 +82,7 @@ pub static BLUETOOTH_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         json!({
             "type": "respond_to_read",
             "value": "0048"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -113,7 +113,7 @@ pub static BLUETOOTH_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
         "Client wrote data to a GATT characteristic",
         json!({
             "type": "respond_to_write"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -158,7 +158,7 @@ pub static BLUETOOTH_SUBSCRIBE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "type": "send_notification",
             "characteristic_uuid": "2A37",
             "value": "0048"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -357,7 +357,9 @@ impl Server for BluetoothBleProtocol {
             let device_name = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "NetGet-BLE".to_string());
 

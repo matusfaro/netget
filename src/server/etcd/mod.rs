@@ -109,7 +109,9 @@ impl EtcdServer {
         // Extract cluster configuration
         let cluster_name = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("cluster_name"))
+            .map(|p| p.get_optional_string("cluster_name"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "netget-cluster".to_string());
 
         let cluster_id = 0x6574636400000001u64; // "etcd" + 1
@@ -344,18 +346,25 @@ impl EtcdServer {
         let mut count = 0;
 
         for protocol_result in &execution_result.protocol_results {
-            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } =
+                protocol_result
+            {
                 if name == "etcd_range_response" {
                     // Parse LLM response
                     if let Some(kvs_array) = data.get("kvs").and_then(|v| v.as_array()) {
                         for kv_json in kvs_array {
                             let key = kv_json.get("key").and_then(|v| v.as_str()).unwrap_or("");
                             let value = kv_json.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                            let create_revision =
-                                kv_json.get("create_revision").and_then(|v| v.as_i64()).unwrap_or(0);
-                            let mod_revision =
-                                kv_json.get("mod_revision").and_then(|v| v.as_i64()).unwrap_or(0);
-                            let version = kv_json.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let create_revision = kv_json
+                                .get("create_revision")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0);
+                            let mod_revision = kv_json
+                                .get("mod_revision")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0);
+                            let version =
+                                kv_json.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
                             let lease = kv_json.get("lease").and_then(|v| v.as_i64()).unwrap_or(0);
 
                             kvs.push(KeyValue {
@@ -369,7 +378,10 @@ impl EtcdServer {
                         }
                     }
                     more = data.get("more").and_then(|v| v.as_bool()).unwrap_or(false);
-                    count = data.get("count").and_then(|v| v.as_i64()).unwrap_or(kvs.len() as i64);
+                    count = data
+                        .get("count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(kvs.len() as i64);
                 }
             }
         }
@@ -447,13 +459,18 @@ impl EtcdServer {
         let mut revision: i64 = 0;
 
         for protocol_result in &execution_result.protocol_results {
-            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } =
+                protocol_result
+            {
                 if name == "etcd_put_response" {
                     // LLM provided put response
-                    revision = data.get("revision").and_then(|v| v.as_i64()).unwrap_or_else(|| {
-                        store_lock.increment_revision();
-                        store_lock.revision
-                    });
+                    revision = data
+                        .get("revision")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_else(|| {
+                            store_lock.increment_revision();
+                            store_lock.revision
+                        });
 
                     // Update store revision if LLM provided one
                     if revision > store_lock.revision {
@@ -536,7 +553,9 @@ impl EtcdServer {
         let mut deleted: i64 = 0;
 
         for protocol_result in &execution_result.protocol_results {
-            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } =
+                protocol_result
+            {
                 if name == "etcd_delete_range_response" {
                     // LLM provided delete response
                     deleted = data.get("deleted").and_then(|v| v.as_i64()).unwrap_or(0);

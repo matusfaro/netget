@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 use crate::client::openai::actions::{
     OPENAI_CLIENT_CONNECTED_EVENT, OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
@@ -36,16 +36,21 @@ impl OpenAiClient {
         let api_key = startup_params
             .as_ref()
             .map(|p| p.get_string("api_key"))
+            .transpose()?
             .context("OpenAI API key is required")?;
 
         let default_model = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("default_model"))
+            .map(|p| p.get_optional_string("default_model"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "gpt-3.5-turbo".to_string());
 
         let organization = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("organization"));
+            .map(|p| p.get_optional_string("organization"))
+            .transpose()?
+            .flatten();
 
         info!(
             "OpenAI client {} initializing with API endpoint: {}",

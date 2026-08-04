@@ -14,7 +14,7 @@ use tracing::{error, info, trace, warn};
 use crate::client::socks5::actions::{
     SOCKS5_CLIENT_CONNECTED_EVENT, SOCKS5_CLIENT_DATA_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -53,16 +53,21 @@ impl Socks5Client {
         let target_addr = startup_params
             .as_ref()
             .map(|p| p.get_string("target_addr"))
+            .transpose()?
             .context("Missing required startup parameter 'target_addr'")?;
 
         // Extract optional authentication
         let auth_username = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("auth_username"));
+            .map(|p| p.get_optional_string("auth_username"))
+            .transpose()?
+            .flatten();
 
         let auth_password = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("auth_password"));
+            .map(|p| p.get_optional_string("auth_password"))
+            .transpose()?
+            .flatten();
 
         info!(
             "SOCKS5 client {} connecting to {} through proxy {}",

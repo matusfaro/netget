@@ -171,8 +171,8 @@ impl Protocol for OpenApiClientProtocol {
                     Parameter {
                         name: "path_params".to_string(),
                         type_hint: "object".to_string(),
-                        description:
-                            "Path parameters (e.g., {\"id\": \"123\"} for /users/{id})".to_string(),
+                        description: "Path parameters (e.g., {\"id\": \"123\"} for /users/{id})"
+                            .to_string(),
                         required: false,
                     },
                     Parameter {
@@ -205,7 +205,7 @@ impl Protocol for OpenApiClientProtocol {
                     "headers": {"Authorization": "Bearer token123"},
                     "body": null
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "list_operations".to_string(),
@@ -214,7 +214,7 @@ impl Protocol for OpenApiClientProtocol {
                 example: json!({
                     "type": "list_operations"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_operation_details".to_string(),
@@ -229,7 +229,7 @@ impl Protocol for OpenApiClientProtocol {
                     "type": "get_operation_details",
                     "operation_id": "listUsers"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -238,7 +238,7 @@ impl Protocol for OpenApiClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -299,8 +299,16 @@ impl Protocol for OpenApiClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("openapi_client_connected", "Triggered when OpenAPI client is initialized with spec", json!({"type": "placeholder", "event_id": "openapi_client_connected"})),
-            EventType::new("openapi_operation_response", "Triggered when OpenAPI operation response is received", json!({"type": "placeholder", "event_id": "openapi_operation_response"})),
+            EventType::new(
+                "openapi_client_connected",
+                "Triggered when OpenAPI client is initialized with spec",
+                json!({"type": "placeholder", "event_id": "openapi_client_connected"}),
+            ),
+            EventType::new(
+                "openapi_operation_response",
+                "Triggered when OpenAPI operation response is received",
+                json!({"type": "placeholder", "event_id": "openapi_operation_response"}),
+            ),
         ]
     }
 
@@ -423,13 +431,13 @@ impl Client for OpenApiClientProtocol {
             // Extract startup parameters into JSON for compatibility
             let mut params = serde_json::Map::new();
             if let Some(sp) = &ctx.startup_params {
-                if let Some(spec) = sp.get_optional_string("spec") {
+                if let Some(spec) = sp.get_optional_string("spec")? {
                     params.insert("spec".to_string(), serde_json::json!(spec));
                 }
-                if let Some(spec_file) = sp.get_optional_string("spec_file") {
+                if let Some(spec_file) = sp.get_optional_string("spec_file")? {
                     params.insert("spec_file".to_string(), serde_json::json!(spec_file));
                 }
-                if let Some(base_url) = sp.get_optional_string("base_url") {
+                if let Some(base_url) = sp.get_optional_string("base_url")? {
                     params.insert("base_url".to_string(), serde_json::json!(base_url));
                 }
             }

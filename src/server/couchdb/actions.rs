@@ -30,7 +30,7 @@ pub static COUCHDB_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_server_info",
             "version": "3.5.1"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -48,7 +48,8 @@ pub static COUCHDB_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "operation".to_string(),
             type_hint: "string".to_string(),
-            description: "Detected operation type (server_info, db_create, doc_get, etc.)".to_string(),
+            description: "Detected operation type (server_info, db_create, doc_get, etc.)"
+                .to_string(),
             required: true,
         },
         Parameter {
@@ -111,7 +112,8 @@ fn send_couchdb_response_action() -> ActionDefinition {
             Parameter {
                 name: "status_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "HTTP status code (200, 201, 400, 401, 404, 409, 500, etc.)".to_string(),
+                description: "HTTP status code (200, 201, 400, 401, 404, 409, 500, etc.)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -146,14 +148,12 @@ fn send_server_info_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_server_info".to_string(),
         description: "Send CouchDB server welcome/info response (GET /)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "version".to_string(),
-                type_hint: "string".to_string(),
-                description: "CouchDB version number".to_string(),
-                required: false,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "version".to_string(),
+            type_hint: "string".to_string(),
+            description: "CouchDB version number".to_string(),
+            required: false,
+        }],
         example: serde_json::json!({
             "type": "send_server_info",
             "version": "3.5.1"
@@ -265,14 +265,12 @@ fn send_all_dbs_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_all_dbs".to_string(),
         description: "Send list of all databases (GET /_all_dbs)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "databases".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of database names".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "databases".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of database names".to_string(),
+            required: true,
+        }],
         example: serde_json::json!({
             "type": "send_all_dbs",
             "databases": ["_replicator", "_users", "mydb", "testdb"]
@@ -323,14 +321,12 @@ fn send_bulk_docs_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_bulk_docs_response".to_string(),
         description: "Send bulk documents operation results (POST /{db}/_bulk_docs)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "results".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of results with ok, id, rev for each document".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "results".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of results with ok, id, rev for each document".to_string(),
+            required: true,
+        }],
         example: serde_json::json!({
             "type": "send_bulk_docs_response",
             "results": [
@@ -469,14 +465,12 @@ fn send_auth_required_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_auth_required".to_string(),
         description: "Send 401 Unauthorized response (basic auth required)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "realm".to_string(),
-                type_hint: "string".to_string(),
-                description: "Authentication realm".to_string(),
-                required: false,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "realm".to_string(),
+            type_hint: "string".to_string(),
+            description: "Authentication realm".to_string(),
+            required: false,
+        }],
         example: serde_json::json!({
             "type": "send_auth_required",
             "realm": "CouchDB"
@@ -642,19 +636,25 @@ impl Server for CouchDbProtocol {
             let enable_auth = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("enable_auth"))
+                .map(|p| p.get_optional_bool("enable_auth"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             let admin_username = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("admin_username"))
+                .map(|p| p.get_optional_string("admin_username"))
+                .transpose()?
+                .flatten()
                 .unwrap_or_else(|| "admin".to_string());
 
             let admin_password = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("admin_password"))
+                .map(|p| p.get_optional_string("admin_password"))
+                .transpose()?
+                .flatten()
                 .unwrap_or_else(|| "password".to_string());
 
             CouchDbServer::spawn_with_llm_actions(
@@ -916,10 +916,7 @@ impl Server for CouchDbProtocol {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
 
-                let offset = action
-                    .get("offset")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let offset = action.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
 
                 let rows = action
                     .get("rows")
@@ -949,10 +946,7 @@ impl Server for CouchDbProtocol {
                     .and_then(|v| v.as_str())
                     .unwrap_or("0");
 
-                let pending = action
-                    .get("pending")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let pending = action.get("pending").and_then(|v| v.as_u64()).unwrap_or(0);
 
                 let response = json!({
                     "results": results,

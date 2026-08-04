@@ -184,7 +184,10 @@ async fn test_socks5_client_no_auth_basic() {
         state: app_state.clone(),
         status_tx: status_tx.clone(),
         client_id,
-        startup_params: Some(netget::protocol::StartupParams::new(startup_params_json, schema)),
+        startup_params: Some(
+            netget::protocol::StartupParams::new(startup_params_json, schema)
+                .expect("valid startup params"),
+        ),
     };
 
     // Connect through SOCKS5
@@ -241,10 +244,13 @@ async fn test_socks5_client_connection_failure() {
         state: app_state.clone(),
         status_tx: status_tx.clone(),
         client_id,
-        startup_params: Some(netget::protocol::StartupParams::new(
-            serde_json::json!({ "target_addr": "example.com:80" }),
-            schema,
-        )),
+        startup_params: Some(
+            netget::protocol::StartupParams::new(
+                serde_json::json!({ "target_addr": "example.com:80" }),
+                schema,
+            )
+            .expect("valid startup params"),
+        ),
     };
 
     // Attempt to connect

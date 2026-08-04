@@ -14,11 +14,6 @@ use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
 use tracing::debug;
 
-/// Connection data for MySQL protocol
-pub struct MysqlConnectionData {
-    pub database: Option<String>,
-}
-
 /// MySQL protocol action handler
 pub struct MysqlProtocol {
     _connection_id: ConnectionId,
@@ -54,7 +49,9 @@ impl Protocol for MysqlProtocol {
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_mysql_connections_action()]
+        // No user-triggered actions. (A `list_mysql_connections` action used to be declared
+        // here; its executor returned a hardcoded empty list, so it only ever misled the model.)
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -81,10 +78,10 @@ impl Protocol for MysqlProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("opensrv-mysql v0.8 protocol library")
-            .llm_control("Query responses (result sets, OK packets, errors)")
+            .implementation("opensrv-mysql v0.7 protocol library")
+            .llm_control("Query responses (result sets, OK packets, ERR packets)")
             .e2e_testing("mysql_async client crate")
-            .notes("No authentication, errors sent as OK (library limitation)")
+            .notes("No authentication, no TLS; all row values are sent as text")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -157,7 +154,9 @@ impl Server for MysqlProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             MysqlServer::spawn_with_llm_actions(
@@ -182,7 +181,6 @@ impl Server for MysqlProtocol {
             "mysql_error_response" => self.execute_mysql_error_response(action),
             "mysql_ok_response" => self.execute_mysql_ok_response(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_mysql_connections" => self.execute_list_mysql_connections(action),
             _ => Err(anyhow::anyhow!("Unknown MySQL action: {}", action_type)),
         }
     }
@@ -224,10 +222,13 @@ impl MysqlProtocol {
     }
 
     fn execute_mysql_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Truncating with `as u16` turned an out-of-range code into an unrelated one; keep the
+        // documented default instead.
         let error_code = action
             .get("error_code")
             .and_then(|v| v.as_u64())
-            .unwrap_or(1064) as u16;
+            .and_then(|c| u16::try_from(c).ok())
+            .unwrap_or(1064);
 
         let message = action
             .get("message")
@@ -278,16 +279,6 @@ impl MysqlProtocol {
             }),
         })
     }
-
-    fn execute_list_mysql_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("MySQL list connections");
-
-        // This is a placeholder - in a real implementation, we'd track connections
-        Ok(ActionResult::Custom {
-            name: "list_mysql_connections".to_string(),
-            data: json!({"connections": []}),
-        })
-    }
 }
 
 /// Action definition: Send MySQL query response
@@ -299,7 +290,11 @@ pub fn mysql_query_response_action() -> ActionDefinition {
             Parameter {
                 name: "columns".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'VARCHAR', 'INT', 'BIGINT')".to_string(),
+                description: "Array of column definitions. Each column needs 'name' and 'type'. \
+                              Recognised types: INT, INTEGER, BIGINT, SMALLINT, TINYINT, FLOAT, DOUBLE, \
+                              DECIMAL, DATE, TIME, DATETIME, TIMESTAMP, BLOB, BINARY, TEXT, VARCHAR \
+                              (anything else is treated as VARCHAR). The type sets the column metadata \
+                              only - every value is transmitted in MySQL's text protocol".to_string(),
                 required: true,
             },
             Parameter {
@@ -332,7 +327,10 @@ pub fn mysql_error_response_action() -> ActionDefinition {
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
                 description:
-                    "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)"
+                    "MySQL error number. Sent verbatim when it is one of the recognised codes: \
+                     1044, 1045, 1046, 1049, 1050, 1051, 1052, 1054, 1062, 1064, 1065, 1136, \
+                     1146, 1149, 1216, 1217, 1364, 1451, 1452, 1690. Any other value is reported \
+                     to the client as 1105 (unknown error) with your message unchanged"
                         .to_string(),
                 required: true,
             },
@@ -404,44 +402,6 @@ pub fn close_this_connection_action() -> ActionDefinition {
     }
 }
 
-/// Action definition: List MySQL connections
-pub fn list_mysql_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_mysql_connections".to_string(),
-        description: "List all active MySQL connections".to_string(),
-        parameters: vec![],
-        example: json!({"type": "list_mysql_connections"}),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("MySQL list connections")
-                .with_debug("MySQL list_mysql_connections"),
-        ),
-    }
-}
-
-/// Action definition: Close specific MySQL connection
-pub fn mysql_close_connection_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "mysql_close_connection".to_string(),
-        description: "Close a specific MySQL connection by ID".to_string(),
-        parameters: vec![Parameter {
-            name: "connection_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "The connection ID to close".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "mysql_close_connection",
-            "connection_id": "conn-123"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("MySQL close connection {connection_id}")
-                .with_debug("MySQL mysql_close_connection: connection_id={connection_id}"),
-        ),
-    }
-}
-
 // ============================================================================
 // MySQL Action Constants
 // ============================================================================
@@ -455,7 +415,11 @@ pub static MYSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             Parameter {
                 name: "columns".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'VARCHAR', 'INT', 'BIGINT')".to_string(),
+                description: "Array of column definitions. Each column needs 'name' and 'type'. \
+                              Recognised types: INT, INTEGER, BIGINT, SMALLINT, TINYINT, FLOAT, DOUBLE, \
+                              DECIMAL, DATE, TIME, DATETIME, TIMESTAMP, BLOB, BINARY, TEXT, VARCHAR \
+                              (anything else is treated as VARCHAR). The type sets the column metadata \
+                              only - every value is transmitted in MySQL's text protocol".to_string(),
                 required: true,
             },
             Parameter {
@@ -488,7 +452,10 @@ pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> =
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
                 description:
-                    "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)"
+                    "MySQL error number. Sent verbatim when it is one of the recognised codes: \
+                     1044, 1045, 1046, 1049, 1050, 1051, 1052, 1054, 1062, 1064, 1065, 1136, \
+                     1146, 1149, 1216, 1217, 1364, 1451, 1452, 1690. Any other value is reported \
+                     to the client as 1105 (unknown error) with your message unchanged"
                         .to_string(),
                 required: true,
             },
@@ -512,8 +479,8 @@ pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> =
     });
 
 /// MySQL OK response action constant
-pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| ActionDefinition {
+pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
         name: "mysql_ok_response".to_string(),
         description: "Send an OK response for INSERT, UPDATE, DELETE, or other non-SELECT queries"
             .to_string(),
@@ -541,7 +508,8 @@ pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> =
                 .with_info("-> MySQL OK, {affected_rows} rows affected")
                 .with_debug("MySQL mysql_ok_response: affected_rows={affected_rows}, last_insert_id={last_insert_id}"),
         ),
-    });
+    }
+});
 
 /// MySQL close connection action constant
 pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
@@ -563,25 +531,29 @@ pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// MySQL query event - triggered when client sends a query
 pub static MYSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mysql_query", "MySQL query received from client", json!({"type": "placeholder", "event_id": "mysql_query"}))
-        .with_parameters(vec![Parameter {
-            name: "query".to_string(),
-            type_hint: "string".to_string(),
-            description: "The SQL query string sent by the client".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            MYSQL_QUERY_RESPONSE_ACTION.clone(),
-            MYSQL_ERROR_RESPONSE_ACTION.clone(),
-            MYSQL_OK_RESPONSE_ACTION.clone(),
-            MYSQL_CLOSE_CONNECTION_ACTION.clone(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("MySQL: {preview(query,80)}")
-                .with_debug("MySQL query: {query}")
-                .with_trace("MySQL: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "mysql_query",
+        "MySQL query received from client",
+        json!({"type": "placeholder", "event_id": "mysql_query"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "query".to_string(),
+        type_hint: "string".to_string(),
+        description: "The SQL query string sent by the client".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        MYSQL_QUERY_RESPONSE_ACTION.clone(),
+        MYSQL_ERROR_RESPONSE_ACTION.clone(),
+        MYSQL_OK_RESPONSE_ACTION.clone(),
+        MYSQL_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("MySQL: {preview(query,80)}")
+            .with_debug("MySQL query: {query}")
+            .with_trace("MySQL: {json_pretty(.)}"),
+    )
 });
 
 /// Get MySQL event types

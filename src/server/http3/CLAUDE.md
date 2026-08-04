@@ -94,9 +94,9 @@ zero.
 
 - HTTP/3 framing, QPACK, real HTTP/3 clients (see above)
 - `request_filter` / `filtered_response` — that mechanism is HTTP/1.1 + HTTP/2
-  only, and `http3` does not declare those startup parameters. Passing them will
-  hit `StartupParams`' undeclared-key panic. Filter traffic with a script handler
-  instead.
+  only, and `http3` does not declare those startup parameters. Passing them is
+  rejected by `StartupParams` as an undeclared key and the server does not start.
+  Filter traffic with a script handler instead.
 - Unidirectional streams, DATAGRAMs, 0-RTT, connection migration, stream
   priorities
 - Binary payloads in either direction (see the encoding asymmetry)

@@ -83,7 +83,7 @@ pub static ELASTICSEARCH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_get_response_action(),
         send_bulk_response_action(),
         send_cluster_info_action(),
-        show_message_action(),
+        send_cluster_health_action(),
     ])
     .with_log_template(
         LogTemplate::new()
@@ -286,7 +286,45 @@ fn send_bulk_response_action() -> ActionDefinition {
 fn send_cluster_info_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_cluster_info".to_string(),
-        description: "Send cluster information response".to_string(),
+        description: "Answer the root endpoint (GET /) with the node/version banner every \
+                      Elasticsearch client fetches to identify the server. This response has \
+                      no cluster health in it - answer the 'cluster_health' operation \
+                      (GET /_cluster/health) with send_cluster_health instead."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "cluster_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Cluster name".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "version".to_string(),
+                type_hint: "string".to_string(),
+                description: "Elasticsearch version, e.g. '8.0.0'".to_string(),
+                required: false,
+            },
+        ],
+        example: serde_json::json!({
+            "type": "send_cluster_info",
+            "cluster_name": "llm-elasticsearch",
+            "version": "8.0.0"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> Elasticsearch cluster {cluster_name}")
+                .with_debug("Elasticsearch cluster_info: {cluster_name} v{version}"),
+        ),
+    }
+}
+
+fn send_cluster_health_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_cluster_health".to_string(),
+        description: "Answer GET /_cluster/health (the 'cluster_health' operation) with a \
+                      cluster health report. Clients and orchestration tooling poll this \
+                      endpoint to decide whether the cluster is usable."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "cluster_name".to_string(),
@@ -297,50 +335,65 @@ fn send_cluster_info_action() -> ActionDefinition {
             Parameter {
                 name: "status".to_string(),
                 type_hint: "string".to_string(),
-                description: "Cluster status: 'green', 'yellow', or 'red'".to_string(),
+                description: "Cluster status: 'green', 'yellow', or 'red'. Anything else is \
+                              rejected"
+                    .to_string(),
                 required: false,
             },
             Parameter {
-                name: "version".to_string(),
-                type_hint: "string".to_string(),
-                description: "Elasticsearch version".to_string(),
+                name: "number_of_nodes".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of nodes in the cluster (default: 1)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "active_shards".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of active shards (default: 0)".to_string(),
                 required: false,
             },
         ],
         example: serde_json::json!({
-            "type": "send_cluster_info",
+            "type": "send_cluster_health",
             "cluster_name": "llm-elasticsearch",
             "status": "green",
-            "version": "8.0.0"
+            "number_of_nodes": 1,
+            "active_shards": 5
         }),
         log_template: Some(
             LogTemplate::new()
-                .with_info("-> Elasticsearch cluster {cluster_name} ({status})")
-                .with_debug("Elasticsearch cluster_info: {cluster_name} v{version}"),
+                .with_info("-> Elasticsearch health {status}")
+                .with_debug("Elasticsearch cluster_health: {cluster_name} status={status}"),
         ),
     }
 }
 
-fn show_message_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "show_message".to_string(),
-        description: "Display a message in the TUI output panel".to_string(),
-        parameters: vec![Parameter {
-            name: "message".to_string(),
-            type_hint: "string".to_string(),
-            description: "Message to display".to_string(),
-            required: true,
-        }],
-        example: serde_json::json!({
-            "type": "show_message",
-            "message": "Indexed document in products index"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("Elasticsearch: {message}")
-                .with_debug("Elasticsearch show_message: {message}"),
-        ),
+/// Read and validate the model-supplied `status_code`.
+///
+/// The old `as u64 as u16` cast wrapped silently, and out-of-range values reached
+/// `Response::builder().status()` where an `.unwrap()` turned them into a panic that
+/// killed the connection task. Reject them here, where the message reaches the model.
+fn parse_status_code(action: &Value) -> Result<u16> {
+    let raw = action
+        .get("status_code")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code: expected a number"))?;
+
+    if !(100..=599).contains(&raw) {
+        return Err(anyhow::anyhow!(
+            "Invalid status_code {raw}: must be an HTTP status between 100 and 599. \
+             Elasticsearch uses 200 for success, 201 for a created document, 404 when a \
+             document or index is missing and 400 for a malformed query."
+        ));
     }
+
+    Ok(raw as u16)
+}
+
+/// Serialize a response body. Serializing a `serde_json::Value` cannot fail, so the
+/// fallback is unreachable - it exists only to keep this off the panic path.
+fn body_of(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
 pub fn get_elasticsearch_event_types() -> Vec<EventType> {
@@ -468,7 +521,9 @@ impl Server for ElasticsearchProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             ElasticsearchServer::spawn_with_llm_actions(

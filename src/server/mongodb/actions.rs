@@ -14,11 +14,6 @@ use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
 use tracing::debug;
 
-/// Connection data for MongoDB protocol
-pub struct MongodbConnectionData {
-    pub database: Option<String>,
-}
-
 /// MongoDB protocol action handler
 pub struct MongodbProtocol {
     _connection_id: ConnectionId,
@@ -42,60 +37,72 @@ impl MongodbProtocol {
 
 // Event type definitions
 pub static MONGODB_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mongodb_command", "MongoDB command received from client", json!({"type": "placeholder", "event_id": "mongodb_command"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "command".to_string(),
-                type_hint: "string".to_string(),
-                description: "Command name (find, insert, update, delete, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "database".to_string(),
-                type_hint: "string".to_string(),
-                description: "Target database name".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "collection".to_string(),
-                type_hint: "string".to_string(),
-                description: "Target collection name".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "filter".to_string(),
-                type_hint: "object".to_string(),
-                description: "Query filter (for find/update/delete)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "document".to_string(),
-                type_hint: "object".to_string(),
-                description: "Document to insert or update".to_string(),
-                required: false,
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} MongoDB {command} {database}.{collection} ({duration_ms}ms)")
-                .with_debug("MongoDB {command} on {database}.{collection} from {client_ip}")
-                .with_trace("MongoDB command: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "mongodb_command",
+        "MongoDB command received from client",
+        json!({"type": "placeholder", "event_id": "mongodb_command"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "Command name (find, insert, update, delete, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "database".to_string(),
+            type_hint: "string".to_string(),
+            description: "Target database name".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "collection".to_string(),
+            type_hint: "string".to_string(),
+            description: "Target collection name (the value of the command field, e.g. \"users\" \
+                          for {find: \"users\"}). Null for commands that do not name a collection"
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "filter".to_string(),
+            type_hint: "object".to_string(),
+            description: "Query filter (for find/update/delete)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "document".to_string(),
+            type_hint: "object".to_string(),
+            description: "Document to insert or update".to_string(),
+            required: false,
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} MongoDB {command} {database}.{collection} ({duration_ms}ms)")
+            .with_debug("MongoDB {command} on {database}.{collection} from {client_ip}")
+            .with_trace("MongoDB command: {json_pretty(.)}"),
+    )
 });
 
 pub static MONGODB_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mongodb_disconnected", "MongoDB client disconnected", json!({"type": "placeholder", "event_id": "mongodb_disconnected"}))
-        .with_parameters(vec![Parameter {
-            name: "reason".to_string(),
-            type_hint: "string".to_string(),
-            description: "Disconnection reason".to_string(),
-            required: false,
-        }])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} MongoDB disconnected: {reason}")
-                .with_debug("MongoDB disconnect from {client_ip}: {reason}"),
-        )
+    EventType::new(
+        "mongodb_disconnected",
+        "MongoDB client disconnected",
+        json!({"type": "placeholder", "event_id": "mongodb_disconnected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "reason".to_string(),
+        type_hint: "string".to_string(),
+        description: "Why the connection ended: client_disconnect, close_this_connection, \
+                      invalid_message_length, unsupported_opcode or malformed_op_msg"
+            .to_string(),
+        required: false,
+    }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} MongoDB disconnected: {reason}")
+            .with_debug("MongoDB disconnect from {client_ip}: {reason}"),
+    )
 });
 
 // Implement Protocol trait (common functionality)
@@ -113,7 +120,9 @@ impl Protocol for MongodbProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_mongodb_connections_action()]
+        // No user-triggered actions. (A `list_mongodb_connections` action used to be declared
+        // here; its executor returned `NoAction`, so it did literally nothing.)
+        vec![]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -151,10 +160,15 @@ impl Protocol for MongodbProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("bson v3.0 with manual OP_MSG parsing")
+            .implementation("bson v3.0 with manual OP_MSG parsing (section kind 0 only)")
             .llm_control("Query responses (documents, counts, errors)")
             .e2e_testing("mongodb official client crate")
-            .notes("No authentication, no storage - LLM returns all data")
+            .notes(
+                "No authentication, no compression, no storage. Only OP_MSG (2013) is \
+                 implemented - a legacy OP_QUERY handshake is rejected. The driver's `hello` \
+                 handshake is answered by the LLM like any other command, so an instruction \
+                 that does not cover it will fail to connect",
+            )
             .build()
     }
 
@@ -229,7 +243,9 @@ impl Server for MongodbProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             MongodbServer::spawn_with_llm_actions(
@@ -257,7 +273,6 @@ impl Server for MongodbProtocol {
             "delete_response" => self.execute_delete_response(action),
             "error_response" => self.execute_error_response(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_mongodb_connections" => self.execute_list_mongodb_connections(action),
             _ => Err(anyhow::anyhow!("Unknown MongoDB action: {}", action_type)),
         }
     }
@@ -271,10 +286,7 @@ impl MongodbProtocol {
             .context("Missing 'documents' array")?
             .clone();
 
-        debug!(
-            "MongoDB find_response with {} documents",
-            documents.len()
-        );
+        debug!("MongoDB find_response with {} documents", documents.len());
         let _ = self.status_tx.send(format!(
             "[MongoDB] Sending find response with {} documents",
             documents.len()
@@ -361,10 +373,7 @@ impl MongodbProtocol {
     }
 
     fn execute_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let code = action
-            .get("code")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as i32;
+        let code = action.get("code").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
         let message = action
             .get("message")
             .and_then(|v| v.as_str())
@@ -384,11 +393,6 @@ impl MongodbProtocol {
                 "message": message
             }),
         })
-    }
-
-    fn execute_list_mongodb_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        // This would list all MongoDB connections (async action)
-        Ok(ActionResult::NoAction)
     }
 }
 
@@ -536,14 +540,3 @@ fn close_this_connection_action() -> ActionDefinition {
     }
 }
 
-fn list_mongodb_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_mongodb_connections".to_string(),
-        description: "List all active MongoDB connections".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_mongodb_connections"
-        }),
-        log_template: Some(LogTemplate::new().with_debug("Listing MongoDB connections")),
-    }
-}

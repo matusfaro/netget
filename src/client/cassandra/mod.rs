@@ -13,7 +13,7 @@ use tracing::{debug, error, info, trace};
 use crate::client::cassandra::actions::{
     CASSANDRA_CLIENT_CONNECTED_EVENT, CASSANDRA_CLIENT_RESULT_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -41,15 +41,21 @@ impl CassandraClient {
         // Parse startup parameters
         let keyspace = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("keyspace"));
+            .map(|p| p.get_optional_string("keyspace"))
+            .transpose()?
+            .flatten();
 
         let username = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("username"));
+            .map(|p| p.get_optional_string("username"))
+            .transpose()?
+            .flatten();
 
         let password = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("password"));
+            .map(|p| p.get_optional_string("password"))
+            .transpose()?
+            .flatten();
 
         info!(
             "Cassandra client {} connecting to {}",

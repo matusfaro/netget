@@ -13,7 +13,7 @@ use tracing::{error, info, trace};
 use crate::client::mysql::actions::{
     MYSQL_CLIENT_CONNECTED_EVENT, MYSQL_CLIENT_RESULT_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -38,12 +38,17 @@ impl MysqlClient {
         let username = startup_params
             .as_ref()
             .map(|p| p.get_string("username"))
+            .transpose()?
             .unwrap_or_else(|| "root".to_string());
         let password = startup_params
             .as_ref()
             .map(|p| p.get_string("password"))
+            .transpose()?
             .unwrap_or_else(|| "".to_string());
-        let database: Option<String> = startup_params.as_ref().map(|p| p.get_string("database"));
+        let database: Option<String> = startup_params
+            .as_ref()
+            .map(|p| p.get_string("database"))
+            .transpose()?;
 
         // Parse remote_addr to get host and port
         let (host, port) = if let Some((h, p)) = remote_addr.split_once(':') {

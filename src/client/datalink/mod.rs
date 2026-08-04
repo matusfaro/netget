@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
 use crate::client::datalink::actions::DATALINK_CLIENT_FRAME_CAPTURED_EVENT;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
@@ -57,8 +57,8 @@ impl DataLinkClient {
             anyhow::anyhow!("DataLink client requires startup parameters (interface)")
         })?;
 
-        let interface = params.get_string("interface");
-        let promiscuous = params.get_optional_bool("promiscuous").unwrap_or(false);
+        let interface = params.get_string("interface")?;
+        let promiscuous = params.get_optional_bool("promiscuous")?.unwrap_or(false);
 
         info!(
             "DataLink client {} opening interface: {} (promiscuous: {})",

@@ -137,7 +137,9 @@ impl Server for IppProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             IppServer::spawn_with_llm_actions(
@@ -467,39 +469,42 @@ pub static IPP_JOB_ATTRIBUTES_ACTION: LazyLock<ActionDefinition> =
 
 /// IPP request event - triggered when client sends an IPP request
 pub static IPP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ipp_request_received", "IPP request received from client", json!({"type": "placeholder", "event_id": "ipp_request_received"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTP method (usually POST)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "uri".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request URI".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "operation".to_string(),
-                type_hint: "string".to_string(),
-                description: "IPP operation name (e.g., Print-Job, Get-Printer-Attributes)"
-                    .to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![
-            IPP_RESPONSE_ACTION.clone(),
-            IPP_PRINTER_ATTRIBUTES_ACTION.clone(),
-            IPP_JOB_ATTRIBUTES_ACTION.clone(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("IPP {operation}")
-                .with_debug("IPP operation={operation}")
-                .with_trace("IPP: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ipp_request_received",
+        "IPP request received from client",
+        json!({"type": "placeholder", "event_id": "ipp_request_received"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (usually POST)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "uri".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request URI".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "IPP operation name (e.g., Print-Job, Get-Printer-Attributes)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        IPP_RESPONSE_ACTION.clone(),
+        IPP_PRINTER_ATTRIBUTES_ACTION.clone(),
+        IPP_JOB_ATTRIBUTES_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("IPP {operation}")
+            .with_debug("IPP operation={operation}")
+            .with_trace("IPP: {json_pretty(.)}"),
+    )
 });
 
 /// Get IPP event types

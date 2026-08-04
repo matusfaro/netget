@@ -468,7 +468,7 @@ impl OpenApiServer {
         // Check if spec is provided via startup_params (REQUIRED)
         let spec_loaded = if let Some(ref params) = startup_params {
             // Extract required spec parameter
-            let spec_content = if let Some(spec_str) = params.get_optional_string("spec") {
+            let spec_content = if let Some(spec_str) = params.get_optional_string("spec")? {
                 // Spec provided (LLM must read file and provide content)
                 info!(
                     "OpenAPI spec provided via startup_params ({} bytes)",

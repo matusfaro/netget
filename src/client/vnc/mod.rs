@@ -15,7 +15,7 @@ use crate::client::vnc::actions::{
     VNC_CLIENT_CONNECTED_EVENT, VNC_CLIENT_FRAMEBUFFER_UPDATE_EVENT,
     VNC_CLIENT_SERVER_CUT_TEXT_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -70,7 +70,9 @@ impl VncClient {
         // Extract password if provided
         let password = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("password"));
+            .map(|p| p.get_optional_string("password"))
+            .transpose()?
+            .flatten();
 
         // Perform VNC handshake
         let (fb_width, fb_height, server_name) =

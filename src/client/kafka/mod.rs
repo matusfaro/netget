@@ -19,7 +19,7 @@ use crate::client::kafka::actions::{
     KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
     KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -50,7 +50,7 @@ impl KafkaClient {
         // Parse startup parameters
         let params = startup_params.context("Kafka client requires startup parameters")?;
 
-        let mode_str = params.get_string("mode");
+        let mode_str = params.get_string("mode")?;
 
         let mode = match mode_str.to_lowercase().as_str() {
             "producer" => KafkaClientMode::Producer,
@@ -64,7 +64,7 @@ impl KafkaClient {
         };
 
         let client_id_str = params
-            .get_optional_string("client_id")
+            .get_optional_string("client_id")?
             .unwrap_or_else(|| "netget-kafka-client".to_string());
 
         info!(
@@ -86,11 +86,11 @@ impl KafkaClient {
             }
             KafkaClientMode::Consumer => {
                 let group_id = params
-                    .get_optional_string("group_id")
+                    .get_optional_string("group_id")?
                     .unwrap_or_else(|| "netget-consumer-group".to_string());
 
                 let topics: Vec<String> = params
-                    .get_optional_array("topics")
+                    .get_optional_array("topics")?
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))

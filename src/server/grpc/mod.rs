@@ -62,6 +62,7 @@ impl GrpcServer {
         let proto_schema = startup_params
             .as_ref()
             .map(|p| p.get_string("proto_schema"))
+            .transpose()?
             .context(
                 "Missing 'proto_schema' in startup_params. LLM must provide protobuf definition.",
             )?;
@@ -69,7 +70,9 @@ impl GrpcServer {
         // Enable reflection by default (can be disabled in startup_params)
         let enable_reflection = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_bool("enable_reflection"))
+            .map(|p| p.get_optional_bool("enable_reflection"))
+            .transpose()?
+            .flatten()
             .unwrap_or(true);
 
         debug!("Compiling protobuf schema for gRPC server");

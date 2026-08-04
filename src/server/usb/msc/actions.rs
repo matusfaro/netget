@@ -332,13 +332,15 @@ impl Server for UsbMscProtocol {
         ctx: crate::protocol::SpawnContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
     {
-        let disk_image = ctx
-            .startup_params
-            .as_ref()
-            .and_then(|p| p.get_optional_string("disk_image"))
-            .map(std::path::PathBuf::from);
-
         Box::pin(async move {
+            let disk_image = ctx
+                .startup_params
+                .as_ref()
+                .map(|p| p.get_optional_string("disk_image"))
+                .transpose()?
+                .flatten()
+                .map(std::path::PathBuf::from);
+
             crate::server::usb::msc::UsbMscServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
                 ctx.llm_client,
@@ -386,11 +388,9 @@ impl Server for UsbMscProtocol {
                     {
                         // Create new disk image
                         let path = std::path::Path::new(disk_image_path);
-                        let disk = tokio::runtime::Handle::current().block_on(async {
-                            super::disk::DiskImage::open_or_create(path, 10)
-                        })?;
-                        let disk_arc =
-                            std::sync::Arc::new(tokio::sync::RwLock::new(disk));
+                        let disk = tokio::runtime::Handle::current()
+                            .block_on(async { super::disk::DiskImage::open_or_create(path, 10) })?;
+                        let disk_arc = std::sync::Arc::new(tokio::sync::RwLock::new(disk));
 
                         // Mount the new disk
                         msc_handler.mount_disk(disk_arc);
@@ -403,7 +403,9 @@ impl Server for UsbMscProtocol {
                         );
                         Ok(ActionResult::NoAction)
                     } else {
-                        Err(anyhow::anyhow!("Failed to downcast handler to UsbMscHandler"))
+                        Err(anyhow::anyhow!(
+                            "Failed to downcast handler to UsbMscHandler"
+                        ))
                     }
                 } else {
                     Err(anyhow::anyhow!(
@@ -439,7 +441,9 @@ impl Server for UsbMscProtocol {
                         tracing::info!("USB MSC: Disk ejected for connection {}", connection_id);
                         Ok(ActionResult::NoAction)
                     } else {
-                        Err(anyhow::anyhow!("Failed to downcast handler to UsbMscHandler"))
+                        Err(anyhow::anyhow!(
+                            "Failed to downcast handler to UsbMscHandler"
+                        ))
                     }
                 } else {
                     Err(anyhow::anyhow!(
@@ -482,7 +486,9 @@ impl Server for UsbMscProtocol {
                         );
                         Ok(ActionResult::NoAction)
                     } else {
-                        Err(anyhow::anyhow!("Failed to downcast handler to UsbMscHandler"))
+                        Err(anyhow::anyhow!(
+                            "Failed to downcast handler to UsbMscHandler"
+                        ))
                     }
                 } else {
                     Err(anyhow::anyhow!(
@@ -542,7 +548,8 @@ fn mount_disk_action() -> ActionDefinition {
 fn eject_disk_action() -> ActionDefinition {
     ActionDefinition {
         name: "eject_disk".to_string(),
-        description: "Eject the currently mounted disk image (device will report 'not ready')".to_string(),
+        description: "Eject the currently mounted disk image (device will report 'not ready')"
+            .to_string(),
         parameters: vec![Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),

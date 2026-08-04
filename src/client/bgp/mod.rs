@@ -18,7 +18,7 @@ use crate::client::bgp::actions::{
     BGP_CLIENT_CONNECTED_EVENT, BGP_CLIENT_NOTIFICATION_RECEIVED_EVENT,
     BGP_CLIENT_UPDATE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -74,17 +74,23 @@ impl BgpClient {
         // Extract startup parameters
         let local_as = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_u32("local_as"))
+            .map(|p| p.get_optional_u32("local_as"))
+            .transpose()?
+            .flatten()
             .unwrap_or(DEFAULT_LOCAL_AS);
 
         let router_id = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("router_id"))
+            .map(|p| p.get_optional_string("router_id"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| DEFAULT_ROUTER_ID.to_string());
 
         let hold_time = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_u32("hold_time"))
+            .map(|p| p.get_optional_u32("hold_time"))
+            .transpose()?
+            .flatten()
             .map(|v| v as u16)
             .unwrap_or(DEFAULT_HOLD_TIME);
 

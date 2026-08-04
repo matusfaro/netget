@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::client::dynamodb::actions::DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
@@ -34,20 +34,24 @@ impl DynamoDbClient {
         // Extract startup parameters
         let region = startup_params
             .as_ref()
-            .and_then(|p| Some(p.get_string("region")))
+            .map(|p| p.get_string("region"))
+            .transpose()?
             .unwrap_or_else(|| "us-east-1".to_string());
 
         let endpoint_url = startup_params
             .as_ref()
-            .map(|p| p.get_string("endpoint_url"));
+            .map(|p| p.get_string("endpoint_url"))
+            .transpose()?;
 
         let access_key_id = startup_params
             .as_ref()
-            .map(|p| p.get_string("access_key_id"));
+            .map(|p| p.get_string("access_key_id"))
+            .transpose()?;
 
         let secret_access_key = startup_params
             .as_ref()
-            .map(|p| p.get_string("secret_access_key"));
+            .map(|p| p.get_string("secret_access_key"))
+            .transpose()?;
 
         info!(
             "DynamoDB client {} initializing for region {}",

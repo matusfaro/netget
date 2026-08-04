@@ -77,7 +77,7 @@ impl Protocol for WireguardClientProtocol {
                 example: json!({
                     "type": "get_connection_status"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -86,7 +86,7 @@ impl Protocol for WireguardClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_client_info".to_string(),
@@ -95,7 +95,7 @@ impl Protocol for WireguardClientProtocol {
                 example: json!({
                     "type": "get_client_info"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -177,7 +177,8 @@ impl Protocol for WireguardClientProtocol {
             ParameterDefinition {
                 name: "allowed_ips".to_string(),
                 type_hint: "array".to_string(),
-                description: "IP ranges to route through VPN (default: 0.0.0.0/0 for all traffic)".to_string(),
+                description: "IP ranges to route through VPN (default: 0.0.0.0/0 for all traffic)"
+                    .to_string(),
                 required: false,
                 example: json!(["0.0.0.0/0", "::/0"]),
             },
@@ -191,7 +192,8 @@ impl Protocol for WireguardClientProtocol {
             ParameterDefinition {
                 name: "private_key".to_string(),
                 type_hint: "string".to_string(),
-                description: "Client private key (base64). If not provided, will be generated.".to_string(),
+                description: "Client private key (base64). If not provided, will be generated."
+                    .to_string(),
                 required: false,
                 example: json!("YAnz5TF+lXXJte14tji3zlMNftft3YEPi775qQV8mno="),
             },
@@ -273,11 +275,11 @@ impl Client for WireguardClientProtocol {
             let params = if let Some(startup_params) = &ctx.startup_params {
                 // Get required parameters using StartupParams accessors
                 crate::client::wireguard::WireguardClientParams {
-                    server_public_key: startup_params.get_string("server_public_key"),
-                    server_endpoint: startup_params.get_string("server_endpoint"),
-                    client_address: startup_params.get_string("client_address"),
+                    server_public_key: startup_params.get_string("server_public_key")?,
+                    server_endpoint: startup_params.get_string("server_endpoint")?,
+                    client_address: startup_params.get_string("client_address")?,
                     allowed_ips: startup_params
-                        .get_optional_array("allowed_ips")
+                        .get_optional_array("allowed_ips")?
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -285,9 +287,9 @@ impl Client for WireguardClientProtocol {
                         })
                         .unwrap_or_else(|| vec!["0.0.0.0/0".to_string()]),
                     keepalive: startup_params
-                        .get_optional_u64("keepalive")
+                        .get_optional_u64("keepalive")?
                         .map(|k| k as u16),
-                    private_key: startup_params.get_optional_string("private_key"),
+                    private_key: startup_params.get_optional_string("private_key")?,
                 }
             } else {
                 return Err(anyhow::anyhow!(

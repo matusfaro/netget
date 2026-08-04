@@ -22,7 +22,7 @@ use tracing::{debug, error, info};
 use crate::client::grpc::actions::{
     GRPC_CLIENT_CONNECTED_EVENT, GRPC_CLIENT_ERROR_EVENT, GRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client as ClientTrait, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -63,11 +63,14 @@ impl GrpcClient {
         let proto_schema = startup_params
             .as_ref()
             .map(|p| p.get_string("proto_schema"))
+            .transpose()?
             .context("Missing required startup parameter: proto_schema")?;
 
         let use_tls = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_bool("use_tls"))
+            .map(|p| p.get_optional_bool("use_tls"))
+            .transpose()?
+            .flatten()
             .unwrap_or(false);
 
         // Load protobuf schema

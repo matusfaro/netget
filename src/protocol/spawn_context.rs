@@ -7,14 +7,80 @@ use crate::llm::OllamaClient;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use std::collections::HashSet;
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+/// Error returned when startup parameters supplied by the LLM or an MCP client
+/// cannot be used by the protocol.
+///
+/// These values are untrusted model/client input, so every failure is reported
+/// rather than panicking the task that is starting the server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StartupParamError {
+    /// A key was supplied (or accessed) that the protocol never declared in
+    /// `get_startup_parameters()`.
+    Undeclared {
+        /// Offending parameter name
+        key: String,
+        /// Parameter names the protocol does declare, sorted
+        allowed: Vec<String>,
+        /// True when the protocol code itself asked for the undeclared key
+        /// (a bug in the protocol) rather than the caller supplying it.
+        accessed_by_protocol: bool,
+    },
+    /// A required parameter was absent or held the wrong JSON type.
+    Invalid {
+        /// Offending parameter name
+        key: String,
+        /// Human readable description of what went wrong
+        detail: String,
+    },
+}
+
+impl fmt::Display for StartupParamError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StartupParamError::Undeclared {
+                key,
+                allowed,
+                accessed_by_protocol,
+            } => {
+                if *accessed_by_protocol {
+                    write!(
+                        f,
+                        "Attempted to access undeclared startup parameter '{}'. Protocol must declare this parameter in get_startup_parameters(). Allowed parameters: {:?}",
+                        key, allowed
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Undeclared startup parameter '{}'. Protocol must declare this parameter in get_startup_parameters(). Allowed parameters: {:?}",
+                        key, allowed
+                    )
+                }
+            }
+            StartupParamError::Invalid { key, detail } => {
+                write!(f, "Invalid startup parameter '{}': {}", key, detail)
+            }
+        }
+    }
+}
+
+impl std::error::Error for StartupParamError {}
+
+/// Convenience alias for fallible startup-parameter access.
+pub type StartupParamResult<T> = std::result::Result<T, StartupParamError>;
 
 /// Type-safe wrapper for startup parameters
 ///
 /// Validates that parameters can only be accessed if they were declared
 /// in the protocol's `get_startup_parameters()` implementation.
+///
+/// Every accessor returns a [`StartupParamResult`]: the JSON originates from the
+/// LLM (`open_server`) or an MCP client (`start_server`), so malformed values
+/// must surface as errors to the caller instead of aborting the task.
 #[derive(Clone, Debug)]
 pub struct StartupParams {
     /// The actual JSON parameter values provided by the LLM
@@ -30,291 +96,367 @@ impl StartupParams {
     /// * `params` - JSON object containing parameter values
     /// * `schema` - Parameter definitions from protocol's `get_startup_parameters()`
     ///
-    /// # Panics
-    /// Panics if any key in `params` is not defined in `schema`
-    pub fn new(params: serde_json::Value, schema: Vec<ParameterDefinition>) -> Self {
+    /// # Errors
+    /// Returns [`StartupParamError::Undeclared`] if any key in `params` is not
+    /// defined in `schema`.
+    pub fn new(
+        params: serde_json::Value,
+        schema: Vec<ParameterDefinition>,
+    ) -> StartupParamResult<Self> {
         let allowed_params: HashSet<String> = schema.iter().map(|p| p.name.clone()).collect();
 
         // Validate that all provided parameters are in the schema
         if let Some(obj) = params.as_object() {
             for key in obj.keys() {
                 if !allowed_params.contains(key) {
-                    panic!(
-                        "Undeclared startup parameter '{}'. Protocol must declare this parameter in get_startup_parameters(). Allowed parameters: {:?}",
-                        key,
-                        allowed_params.iter().collect::<Vec<_>>()
-                    );
+                    return Err(StartupParamError::Undeclared {
+                        key: key.clone(),
+                        allowed: sorted(&allowed_params),
+                        accessed_by_protocol: false,
+                    });
                 }
             }
         }
 
-        Self {
+        Ok(Self {
             params,
             allowed_params,
-        }
+        })
+    }
+
+    /// Names of the parameters this protocol declares, sorted.
+    pub fn allowed_parameters(&self) -> Vec<String> {
+        sorted(&self.allowed_params)
     }
 
     /// Get a required string parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter is missing
     /// - If the parameter is not a string
-    pub fn get_string(&self, key: &str) -> String {
-        self.validate_key(key);
-        self.params
-            .get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or_else(|| {
-                panic!(
+    pub fn get_string(&self, key: &str) -> StartupParamResult<String> {
+        self.validate_key(key)?;
+        match self.params.get(key).and_then(|v| v.as_str()) {
+            Some(s) => Ok(s.to_string()),
+            None => Err(self.invalid(
+                key,
+                format!(
                     "Required string parameter '{}' is missing or not a string. Params: {}",
                     key, self.params
-                )
-            })
-            .to_string()
+                ),
+            )),
+        }
     }
 
     /// Get an optional string parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not a string
-    pub fn get_optional_string(&self, key: &str) -> Option<String> {
-        self.validate_key(key);
-        self.params.get(key).map(|v| {
-            v.as_str()
-                .unwrap_or_else(|| {
-                    panic!(
+    pub fn get_optional_string(&self, key: &str) -> StartupParamResult<Option<String>> {
+        self.validate_key(key)?;
+        match self.params.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_str() {
+                Some(s) => Ok(Some(s.to_string())),
+                None => Err(self.invalid(
+                    key,
+                    format!(
                         "Optional string parameter '{}' exists but is not a string. Value: {}",
                         key, v
-                    )
-                })
-                .to_string()
-        })
+                    ),
+                )),
+            },
+        }
     }
 
     /// Get a required boolean parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter is missing
     /// - If the parameter is not a boolean
-    pub fn get_bool(&self, key: &str) -> bool {
-        self.validate_key(key);
-        self.params
-            .get(key)
-            .and_then(|v| v.as_bool())
-            .unwrap_or_else(|| {
-                panic!(
+    pub fn get_bool(&self, key: &str) -> StartupParamResult<bool> {
+        self.validate_key(key)?;
+        match self.params.get(key).and_then(|v| v.as_bool()) {
+            Some(b) => Ok(b),
+            None => Err(self.invalid(
+                key,
+                format!(
                     "Required boolean parameter '{}' is missing or not a boolean. Params: {}",
                     key, self.params
-                )
-            })
+                ),
+            )),
+        }
     }
 
     /// Get an optional boolean parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not a boolean
-    pub fn get_optional_bool(&self, key: &str) -> Option<bool> {
-        self.validate_key(key);
-        self.params.get(key).map(|v| {
-            v.as_bool().unwrap_or_else(|| {
-                panic!(
-                    "Optional boolean parameter '{}' exists but is not a boolean. Value: {}",
-                    key, v
-                )
-            })
-        })
+    pub fn get_optional_bool(&self, key: &str) -> StartupParamResult<Option<bool>> {
+        self.validate_key(key)?;
+        match self.params.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_bool() {
+                Some(b) => Ok(Some(b)),
+                None => Err(self.invalid(
+                    key,
+                    format!(
+                        "Optional boolean parameter '{}' exists but is not a boolean. Value: {}",
+                        key, v
+                    ),
+                )),
+            },
+        }
     }
 
     /// Get a required integer parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter is missing
     /// - If the parameter is not an integer
-    pub fn get_i64(&self, key: &str) -> i64 {
-        self.validate_key(key);
-        self.params
-            .get(key)
-            .and_then(|v| v.as_i64())
-            .unwrap_or_else(|| {
-                panic!(
+    pub fn get_i64(&self, key: &str) -> StartupParamResult<i64> {
+        self.validate_key(key)?;
+        match self.params.get(key).and_then(|v| v.as_i64()) {
+            Some(n) => Ok(n),
+            None => Err(self.invalid(
+                key,
+                format!(
                     "Required integer parameter '{}' is missing or not an integer. Params: {}",
                     key, self.params
-                )
-            })
+                ),
+            )),
+        }
     }
 
     /// Get an optional integer parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not an integer
-    pub fn get_optional_i64(&self, key: &str) -> Option<i64> {
-        self.validate_key(key);
-        self.params.get(key).map(|v| {
-            v.as_i64().unwrap_or_else(|| {
-                panic!(
-                    "Optional integer parameter '{}' exists but is not an integer. Value: {}",
-                    key, v
-                )
-            })
-        })
+    pub fn get_optional_i64(&self, key: &str) -> StartupParamResult<Option<i64>> {
+        self.validate_key(key)?;
+        match self.params.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_i64() {
+                Some(n) => Ok(Some(n)),
+                None => Err(self.invalid(
+                    key,
+                    format!(
+                        "Optional integer parameter '{}' exists but is not an integer. Value: {}",
+                        key, v
+                    ),
+                )),
+            },
+        }
     }
 
     /// Get a required unsigned integer parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter is missing
     /// - If the parameter is not an unsigned integer
-    pub fn get_u64(&self, key: &str) -> u64 {
-        self.validate_key(key);
-        self.params.get(key).and_then(|v| v.as_u64()).unwrap_or_else(|| {
-            panic!(
-                "Required unsigned integer parameter '{}' is missing or not an unsigned integer. Params: {}",
-                key, self.params
-            )
-        })
+    pub fn get_u64(&self, key: &str) -> StartupParamResult<u64> {
+        self.validate_key(key)?;
+        match self.params.get(key).and_then(|v| v.as_u64()) {
+            Some(n) => Ok(n),
+            None => Err(self.invalid(
+                key,
+                format!(
+                    "Required unsigned integer parameter '{}' is missing or not an unsigned integer. Params: {}",
+                    key, self.params
+                ),
+            )),
+        }
     }
 
     /// Get an optional unsigned integer parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not an unsigned integer
-    pub fn get_optional_u64(&self, key: &str) -> Option<u64> {
-        self.validate_key(key);
-        self.params.get(key).map(|v| v.as_u64().unwrap_or_else(|| {
-                panic!(
-                    "Optional unsigned integer parameter '{}' exists but is not an unsigned integer. Value: {}",
-                    key, v
-                )
-            }))
+    pub fn get_optional_u64(&self, key: &str) -> StartupParamResult<Option<u64>> {
+        self.validate_key(key)?;
+        match self.params.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_u64() {
+                Some(n) => Ok(Some(n)),
+                None => Err(self.invalid(
+                    key,
+                    format!(
+                        "Optional unsigned integer parameter '{}' exists but is not an unsigned integer. Value: {}",
+                        key, v
+                    ),
+                )),
+            },
+        }
     }
 
     /// Get an optional u32 parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not an unsigned integer or exceeds u32::MAX
-    pub fn get_optional_u32(&self, key: &str) -> Option<u32> {
-        self.validate_key(key);
+    pub fn get_optional_u32(&self, key: &str) -> StartupParamResult<Option<u32>> {
+        self.validate_key(key)?;
         match self.params.get(key) {
-            None => None,
+            None | Some(serde_json::Value::Null) => Ok(None),
             Some(v) => {
-                let val = v.as_u64().unwrap_or_else(|| {
-                    panic!(
-                        "Optional u32 parameter '{}' exists but is not an unsigned integer. Value: {}",
-                        key, v
-                    )
-                });
+                let val = match v.as_u64() {
+                    Some(n) => n,
+                    None => {
+                        return Err(self.invalid(
+                            key,
+                            format!(
+                                "Optional u32 parameter '{}' exists but is not an unsigned integer. Value: {}",
+                                key, v
+                            ),
+                        ))
+                    }
+                };
                 if val > u32::MAX as u64 {
-                    panic!(
-                        "Optional u32 parameter '{}' exceeds u32::MAX ({}). Value: {}",
+                    return Err(self.invalid(
                         key,
-                        u32::MAX,
-                        val
-                    );
+                        format!(
+                            "Optional u32 parameter '{}' exceeds u32::MAX ({}). Value: {}",
+                            key,
+                            u32::MAX,
+                            val
+                        ),
+                    ));
                 }
-                Some(val as u32)
+                Ok(Some(val as u32))
             }
         }
     }
 
     /// Get a required object/map parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter is missing
     /// - If the parameter is not an object
-    pub fn get_object(&self, key: &str) -> &serde_json::Map<String, serde_json::Value> {
-        self.validate_key(key);
-        self.params
-            .get(key)
-            .and_then(|v| v.as_object())
-            .unwrap_or_else(|| {
-                panic!(
+    pub fn get_object(
+        &self,
+        key: &str,
+    ) -> StartupParamResult<&serde_json::Map<String, serde_json::Value>> {
+        self.validate_key(key)?;
+        match self.params.get(key).and_then(|v| v.as_object()) {
+            Some(o) => Ok(o),
+            None => Err(self.invalid(
+                key,
+                format!(
                     "Required object parameter '{}' is missing or not an object. Params: {}",
                     key, self.params
-                )
-            })
+                ),
+            )),
+        }
     }
 
     /// Get an optional object/map parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not an object
     pub fn get_optional_object(
         &self,
         key: &str,
-    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
-        self.validate_key(key);
+    ) -> StartupParamResult<Option<&serde_json::Map<String, serde_json::Value>>> {
+        self.validate_key(key)?;
         match self.params.get(key) {
-            None => None,
-            Some(v) => Some(v.as_object().unwrap_or_else(|| {
-                panic!(
-                    "Optional object parameter '{}' exists but is not an object. Value: {}",
-                    key, v
-                )
-            })),
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_object() {
+                Some(o) => Ok(Some(o)),
+                None => Err(self.invalid(
+                    key,
+                    format!(
+                        "Optional object parameter '{}' exists but is not an object. Value: {}",
+                        key, v
+                    ),
+                )),
+            },
         }
     }
 
     /// Get a required array parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter is missing
     /// - If the parameter is not an array
-    pub fn get_array(&self, key: &str) -> &Vec<serde_json::Value> {
-        self.validate_key(key);
-        self.params
-            .get(key)
-            .and_then(|v| v.as_array())
-            .unwrap_or_else(|| {
-                panic!(
+    pub fn get_array(&self, key: &str) -> StartupParamResult<&Vec<serde_json::Value>> {
+        self.validate_key(key)?;
+        match self.params.get(key).and_then(|v| v.as_array()) {
+            Some(a) => Ok(a),
+            None => Err(self.invalid(
+                key,
+                format!(
                     "Required array parameter '{}' is missing or not an array. Params: {}",
                     key, self.params
-                )
-            })
+                ),
+            )),
+        }
     }
 
     /// Get an optional array parameter
     ///
-    /// # Panics
+    /// # Errors
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not an array
-    pub fn get_optional_array(&self, key: &str) -> Option<&Vec<serde_json::Value>> {
-        self.validate_key(key);
+    pub fn get_optional_array(
+        &self,
+        key: &str,
+    ) -> StartupParamResult<Option<&Vec<serde_json::Value>>> {
+        self.validate_key(key)?;
         match self.params.get(key) {
-            None => None,
-            Some(v) => Some(v.as_array().unwrap_or_else(|| {
-                panic!(
-                    "Optional array parameter '{}' exists but is not an array. Value: {}",
-                    key, v
-                )
-            })),
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_array() {
+                Some(a) => Ok(Some(a)),
+                None => Err(self.invalid(
+                    key,
+                    format!(
+                        "Optional array parameter '{}' exists but is not an array. Value: {}",
+                        key, v
+                    ),
+                )),
+            },
+        }
+    }
+
+    /// Build an `Invalid` error for `key`.
+    fn invalid(&self, key: &str, detail: String) -> StartupParamError {
+        StartupParamError::Invalid {
+            key: key.to_string(),
+            detail,
         }
     }
 
     /// Validate that a key was declared in get_startup_parameters()
     ///
-    /// # Panics
+    /// # Errors
     /// If the key is not in the allowed parameters set
-    fn validate_key(&self, key: &str) {
+    fn validate_key(&self, key: &str) -> StartupParamResult<()> {
         if !self.allowed_params.contains(key) {
-            panic!(
-                "Attempted to access undeclared startup parameter '{}'. Protocol must declare this parameter in get_startup_parameters(). Allowed parameters: {:?}",
-                key,
-                self.allowed_params.iter().collect::<Vec<_>>()
-            );
+            return Err(StartupParamError::Undeclared {
+                key: key.to_string(),
+                allowed: sorted(&self.allowed_params),
+                accessed_by_protocol: true,
+            });
         }
+        Ok(())
     }
+}
+
+/// Sorted copy of a name set, so error messages are deterministic.
+fn sorted(set: &HashSet<String>) -> Vec<String> {
+    let mut v: Vec<String> = set.iter().cloned().collect();
+    v.sort();
+    v
 }
 
 /// Context passed to protocol servers during spawning
@@ -367,8 +509,9 @@ pub struct SpawnContext {
     /// Optional type-safe startup parameters specific to the protocol
     ///
     /// Parameters can only be accessed if they were declared in the protocol's
-    /// `get_startup_parameters()` implementation. Attempting to access undeclared
-    /// parameters will panic at runtime.
+    /// `get_startup_parameters()` implementation. Accessing an undeclared
+    /// parameter, or one holding the wrong JSON type, returns a
+    /// [`StartupParamError`] rather than panicking.
     ///
     /// For example:
     /// - HTTP Proxy: certificate_mode, request_filter_mode, response_filter_mode
@@ -393,9 +536,10 @@ impl SpawnContext {
     /// ```
     pub fn socket_addr(&self) -> Option<SocketAddr> {
         match (&self.host, self.port) {
-            (Some(host), Some(port)) => host.parse::<std::net::IpAddr>().ok().map(|ip| {
-                SocketAddr::new(ip, port)
-            }),
+            (Some(host), Some(port)) => host
+                .parse::<std::net::IpAddr>()
+                .ok()
+                .map(|ip| SocketAddr::new(ip, port)),
             _ => None,
         }
     }

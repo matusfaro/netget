@@ -14,7 +14,7 @@ use tracing::{debug, error, info};
 use crate::client::sqs::actions::{
     SQS_CLIENT_CONNECTED_EVENT, SQS_MESSAGE_RECEIVED_EVENT, SQS_MESSAGE_SENT_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -39,15 +39,20 @@ impl SqsClient {
         let queue_url = startup_params
             .as_ref()
             .map(|p| p.get_string("queue_url"))
+            .transpose()?
             .context("Missing required 'queue_url' parameter")?;
 
         let region = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("region"));
+            .map(|p| p.get_optional_string("region"))
+            .transpose()?
+            .flatten();
 
         let endpoint_url = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("endpoint_url"));
+            .map(|p| p.get_optional_string("endpoint_url"))
+            .transpose()?
+            .flatten();
 
         info!(
             "SQS client {} connecting to queue: {}",

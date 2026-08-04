@@ -12,7 +12,7 @@ use tracing::{error, info, trace};
 use crate::client::postgresql::actions::{
     POSTGRESQL_CLIENT_CONNECTED_EVENT, POSTGRESQL_CLIENT_QUERY_RESULT_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -36,13 +36,13 @@ impl PostgresqlClient {
         // Extract connection parameters from startup_params if provided
         let (database, user, password) = if let Some(params) = &startup_params {
             let database = params
-                .get_optional_string("database")
+                .get_optional_string("database")?
                 .unwrap_or_else(|| "postgres".to_string());
             let user = params
-                .get_optional_string("user")
+                .get_optional_string("user")?
                 .unwrap_or_else(|| "postgres".to_string());
             let password = params
-                .get_optional_string("password")
+                .get_optional_string("password")?
                 .unwrap_or_else(|| "".to_string());
             (database, user, password)
         } else {

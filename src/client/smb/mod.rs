@@ -14,7 +14,7 @@ use crate::client::smb::actions::{
     SMB_CLIENT_CONNECTED_EVENT, SMB_CLIENT_DIR_LISTED_EVENT, SMB_CLIENT_ERROR_EVENT,
     SMB_CLIENT_FILE_READ_EVENT, SMB_CLIENT_FILE_WRITTEN_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
@@ -48,13 +48,13 @@ impl SmbClient {
         // Parse startup parameters for credentials
         let (username, password, domain, workgroup) = if let Some(params) = startup_params {
             let username = params
-                .get_optional_string("username")
+                .get_optional_string("username")?
                 .unwrap_or_else(|| "guest".to_string());
             let password = params
-                .get_optional_string("password")
+                .get_optional_string("password")?
                 .unwrap_or_else(|| "".to_string());
-            let domain = params.get_optional_string("domain");
-            let workgroup = params.get_optional_string("workgroup");
+            let domain = params.get_optional_string("domain")?;
+            let workgroup = params.get_optional_string("workgroup")?;
 
             (username, password, domain, workgroup)
         } else {

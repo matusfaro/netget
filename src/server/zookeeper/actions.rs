@@ -210,7 +210,9 @@ impl Server for ZookeeperProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             ZookeeperServer::spawn_with_llm_actions(
@@ -233,14 +235,8 @@ impl Server for ZookeeperProtocol {
 
         match action_type {
             "zookeeper_response" => {
-                let xid = action
-                    .get("xid")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i32;
-                let zxid = action
-                    .get("zxid")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i64;
+                let xid = action.get("xid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                let zxid = action.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
                 let error_code = action
                     .get("error_code")
                     .and_then(|v| v.as_i64())

@@ -29,7 +29,7 @@ pub static NFC_READERS_LISTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "p2": "00",
             "data": "D2760000850101",
             "le": "00"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "readers".to_string(),
@@ -46,7 +46,7 @@ pub static NFC_CARD_DETECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "NFC card/tag detected in reader",
         json!({
             "type": "read_ndef"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -72,7 +72,7 @@ pub static NFC_APDU_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_apdu_raw",
             "apdu_hex": "00B0000010"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -116,7 +116,7 @@ pub static NFC_NDEF_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                     "text": "Response message"
                 }
             ]
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "records".to_string(),
@@ -133,7 +133,7 @@ pub static NFC_CARD_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "NFC card/tag disconnected from reader",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
 });
 
@@ -216,26 +216,24 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "list_readers"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "connect_card".to_string(),
                 description: "Connect to NFC card/tag in reader (waits for card if not present)"
                     .to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "timeout_ms".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Timeout in milliseconds to wait for card (default: 30000)"
-                            .to_string(),
-                        required: false,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "timeout_ms".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Timeout in milliseconds to wait for card (default: 30000)"
+                        .to_string(),
+                    required: false,
+                }],
                 example: json!({
                     "type": "connect_card",
                     "timeout_ms": 30000
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect_card".to_string(),
@@ -244,7 +242,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "disconnect_card"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -301,7 +299,7 @@ impl Protocol for NfcClientProtocol {
                     "data": "D2760000850101",
                     "le": "00"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_apdu_raw".to_string(),
@@ -316,7 +314,7 @@ impl Protocol for NfcClientProtocol {
                     "type": "send_apdu_raw",
                     "apdu_hex": "00A4040007D276000085010100"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "read_ndef".to_string(),
@@ -325,7 +323,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "read_ndef"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "write_ndef".to_string(),
@@ -350,7 +348,7 @@ impl Protocol for NfcClientProtocol {
                         }
                     ]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -359,7 +357,7 @@ impl Protocol for NfcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -428,8 +426,8 @@ impl Client for NfcClientProtocol {
             // Build startup params JSON manually since StartupParams doesn't expose to_json
             let startup_params_json = if let Some(ref params) = ctx.startup_params {
                 serde_json::json!({
-                    "reader_index": params.get_optional_u64("reader_index"),
-                    "reader_name": params.get_optional_string("reader_name"),
+                    "reader_index": params.get_optional_u64("reader_index")?,
+                    "reader_name": params.get_optional_string("reader_name")?,
                 })
             } else {
                 serde_json::json!({})

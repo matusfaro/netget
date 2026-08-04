@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::client::irc::actions::{IRC_CLIENT_CONNECTED_EVENT, IRC_CLIENT_MESSAGE_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -51,15 +51,21 @@ impl IrcClient {
         // Parse startup params
         let nickname = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("nickname"))
+            .map(|p| p.get_optional_string("nickname"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "netget_user".to_string());
         let username = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("username"))
+            .map(|p| p.get_optional_string("username"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "netget".to_string());
         let realname = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("realname"))
+            .map(|p| p.get_optional_string("realname"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "NetGet IRC Client".to_string());
 
         // Resolve and connect

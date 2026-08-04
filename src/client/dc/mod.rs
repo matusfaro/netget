@@ -20,7 +20,7 @@ use crate::client::dc::actions::{
     DC_CLIENT_KICKED_EVENT, DC_CLIENT_MESSAGE_RECEIVED_EVENT, DC_CLIENT_REDIRECT_EVENT,
     DC_CLIENT_SEARCH_RESULT_EVENT, DC_CLIENT_USERLIST_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -53,9 +53,9 @@ impl DcWriteHalf {
 /// Connection state for DC authentication
 #[derive(Debug, Clone, PartialEq)]
 enum DcConnectionState {
-    AwaitingLock,   // Waiting for hub's $Lock challenge
-    AwaitingHello,  // Sent $Key, waiting for $Hello acceptance
-    Authenticated,  // Fully authenticated, can chat/search
+    AwaitingLock,  // Waiting for hub's $Lock challenge
+    AwaitingHello, // Sent $Key, waiting for $Hello acceptance
+    Authenticated, // Fully authenticated, can chat/search
 }
 
 /// File entry for file list
@@ -93,35 +93,51 @@ impl DcClient {
         // Get startup parameters
         let nickname = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("nickname"))
+            .map(|p| p.get_optional_string("nickname"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "NetGetUser".to_string());
         let description = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("description"))
+            .map(|p| p.get_optional_string("description"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "NetGet DC Client".to_string());
         let email = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("email"))
+            .map(|p| p.get_optional_string("email"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| String::new());
         let share_size = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_u64("share_size"))
+            .map(|p| p.get_optional_u64("share_size"))
+            .transpose()?
+            .flatten()
             .unwrap_or(0);
         let use_tls = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_bool("use_tls"))
+            .map(|p| p.get_optional_bool("use_tls"))
+            .transpose()?
+            .flatten()
             .unwrap_or(false);
         let auto_reconnect = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_bool("auto_reconnect"))
+            .map(|p| p.get_optional_bool("auto_reconnect"))
+            .transpose()?
+            .flatten()
             .unwrap_or(false);
         let max_reconnect_attempts = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_u64("max_reconnect_attempts"))
+            .map(|p| p.get_optional_u64("max_reconnect_attempts"))
+            .transpose()?
+            .flatten()
             .unwrap_or(5) as u32;
         let initial_reconnect_delay_secs = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_u64("initial_reconnect_delay_secs"))
+            .map(|p| p.get_optional_u64("initial_reconnect_delay_secs"))
+            .transpose()?
+            .flatten()
             .unwrap_or(2);
 
         // Attempt connection with reconnection loop
@@ -187,7 +203,10 @@ impl DcClient {
                     // Not configured for auto-reconnect, return error
                     return Err(e);
                 }
-                Err(e) if max_reconnect_attempts > 0 && reconnect_attempt >= max_reconnect_attempts => {
+                Err(e)
+                    if max_reconnect_attempts > 0
+                        && reconnect_attempt >= max_reconnect_attempts =>
+                {
                     // Exceeded max attempts
                     error!(
                         "DC client {} exhausted reconnection attempts ({}/{}): {}",
@@ -202,14 +221,19 @@ impl DcClient {
                 Err(e) => {
                     // Will reconnect
                     reconnect_attempt += 1;
-                    let delay_secs = initial_reconnect_delay_secs * (2u64.pow(reconnect_attempt - 1));
+                    let delay_secs =
+                        initial_reconnect_delay_secs * (2u64.pow(reconnect_attempt - 1));
                     let delay_secs = delay_secs.min(60); // Cap at 60 seconds
 
                     info!(
                         "DC client {} connection failed (attempt {}/{}), retrying in {}s: {}",
                         client_id,
                         reconnect_attempt,
-                        if max_reconnect_attempts == 0 { "∞".to_string() } else { max_reconnect_attempts.to_string() },
+                        if max_reconnect_attempts == 0 {
+                            "∞".to_string()
+                        } else {
+                            max_reconnect_attempts.to_string()
+                        },
                         delay_secs,
                         e
                     );
@@ -219,7 +243,11 @@ impl DcClient {
                         client_id,
                         delay_secs,
                         reconnect_attempt,
-                        if max_reconnect_attempts == 0 { "∞".to_string() } else { max_reconnect_attempts.to_string() }
+                        if max_reconnect_attempts == 0 {
+                            "∞".to_string()
+                        } else {
+                            max_reconnect_attempts.to_string()
+                        }
                     ));
 
                     // Sleep with exponential backoff
@@ -401,8 +429,8 @@ where
                     app_state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
-                    let _ = status_tx
-                        .send(format!("[CLIENT] DC client {} disconnected", client_id));
+                    let _ =
+                        status_tx.send(format!("[CLIENT] DC client {} disconnected", client_id));
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     break;
                 }
@@ -468,7 +496,9 @@ fn parse_private_message(message: &str) -> Result<PrivateMessageParts> {
     }
 
     // Find "From:" to split target and source
-    let from_pos = message.find(" From:").ok_or_else(|| anyhow::anyhow!("Missing 'From:' in private message"))?;
+    let from_pos = message
+        .find(" From:")
+        .ok_or_else(|| anyhow::anyhow!("Missing 'From:' in private message"))?;
 
     // Extract target (between "$To: " and " From:")
     let target_part = &message[5..from_pos]; // Skip "$To: "
@@ -716,7 +746,10 @@ async fn process_dc_message(
         );
     } else {
         // Unknown message type - log but don't error
-        debug!("DC client {} received unknown message: {}", client_id, message);
+        debug!(
+            "DC client {} received unknown message: {}",
+            client_id, message
+        );
     }
 
     Ok(())
@@ -835,10 +868,7 @@ async fn handle_hello_message(
     // Parse Hello: "$Hello nickname"
     let nickname = message.strip_prefix("$Hello ").unwrap_or("").trim();
 
-    info!(
-        "DC client {} authenticated as '{}'",
-        client_id, nickname
-    );
+    info!("DC client {} authenticated as '{}'", client_id, nickname);
 
     // Update state
     client_state.lock().await.auth_state = DcConnectionState::Authenticated;
@@ -947,13 +977,7 @@ async fn handle_chat_message(
     .await
     {
         Ok(result) => {
-            execute_dc_actions(
-                result,
-                client_state,
-                write_half,
-                client_id,
-            )
-            .await?;
+            execute_dc_actions(result, client_state, write_half, client_id).await?;
         }
         Err(e) => {
             error!("LLM error on dc_message_received: {}", e);
@@ -1066,12 +1090,21 @@ async fn handle_search_result(
     let first_parts: Vec<&str> = parts[0].split_whitespace().collect();
     let source = first_parts.first().unwrap_or(&"").to_string();
     let filename = first_parts.get(1).unwrap_or(&"").to_string();
-    let size = parts.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    let size = parts
+        .get(1)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
 
     let slots_str = parts.get(2).unwrap_or(&"");
     let slots_parts: Vec<&str> = slots_str.split('/').collect();
-    let free_slots = slots_parts.first().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
-    let total_slots = slots_parts.get(1).and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
+    let free_slots = slots_parts
+        .first()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let total_slots = slots_parts
+        .get(1)
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
 
     debug!(
         "DC client {} received search result: {} from {} ({} bytes, {}/{} slots)",
@@ -1351,7 +1384,10 @@ async fn handle_redirect(
     client_id: ClientId,
     memory: &str,
 ) -> Result<()> {
-    let address = message.strip_prefix("$ForceMove ").unwrap_or("").to_string();
+    let address = message
+        .strip_prefix("$ForceMove ")
+        .unwrap_or("")
+        .to_string();
 
     info!("DC client {} redirected to {}", client_id, address);
 
@@ -1514,10 +1550,7 @@ async fn execute_dc_actions(
 }
 
 /// Send a DC command (ensures pipe termination)
-async fn send_dc_command(
-    write_half: &Arc<Mutex<DcWriteHalf>>,
-    command: &str,
-) -> Result<()> {
+async fn send_dc_command(write_half: &Arc<Mutex<DcWriteHalf>>, command: &str) -> Result<()> {
     let mut write_guard = write_half.lock().await;
     write_guard.write_all(command.as_bytes()).await?;
     write_guard.flush().await?;
@@ -1527,7 +1560,10 @@ async fn send_dc_command(
 /// Generate XML file list from file entries (NMDC format)
 fn generate_xml_filelist(files: &[DcFileEntry], nickname: &str) -> String {
     let mut xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-    xml.push_str(&format!("<FileListing Version=\"1\" CID=\"{}\" Base=\"/\" Generator=\"NetGet DC Client\">\n", nickname));
+    xml.push_str(&format!(
+        "<FileListing Version=\"1\" CID=\"{}\" Base=\"/\" Generator=\"NetGet DC Client\">\n",
+        nickname
+    ));
 
     for file in files {
         let tth_attr = file

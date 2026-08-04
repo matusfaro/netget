@@ -14,7 +14,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 use tracing::{debug, error, info, trace};
 
 use crate::client::imap::actions::IMAP_CLIENT_CONNECTED_EVENT;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -37,8 +37,8 @@ impl ImapClient {
     ) -> Result<SocketAddr> {
         // Extract authentication credentials from startup params
         let (username, password) = if let Some(params) = startup_params {
-            let username = params.get_string("username");
-            let password = params.get_string("password");
+            let username = params.get_string("username")?;
+            let password = params.get_string("password")?;
             (username, password)
         } else {
             return Err(anyhow::anyhow!(
@@ -413,8 +413,10 @@ impl ImapClient {
                     mailbox_list.push(mailbox);
                 }
 
-                let mailbox_names: Vec<String> =
-                    mailbox_list.iter().map(|m: &async_imap::types::Name| m.name().to_string()).collect();
+                let mailbox_names: Vec<String> = mailbox_list
+                    .iter()
+                    .map(|m: &async_imap::types::Name| m.name().to_string())
+                    .collect();
 
                 info!(
                     "IMAP client {} listed {} mailboxes",

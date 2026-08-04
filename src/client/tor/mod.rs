@@ -12,12 +12,12 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
 #[cfg(feature = "tor")]
-use tor_netdir::{NetDir, Relay};
-#[cfg(feature = "tor")]
 use serde::Serialize;
+#[cfg(feature = "tor")]
+use tor_netdir::{NetDir, Relay};
 
 use crate::client::tor::actions::{TOR_CLIENT_CONNECTED_EVENT, TOR_CLIENT_DATA_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -90,10 +90,7 @@ impl RelayInfo {
 
         // Use first 8 chars of fingerprint as a proxy for nickname
         // NOTE: tor-netdir's Relay type doesn't expose nickname or flags in public API
-        let nickname = fingerprint
-            .chars()
-            .take(8)
-            .collect::<String>();
+        let nickname = fingerprint.chars().take(8).collect::<String>();
 
         // Return minimal info - flag details not accessible via current Arti API
         // TODO: Update when Arti's experimental-api exposes RouterStatus fields
@@ -129,9 +126,15 @@ impl TorClient {
 
         // Create Tor client config - use custom directory if provided
         let config = if let Some(ref params) = startup_params {
-            if let Some(directory_server) = params.get_optional_string("directory_server") {
-                info!("Tor client {} using custom directory server: {}", client_id, directory_server);
-                let _ = status_tx.send(format!("[CLIENT] Tor client {} using custom directory: {}", client_id, directory_server));
+            if let Some(directory_server) = params.get_optional_string("directory_server")? {
+                info!(
+                    "Tor client {} using custom directory server: {}",
+                    client_id, directory_server
+                );
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Tor client {} using custom directory: {}",
+                    client_id, directory_server
+                ));
                 Self::create_custom_config(&directory_server)?
             } else {
                 TorClientConfig::default()
@@ -149,7 +152,9 @@ impl TorClient {
 
         // Store Tor client for directory queries (requires experimental-api feature)
         #[cfg(feature = "tor")]
-        app_state.set_tor_client(client_id, Arc::new(tor_client.clone())).await;
+        app_state
+            .set_tor_client(client_id, Arc::new(tor_client.clone()))
+            .await;
 
         // Emit bootstrap complete event with consensus info
         #[cfg(feature = "tor")]
@@ -184,7 +189,10 @@ impl TorClient {
                     }
                 }
                 Err(e) => {
-                    trace!("Could not get consensus info at bootstrap (may not be available yet): {}", e);
+                    trace!(
+                        "Could not get consensus info at bootstrap (may not be available yet): {}",
+                        e
+                    );
                 }
             }
         }
@@ -482,9 +490,9 @@ impl TorClient {
         use arti_client::config::dir::FallbackDir;
 
         // Parse the directory server address
-        let addr: SocketAddr = directory_server
-            .parse()
-            .context("Invalid directory_server address format. Expected 'IP:port' like '127.0.0.1:9030'")?;
+        let addr: SocketAddr = directory_server.parse().context(
+            "Invalid directory_server address format. Expected 'IP:port' like '127.0.0.1:9030'",
+        )?;
 
         // WARNING: Arti FallbackDir requires an OR (relay) port, but we only have HTTP directory
         // This configuration will likely fail during bootstrap because Arti expects a working
@@ -496,9 +504,9 @@ impl TorClient {
 
         let mut fallback = FallbackDir::builder();
         fallback
-            .rsa_identity([0x42; 20].into())  // Dummy RSA identity
-            .ed_identity([0x99; 32].into())  // Dummy Ed25519 identity
-            .orports()  // Arti only supports orports(), not dirports()
+            .rsa_identity([0x42; 20].into()) // Dummy RSA identity
+            .ed_identity([0x99; 32].into()) // Dummy Ed25519 identity
+            .orports() // Arti only supports orports(), not dirports()
             .push(addr);
 
         // Build config with custom fallback

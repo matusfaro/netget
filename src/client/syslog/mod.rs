@@ -14,7 +14,7 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -119,7 +119,9 @@ impl SyslogClient {
         // Parse protocol from startup params (default to UDP)
         let protocol = startup_params
             .as_ref()
-            .and_then(|params| params.get_optional_string("protocol"))
+            .map(|params| params.get_optional_string("protocol"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "udp".to_string())
             .to_lowercase();
 

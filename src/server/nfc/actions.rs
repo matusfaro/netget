@@ -61,32 +61,38 @@ pub static NFC_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             name: "apdu_hex".to_string(),
             type_hint: "string".to_string(),
             description: "APDU command as hex string".to_string(),
-            required: true},
+            required: true,
+        },
         Parameter {
             name: "cla".to_string(),
             type_hint: "string".to_string(),
             description: "Class byte (hex)".to_string(),
-            required: true},
+            required: true,
+        },
         Parameter {
             name: "ins".to_string(),
             type_hint: "string".to_string(),
             description: "Instruction byte (hex)".to_string(),
-            required: true},
+            required: true,
+        },
         Parameter {
             name: "p1".to_string(),
             type_hint: "string".to_string(),
             description: "Parameter 1 (hex)".to_string(),
-            required: true},
+            required: true,
+        },
         Parameter {
             name: "p2".to_string(),
             type_hint: "string".to_string(),
             description: "Parameter 2 (hex)".to_string(),
-            required: true},
+            required: true,
+        },
         Parameter {
             name: "data_hex".to_string(),
             type_hint: "string".to_string(),
             description: "Command data (hex)".to_string(),
-            required: false},
+            required: false,
+        },
     ])
 });
 
@@ -306,10 +312,11 @@ impl Protocol for NfcServerProtocol {
             ParameterDefinition {
                 name: "tag_type".to_string(),
                 type_hint: "string".to_string(),
-                description: "Virtual tag type: 'type2' (MIFARE), 'type4' (ISO14443-4), 'generic' (default)"
-                    .to_string(),
+                description:
+                    "Virtual tag type: 'type2' (MIFARE), 'type4' (ISO14443-4), 'generic' (default)"
+                        .to_string(),
                 required: false,
-            
+
                 example: json!("tag_type"),
             },
             ParameterDefinition {
@@ -317,7 +324,7 @@ impl Protocol for NfcServerProtocol {
                 type_hint: "string".to_string(),
                 description: "Tag UID (hex, auto-generated if not specified)".to_string(),
                 required: false,
-            
+
                 example: json!("uid"),
             },
         ]
@@ -338,8 +345,8 @@ impl Server for NfcServerProtocol {
             // Build startup params JSON manually since StartupParams doesn't expose to_json
             let startup_params_json = if let Some(ref params) = ctx.startup_params {
                 serde_json::json!({
-                    "tag_type": params.get_optional_string("tag_type"),
-                    "uid": params.get_optional_string("uid"),
+                    "tag_type": params.get_optional_string("tag_type")?,
+                    "uid": params.get_optional_string("uid")?,
                 })
             } else {
                 serde_json::json!({})
@@ -382,14 +389,8 @@ impl Server for NfcServerProtocol {
             }
             "respond_to_apdu" => {
                 let _data_hex = action.get("data_hex").and_then(|v| v.as_str());
-                let _sw1 = action
-                    .get("sw1")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("90");
-                let _sw2 = action
-                    .get("sw2")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("00");
+                let _sw1 = action.get("sw1").and_then(|v| v.as_str()).unwrap_or("90");
+                let _sw2 = action.get("sw2").and_then(|v| v.as_str()).unwrap_or("00");
                 // Virtual tag doesn't actually process this yet
                 Ok(ActionResult::NoAction)
             }

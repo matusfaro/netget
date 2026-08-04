@@ -75,11 +75,25 @@ pub async fn start_client_by_id(
         .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol_name))?;
 
     // Build type-safe startup params if provided
+    //
+    // The JSON comes from the LLM or an MCP client, so a bad key must become a
+    // reported error (and an `Error` client status), never a panic.
     let startup_params = if let Some(params_json) = client.startup_params.clone() {
         // Get the parameter schema from the protocol
         let schema = protocol.get_startup_parameters();
         // Create validated StartupParams
-        Some(crate::protocol::StartupParams::new(params_json, schema))
+        match crate::protocol::StartupParams::new(params_json, schema) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                let msg = format!("Invalid startup_params for {}: {}", protocol_name, e);
+                state
+                    .update_client_status(client_id, ClientStatus::Error(msg.clone()))
+                    .await;
+                let _ = status_tx.send(format!("[ERROR] {}", msg));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                return Err(ActionExecutionError::Fatal(anyhow::anyhow!(msg)));
+            }
+        }
     } else {
         None
     };
@@ -156,6 +170,22 @@ pub async fn start_client_from_action(
     let protocol_impl = crate::protocol::CLIENT_REGISTRY
         .get(&protocol)
         .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
+
+    // === Validate startup params BEFORE registering the client ===
+    //
+    // This JSON is untrusted (LLM `open_client` / MCP `start_client`), so
+    // validating here means a malformed request errors out without leaving a
+    // `ClientInstance` stranded in `ClientStatus::Connecting`.
+    let startup_params_obj = match startup_params.clone() {
+        Some(params_json) => {
+            let schema = protocol_impl.get_startup_parameters();
+            Some(
+                crate::protocol::StartupParams::new(params_json, schema)
+                    .map_err(|e| anyhow::anyhow!("Invalid startup_params for {}: {}", protocol, e))?,
+            )
+        }
+        None => None,
+    };
 
     // Create client instance
     let client = crate::state::client::ClientInstance {
@@ -253,13 +283,7 @@ pub async fn start_client_from_action(
         }
     }
 
-    // Build startup params
-    let startup_params_obj = if let Some(params_json) = startup_params {
-        let schema = protocol_impl.get_startup_parameters();
-        Some(crate::protocol::StartupParams::new(params_json, schema))
-    } else {
-        None
-    };
+    // `startup_params_obj` was built and validated above, before `add_client`.
 
     // Create a status channel. This path (the /load command, the open_client
     // action, and the MCP start_client tool) has no rolling TUI to render into,

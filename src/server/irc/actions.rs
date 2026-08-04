@@ -225,7 +225,9 @@ impl Server for IrcProtocol {
             let _send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             IrcServer::spawn_with_llm_actions(
@@ -624,7 +626,9 @@ fn send_irc_part_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> IRC {nickname} PART {channel}")
-                .with_debug("IRC send_irc_part: nickname={nickname}, channel={channel}, reason={reason}"),
+                .with_debug(
+                    "IRC send_irc_part: nickname={nickname}, channel={channel}, reason={reason}",
+                ),
         ),
     }
 }
@@ -700,7 +704,9 @@ fn send_irc_notice_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> IRC NOTICE {source} -> {target}")
-                .with_debug("IRC send_irc_notice: source={source}, target={target}, message={message}"),
+                .with_debug(
+                    "IRC send_irc_notice: source={source}, target={target}, message={message}",
+                ),
         ),
     }
 }
@@ -786,31 +792,35 @@ fn close_connection_action() -> ActionDefinition {
 // ============================================================================
 
 pub static IRC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("irc_message_received", "IRC message received from a client", json!({"type": "placeholder", "event_id": "irc_message_received"}))
-        .with_parameters(vec![Parameter {
-            name: "message".to_string(),
-            type_hint: "string".to_string(),
-            description: "The IRC message line received".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            send_irc_message_action(),
-            send_irc_welcome_action(),
-            send_irc_pong_action(),
-            send_irc_join_action(),
-            send_irc_part_action(),
-            send_irc_privmsg_action(),
-            send_irc_notice_action(),
-            send_irc_numeric_action(),
-            wait_for_more_action(),
-            close_connection_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("IRC {client_ip}: {preview(message,80)}")
-                .with_debug("IRC message from {client_ip}:{client_port}")
-                .with_trace("IRC: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "irc_message_received",
+        "IRC message received from a client",
+        json!({"type": "placeholder", "event_id": "irc_message_received"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "message".to_string(),
+        type_hint: "string".to_string(),
+        description: "The IRC message line received".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        send_irc_message_action(),
+        send_irc_welcome_action(),
+        send_irc_pong_action(),
+        send_irc_join_action(),
+        send_irc_part_action(),
+        send_irc_privmsg_action(),
+        send_irc_notice_action(),
+        send_irc_numeric_action(),
+        wait_for_more_action(),
+        close_connection_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("IRC {client_ip}: {preview(message,80)}")
+            .with_debug("IRC message from {client_ip}:{client_port}")
+            .with_trace("IRC: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_irc_event_types() -> Vec<EventType> {

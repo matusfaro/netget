@@ -102,7 +102,7 @@ impl Socks5Server {
             let _ = status_tx.send("[INFO] Applying SOCKS5 startup parameters".to_string());
 
             // Parse auth methods
-            if let Some(methods) = params.get_optional_array("auth_methods") {
+            if let Some(methods) = params.get_optional_array("auth_methods")? {
                 config.auth_methods.clear();
                 for method in methods {
                     if let Some(method_str) = method.as_str() {
@@ -119,13 +119,13 @@ impl Socks5Server {
             }
 
             // Parse default action
-            if let Some(action_str) = params.get_optional_string("default_action") {
+            if let Some(action_str) = params.get_optional_string("default_action")? {
                 config.default_action = action_str;
                 let _ = status_tx.send(format!("[INFO] Default action: {}", config.default_action));
             }
 
             // Parse filter configuration
-            if let Some(filter) = params.get_optional_object("filter") {
+            if let Some(filter) = params.get_optional_object("filter")? {
                 if let Some(patterns) = filter
                     .get("target_host_patterns")
                     .and_then(|v| v.as_array())
@@ -154,7 +154,7 @@ impl Socks5Server {
             }
 
             // Parse filter mode
-            if let Some(mode_str) = params.get_optional_string("filter_mode") {
+            if let Some(mode_str) = params.get_optional_string("filter_mode")? {
                 config.filter_mode = match mode_str.as_str() {
                     "allow_all" => FilterMode::AllowAll,
                     "deny_all" => FilterMode::DenyAll,
@@ -169,9 +169,12 @@ impl Socks5Server {
             }
 
             // Parse MITM mode
-            if let Some(mitm) = params.get_optional_bool("mitm_by_default") {
+            if let Some(mitm) = params.get_optional_bool("mitm_by_default")? {
                 config.mitm_by_default = mitm;
-                let _ = status_tx.send(format!("[INFO] MITM by default: {}", config.mitm_by_default));
+                let _ = status_tx.send(format!(
+                    "[INFO] MITM by default: {}",
+                    config.mitm_by_default
+                ));
             }
         }
 

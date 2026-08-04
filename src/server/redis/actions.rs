@@ -51,7 +51,9 @@ impl Protocol for RedisProtocol {
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_redis_connections_action()]
+        // No user-triggered actions. (A `list_redis_connections` action used to be declared
+        // here; its executor returned a hardcoded empty list, so it only ever misled the model.)
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -81,10 +83,10 @@ impl Protocol for RedisProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("redis-protocol v5.2 (RESP2 parsing)")
+            .implementation("redis-protocol v6.0 (RESP2 parsing), manual RESP2 encoding")
             .llm_control("All Redis commands (GET, SET, INCR, etc.)")
             .e2e_testing("redis-rs client")
-            .notes("RESP2 only (no RESP3)")
+            .notes("RESP2 only (no RESP3), no AUTH/SELECT/MULTI/pub-sub, no inline commands")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -156,7 +158,9 @@ impl Server for RedisProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             RedisServer::spawn_with_llm_actions(
@@ -184,7 +188,6 @@ impl Server for RedisProtocol {
             "redis_error" => self.execute_redis_error(action),
             "redis_null" => self.execute_redis_null(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_redis_connections" => self.execute_list_redis_connections(action),
             _ => Err(anyhow::anyhow!("Unknown Redis action: {}", action_type)),
         }
     }
@@ -308,14 +311,6 @@ impl RedisProtocol {
         })
     }
 
-    fn execute_list_redis_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("Redis list connections");
-
-        Ok(ActionResult::Custom {
-            name: "list_redis_connections".to_string(),
-            data: json!({"connections": []}),
-        })
-    }
 }
 
 /// Action definition: Send Redis simple string response
@@ -368,12 +363,11 @@ pub fn redis_bulk_string_action() -> ActionDefinition {
 pub fn redis_array_action() -> ActionDefinition {
     ActionDefinition {
         name: "redis_array".to_string(),
-        description: "Send an array response. Each element will be encoded as bulk string"
-            .to_string(),
+        description: "Send an array response, for commands that return a list (KEYS, MGET, LRANGE, SCAN...)".to_string(),
         parameters: vec![Parameter {
             name: "values".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of values. Each will be encoded as bulk string".to_string(),
+            description: "Array of values. A string becomes a bulk string, an integer becomes a RESP integer, true/false become the bulk strings \"1\"/\"0\", null becomes a nil element, and a nested array or object is sent as its JSON text in a bulk string".to_string(),
             required: true,
         }],
         example: json!({
@@ -466,21 +460,6 @@ pub fn close_this_connection_action() -> ActionDefinition {
     }
 }
 
-/// Action definition: List Redis connections
-pub fn list_redis_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_redis_connections".to_string(),
-        description: "List all active Redis connections".to_string(),
-        parameters: vec![],
-        example: json!({"type": "list_redis_connections"}),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("Redis list connections")
-                .with_debug("Redis list_redis_connections"),
-        ),
-    }
-}
-
 // ============================================================================
 // Redis Action Constants
 // ============================================================================
@@ -503,28 +482,32 @@ pub static REDIS_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// Redis command event - triggered when client sends a command
 pub static REDIS_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("redis_command", "Redis command received from client", json!({"type": "placeholder", "event_id": "redis_command"}))
-        .with_parameters(vec![Parameter {
-            name: "command".to_string(),
-            type_hint: "string".to_string(),
-            description: "The Redis command string sent by the client".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            REDIS_SIMPLE_STRING_ACTION.clone(),
-            REDIS_BULK_STRING_ACTION.clone(),
-            REDIS_ARRAY_ACTION.clone(),
-            REDIS_INTEGER_ACTION.clone(),
-            REDIS_ERROR_ACTION.clone(),
-            REDIS_NULL_ACTION.clone(),
-            REDIS_CLOSE_CONNECTION_ACTION.clone(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("Redis: {command}")
-                .with_debug("Redis command: {command}")
-                .with_trace("Redis: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "redis_command",
+        "Redis command received from client",
+        json!({"type": "placeholder", "event_id": "redis_command"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "command".to_string(),
+        type_hint: "string".to_string(),
+        description: "The Redis command string sent by the client".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        REDIS_SIMPLE_STRING_ACTION.clone(),
+        REDIS_BULK_STRING_ACTION.clone(),
+        REDIS_ARRAY_ACTION.clone(),
+        REDIS_INTEGER_ACTION.clone(),
+        REDIS_ERROR_ACTION.clone(),
+        REDIS_NULL_ACTION.clone(),
+        REDIS_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Redis: {command}")
+            .with_debug("Redis command: {command}")
+            .with_trace("Redis: {json_pretty(.)}"),
+    )
 });
 
 /// Get Redis event types

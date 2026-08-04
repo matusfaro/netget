@@ -69,16 +69,16 @@ impl ProxyServer {
             let _ = status_tx.send(format!("[INFO] Applying proxy startup parameters"));
 
             // Parse certificate_mode
-            if let Some(cert_mode_str) = params.get_optional_string("certificate_mode") {
+            if let Some(cert_mode_str) = params.get_optional_string("certificate_mode")? {
                 config.certificate_mode = match cert_mode_str.as_str() {
                     "generate" => CertificateMode::Generate,
                     "none" => CertificateMode::None,
                     "load_from_file" => {
                         let cert_path = params
-                            .get_optional_string("cert_path")
+                            .get_optional_string("cert_path")?
                             .context("Missing cert_path for load_from_file mode")?;
                         let key_path = params
-                            .get_optional_string("key_path")
+                            .get_optional_string("key_path")?
                             .context("Missing key_path for load_from_file mode")?;
                         CertificateMode::LoadFromFile {
                             cert_path: cert_path.into(),
@@ -97,21 +97,21 @@ impl ProxyServer {
             }
 
             // Parse filter modes
-            if let Some(mode_str) = params.get_optional_string("request_filter_mode") {
+            if let Some(mode_str) = params.get_optional_string("request_filter_mode")? {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
                     let _ = status_tx.send(format!("[INFO] Request filter mode: {mode:?}"));
                     config.request_filter_mode = mode;
                 }
             }
 
-            if let Some(mode_str) = params.get_optional_string("response_filter_mode") {
+            if let Some(mode_str) = params.get_optional_string("response_filter_mode")? {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
                     let _ = status_tx.send(format!("[INFO] Response filter mode: {mode:?}"));
                     config.response_filter_mode = mode;
                 }
             }
 
-            if let Some(mode_str) = params.get_optional_string("https_connection_filter_mode") {
+            if let Some(mode_str) = params.get_optional_string("https_connection_filter_mode")? {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
                     let _ =
                         status_tx.send(format!("[INFO] HTTPS connection filter mode: {:?}", mode));
@@ -125,42 +125,32 @@ impl ProxyServer {
             CertificateMode::Generate => {
                 info!("Generating self-signed CA certificate for MITM");
                 let _ = status_tx.send("[INFO] Generating MITM CA certificate...".to_string());
-                let (ca_cert, ca_key) = Self::generate_ca_certificate()?;
-                Some(Arc::new(CertificateCache::new(ca_cert, ca_key)))
+                let (ca_cert, ca_key, ca_params) = Self::generate_ca_certificate()?;
+                Some(Arc::new(CertificateCache::new(ca_cert, ca_key, ca_params)))
             }
             CertificateMode::LoadFromFile {
                 cert_path,
                 key_path,
             } => {
-                info!(
-                    "Loading CA certificate from {:?} and {:?}",
-                    cert_path, key_path
-                );
-                let _ = status_tx.send(format!("[INFO] Loading CA cert from {:?}", cert_path));
-
-                // Read certificate and key files
-                let _cert_pem = std::fs::read_to_string(cert_path)
-                    .context("Failed to read certificate file")?;
-                let key_pem =
-                    std::fs::read_to_string(key_path).context("Failed to read private key file")?;
-
-                // Parse the key pair
-                let key_pair =
-                    KeyPair::from_pem(&key_pem).context("Failed to parse private key")?;
-
-                // For loading existing certificates, we need to create a Certificate from PEM
-                // rcgen doesn't have direct PEM parsing, so we'll use the same params and key
-                let mut params = CertificateParams::default();
-                params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-                params
-                    .distinguished_name
-                    .push(rcgen::DnType::CommonName, "NetGet MITM Proxy CA (Loaded)");
-
-                let cert = params
-                    .self_signed(&key_pair)
-                    .context("Failed to create certificate")?;
-
-                Some(Arc::new(CertificateCache::new(cert, key_pair)))
+                // Loading an operator-supplied CA is deliberately refused rather
+                // than approximated. The previous implementation read the key,
+                // ignored the certificate file entirely, and minted a *different*
+                // self-signed CA from the operator's private key. Clients that
+                // trusted the real CA rejected the result, so interception
+                // silently failed while appearing configured -- and the operator's
+                // CA key had been used to sign a certificate they never asked for.
+                //
+                // Using the real certificate requires reading its subject, which
+                // needs rcgen's "x509-parser" feature (not currently enabled in
+                // Cargo.toml).
+                return Err(anyhow::anyhow!(
+                    "certificate_mode 'load_from_file' is not implemented (cert_path={:?}, \
+                     key_path={:?}). Use certificate_mode 'generate' and distribute the \
+                     generated CA via the ca_export_path startup parameter, or 'none' for \
+                     pass-through mode.",
+                    cert_path,
+                    key_path
+                ));
             }
             CertificateMode::None => {
                 info!("Proxy running in pass-through mode (no MITM, origin certificates)");
@@ -168,6 +158,21 @@ impl ProxyServer {
                 None
             }
         };
+
+        // Export the CA certificate if the operator asked for it. Only the public
+        // certificate is written; the private key never leaves memory.
+        if let (Some(cache), Some(params)) = (cert_cache.as_ref(), startup_params.as_ref()) {
+            if let Some(path) = params.get_optional_string("ca_export_path")? {
+                std::fs::write(&path, cache.ca_cert_pem())
+                    .with_context(|| format!("Failed to write CA certificate to {}", path))?;
+                info!("Exported MITM CA certificate to {}", path);
+                let _ = status_tx.send(format!(
+                    "[INFO] MITM CA certificate written to {} - clients must trust this file \
+                     for interception to work",
+                    path
+                ));
+            }
+        }
 
         // Save the config back to state
         app_state
@@ -189,26 +194,39 @@ impl ProxyServer {
         let _ = status_tx.send(format!("→ Proxy server listening on {}", actual_addr));
 
         if cert_cache.is_some() {
-            let _ = status_tx
-                .send("[INFO] MITM mode enabled - full HTTPS decryption and inspection".to_string());
+            let _ = status_tx.send(
+                "[INFO] MITM mode enabled - full HTTPS decryption and inspection".to_string(),
+            );
         } else {
             let _ = status_tx.send("[INFO] Pass-through mode - HTTPS allow/block only".to_string());
         }
 
-        // Spawn cache cleanup task if MITM mode is enabled
+        // Spawn cache cleanup task if MITM mode is enabled.
+        //
+        // Only ONE task handle can be registered per server, and that slot belongs
+        // to the accept loop (registering a second one silently drops the first,
+        // leaving the port held after stop_server). So this task holds a *weak*
+        // reference and exits on its own once the accept loop is aborted and the
+        // last strong reference to the cache goes away.
         if let Some(ref cache) = cert_cache {
-            let cache_clone = cache.clone();
+            let cache_weak = Arc::downgrade(cache);
             let status_tx_clone = status_tx.clone();
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // 1 hour
                 loop {
                     interval.tick().await;
+                    let Some(cache_clone) = cache_weak.upgrade() else {
+                        debug!("Proxy server stopped, ending certificate cache cleanup task");
+                        break;
+                    };
                     debug!("Running periodic certificate cache cleanup");
                     cache_clone.cleanup_expired().await;
                     let stats = cache_clone.get_stats().await;
                     info!(
                         "Certificate cache stats: {} total, {} valid, {} expired",
-                        stats.total_certificates, stats.valid_certificates, stats.expired_certificates
+                        stats.total_certificates,
+                        stats.valid_certificates,
+                        stats.expired_certificates
                     );
                     let _ = status_tx_clone.send(format!(
                         "[DEBUG] Certificate cache: {} certs ({} valid)",
@@ -217,7 +235,8 @@ impl ProxyServer {
                 }
             });
             info!("Started certificate cache cleanup task (runs every hour)");
-            let _ = status_tx.send("[INFO] Certificate cache cleanup task started (hourly)".to_string());
+            let _ = status_tx
+                .send("[INFO] Certificate cache cleanup task started (hourly)".to_string());
         }
 
         // Spawn proxy handler task
@@ -371,7 +390,7 @@ impl ProxyServer {
             if request_str.len() > 200 {
                 format!(
                     "{}... ({} bytes total)",
-                    &request_str[..200],
+                    truncate_str(&request_str, 200),
                     request_str.len()
                 )
             } else {
@@ -492,7 +511,10 @@ impl ProxyServer {
 
         if let Some(cache) = cert_cache {
             // MITM mode - full decryption and inspection
-            info!("MITM mode: will decrypt and inspect HTTPS traffic for {}:{}", dest_host, dest_port);
+            info!(
+                "MITM mode: will decrypt and inspect HTTPS traffic for {}:{}",
+                dest_host, dest_port
+            );
 
             // Call MITM implementation
             return tls_mitm::perform_mitm(
@@ -1069,17 +1091,6 @@ impl ProxyServer {
     ) -> Result<RequestAction> {
         let _ = status_tx.send("[DEBUG] Consulting LLM about HTTP request...".to_string());
 
-        // Format request info for event description
-        let _body_preview = if request_info.body.len() > 500 {
-            format!(
-                "{}... ({} bytes total)",
-                String::from_utf8_lossy(&request_info.body[..500]),
-                request_info.body.len()
-            )
-        } else {
-            String::from_utf8_lossy(&request_info.body).to_string()
-        };
-
         // Create HTTP request event
         let event = Event::new(
             &PROXY_HTTP_REQUEST_EVENT,
@@ -1163,7 +1174,7 @@ impl ProxyServer {
     }
 
     /// Apply modifications to HTTP request
-    fn apply_request_modifications(
+    pub(crate) fn apply_request_modifications(
         request_data: &[u8],
         modifications: &RequestAction,
     ) -> Result<Vec<u8>> {
@@ -1171,7 +1182,7 @@ impl ProxyServer {
             headers,
             remove_headers,
             new_path,
-            query_params: _,
+            query_params,
             new_body,
             body_replacements,
         } = modifications
@@ -1198,15 +1209,15 @@ impl ProxyServer {
                 return Ok(request_data.to_vec());
             }
 
-            // Parse original request line
+            // Rebuild the request line, applying new_path and query_params.
             let mut request_line = header_lines[0].to_string();
-            if let Some(path) = new_path {
-                let parts: Vec<&str> = header_lines[0].split_whitespace().collect();
-                if parts.len() >= 3 {
-                    let method = parts[0];
-                    let version = parts[2];
-                    request_line = format!("{} {} {}", method, path, version);
-                }
+            let original_parts: Vec<&str> = header_lines[0].split_whitespace().collect();
+            if (new_path.is_some() || query_params.is_some()) && original_parts.len() >= 3 {
+                let method = original_parts[0];
+                let version = original_parts[2];
+                let target = new_path.as_deref().unwrap_or(original_parts[1]);
+                let target = apply_query_params(target, query_params.as_ref());
+                request_line = format!("{} {} {}", method, target, version);
             }
 
             // Build headers map
@@ -1249,10 +1260,16 @@ impl ProxyServer {
 
             if let Some(replacements) = body_replacements {
                 for replacement in replacements {
-                    if let Ok(re) = Regex::new(&replacement.pattern) {
-                        body = re
-                            .replace_all(&body, replacement.replacement.as_str())
-                            .to_string();
+                    match Regex::new(&replacement.pattern) {
+                        Ok(re) => {
+                            body = re
+                                .replace_all(&body, replacement.replacement.as_str())
+                                .to_string();
+                        }
+                        Err(e) => warn!(
+                            "Invalid body_replacements pattern {:?}: {} (skipped)",
+                            replacement.pattern, e
+                        ),
                     }
                 }
             }
@@ -1288,8 +1305,12 @@ impl ProxyServer {
         }
     }
 
-    /// Generate a self-signed CA certificate for MITM proxy
-    fn generate_ca_certificate() -> Result<(Certificate, KeyPair)> {
+    /// Generate a self-signed CA certificate for MITM proxy.
+    ///
+    /// A fresh key is generated per server start; there is no fixed key and
+    /// nothing is persisted. The params are returned alongside so that leaf
+    /// certificates can be issued under this CA's real distinguished name.
+    fn generate_ca_certificate() -> Result<(Certificate, KeyPair, CertificateParams)> {
         let mut params = CertificateParams::default();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params
@@ -1299,6 +1320,66 @@ impl ProxyServer {
         let key_pair = KeyPair::generate()?;
         let cert = params.self_signed(&key_pair)?;
 
-        Ok((cert, key_pair))
+        Ok((cert, key_pair, params))
     }
+}
+
+/// Merge `query_params` into a request target, replacing same-named parameters
+/// and appending the rest. Returns the target unchanged when there is nothing to
+/// merge.
+pub(crate) fn apply_query_params(
+    target: &str,
+    query_params: Option<&HashMap<String, String>>,
+) -> String {
+    let Some(params) = query_params.filter(|p| !p.is_empty()) else {
+        return target.to_string();
+    };
+
+    let (path, existing_query) = match target.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (target, None),
+    };
+
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    if let Some(query) = existing_query {
+        for pair in query.split('&').filter(|p| !p.is_empty()) {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            pairs.push((k.to_string(), v.to_string()));
+        }
+    }
+
+    for (name, value) in params {
+        if let Some(existing) = pairs.iter_mut().find(|(k, _)| k == name) {
+            existing.1 = value.clone();
+        } else {
+            pairs.push((name.clone(), value.clone()));
+        }
+    }
+
+    let query = pairs
+        .into_iter()
+        .map(|(k, v)| if v.is_empty() { k } else { format!("{k}={v}") })
+        .collect::<Vec<_>>()
+        .join("&");
+
+    if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
+/// Truncate a string to at most `max_bytes`, never splitting a UTF-8 character.
+///
+/// `&s[..n]` panics when `n` lands inside a multi-byte character, which any
+/// client can arrange by sending a request whose 200th byte is mid-character.
+pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }

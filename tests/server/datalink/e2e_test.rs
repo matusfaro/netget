@@ -16,7 +16,7 @@ mod datalink_server_tests {
     async fn test_datalink_arp_capture_with_mocks() -> E2EResult<()> {
         // Start a DataLink server on a network interface with mocks
         let server_config = NetGetConfig::new(
-            "Listen on datalink interface lo0. Monitor ARP packets and analyze them."
+            "Listen on datalink interface lo0. Monitor ARP packets and analyze them.",
         )
         .with_mock(|mock| {
             mock
@@ -28,8 +28,8 @@ mod datalink_server_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "ETH",
+                        "interface": "lo0",
                         "startup_params": {
-                            "interface": "lo0",
                             "filter": "arp"
                         },
                         "instruction": "Monitor ARP packets on lo0 interface"
@@ -66,7 +66,7 @@ mod datalink_server_tests {
     async fn test_datalink_custom_protocol_with_mocks() -> E2EResult<()> {
         // Start a DataLink server monitoring custom protocol
         let server_config = NetGetConfig::new(
-            "Listen on datalink interface lo0. Monitor for custom protocol with EtherType 0x88B5."
+            "Listen on datalink interface lo0. Monitor for custom protocol with EtherType 0x88B5.",
         )
         .with_mock(|mock| {
             mock
@@ -78,8 +78,8 @@ mod datalink_server_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "ETH",
+                        "interface": "lo0",
                         "startup_params": {
-                            "interface": "lo0",
                             "filter": "ether proto 0x88B5"
                         },
                         "instruction": "Monitor custom protocol frames on lo0"
@@ -112,28 +112,25 @@ mod datalink_server_tests {
     #[tokio::test]
     async fn test_datalink_ignore_packet_with_mocks() -> E2EResult<()> {
         // Start a DataLink server that ignores certain packets
-        let server_config = NetGetConfig::new(
-            "Listen on datalink interface lo0. Ignore all IPv6 packets."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                // Note: Use .on_any() for initial user command since instruction field is empty before server is created
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ETH",
-                        "startup_params": {
-                            "interface": "lo0"
-                        },
-                        "instruction": "Monitor all packets but ignore IPv6"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Listen on datalink interface lo0. Ignore all IPv6 packets.")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        // Note: Use .on_any() for initial user command since instruction field is empty before server is created
+                        .on_any()
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "ETH",
+                                "interface": "lo0",
+                                "instruction": "Monitor all packets but ignore IPv6"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 

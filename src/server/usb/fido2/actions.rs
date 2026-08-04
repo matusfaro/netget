@@ -462,15 +462,18 @@ impl Server for UsbFido2Protocol {
             let support_u2f = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| Some(p.get_bool("support_u2f")));
+                .map(|p| p.get_bool("support_u2f"))
+                .transpose()?;
             let support_fido2 = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| Some(p.get_bool("support_fido2")));
+                .map(|p| p.get_bool("support_fido2"))
+                .transpose()?;
             let auto_approve = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| Some(p.get_bool("auto_approve")));
+                .map(|p| p.get_bool("auto_approve"))
+                .transpose()?;
 
             // Call the actual spawn function
             crate::server::usb::fido2::UsbFido2Server::spawn_with_llm_actions(

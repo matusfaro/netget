@@ -51,7 +51,9 @@ impl Protocol for PostgresqlProtocol {
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_postgresql_connections_action()]
+        // No user-triggered actions. (A `list_postgresql_connections` action used to be declared
+        // here; its executor returned a hardcoded empty list, so it only ever misled the model.)
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -78,10 +80,10 @@ impl Protocol for PostgresqlProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("pgwire v0.26 protocol library")
+            .implementation("pgwire v0.35 protocol library")
             .llm_control("Query responses (columns, rows, types)")
             .e2e_testing("tokio-postgres client")
-            .notes("Extended query timeout issue")
+            .notes("No authentication, no TLS; simple and extended query protocols, text format only")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -154,7 +156,9 @@ impl Server for PostgresqlProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             PostgresqlServer::spawn_with_llm_actions(
@@ -179,7 +183,6 @@ impl Server for PostgresqlProtocol {
             "postgresql_error_response" => self.execute_postgresql_error_response(action),
             "postgresql_ok_response" => self.execute_postgresql_ok_response(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_postgresql_connections" => self.execute_list_postgresql_connections(action),
             _ => Err(anyhow::anyhow!(
                 "Unknown PostgreSQL action: {}",
                 action_type
@@ -274,19 +277,6 @@ impl PostgresqlProtocol {
             }),
         })
     }
-
-    fn execute_list_postgresql_connections(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        debug!("PostgreSQL list connections");
-
-        // Placeholder - in a real implementation, we'd track connections
-        Ok(ActionResult::Custom {
-            name: "list_postgresql_connections".to_string(),
-            data: json!({"connections": []}),
-        })
-    }
 }
 
 /// Action definition: Send PostgreSQL query response
@@ -298,7 +288,11 @@ pub fn postgresql_query_response_action() -> ActionDefinition {
             Parameter {
                 name: "columns".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'text', 'int4', 'int8', 'float8', 'bool')".to_string(),
+                description: "Array of column definitions. Each column needs 'name' and 'type'. \
+                              Recognised types: int2/smallint, int4/int/integer, int8/bigint, \
+                              float4/real, float8/double, bool/boolean, date, time, timestamp, \
+                              text, varchar (anything else is sent as varchar). Rows shorter than \
+                              the column list are padded with NULLs; extra values are dropped".to_string(),
                 required: true,
             },
             Parameter {
@@ -400,21 +394,6 @@ pub fn close_this_connection_action() -> ActionDefinition {
     }
 }
 
-/// Action definition: List PostgreSQL connections
-pub fn list_postgresql_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_postgresql_connections".to_string(),
-        description: "List all active PostgreSQL connections".to_string(),
-        parameters: vec![],
-        example: json!({"type": "list_postgresql_connections"}),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("PostgreSQL listing connections")
-                .with_debug("PostgreSQL list_postgresql_connections"),
-        ),
-    }
-}
-
 // ============================================================================
 // PostgreSQL Action Constants
 // ============================================================================
@@ -428,7 +407,11 @@ pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
             Parameter {
                 name: "columns".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'text', 'int4', 'int8', 'float8', 'bool')".to_string(),
+                description: "Array of column definitions. Each column needs 'name' and 'type'. \
+                              Recognised types: int2/smallint, int4/int/integer, int8/bigint, \
+                              float4/real, float8/double, bool/boolean, date, time, timestamp, \
+                              text, varchar (anything else is sent as varchar). Rows shorter than \
+                              the column list are padded with NULLs; extra values are dropped".to_string(),
                 required: true,
             },
             Parameter {
@@ -535,25 +518,29 @@ pub static POSTGRESQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// PostgreSQL query event - triggered when client sends a query
 pub static POSTGRESQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("postgresql_query", "PostgreSQL query received from client", json!({"type": "placeholder", "event_id": "postgresql_query"}))
-        .with_parameters(vec![Parameter {
-            name: "query".to_string(),
-            type_hint: "string".to_string(),
-            description: "The SQL query string sent by the client".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            POSTGRESQL_QUERY_RESPONSE_ACTION.clone(),
-            POSTGRESQL_ERROR_RESPONSE_ACTION.clone(),
-            POSTGRESQL_OK_RESPONSE_ACTION.clone(),
-            POSTGRESQL_CLOSE_CONNECTION_ACTION.clone(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("PostgreSQL {client_ip}: {preview(query,80)}")
-                .with_debug("PostgreSQL query from {client_ip}:{client_port}")
-                .with_trace("PostgreSQL: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "postgresql_query",
+        "PostgreSQL query received from client",
+        json!({"type": "placeholder", "event_id": "postgresql_query"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "query".to_string(),
+        type_hint: "string".to_string(),
+        description: "The SQL query string sent by the client".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        POSTGRESQL_QUERY_RESPONSE_ACTION.clone(),
+        POSTGRESQL_ERROR_RESPONSE_ACTION.clone(),
+        POSTGRESQL_OK_RESPONSE_ACTION.clone(),
+        POSTGRESQL_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("PostgreSQL {client_ip}: {preview(query,80)}")
+            .with_debug("PostgreSQL query from {client_ip}:{client_port}")
+            .with_trace("PostgreSQL: {json_pretty(.)}"),
+    )
 });
 
 /// Get PostgreSQL event types

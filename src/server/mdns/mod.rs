@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::console_info;
 #[cfg(feature = "mdns")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "mdns")]
@@ -17,7 +18,6 @@ use crate::protocol::Event;
 use crate::server::MdnsProtocol;
 #[cfg(feature = "mdns")]
 use crate::state::app_state::AppState;
-use crate::console_info;
 #[cfg(feature = "mdns")]
 use actions::MDNS_SERVER_STARTUP_EVENT;
 
@@ -66,8 +66,11 @@ impl MdnsServer {
         // If startup_params are provided, register services directly
         if let Some(ref params) = startup_params {
             // Check for multiple services array
-            if let Some(services) = params.get_optional_array("services") {
-                info!("Registering {} services from startup_params", services.len());
+            if let Some(services) = params.get_optional_array("services")? {
+                info!(
+                    "Registering {} services from startup_params",
+                    services.len()
+                );
                 used_startup_params = true;
                 for service in services {
                     if let Some(service_obj) = service.as_object() {
@@ -99,17 +102,26 @@ impl MdnsServer {
                             .unwrap_or(default_port);
 
                         // Don't fail server startup if registration fails
-                        let _ = register_service(&mdns, service_type, service_name, port, &properties, &status_tx);
+                        let _ = register_service(
+                            &mdns,
+                            service_type,
+                            service_name,
+                            port,
+                            &properties,
+                            &status_tx,
+                        );
                     }
                 }
             }
             // Check for single service parameters
-            else if let Some(service_type) = params.get_optional_string("service_type") {
+            else if let Some(service_type) = params.get_optional_string("service_type")? {
                 info!("Registering single service from startup_params");
                 used_startup_params = true;
-                let service_name = params.get_optional_string("service_name")
+                let service_name = params
+                    .get_optional_string("service_name")?
                     .unwrap_or_else(|| "Service".to_string());
-                let properties = params.get_optional_object("properties")
+                let properties = params
+                    .get_optional_object("properties")?
                     .map(|obj| {
                         obj.iter()
                             .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
@@ -118,12 +130,19 @@ impl MdnsServer {
                     .unwrap_or_default();
 
                 let port = params
-                    .get_optional_u64("port")
+                    .get_optional_u64("port")?
                     .and_then(|p| u16::try_from(p).ok())
                     .unwrap_or(default_port);
 
                 // Don't fail server startup if registration fails
-                let _ = register_service(&mdns, &service_type, &service_name, port, &properties, &status_tx);
+                let _ = register_service(
+                    &mdns,
+                    &service_type,
+                    &service_name,
+                    port,
+                    &properties,
+                    &status_tx,
+                );
             }
         }
 
@@ -135,65 +154,65 @@ impl MdnsServer {
             // Get LLM's service registration instructions
             // mDNS manually processes register_mdns_service actions using raw_actions
             if let Ok(execution_result) = call_llm(
-            &llm_client,
-            &app_state,
-            server_id,
-            None,
-            &event,
-            protocol.as_ref(),
-        )
-        .await
-        {
-            // Display messages from LLM
-            for message in &execution_result.messages {
-                console_info!(status_tx, "{}", message);
-            }
+                &llm_client,
+                &app_state,
+                server_id,
+                None,
+                &event,
+                protocol.as_ref(),
+            )
+            .await
+            {
+                // Display messages from LLM
+                for message in &execution_result.messages {
+                    console_info!(status_tx, "{}", message);
+                }
 
-            // Process raw actions for manual mDNS service registration
-            for action in execution_result.raw_actions {
-                if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
-                    if action_type == "register_mdns_service" {
-                        // Extract service parameters
-                        let service_type = action
-                            .get("service_type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("_http._tcp.local.");
-                        let instance_name = action
-                            .get("instance_name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("MyService");
-                        // `as u16` would silently wrap an out-of-range port
-                        // (e.g. 70000 -> 4464) into a wrong SRV record.
-                        let port = action
-                            .get("port")
-                            .and_then(|v| v.as_u64())
-                            .and_then(|p| u16::try_from(p).ok())
-                            .unwrap_or(default_port);
+                // Process raw actions for manual mDNS service registration
+                for action in execution_result.raw_actions {
+                    if let Some(action_type) = action.get("type").and_then(|v| v.as_str()) {
+                        if action_type == "register_mdns_service" {
+                            // Extract service parameters
+                            let service_type = action
+                                .get("service_type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("_http._tcp.local.");
+                            let instance_name = action
+                                .get("instance_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("MyService");
+                            // `as u16` would silently wrap an out-of-range port
+                            // (e.g. 70000 -> 4464) into a wrong SRV record.
+                            let port = action
+                                .get("port")
+                                .and_then(|v| v.as_u64())
+                                .and_then(|p| u16::try_from(p).ok())
+                                .unwrap_or(default_port);
 
-                        let properties = action
-                            .get("properties")
-                            .and_then(|v| v.as_object())
-                            .map(|obj| {
-                                obj.iter()
-                                    .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default();
+                            let properties = action
+                                .get("properties")
+                                .and_then(|v| v.as_object())
+                                .map(|obj| {
+                                    obj.iter()
+                                        .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
 
-                        // Failures are logged by register_service; one bad
-                        // service must not abort the remaining registrations.
-                        let _ = register_service(
-                            &mdns,
-                            service_type,
-                            instance_name,
-                            port,
-                            &properties,
-                            &status_tx,
-                        );
+                            // Failures are logged by register_service; one bad
+                            // service must not abort the remaining registrations.
+                            let _ = register_service(
+                                &mdns,
+                                service_type,
+                                instance_name,
+                                port,
+                                &properties,
+                                &status_tx,
+                            );
+                        }
                     }
                 }
             }
-        }
         } // Close if !used_startup_params
 
         // Keep the daemon alive for the lifetime of the server task.
@@ -290,10 +309,8 @@ fn register_service(
                 }
                 Err(e) => {
                     error!("Failed to register mDNS service: {}", e);
-                    let _ = status_tx.send(format!(
-                        "[ERROR] ✗ Failed to register mDNS service: {}",
-                        e
-                    ));
+                    let _ =
+                        status_tx.send(format!("[ERROR] ✗ Failed to register mDNS service: {}", e));
                     Err(anyhow::anyhow!("Failed to register mDNS service: {}", e))
                 }
             }

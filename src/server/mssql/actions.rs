@@ -49,7 +49,9 @@ impl Protocol for MssqlProtocol {
         }]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_mssql_connections_action()]
+        // No user-triggered actions. (A `list_mssql_connections` action used to be declared
+        // here; its executor returned a hardcoded empty list, so it only ever misled the model.)
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -76,10 +78,14 @@ impl Protocol for MssqlProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual TDS protocol implementation (simplified)")
+            .implementation("Manual TDS 7.4 implementation (pre-login, login, SQL batch, RPC)")
             .llm_control("Query responses (result sets, errors, completion)")
             .e2e_testing("tiberius client crate")
-            .notes("No authentication, simplified TDS handshake, basic query support")
+            .notes(
+                "No authentication and no TLS (pre-login advertises ENCRYPT_NOT_SUP). RPC \
+                 parameters are not decoded - the SQL text is recovered heuristically from the \
+                 packet, so parameterised queries arrive with their placeholders intact",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -152,7 +158,9 @@ impl Server for MssqlProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             MssqlServer::spawn_with_llm_actions(
@@ -177,7 +185,6 @@ impl Server for MssqlProtocol {
             "mssql_error_response" => self.execute_mssql_error_response(action),
             "mssql_ok_response" => self.execute_mssql_ok_response(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_mssql_connections" => self.execute_list_mssql_connections(action),
             _ => Err(anyhow::anyhow!("Unknown MSSQL action: {}", action_type)),
         }
     }
@@ -259,25 +266,16 @@ impl MssqlProtocol {
 
         debug!("MSSQL OK response: rows_affected={}", rows_affected);
 
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] MSSQL → OK: {} rows affected", rows_affected));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] MSSQL → OK: {} rows affected",
+            rows_affected
+        ));
 
         Ok(ActionResult::Custom {
             name: "mssql_ok".to_string(),
             data: json!({
                 "rows_affected": rows_affected
             }),
-        })
-    }
-
-    fn execute_list_mssql_connections(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("MSSQL list connections");
-
-        // This is a placeholder - in a real implementation, we'd track connections
-        Ok(ActionResult::Custom {
-            name: "list_mssql_connections".to_string(),
-            data: json!({"connections": []}),
         })
     }
 }
@@ -291,7 +289,12 @@ pub fn mssql_query_response_action() -> ActionDefinition {
             Parameter {
                 name: "columns".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of column definitions. Each column should have 'name' and 'type' (e.g. 'NVARCHAR', 'INT', 'BIGINT')".to_string(),
+                description: "Array of column definitions. Each column needs 'name' and 'type'. \
+                              Recognised types: TINYINT, SMALLINT, INT/INTEGER, BIGINT (sent as \
+                              binary integers), BIT/BOOL (sent as a bit), FLOAT/REAL/DOUBLE/DECIMAL \
+                              (sent as a 64-bit float), and NVARCHAR/VARCHAR/anything else (sent as \
+                              Unicode text, max 4000 characters). JSON null becomes SQL NULL. Rows \
+                              shorter than the column list are padded with NULLs".to_string(),
                 required: true,
             },
             Parameter {
@@ -323,8 +326,9 @@ pub fn mssql_error_response_action() -> ActionDefinition {
             Parameter {
                 name: "error_number".to_string(),
                 type_hint: "number".to_string(),
-                description: "MSSQL error number (e.g. 207 for invalid column, 208 for invalid object)"
-                    .to_string(),
+                description:
+                    "MSSQL error number (e.g. 207 for invalid column, 208 for invalid object)"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -336,7 +340,8 @@ pub fn mssql_error_response_action() -> ActionDefinition {
             Parameter {
                 name: "severity".to_string(),
                 type_hint: "number".to_string(),
-                description: "Error severity level (1-25, typically 16 for user errors)".to_string(),
+                description: "Error severity level (1-25, typically 16 for user errors)"
+                    .to_string(),
                 required: false,
             },
         ],
@@ -390,31 +395,22 @@ pub fn close_this_connection_action() -> ActionDefinition {
     }
 }
 
-/// Action definition: List MSSQL connections
-pub fn list_mssql_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_mssql_connections".to_string(),
-        description: "List all active MSSQL connections".to_string(),
-        parameters: vec![],
-        example: json!({"type": "list_mssql_connections"}),
-        log_template: Some(LogTemplate::new().with_debug("Listing MSSQL connections")),
-    }
-}
-
 // ============================================================================
 // MSSQL Action Constants
 // ============================================================================
 
 /// MSSQL query response action constant
-pub static MSSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static MSSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "mssql_query_response".to_string(),
         description: "Send a result set in response to a SELECT query".to_string(),
         parameters: vec![
             Parameter {
                 name: "columns".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of column definitions. Each column should have 'name' and 'type'".to_string(),
+                description: "Array of column definitions. Each column needs 'name' and 'type' \
+                              (TINYINT, SMALLINT, INT, BIGINT, BIT, FLOAT, NVARCHAR)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -434,8 +430,7 @@ pub static MSSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
                 .with_info("-> MSSQL response ({rows_len} rows)")
                 .with_debug("MSSQL mssql_query_response: columns={columns_len} rows={rows_len}"),
         ),
-    }
-});
+    });
 
 /// MSSQL error response action constant
 pub static MSSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
@@ -476,8 +471,8 @@ pub static MSSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
 });
 
 /// MSSQL OK response action constant
-pub static MSSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static MSSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "mssql_ok_response".to_string(),
         description: "Send a completion response for non-SELECT queries".to_string(),
         parameters: vec![Parameter {
@@ -495,12 +490,11 @@ pub static MSSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(
                 .with_info("-> MSSQL OK ({rows_affected} rows affected)")
                 .with_debug("MSSQL mssql_ok_response: rows_affected={rows_affected}"),
         ),
-    }
-});
+    });
 
 /// MSSQL close connection action constant
-pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "close_this_connection".to_string(),
         description: "Close the current MSSQL connection".to_string(),
         parameters: vec![],
@@ -510,8 +504,7 @@ pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
                 .with_info("-> MSSQL close connection")
                 .with_debug("MSSQL close_this_connection"),
         ),
-    }
-});
+    });
 
 // ============================================================================
 // MSSQL Event Type Constants
@@ -519,25 +512,29 @@ pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
 
 /// MSSQL query event - triggered when client sends a query
 pub static MSSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mssql_query", "MSSQL query received from client", json!({"type": "placeholder", "event_id": "mssql_query"}))
-        .with_parameters(vec![Parameter {
-            name: "query".to_string(),
-            type_hint: "string".to_string(),
-            description: "The SQL query string sent by the client".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            MSSQL_QUERY_RESPONSE_ACTION.clone(),
-            MSSQL_ERROR_RESPONSE_ACTION.clone(),
-            MSSQL_OK_RESPONSE_ACTION.clone(),
-            MSSQL_CLOSE_CONNECTION_ACTION.clone(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} MSSQL {preview(query,50)} ({duration_ms}ms)")
-                .with_debug("MSSQL query from {client_ip}: {preview(query,100)}")
-                .with_trace("MSSQL full query: {query}"),
-        )
+    EventType::new(
+        "mssql_query",
+        "MSSQL query received from client",
+        json!({"type": "placeholder", "event_id": "mssql_query"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "query".to_string(),
+        type_hint: "string".to_string(),
+        description: "The SQL query string sent by the client".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        MSSQL_QUERY_RESPONSE_ACTION.clone(),
+        MSSQL_ERROR_RESPONSE_ACTION.clone(),
+        MSSQL_OK_RESPONSE_ACTION.clone(),
+        MSSQL_CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} MSSQL {preview(query,50)} ({duration_ms}ms)")
+            .with_debug("MSSQL query from {client_ip}: {preview(query,100)}")
+            .with_trace("MSSQL full query: {query}"),
+    )
 });
 
 /// Get MSSQL event types

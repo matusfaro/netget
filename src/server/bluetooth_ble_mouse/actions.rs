@@ -20,7 +20,7 @@ pub static MOUSE_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             "type": "move_cursor",
             "dx": 10,
             "dy": 0
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),
@@ -43,7 +43,7 @@ pub static MOUSE_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
         "A device disconnected from the BLE mouse",
         json!({
             "type": "list_clients"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),
@@ -201,7 +201,9 @@ impl Server for BluetoothBleMouseProtocol {
             let device_name = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
                 .as_deref()
                 .unwrap_or("NetGet-Mouse")
                 .to_string();

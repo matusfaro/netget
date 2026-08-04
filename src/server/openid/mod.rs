@@ -326,13 +326,13 @@ impl OpenIdServer {
         if let Some(ref params) = startup_params {
             let mut state = openid_state.write().await;
 
-            if let Some(issuer) = params.get_optional_string("issuer") {
+            if let Some(issuer) = params.get_optional_string("issuer")? {
                 info!("OpenID issuer configured: {}", issuer);
                 let _ = status_tx.send(format!("[INFO] OpenID issuer: {}", issuer));
                 state.issuer = Some(issuer);
             }
 
-            if let Some(scopes_array) = params.get_optional_array("supported_scopes") {
+            if let Some(scopes_array) = params.get_optional_array("supported_scopes")? {
                 let scopes: Vec<String> = scopes_array
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))

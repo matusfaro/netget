@@ -292,7 +292,9 @@ impl Server for LdapProtocol {
             let _send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             LdapServer::spawn_with_llm_actions(
@@ -556,10 +558,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("LDAP waiting for more data"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("LDAP waiting for more data")),
     }
 }
 
@@ -604,43 +603,47 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// LDAP bind event - triggered when client attempts to authenticate
 pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_bind", "LDAP bind (authentication) request received", json!({"type": "placeholder", "event_id": "ldap_bind"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "message_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "LDAP message ID".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "version".to_string(),
-                type_hint: "number".to_string(),
-                description: "LDAP protocol version (typically 3)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "dn".to_string(),
-                type_hint: "string".to_string(),
-                description: "Distinguished Name for authentication".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "password".to_string(),
-                type_hint: "string".to_string(),
-                description: "Password for simple authentication".to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![
-            LDAP_BIND_RESPONSE_ACTION.clone(),
-            CLOSE_CONNECTION_ACTION.clone(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("LDAP BIND {client_ip} dn={dn}")
-                .with_debug("LDAP bind v{version} from {client_ip}:{client_port}, dn={dn}")
-                .with_trace("LDAP bind: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ldap_bind",
+        "LDAP bind (authentication) request received",
+        json!({"type": "placeholder", "event_id": "ldap_bind"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "LDAP message ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "version".to_string(),
+            type_hint: "number".to_string(),
+            description: "LDAP protocol version (typically 3)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "Distinguished Name for authentication".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "password".to_string(),
+            type_hint: "string".to_string(),
+            description: "Password for simple authentication".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        LDAP_BIND_RESPONSE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("LDAP BIND {client_ip} dn={dn}")
+            .with_debug("LDAP bind v{version} from {client_ip}:{client_port}, dn={dn}")
+            .with_trace("LDAP bind: {json_pretty(.)}"),
+    )
 });
 
 /// LDAP search event - triggered when client performs a directory search
@@ -686,20 +689,24 @@ pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// LDAP unbind event - triggered when client closes connection
 pub static LDAP_UNBIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_unbind", "LDAP unbind (disconnect) request received", json!({"type": "placeholder", "event_id": "ldap_unbind"}))
-        .with_parameters(vec![Parameter {
-            name: "bind_dn".to_string(),
-            type_hint: "string".to_string(),
-            description: "DN of authenticated user (empty if not authenticated)".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("LDAP UNBIND {client_ip}")
-                .with_debug("LDAP unbind from {client_ip}:{client_port}, bind_dn={bind_dn}")
-                .with_trace("LDAP unbind: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ldap_unbind",
+        "LDAP unbind (disconnect) request received",
+        json!({"type": "placeholder", "event_id": "ldap_unbind"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "bind_dn".to_string(),
+        type_hint: "string".to_string(),
+        description: "DN of authenticated user (empty if not authenticated)".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("LDAP UNBIND {client_ip}")
+            .with_debug("LDAP unbind from {client_ip}:{client_port}, bind_dn={bind_dn}")
+            .with_trace("LDAP unbind: {json_pretty(.)}"),
+    )
 });
 
 /// Get LDAP event types

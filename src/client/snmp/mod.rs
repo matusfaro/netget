@@ -15,7 +15,7 @@ use tracing::{debug, error, info, trace};
 use crate::client::snmp::actions::{
     SNMP_CLIENT_CONNECTED_EVENT, SNMP_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -58,29 +58,29 @@ enum SnmpVersion {
 }
 
 /// Parse startup parameters
-fn parse_startup_params(params: Option<crate::protocol::StartupParams>) -> SnmpConfig {
+fn parse_startup_params(params: Option<crate::protocol::StartupParams>) -> Result<SnmpConfig> {
     let mut config = SnmpConfig::default();
 
     if let Some(params) = params {
-        if let Some(community) = params.get_optional_string("community") {
+        if let Some(community) = params.get_optional_string("community")? {
             config.community = community;
         }
-        if let Some(version) = params.get_optional_string("version") {
+        if let Some(version) = params.get_optional_string("version")? {
             config.version = match version.to_lowercase().as_str() {
                 "v1" | "1" => SnmpVersion::V1,
                 "v2c" | "v2" | "2c" | "2" => SnmpVersion::V2c,
                 _ => SnmpVersion::V2c,
             };
         }
-        if let Some(timeout) = params.get_optional_i64("timeout_ms") {
+        if let Some(timeout) = params.get_optional_i64("timeout_ms")? {
             config.timeout_ms = timeout as u64;
         }
-        if let Some(retries) = params.get_optional_i64("retries") {
+        if let Some(retries) = params.get_optional_i64("retries")? {
             config.retries = retries as u32;
         }
     }
 
-    config
+    Ok(config)
 }
 
 /// Helper function to parse OID string to ObjectIdentifier
@@ -112,7 +112,7 @@ impl SnmpClient {
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         // Parse configuration
-        let config = parse_startup_params(startup_params);
+        let config = parse_startup_params(startup_params)?;
         debug!(
             "SNMP client config: community={}, version={:?}, timeout={}ms, retries={}",
             config.community, config.version, config.timeout_ms, config.retries

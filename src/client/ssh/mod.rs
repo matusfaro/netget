@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::client::ssh::actions::{SSH_CLIENT_CONNECTED_EVENT, SSH_CLIENT_OUTPUT_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -60,10 +60,10 @@ impl SshClient {
         let params =
             startup_params.context("Missing required startup parameters for SSH client")?;
 
-        let username = params.get_string("username");
-        let password = params.get_optional_string("password");
+        let username = params.get_string("username")?;
+        let password = params.get_optional_string("password")?;
         let auth_method = params
-            .get_optional_string("auth_method")
+            .get_optional_string("auth_method")?
             .unwrap_or_else(|| "password".to_string());
 
         if auth_method != "password" {

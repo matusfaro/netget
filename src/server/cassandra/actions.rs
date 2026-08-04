@@ -155,7 +155,9 @@ impl Server for CassandraProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             CassandraServer::spawn_with_llm_actions(
@@ -257,10 +259,7 @@ impl CassandraProtocol {
             .and_then(|v| v.as_array())
             .context("Missing 'columns' array")?;
 
-        let params = action
-            .get("params")
-            .and_then(|v| v.as_array())
-            .cloned();
+        let params = action.get("params").and_then(|v| v.as_array()).cloned();
 
         debug!(
             "Cassandra prepared statement: {} result columns, {} params",
@@ -431,7 +430,8 @@ fn cassandra_result_rows_action() -> ActionDefinition {
 fn cassandra_prepared_action() -> ActionDefinition {
     ActionDefinition {
         name: "cassandra_prepared".to_string(),
-        description: "Send prepared statement response with parameter and result column metadata".to_string(),
+        description: "Send prepared statement response with parameter and result column metadata"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "columns".to_string(),
@@ -535,7 +535,7 @@ pub static CASSANDRA_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Client sends STARTUP frame with protocol version and options",
         json!({
             "type": "cassandra_ready"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -564,38 +564,42 @@ pub static CASSANDRA_OPTIONS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 "CQL_VERSION": ["3.0.0"],
                 "COMPRESSION": []
             }
-        })
+        }),
     )
     .with_actions(vec![cassandra_supported_action(), cassandra_error_action()])
 });
 
 pub static CASSANDRA_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("cassandra_query", "Client sends CQL query to execute", json!({"type": "placeholder", "event_id": "cassandra_query"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "query".to_string(),
-                type_hint: "string".to_string(),
-                description: "The CQL query string".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "consistency".to_string(),
-                type_hint: "string".to_string(),
-                description: "Consistency level (ONE, QUORUM, ALL, etc.)".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            cassandra_result_rows_action(),
-            cassandra_error_action(),
-            close_this_connection_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("Cassandra {client_ip}: {preview(query,80)}")
-                .with_debug("Cassandra query from {client_ip}:{client_port}")
-                .with_trace("Cassandra: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "cassandra_query",
+        "Client sends CQL query to execute",
+        json!({"type": "placeholder", "event_id": "cassandra_query"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "query".to_string(),
+            type_hint: "string".to_string(),
+            description: "The CQL query string".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "consistency".to_string(),
+            type_hint: "string".to_string(),
+            description: "Consistency level (ONE, QUORUM, ALL, etc.)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        cassandra_result_rows_action(),
+        cassandra_error_action(),
+        close_this_connection_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Cassandra {client_ip}: {preview(query,80)}")
+            .with_debug("Cassandra query from {client_ip}:{client_port}")
+            .with_trace("Cassandra: {json_pretty(.)}"),
+    )
 });
 
 pub static CASSANDRA_PREPARE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -609,7 +613,7 @@ pub static CASSANDRA_PREPARE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 {"name": "name", "type": "varchar"}
             ],
             "params": [{"type": "int"}]
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -645,7 +649,7 @@ pub static CASSANDRA_EXECUTE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 {"name": "name", "type": "varchar"}
             ],
             "rows": [[1, "Alice"], [2, "Bob"]]
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -679,7 +683,7 @@ pub static CASSANDRA_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Client sends AUTH_RESPONSE with credentials (SASL PLAIN)",
         json!({
             "type": "cassandra_auth_success"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {

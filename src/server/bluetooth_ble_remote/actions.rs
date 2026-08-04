@@ -18,7 +18,7 @@ pub static REMOTE_BUTTON_PRESSED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "A remote control button was pressed",
         json!({
             "type": "play_pause"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "button".to_string(),
@@ -176,7 +176,9 @@ impl Server for BluetoothBleRemoteProtocol {
             let device_name = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
                 .as_deref()
                 .unwrap_or("NetGet-Remote")
                 .to_string();

@@ -62,9 +62,9 @@ impl BgpServer {
 
         // Extract AS number and router ID from startup params
         let (local_as, router_id) = if let Some(ref params) = startup_params {
-            let as_num = params.get_optional_u32("as_number").unwrap_or(65000); // Default private ASN
+            let as_num = params.get_optional_u32("as_number")?.unwrap_or(65000); // Default private ASN
             let router_id_str = params
-                .get_optional_string("router_id")
+                .get_optional_string("router_id")?
                 .unwrap_or_else(|| "192.168.1.1".to_string());
             console_info!(
                 status_tx,
@@ -368,7 +368,9 @@ impl BgpSession {
             Ok(result) => {
                 // Write any outputs from actions to the stream
                 for protocol_result in result.protocol_results {
-                    if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) = protocol_result {
+                    if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) =
+                        protocol_result
+                    {
                         self.stream.write_all(&output_data).await?;
                         self.stream.flush().await?;
                     }

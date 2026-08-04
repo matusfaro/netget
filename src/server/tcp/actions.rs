@@ -198,7 +198,9 @@ impl Server for TcpProtocol {
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             use crate::server::tcp::TcpServer;
@@ -402,10 +404,7 @@ fn list_connections_action() -> ActionDefinition {
         example: json!({
             "type": "list_connections"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("TCP list_connections"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("TCP list_connections")),
     }
 }
 

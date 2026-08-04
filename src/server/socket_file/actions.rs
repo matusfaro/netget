@@ -208,13 +208,16 @@ impl Server for SocketFileProtocol {
             let socket_path = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| Some(p.get_string("socket_path")))
+                .map(|p| p.get_string("socket_path"))
+                .transpose()?
                 .ok_or_else(|| anyhow::anyhow!("socket_path parameter is required"))?;
 
             let send_first = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_bool("send_first"))
+                .map(|p| p.get_optional_bool("send_first"))
+                .transpose()?
+                .flatten()
                 .unwrap_or(false);
 
             use crate::server::socket_file::SocketFileServer;
@@ -449,7 +452,7 @@ pub static SOCKET_FILE_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::
         json!({
             "type": "send_socket_data",
             "data": "READY\n"
-        })
+        }),
     )
     .with_parameters(vec![])
     .with_actions(vec![
@@ -466,7 +469,7 @@ pub static SOCKET_FILE_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(
         json!({
             "type": "send_socket_data",
             "data": "ACK\n"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "data".to_string(),

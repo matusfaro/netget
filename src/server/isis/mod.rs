@@ -98,13 +98,13 @@ impl IsisServer {
         // Extract configuration from startup params
         let (system_id, area_id, level) = if let Some(ref params) = startup_params {
             let sys_id = params
-                .get_optional_string("system_id")
+                .get_optional_string("system_id")?
                 .unwrap_or_else(|| "0000.0000.0001".to_string());
             let area = params
-                .get_optional_string("area_id")
+                .get_optional_string("area_id")?
                 .unwrap_or_else(|| "49.0001".to_string());
             let lvl = params
-                .get_optional_string("level")
+                .get_optional_string("level")?
                 .unwrap_or_else(|| "level-2".to_string());
 
             info!(

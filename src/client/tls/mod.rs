@@ -19,7 +19,7 @@ use tokio_rustls::TlsConnector;
 use tracing::{debug, error, info, trace};
 
 use crate::client::tls::actions::{TLS_CLIENT_CONNECTED_EVENT, TLS_CLIENT_DATA_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::patterns;
@@ -58,16 +58,22 @@ impl TlsClient {
         // Extract startup parameters
         let accept_invalid_certs = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_bool("accept_invalid_certs"))
+            .map(|p| p.get_optional_bool("accept_invalid_certs"))
+            .transpose()?
+            .flatten()
             .unwrap_or(false);
 
         let server_name_override = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("server_name"));
+            .map(|p| p.get_optional_string("server_name"))
+            .transpose()?
+            .flatten();
 
         let custom_ca_cert_pem = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("custom_ca_cert_pem"));
+            .map(|p| p.get_optional_string("custom_ca_cert_pem"))
+            .transpose()?
+            .flatten();
 
         debug!(
             "TLS client {} connecting to {} (accept_invalid_certs: {})",
@@ -104,13 +110,17 @@ impl TlsClient {
                 .context("Failed to parse custom CA certificate PEM")?;
 
             if ca_certs.is_empty() {
-                return Err(anyhow::anyhow!("No certificates found in custom_ca_cert_pem"));
+                return Err(anyhow::anyhow!(
+                    "No certificates found in custom_ca_cert_pem"
+                ));
             }
 
             // Create root store with custom CA
             let mut root_store = RootCertStore::empty();
             for cert in ca_certs {
-                root_store.add(cert).context("Failed to add custom CA certificate to root store")?;
+                root_store
+                    .add(cert)
+                    .context("Failed to add custom CA certificate to root store")?;
             }
 
             ClientConfig::builder()
@@ -206,9 +216,11 @@ impl TlsClient {
                     let protocol = crate::client::tls::actions::TlsClientProtocol::new();
                     for action in result.actions {
                         match protocol.execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(
-                                bytes,
-                            )) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::SendData(
+                                    bytes,
+                                ),
+                            ) => {
                                 let mut write_guard = write_half_for_connected.lock().await;
                                 if let Err(e) = write_guard.write_all(&bytes).await {
                                     error!("Failed to send data after connect: {}", e);
@@ -218,11 +230,15 @@ impl TlsClient {
                                     info!("Sent {} {}", bytes.len(), patterns::TLS_CLIENT_SENT);
                                 }
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 info!("LLM requested disconnect after connect");
                                 return Ok(local_addr);
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::WaitForMore,
+                            ) => {
                                 // Just wait for data
                             }
                             Ok(_) => {
@@ -256,8 +272,8 @@ impl TlsClient {
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
-                        let _ =
-                            status_tx.send(format!("[CLIENT] TLS client {} disconnected", client_id));
+                        let _ = status_tx
+                            .send(format!("[CLIENT] TLS client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -289,7 +305,8 @@ impl TlsClient {
                                     );
 
                                     // Try to decode as UTF-8, fallback to hex
-                                    let data_str = if let Ok(utf8) = String::from_utf8(data.clone()) {
+                                    let data_str = if let Ok(utf8) = String::from_utf8(data.clone())
+                                    {
                                         utf8
                                     } else {
                                         format!("HEX:{}", hex::encode(&data))
@@ -413,8 +430,10 @@ impl tokio_rustls::rustls::client::danger::ServerCertVerifier for NoVerification
         _message: &[u8],
         _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
         _dss: &tokio_rustls::rustls::DigitallySignedStruct,
-    ) -> Result<tokio_rustls::rustls::client::danger::HandshakeSignatureValid, tokio_rustls::rustls::Error>
-    {
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
         // Accept all signatures
         Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
     }
@@ -424,8 +443,10 @@ impl tokio_rustls::rustls::client::danger::ServerCertVerifier for NoVerification
         _message: &[u8],
         _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
         _dss: &tokio_rustls::rustls::DigitallySignedStruct,
-    ) -> Result<tokio_rustls::rustls::client::danger::HandshakeSignatureValid, tokio_rustls::rustls::Error>
-    {
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
         // Accept all signatures
         Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
     }

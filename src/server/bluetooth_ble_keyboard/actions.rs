@@ -19,7 +19,7 @@ pub static KEYBOARD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
         json!({
             "type": "type_text",
             "text": "Hello, World!"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),
@@ -42,7 +42,7 @@ pub static KEYBOARD_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::n
         "A device disconnected from the BLE keyboard",
         json!({
             "type": "list_clients"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),
@@ -199,7 +199,9 @@ impl Server for BluetoothBleKeyboardProtocol {
             let device_name = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
                 .as_deref()
                 .unwrap_or("NetGet-Keyboard")
                 .to_string();

@@ -156,7 +156,9 @@ impl Server for BitcoinProtocol {
             let network = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("network"))
+                .map(|p| p.get_optional_string("network"))
+                .transpose()?
+                .flatten()
                 .unwrap_or_else(|| "mainnet".to_string());
 
             use crate::server::bitcoin::BitcoinServer;
@@ -612,7 +614,7 @@ pub static BITCOIN_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(
             "type": "send_version",
             "network": "mainnet",
             "version": 70015
-        })
+        }),
     )
     .with_actions(vec![send_version_action(), close_this_connection_action()])
     .with_log_template(
@@ -625,37 +627,40 @@ pub static BITCOIN_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(
 
 /// Bitcoin message received event
 pub static BITCOIN_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bitcoin_message_received", "Bitcoin P2P message received", json!({"type": "placeholder", "event_id": "bitcoin_message_received"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "message_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "Type of message (version, verack, ping, pong, getdata, etc.)"
-                    .to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "message".to_string(),
-                type_hint: "object".to_string(),
-                description: "Parsed message data (structure depends on message type)".to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![
-            send_bitcoin_message_action(),
-            send_version_action(),
-            send_verack_action(),
-            send_ping_action(),
-            send_pong_action(),
-            send_getaddr_action(),
-            close_this_connection_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} BTC {message_type}")
-                .with_debug("Bitcoin {message_type} from {client_ip}:{client_port}")
-                .with_trace("Bitcoin message: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "bitcoin_message_received",
+        "Bitcoin P2P message received",
+        json!({"type": "placeholder", "event_id": "bitcoin_message_received"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Type of message (version, verack, ping, pong, getdata, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "message".to_string(),
+            type_hint: "object".to_string(),
+            description: "Parsed message data (structure depends on message type)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_bitcoin_message_action(),
+        send_version_action(),
+        send_verack_action(),
+        send_ping_action(),
+        send_pong_action(),
+        send_getaddr_action(),
+        close_this_connection_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BTC {message_type}")
+            .with_debug("Bitcoin {message_type} from {client_ip}:{client_port}")
+            .with_trace("Bitcoin message: {json_pretty(.)}"),
+    )
 });
 
 /// Get Bitcoin event types

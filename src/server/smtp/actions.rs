@@ -282,18 +282,18 @@ impl Server for SmtpProtocol {
 
             // Check if TLS should be enabled via startup parameters
             let tls_config = if let Some(ref params) = ctx.startup_params {
-                if params.get_optional_bool("enable_tls").unwrap_or(false) {
+                if params.get_optional_bool("enable_tls")?.unwrap_or(false) {
                     // Generate TLS configuration
-                    let common_name = params.get_optional_string("tls_common_name");
-                    let san_dns_names = params.get_optional_array("tls_san_dns_names").map(|arr| {
+                    let common_name = params.get_optional_string("tls_common_name")?;
+                    let san_dns_names = params.get_optional_array("tls_san_dns_names")?.map(|arr| {
                         arr.iter()
                             .filter_map(|v| v.as_str())
                             .map(|s| s.to_string())
                             .collect::<Vec<_>>()
                     });
-                    let validity_days = params.get_optional_i64("tls_validity_days");
-                    let organization = params.get_optional_string("tls_organization");
-                    let organizational_unit = params.get_optional_string("tls_organizational_unit");
+                    let validity_days = params.get_optional_i64("tls_validity_days")?;
+                    let organization = params.get_optional_string("tls_organization")?;
+                    let organizational_unit = params.get_optional_string("tls_organizational_unit")?;
 
                     match crate::server::tls_cert_manager::generate_custom_tls_config(
                         common_name,
@@ -532,10 +532,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("SMTP waiting for more data"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("SMTP waiting for more data")),
     }
 }
 
@@ -584,15 +581,19 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// SMTP command event - triggered when client sends an SMTP command
 pub static SMTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("smtp_command", "SMTP command received from client", json!({"type": "placeholder", "event_id": "smtp_command"}))
-    .with_parameters(vec![
-        Parameter {
-            name: "command".to_string(),
-            type_hint: "string".to_string(),
-            description: "The SMTP command received (e.g., 'EHLO example.com', 'MAIL FROM:<sender@example.com>')".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "smtp_command",
+        "SMTP command received from client",
+        json!({"type": "placeholder", "event_id": "smtp_command"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "command".to_string(),
+        type_hint: "string".to_string(),
+        description:
+            "The SMTP command received (e.g., 'EHLO example.com', 'MAIL FROM:<sender@example.com>')"
+                .to_string(),
+        required: true,
+    }])
     .with_actions(vec![
         SEND_SMTP_GREETING_ACTION.clone(),
         SEND_SMTP_OK_ACTION.clone(),

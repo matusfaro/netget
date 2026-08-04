@@ -19,6 +19,7 @@ use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::console_info;
 #[cfg(feature = "ospf")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "ospf")]
@@ -33,7 +34,6 @@ use crate::server::socket_helpers::create_ospf_raw_socket;
 use crate::state::app_state::AppState;
 #[cfg(feature = "ospf")]
 use crate::state::server::OspfNeighborState;
-use crate::console_info;
 #[cfg(feature = "ospf")]
 use actions::{OspfProtocol, OSPF_HELLO_EVENT};
 
@@ -115,10 +115,10 @@ impl OspfServer {
         // Extract configuration
         let (router_id, area_id) = if let Some(ref params) = startup_params {
             let router_id = params
-                .get_optional_string("router_id")
+                .get_optional_string("router_id")?
                 .unwrap_or_else(|| interface_ip.to_string());
             let area_id = params
-                .get_optional_string("area_id")
+                .get_optional_string("area_id")?
                 .unwrap_or_else(|| "0.0.0.0".to_string());
 
             console_info!(status_tx, "OSPF: router_id={}, area={}", router_id, area_id);

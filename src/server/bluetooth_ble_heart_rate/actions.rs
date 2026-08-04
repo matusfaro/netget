@@ -12,14 +12,17 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static HEART_RATE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("heart_rate_updated", "Heart rate BPM was updated", json!({"type": "placeholder", "event_id": "heart_rate_updated"})).with_parameters(vec![
-        Parameter {
-            name: "bpm".to_string(),
-            type_hint: "number".to_string(),
-            description: "Beats per minute".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "heart_rate_updated",
+        "Heart rate BPM was updated",
+        json!({"type": "placeholder", "event_id": "heart_rate_updated"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "bpm".to_string(),
+        type_hint: "number".to_string(),
+        description: "Beats per minute".to_string(),
+        required: true,
+    }])
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE heart rate: {bpm} BPM")
@@ -197,7 +200,9 @@ impl Server for BluetoothBleHeartRateProtocol {
             let device_name = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("device_name"))
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
                 .as_deref()
                 .unwrap_or("NetGet-HeartRate")
                 .to_string();

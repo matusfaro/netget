@@ -25,4 +25,4 @@ pub use event_type::{Event, EventType};
 pub use log_template::{LogLevel, LogTemplate};
 pub use metadata::{DevelopmentState, ProtocolMetadata, ProtocolMetadataV2};
 pub use server_registry::registry;
-pub use spawn_context::{SpawnContext, StartupParams};
+pub use spawn_context::{SpawnContext, StartupParamError, StartupParamResult, StartupParams};
