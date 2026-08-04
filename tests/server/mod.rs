@@ -2,8 +2,12 @@
 
 #[cfg(feature = "amqp")]
 pub mod amqp;
+#[cfg(feature = "arp")]
+pub mod arp;
 #[cfg(feature = "bgp")]
 pub mod bgp;
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
 #[cfg(feature = "bluetooth-ble")]
 pub mod bluetooth_ble;
 #[cfg(feature = "bluetooth-ble-battery")]
@@ -76,6 +80,8 @@ pub mod http2;
 pub mod http3;
 #[cfg(feature = "icmp")]
 pub mod icmp;
+#[cfg(feature = "igmp")]
+pub mod igmp;
 #[cfg(feature = "imap")]
 pub mod imap;
 #[cfg(feature = "ipp")]
@@ -108,6 +114,8 @@ pub mod mqtt;
 pub mod mysql;
 #[cfg(feature = "mssql")]
 pub mod mssql;
+#[cfg(feature = "nfc")]
+pub mod nfc;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "nntp")]
@@ -124,6 +132,8 @@ pub mod ollama;
 pub mod openai;
 #[cfg(feature = "openapi")]
 pub mod openapi;
+#[cfg(feature = "openid")]
+pub mod openid;
 #[cfg(feature = "openvpn")]
 pub mod openvpn;
 #[cfg(feature = "ospf")]
@@ -144,6 +154,8 @@ pub mod rip;
 pub mod rss;
 #[cfg(feature = "s3")]
 pub mod s3;
+#[cfg(feature = "sip")]
+pub mod sip;
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smtp")]
@@ -164,6 +176,8 @@ pub mod ssh;
 pub mod ssh_agent;
 #[cfg(feature = "stun")]
 pub mod stun;
+#[cfg(feature = "svn")]
+pub mod svn;
 #[cfg(feature = "syslog")]
 pub mod syslog;
 #[cfg(feature = "tcp")]
@@ -172,6 +186,8 @@ pub mod tcp;
 pub mod telnet;
 #[cfg(feature = "tftp")]
 pub mod tftp;
+#[cfg(feature = "tls")]
+pub mod tls;
 #[cfg(feature = "tor")]
 pub mod tor_integration;
 #[cfg(feature = "tor")]
@@ -192,6 +208,18 @@ pub mod torrent_tracker;
 pub mod turn;
 #[cfg(feature = "udp")]
 pub mod udp;
+#[cfg(feature = "usb-fido2")]
+pub mod usb_fido2;
+#[cfg(feature = "usb-keyboard")]
+pub mod usb_keyboard;
+#[cfg(feature = "usb-mouse")]
+pub mod usb_mouse;
+#[cfg(feature = "usb-msc")]
+pub mod usb_msc;
+#[cfg(feature = "usb-serial")]
+pub mod usb_serial;
+#[cfg(feature = "usb-smartcard")]
+pub mod usb_smartcard;
 #[cfg(feature = "vnc")]
 pub mod vnc;
 #[cfg(feature = "webdav")]
@@ -200,6 +228,8 @@ pub mod webdav;
 pub mod webrtc;
 #[cfg(feature = "webrtc")]
 pub mod webrtc_signaling;
+#[cfg(feature = "whois")]
+pub mod whois;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
 #[cfg(feature = "xmlrpc")]
