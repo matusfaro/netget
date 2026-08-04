@@ -130,6 +130,33 @@ pub struct Args {
     )]
     pub api_key: Option<String>,
 
+    /// Route all LLM calls to the calling MCP agent instead of a model (MCP mode only)
+    #[clap(
+        long = "llm-agent",
+        help = "Do not call any model. Queue every LLM request for the calling MCP agent (e.g. Claude Code) to answer via the get_next_llm_request / answer_llm_request tools. Only meaningful with --mcp / --mcp-http; mutually exclusive with --ollama-url / --openai-url.",
+        conflicts_with_all = ["ollama_url", "openai_url"]
+    )]
+    pub llm_agent: bool,
+
+    /// FIFO path for agent-queue push notifications
+    #[clap(
+        long = "llm-agent-pipe",
+        value_name = "PATH",
+        help = "Named pipe (FIFO) that receives the id of each newly queued LLM request, so the agent can block-read it to get woken instead of polling. Created if absent. Requires --llm-agent; the long-poll tool works without it.",
+        requires = "llm_agent"
+    )]
+    pub llm_agent_pipe: Option<std::path::PathBuf>,
+
+    /// Seconds a queued LLM request waits for the agent's answer before erroring
+    #[clap(
+        long = "llm-agent-timeout",
+        value_name = "SECONDS",
+        default_value = "300",
+        help = "How long (seconds) a queued LLM request waits for the agent to answer before the call errors and the connection resets to Idle. Requires --llm-agent.",
+        requires = "llm_agent"
+    )]
+    pub llm_agent_timeout: u64,
+
     /// Path to embedded GGUF model file (enables embedded LLM inference)
     #[cfg(feature = "embedded-llm")]
     #[clap(

@@ -25,15 +25,16 @@ rmcp STDIO transport  /  rmcp StreamableHttpService
   |
   v
 NetGetMcpService (tools.rs)
-  |--- 10 MCP tools (list_protocols, start_server, etc.)
+  |--- MCP tools (list_protocols, start_server, get_next_llm_request, ...)
   |--- AppState (shared server/client state)
   v
 Protocol Servers (tcp, http, dns, ...)
   |
   v
-OllamaClient (2 backends)
-  |--- Ollama /api/chat  (local)
-  |--- OpenAI /v1/chat   (remote)
+OllamaClient (3 backends)
+  |--- Ollama /api/chat        (local)
+  |--- OpenAI /v1/chat         (remote)
+  |--- Agent queue (--llm-agent): the calling MCP agent answers
 ```
 
 ## Library
@@ -73,6 +74,9 @@ OllamaClient (2 backends)
 | `list_access_logs` | Recent request/response entries (newest first) | `AppState::list_access_logs()` |
 | `get_access_log` | Full request + response for one entry by id | `AppState::get_access_log()` |
 | `stop_all` | Stop all servers | Iterate + remove all |
+| `get_next_llm_request` | (agent mode) Fetch next queued LLM request; optional long-poll | `LlmRequestQueue::wait_and_claim()` |
+| `answer_llm_request` | (agent mode) Answer a queued request with action JSON | `LlmRequestQueue::answer()` |
+| `list_llm_requests` | (agent mode) List outstanding queued requests | `LlmRequestQueue::list()` |
 
 ## Access Logs
 
@@ -92,14 +96,57 @@ errors out does not produce an entry.
 ## LLM Backend
 
 Protocol servers started via `start_server` are driven by NetGet's own configured
-LLM client (`SharedState.llm_client`), built once from the CLI args:
+LLM client (`SharedState.llm_client`), built once from the CLI args. Three
+mutually-exclusive sources:
 
 - **Ollama** (default) - local Ollama instance, or
-- **OpenAI-compatible** - when `--openai-url` / `--api-key` are provided.
+- **OpenAI-compatible** - when `--openai-url` / `--api-key` are provided, or
+- **Agent queue** - when `--llm-agent` is set (see below).
 
-MCP **sampling** (routing protocol-server LLM calls back to the MCP client's model)
-is intentionally **not** supported: the capability is being removed from the MCP
-spec, so NetGet always uses its own LLM backend.
+MCP **sampling** (routing protocol-server LLM calls back to the MCP client's model
+via the spec's `sampling/createMessage`) is intentionally **not** supported: that
+capability is being removed from the MCP spec. Agent-LLM mode below achieves the
+same "the calling agent is the model" outcome with our own tool workflow, so it is
+spec-independent.
+
+## Agent LLM Backend (`--llm-agent`)
+
+`netget --mcp --llm-agent` builds an `OllamaClient` backed by a
+`crate::llm::agent_queue::LlmRequestQueue` instead of contacting any model. Every
+protocol-server LLM call (all of them — `chat_with_tools` and `generate_with_format`
+route through the new `LlmBackend::Queue` arm) enqueues a request and blocks until
+the calling MCP agent answers it, or until `--llm-agent-timeout` (default 300s)
+elapses, at which point the call errors and the connection resets to Idle — exactly
+like an Ollama/OpenAI timeout.
+
+Wiring: the queue is created in `create_shared_state`, embedded in the queue-backed
+`llm_client`, and a clone of the `Arc` is stored in `SharedState.agent_queue`.
+`start_server` already copies `SharedState.llm_client` into `AppState`, so every
+server produced to the queue automatically. A placeholder model (`"agent"`) is
+pre-seeded so `ensure_model_selected` never reaches out to Ollama's `/api/tags`.
+
+Agent workflow:
+1. `get_next_llm_request { wait_seconds? }` — claim the next request (optionally
+   long-poll). Returns the request id, the prompt (server instruction + triggering
+   event), and the **available actions** — the agent must answer using only those.
+2. `answer_llm_request { request_id, actions }` — `actions` is a JSON array of NetGet
+   action objects (`{"type": "...", ...}`), the same shape `get_access_log` shows.
+   Answered actions become native tool calls fed through the normal
+   `ConversationHandler` pipeline, so validation/execution is unchanged.
+3. `list_llm_requests` — outstanding requests, for monitoring.
+
+Two notification paths (the agent picks either):
+- **Long-poll** (reliable default): `get_next_llm_request(wait_seconds)` blocks
+  server-side (rmcp runs each request in its own task, so it never blocks other
+  tools). `wait_seconds` is capped at 120 to stay under client tool-call timeouts.
+- **FIFO push** (`--llm-agent-pipe <PATH>`): the new request id is written to the
+  named pipe (created if absent) on each enqueue, so an idle agent can block-read it
+  (`read id < pipe`) instead of polling. Best-effort — if no reader is attached the
+  non-blocking write is dropped; the long-poll tool is the source of truth.
+
+Note: the answer must use an action offered for that event. Using an action the
+event does not expose (e.g. `close_connection` on `tcp_data_received`) triggers
+NetGet's unknown-action retry, which enqueues a *second* request.
 
 ## Logging
 

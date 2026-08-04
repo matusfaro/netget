@@ -24,6 +24,13 @@ enum LlmBackend {
         base_url: String,
         api_key: String,
     },
+    /// No model: enqueue each request and await an answer from the calling MCP
+    /// agent (see `crate::llm::agent_queue`). MCP `--llm-agent` mode only.
+    Queue {
+        queue: std::sync::Arc<crate::llm::agent_queue::LlmRequestQueue>,
+        /// How long to wait for the agent's answer before erroring.
+        timeout: std::time::Duration,
+    },
 }
 
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
@@ -462,11 +469,26 @@ impl OllamaClient {
         }
     }
 
-    /// Returns the backend type as a string ("ollama" or "openai")
+    /// Create a client that queues LLM requests for the calling MCP agent to answer.
+    /// No model is contacted; each request waits up to `timeout` for an answer.
+    pub fn new_queue(
+        queue: std::sync::Arc<crate::llm::agent_queue::LlmRequestQueue>,
+        timeout: std::time::Duration,
+    ) -> Self {
+        Self {
+            backend: LlmBackend::Queue { queue, timeout },
+            status_tx: None,
+            mock_config_file: None,
+            app_state: None,
+        }
+    }
+
+    /// Returns the backend type as a string ("ollama", "openai", or "agent")
     pub fn backend_type(&self) -> &str {
         match &self.backend {
             LlmBackend::Ollama(_) => "ollama",
             LlmBackend::OpenAI { .. } => "openai",
+            LlmBackend::Queue { .. } => "agent",
         }
     }
 
@@ -480,6 +502,7 @@ impl OllamaClient {
                 format!("{}", ollama.uri())
             }
             LlmBackend::OpenAI { base_url, .. } => base_url.clone(),
+            LlmBackend::Queue { .. } => "(calling agent)".to_string(),
         }
     }
 
@@ -661,6 +684,32 @@ impl OllamaClient {
 
                 (text, usage)
             }
+
+            LlmBackend::Queue { queue, timeout } => {
+                // No model: enqueue the prompt and await the agent's action JSON.
+                let (id, rx) =
+                    queue.submit(model.to_string(), vec![Message::user(prompt)], Vec::new());
+                let actions = match tokio::time::timeout(*timeout, rx).await {
+                    Ok(Ok(actions)) => actions,
+                    Ok(Err(_)) => {
+                        queue.expire(id);
+                        anyhow::bail!(
+                            "agent-queue: LLM request #{} was dropped before it was answered",
+                            id
+                        );
+                    }
+                    Err(_) => {
+                        queue.expire(id);
+                        anyhow::bail!(
+                            "agent-queue: LLM request #{} timed out after {:?} without an agent answer",
+                            id,
+                            timeout
+                        );
+                    }
+                };
+                let text = serde_json::json!({ "actions": actions }).to_string();
+                (text, TokenUsage::default())
+            }
         };
 
         // Record tokens in app state if available (for /usage command)
@@ -783,6 +832,10 @@ impl OllamaClient {
                 self.chat_with_tools_openai(client, base_url, api_key, request)
                     .await?
             }
+            LlmBackend::Queue { queue, timeout } => {
+                self.chat_with_tools_queue(queue.clone(), *timeout, request)
+                    .await?
+            }
         };
 
         // Record tokens in app state if available
@@ -815,6 +868,82 @@ impl OllamaClient {
         }
 
         Ok(chat_response)
+    }
+
+    /// Agent-queue backend: enqueue the request and await the calling MCP agent's
+    /// answer. The answer (a NetGet action JSON array) is wrapped as
+    /// `{"actions":[...]}` in the response content — the same shape the test mock
+    /// Ollama server produces — so `ActionResponse::from_str` parses it downstream.
+    async fn chat_with_tools_queue(
+        &self,
+        queue: std::sync::Arc<crate::llm::agent_queue::LlmRequestQueue>,
+        timeout: std::time::Duration,
+        request: &ChatRequest,
+    ) -> Result<ChatResponse> {
+        let (id, rx) = queue.submit(
+            request.model.clone(),
+            request.messages.clone(),
+            request.tools.clone(),
+        );
+        debug!(
+            "agent-queue: enqueued LLM request #{} ({} tools), awaiting agent answer (timeout {:?})",
+            id,
+            request.tools.len(),
+            timeout
+        );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[DEBUG] agent-queue: request #{} awaiting agent answer",
+                id
+            ));
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(actions)) => {
+                // The native-tools pipeline (ConversationHandler) reads tool_calls, not
+                // content: turn each answered action into a ToolCall whose function name
+                // is the action `type` and whose arguments are the remaining fields.
+                let tool_calls = actions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, mut action)| {
+                        let function_name = action
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        if let Some(map) = action.as_object_mut() {
+                            map.remove("type");
+                        }
+                        ToolCall {
+                            id: format!("agent-{}", i),
+                            function_name,
+                            arguments: action,
+                        }
+                    })
+                    .collect();
+                Ok(ChatResponse {
+                    content: None,
+                    tool_calls,
+                    token_usage: TokenUsage::default(),
+                })
+            }
+            Ok(Err(_)) => {
+                queue.expire(id);
+                anyhow::bail!(
+                    "agent-queue: LLM request #{} was dropped before it was answered",
+                    id
+                )
+            }
+            Err(_) => {
+                queue.expire(id);
+                anyhow::bail!(
+                    "agent-queue: LLM request #{} timed out after {:?} without an agent answer",
+                    id,
+                    timeout
+                )
+            }
+        }
     }
 
     /// Ollama backend: /api/chat with tools
@@ -1351,6 +1480,7 @@ impl OllamaClient {
                     .collect();
                 Ok(models)
             }
+            LlmBackend::Queue { .. } => Ok(vec!["agent".to_string()]),
         }
     }
 }
