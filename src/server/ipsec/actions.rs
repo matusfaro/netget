@@ -1,9 +1,12 @@
 //! IPSec/IKEv2 protocol actions implementation
 //!
-//! Defines LLM-controllable actions for IPSec/IKEv2 enhanced honeypot
+//! Defines LLM-controllable actions for the IPSec/IKEv2 parse-and-log honeypot.
 //!
-//! **Status**: Experimental (enhanced detection with manual parsing)
-//! **Future**: Full VPN implementation when swanny library reaches 1.0
+//! **All actions here are classification/logging decisions.** None of them put a
+//! byte on the wire, negotiate a Security Association, or create a tunnel - the
+//! honeypot is receive-only by design. See `src/server/ipsec/mod.rs`.
+//!
+//! **Status**: Experimental (manual IKE header + payload-chain parsing)
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -20,8 +23,11 @@ use std::sync::LazyLock;
 pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ipsec_handshake",
-        "IPSec/IKEv2 client initiated handshake",
-        json!({"type": "placeholder", "event_id": "ipsec_handshake"}),
+        "An IKE handshake datagram (IKEv2 IKE_SA_INIT/IKE_AUTH or IKEv1 Identity \
+         Protection/Aggressive Mode) was received and parsed. The honeypot sends no \
+         reply; respond with log_handshake, accept_connection or reject_connection to \
+         record how this attempt should be classified.",
+        json!({"type": "log_handshake", "details": "IKE handshake observed"}),
     )
     .with_log_template(
         LogTemplate::new()
@@ -31,24 +37,14 @@ pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
 });
 
-/// IPSec/IKEv2 data packet event
-pub static IPSEC_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ipsec_data",
-        "IPSec encrypted data packet received",
-        json!({"type": "placeholder", "event_id": "ipsec_data"}),
-    )
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("{client_ip} ESP {data_len}B")
-            .with_debug("ESP data from {client_ip}: {data_len} bytes")
-            .with_trace("ESP packet: {json_pretty(.)}"),
-    )
-});
-
-/// Get all IPSec event types
+/// Get all IPSec event types.
+///
+/// Only `ipsec_handshake` is emitted. An `ipsec_data` (ESP) event used to be
+/// declared here, but the honeypot never establishes a Security Association so
+/// no ESP traffic can ever be attributed to one - it was removed rather than
+/// left as an event that handlers could subscribe to but that would never fire.
 pub fn get_ipsec_event_types() -> Vec<EventType> {
-    vec![IPSEC_HANDSHAKE_EVENT.clone(), IPSEC_DATA_EVENT.clone()]
+    vec![IPSEC_HANDSHAKE_EVENT.clone()]
 }
 
 /// IPSec protocol implementation
@@ -62,16 +58,26 @@ impl IpsecProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IpsecProtocol {
+    /// No user-triggered actions are advertised.
+    ///
+    /// `list_connections` and `close_connection` were previously listed, but IKE
+    /// here is connectionless and no Security Associations exist, so both were
+    /// unconditional no-ops that promised the LLM state it could never get. They
+    /// remain accepted by `execute_action` for backwards compatibility.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_connections_action(), close_connection_action()]
+        vec![]
     }
+    /// Classification actions only.
+    ///
+    /// `send_notify` and `inspect_traffic` were removed from this list: the
+    /// honeypot never transmits (so no NOTIFY can be sent) and never decrypts ESP
+    /// (so there is no traffic to inspect). Their names promised wire behaviour
+    /// the executor does not implement.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             accept_connection_action(),
             reject_connection_action(),
             log_handshake_action(),
-            send_notify_action(),
-            inspect_traffic_action(),
         ]
     }
     fn protocol_name(&self) -> &'static str {
@@ -92,16 +98,28 @@ impl Protocol for IpsecProtocol {
         };
 
         ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
-                .implementation("Enhanced IKE parsing with payload chain analysis")
-                .llm_control("Detailed protocol analysis, security parameter extraction")
-                .e2e_testing("strongSwan client (detection only)")
-                .notes("Enhanced honeypot - extracts payloads, flags, SPIs. Full VPN planned when swanny reaches 1.0 (mid-2025)")
-                .build()
+            .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
+            .implementation(
+                "Receive-only IKE honeypot: manual 28-byte header parsing plus payload-chain \
+                 walk. No cryptography, no Security Associations, no tunnel interface, and \
+                 no packets are ever transmitted back to the peer.",
+            )
+            .llm_control(
+                "Classification of observed IKE attempts only (accept/reject/log labels \
+                 recorded in the log). The LLM cannot influence what is sent on the wire, \
+                 because nothing is sent.",
+            )
+            .e2e_testing("Crafted IKEv1/IKEv2 datagrams over UDP (detection only)")
+            .notes(
+                "NOT A VPN. Detects and analyses IKE reconnaissance; use WireGuard for a \
+                 working tunnel. A real IKEv2 responder would need SA negotiation, DH, \
+                 auth, ESP and kernel XFRM programming - deliberately out of scope.",
+            )
+            .build()
     }
     fn description(&self) -> &'static str {
-        "IPSec/IKEv2 enhanced honeypot with detailed protocol analysis"
+        "IPSec/IKEv2 honeypot - parses and logs IKE handshakes, never replies (not a VPN)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start an IPSec/IKEv2 honeypot on port 500 to analyze VPN reconnaissance attempts"
@@ -255,7 +273,10 @@ impl IpsecProtocol {
 fn accept_connection_action() -> ActionDefinition {
     ActionDefinition {
         name: "accept_connection".to_string(),
-        description: "Accept IPSec/IKEv2 connection handshake and establish SA".to_string(),
+        description: "Classify this IKE attempt as legitimate and record it in the log. No SA \
+                      is established and no IKE response is sent - the honeypot is \
+                      receive-only. Use this to label benign/expected VPN clients."
+            .to_string(),
         parameters: vec![Parameter {
             name: "message".to_string(),
             type_hint: "string".to_string(),
@@ -278,7 +299,10 @@ fn accept_connection_action() -> ActionDefinition {
 fn reject_connection_action() -> ActionDefinition {
     ActionDefinition {
         name: "reject_connection".to_string(),
-        description: "Reject IPSec/IKEv2 connection handshake (honeypot decision)".to_string(),
+        description: "Classify this IKE attempt as unwanted (scan, probe, misconfigured client) \
+                      and record the reason. The packet is silently dropped either way - no \
+                      rejection is transmitted, because the honeypot never replies."
+            .to_string(),
         parameters: vec![Parameter {
             name: "reason".to_string(),
             type_hint: "string".to_string(),
@@ -301,7 +325,9 @@ fn reject_connection_action() -> ActionDefinition {
 fn log_handshake_action() -> ActionDefinition {
     ActionDefinition {
         name: "log_handshake".to_string(),
-        description: "Log IPSec/IKEv2 handshake details for analysis".to_string(),
+        description: "Record an analyst note about this IKE handshake (what it looks like, why \
+                      it matters). This is the primary action for this protocol."
+            .to_string(),
         parameters: vec![Parameter {
             name: "details".to_string(),
             type_hint: "string".to_string(),
@@ -316,90 +342,6 @@ fn log_handshake_action() -> ActionDefinition {
             LogTemplate::new()
                 .with_info("-> IKE logged: {details}")
                 .with_debug("IKE handshake logged: {details}"),
-        ),
-    }
-}
-
-/// Action: Send IKE NOTIFY message
-fn send_notify_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "send_notify".to_string(),
-        description: "Send IKE NOTIFY message to peer".to_string(),
-        parameters: vec![Parameter {
-            name: "notify_type".to_string(),
-            type_hint: "string".to_string(),
-            description:
-                "IKE notify message type (e.g., NO_PROPOSAL_CHOSEN, AUTHENTICATION_FAILED)"
-                    .to_string(),
-            required: false,
-        }],
-        example: json!({
-            "type": "send_notify",
-            "notify_type": "NO_PROPOSAL_CHOSEN"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> IKE NOTIFY {notify_type}")
-                .with_debug("IKE send notify: {notify_type}"),
-        ),
-    }
-}
-
-/// Action: Inspect ESP/tunnel traffic
-fn inspect_traffic_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "inspect_traffic".to_string(),
-        description: "Enable/disable ESP traffic inspection for this SA".to_string(),
-        parameters: vec![Parameter {
-            name: "inspect".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "Whether to inspect decrypted ESP traffic".to_string(),
-            required: false,
-        }],
-        example: json!({
-            "type": "inspect_traffic",
-            "inspect": true
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> ESP inspect={inspect}")
-                .with_debug("ESP traffic inspection: {inspect}"),
-        ),
-    }
-}
-
-/// Action: List all connections (async)
-fn list_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_connections".to_string(),
-        description: "List all established IPSec Security Associations".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_connections"
-        }),
-        log_template: Some(LogTemplate::new().with_debug("IPSec list connections")),
-    }
-}
-
-/// Action: Close connection (async)
-fn close_connection_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "close_connection".to_string(),
-        description: "Delete a specific IPSec Security Association".to_string(),
-        parameters: vec![Parameter {
-            name: "peer_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Peer address to disconnect".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "close_connection",
-            "peer_addr": "192.168.1.100:500"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> IKE close {peer_addr}")
-                .with_debug("IPSec close connection: {peer_addr}"),
         ),
     }
 }

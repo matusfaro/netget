@@ -1,23 +1,41 @@
-//! IPSec/IKEv2 Enhanced Honeypot Implementation
+//! IPSec/IKEv2 parse-and-log honeypot
 //!
-//! This is an IPSec/IKEv2 *enhanced honeypot* that detects and logs IKE connection
-//! attempts with detailed protocol analysis. It does NOT establish actual VPN tunnels.
+//! # What this actually is
 //!
-//! **Status**: Experimental (enhanced detection with manual parsing)
-//! **Future**: Full VPN implementation when swanny library reaches 1.0 (mid-2025)
+//! A **read-only IKE honeypot**. It binds a UDP socket, parses the 28-byte IKE
+//! header and walks the payload chain of every datagram it receives, then reports
+//! what it saw. It performs **no cryptography, establishes no Security
+//! Associations, creates no tunnel interface, and never transmits a single byte
+//! back to the peer**. Nothing here is a VPN; use WireGuard
+//! (`src/server/wireguard/`) when a working tunnel is required.
 //!
-//! The LLM controls:
-//! - Connection authentication decisions (log reconnaissance attempts)
-//! - Response behavior (accept/reject/silent-drop)
-//! - Traffic pattern analysis
-//! - Security parameter analysis (cipher suites, DH groups, etc.)
+//! Staying silent is deliberate: it avoids accidentally negotiating anything and
+//! avoids fingerprinting the honeypot by its responses.
+//!
+//! # What the LLM controls
+//!
+//! Each IKE_SA_INIT / IKE_AUTH (or IKEv1 Identity Protection / Aggressive Mode)
+//! datagram raises an `ipsec_handshake` event through
+//! [`crate::llm::action_helper::call_llm`], which runs any configured
+//! script/static event handler first and falls back to a real LLM call only when
+//! none is configured. The resulting actions are **classification and logging
+//! decisions only** - `accept_connection`, `reject_connection`, `log_handshake`
+//! and `send_notify` all record intent without changing what goes on the wire.
+//!
+//! # Status
+//!
+//! `DevelopmentState::Experimental`. Turning this into a real IKEv2 responder
+//! means implementing SA negotiation, Diffie-Hellman, authentication, ESP and
+//! kernel XFRM/SAD/SPD programming - a multi-month project, not a patch. It is
+//! deliberately out of scope.
 
 pub mod actions;
 
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use actions::IPSEC_HANDSHAKE_EVENT;
+use actions::{IpsecProtocol, IPSEC_HANDSHAKE_EVENT};
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -77,12 +95,12 @@ impl IpsecServer {
         bind_addr: SocketAddr,
         llm_client: Arc<OllamaClient>,
         app_state: Arc<AppState>,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        info!("Starting IPSec/IKEv2 enhanced honeypot on {}", bind_addr);
+        info!("Starting IPSec/IKEv2 parse-and-log honeypot on {}", bind_addr);
         let _ = status_tx.send(format!(
-            "[INFO] Starting IPSec/IKEv2 enhanced honeypot on {} (detailed protocol analysis)",
+            "[INFO] Starting IPSec/IKEv2 honeypot on {} (parses and logs IKE, never replies)",
             bind_addr
         ));
 
@@ -102,14 +120,15 @@ impl IpsecServer {
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
             if let Err(e) =
-                Self::handle_packets(socket_clone, llm_client, app_state, status_tx).await
+                Self::handle_packets(socket_clone, llm_client, app_state, server_id, status_tx)
+                    .await
             {
                 error!("IPSec/IKEv2 honeypot error: {}", e);
             }
         });
 
         task_registrar
-            .register_server_task(_server_id, accept_handle)
+            .register_server_task(server_id, accept_handle)
             .await;
 
         Ok(local_addr)
@@ -120,6 +139,7 @@ impl IpsecServer {
         socket: Arc<UdpSocket>,
         llm_client: Arc<OllamaClient>,
         app_state: Arc<AppState>,
+        server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         let mut buf = vec![0u8; MAX_PACKET_SIZE];
@@ -224,9 +244,9 @@ impl IpsecServer {
                     is_response,
                     message_id,
                     &payload_types,
-                    &socket,
                     &llm_client,
                     &app_state,
+                    server_id,
                     &status_tx,
                 )
                 .await;
@@ -303,7 +323,10 @@ impl IpsecServer {
         }
     }
 
-    /// Handle handshake initiation - enhanced honeypot analysis
+    /// Handle handshake initiation - parse, report, and raise the LLM event.
+    ///
+    /// No IKE response is ever transmitted: this honeypot is receive-only.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_handshake_initiation(
         peer_addr: SocketAddr,
         packet: &[u8],
@@ -315,15 +338,15 @@ impl IpsecServer {
         is_response: bool,
         message_id: u32,
         payload_types: &[u8],
-        _socket: &UdpSocket,
-        _llm_client: &OllamaClient,
-        _app_state: &AppState,
+        llm_client: &OllamaClient,
+        app_state: &AppState,
+        server_id: crate::state::ServerId,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
         let payload_names = Self::format_payload_types(payload_types);
 
         info!(
-            "IPSec {} handshake from {} (enhanced honeypot, payloads=[{}])",
+            "IPSec {} handshake from {} (honeypot, payloads=[{}])",
             ike_version, peer_addr, payload_names
         );
         let _ = status_tx.send(format!(
@@ -331,8 +354,8 @@ impl IpsecServer {
             ike_version, peer_addr, payload_names
         ));
 
-        // Build enhanced event for LLM
-        let _event = Event::new(
+        // Build event for the script/static handler or the LLM
+        let event = Event::new(
             &IPSEC_HANDSHAKE_EVENT,
             serde_json::json!({
                 "peer_addr": peer_addr.to_string(),
@@ -345,7 +368,8 @@ impl IpsecServer {
                 "is_response": is_response,
                 "message_id": message_id,
                 "payloads": payload_types.iter().map(|&p| Self::payload_type_name(p)).collect::<Vec<_>>(),
-                "enhanced_honeypot": true,
+                "honeypot_mode": true,
+                "responds_to_peer": false,
                 "analysis": {
                     "expected_payloads": if exchange_type == "IKE_SA_INIT" {
                         "SA, KE, NONCE"
@@ -361,12 +385,42 @@ impl IpsecServer {
             }),
         );
 
-        // TODO: Call LLM for advanced security analysis when full implementation is ready
-        // For now, provide detailed logging for security research
         debug!(
-            "IPSec/IKEv2 handshake analyzed from {} (enhanced honeypot mode, {} payloads detected)",
+            "IPSec/IKEv2 handshake analyzed from {} ({} payloads detected)",
             peer_addr,
             payload_types.len()
         );
+
+        // Route through the event handler / LLM. Any configured script or static
+        // handler runs in-process with no model call; otherwise this falls back to
+        // the LLM. The resulting actions are classification decisions only - the
+        // honeypot still transmits nothing.
+        let protocol = IpsecProtocol::new();
+        match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            None, // IKE is connectionless; no per-connection state is tracked
+            &event,
+            &protocol,
+        )
+        .await
+        {
+            Ok(result) => {
+                for message in &result.messages {
+                    info!("{}", message);
+                    let _ = status_tx.send(format!("[INFO] {}", message));
+                }
+                debug!(
+                    "IPSec handshake from {} produced {} action(s) (no packets sent)",
+                    peer_addr,
+                    result.raw_actions.len()
+                );
+            }
+            Err(e) => {
+                error!("IPSec handshake event handling failed: {}", e);
+                let _ = status_tx.send(format!("[ERROR] IPSec event handling failed: {}", e));
+            }
+        }
     }
 }
