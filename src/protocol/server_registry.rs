@@ -557,6 +557,50 @@ impl ServerRegistry {
         self.protocols.get(protocol_name).cloned()
     }
 
+    /// Resolve user/LLM-supplied input (a protocol name or keyword) to a
+    /// registered protocol implementation.
+    ///
+    /// This is the recommended entry point for turning arbitrary protocol input
+    /// (CLI args, `/load` scripts, MCP `start_server` calls, or an already
+    /// canonical name such as a stored `ServerInfo::protocol_name`) into a
+    /// protocol implementation. Unlike calling `get()` / `parse_from_str()`
+    /// directly, a failure here distinguishes "this protocol exists but wasn't
+    /// compiled into this build" from "this is not a real NetGet protocol at
+    /// all", and offers a "did you mean" suggestion for likely typos — see
+    /// [`ProtocolLookupError`].
+    pub fn resolve(&self, input: &str) -> Result<Arc<dyn Server>, ProtocolLookupError> {
+        // Exact canonical name first — handles a name already resolved by a
+        // previous call (e.g. a stored `ServerInfo::protocol_name`).
+        if let Some(p) = self.get(input) {
+            return Ok(p);
+        }
+
+        // Fall back to keyword / stack-name parsing (case-insensitive,
+        // hyphen/space tolerant) against currently-compiled protocols.
+        if let Some(name) = self.parse_from_str(input) {
+            if let Some(p) = self.get(&name) {
+                return Ok(p);
+            }
+        }
+
+        // Not found among compiled-in protocols. Check whether `input` names a
+        // real NetGet protocol that simply wasn't compiled into this build.
+        let input_norm = input.to_lowercase().replace(['-', ' '], "_");
+        for (name, feature) in ALL_KNOWN_PROTOCOLS {
+            let name_norm = name.to_lowercase().replace(['-', ' '], "_");
+            if name_norm == input_norm {
+                return Err(ProtocolLookupError::NotCompiled { name, feature });
+            }
+        }
+
+        // Truly unknown. Offer a "did you mean" suggestion via edit distance
+        // against every known protocol name, compiled in or not.
+        Err(ProtocolLookupError::Unknown {
+            input: input.to_string(),
+            suggestion: suggest_protocol_name(input, ALL_KNOWN_PROTOCOLS),
+        })
+    }
+
     /// Parse protocol from user input string
     ///
     /// Attempts to match keywords from registered protocols.
@@ -804,6 +848,224 @@ impl ServerRegistry {
             false
         }
     }
+}
+
+/// All protocol names known to the netget codebase, paired with the Cargo
+/// feature flag that compiles each one in — independent of which features are
+/// actually enabled in *this* build. This lets [`ServerRegistry::resolve`] tell
+/// "protocol exists but wasn't compiled in" apart from "no such protocol".
+///
+/// Kept manually in sync with the `#[cfg(feature = "...")]` registrations in
+/// `register_protocols()` above. This is the one acceptable central touchpoint
+/// per CLAUDE.md's decentralization policy (it plays the same role as the
+/// `register()` calls themselves) — when adding a new protocol, add its
+/// (canonical name, feature) pair here too.
+const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
+    ("TCP", "tcp"),
+    ("SOCKET_FILE", "socket_file"),
+    ("HTTP", "http"),
+    ("HTTP2", "http2"),
+    ("PyPI", "pypi"),
+    ("Maven", "maven"),
+    ("UDP", "udp"),
+    ("DataLink", "datalink"),
+    ("ARP", "arp"),
+    ("ICMP", "icmp"),
+    ("DC", "dc"),
+    ("DNS", "dns"),
+    ("DoT", "dot"),
+    ("DoH", "doh"),
+    ("DHCP", "dhcp"),
+    ("BOOTP", "bootp"),
+    ("NTP", "ntp"),
+    ("TFTP", "tftp"),
+    ("WHOIS", "whois"),
+    ("SNMP", "snmp"),
+    ("IGMP", "igmp"),
+    ("Syslog", "syslog"),
+    ("SSH", "ssh"),
+    ("SSH Agent", "ssh-agent"),
+    ("SVN", "svn"),
+    ("IRC", "irc"),
+    ("XMPP", "xmpp"),
+    ("Telnet", "telnet"),
+    ("SMTP", "smtp"),
+    ("FTP", "ftp"),
+    ("IMAP", "imap"),
+    ("NNTP", "nntp"),
+    ("MQTT", "mqtt"),
+    ("AMQP", "amqp"),
+    ("mDNS", "mdns"),
+    ("LDAP", "ldap"),
+    ("MySQL", "mysql"),
+    ("MSSQL", "mssql"),
+    ("PostgreSQL", "postgresql"),
+    ("Redis", "redis"),
+    ("RSS", "rss"),
+    ("Cassandra", "cassandra"),
+    ("MongoDB", "mongodb-server"),
+    ("DynamoDB", "dynamo"),
+    ("SQS", "sqs"),
+    ("Elasticsearch", "elasticsearch"),
+    ("CouchDB", "couchdb"),
+    ("NPM", "npm"),
+    ("IPP", "ipp"),
+    ("WebDAV", "webdav"),
+    ("NFS", "nfs"),
+    ("nfc", "nfc"),
+    ("SMB", "smb"),
+    ("Proxy", "proxy"),
+    ("SOCKS5", "socks5"),
+    ("WireGuard", "wireguard"),
+    ("OpenVPN", "openvpn"),
+    ("IPSec/IKEv2", "ipsec"),
+    ("TURN", "turn"),
+    ("WebRTC Signaling", "webrtc"),
+    ("SIP", "sip"),
+    ("ISIS", "isis"),
+    ("RIP", "rip"),
+    ("Bitcoin P2P", "bitcoin"),
+    ("MCP", "mcp"),
+    ("OpenAI", "openai"),
+    ("Ollama", "ollama"),
+    ("OAuth2", "oauth2"),
+    ("JSON-RPC", "jsonrpc"),
+    ("XML-RPC", "xmlrpc"),
+    ("gRPC", "grpc"),
+    ("etcd", "etcd"),
+    ("ZooKeeper", "zookeeper"),
+    ("Tor Relay", "tor"),
+    ("VNC", "vnc"),
+    ("OpenAPI", "openapi"),
+    ("OpenID", "openid"),
+    ("KAFKA", "kafka"),
+    ("HTTP3", "http3"),
+    ("Torrent-Tracker", "torrent-tracker"),
+    ("Torrent-DHT", "torrent-dht"),
+    ("Torrent-Peer", "torrent-peer"),
+    ("TLS", "tls"),
+    ("SamlIdp", "saml-idp"),
+    ("SamlSp", "saml-sp"),
+    ("USB-Keyboard", "usb-keyboard"),
+    ("USB-Mouse", "usb-mouse"),
+    ("USB-Serial", "usb-serial"),
+    ("USB-MassStorage", "usb-msc"),
+    ("usb-fido2", "usb-fido2"),
+    ("usb-smartcard", "usb-smartcard"),
+    ("BLUETOOTH_BLE", "bluetooth-ble"),
+    ("BLUETOOTH_BLE_KEYBOARD", "bluetooth-ble-keyboard"),
+    ("BLUETOOTH_BLE_MOUSE", "bluetooth-ble-mouse"),
+    ("BLUETOOTH_BLE_BEACON", "bluetooth-ble-beacon"),
+    ("BLUETOOTH_BLE_REMOTE", "bluetooth-ble-remote"),
+    ("BLUETOOTH_BLE_BATTERY", "bluetooth-ble-battery"),
+    ("BLUETOOTH_BLE_HEART_RATE", "bluetooth-ble-heart-rate"),
+    ("BLUETOOTH_BLE_THERMOMETER", "bluetooth-ble-thermometer"),
+    ("BLUETOOTH_BLE_ENVIRONMENTAL", "bluetooth-ble-environmental"),
+    ("BLUETOOTH_BLE_PROXIMITY", "bluetooth-ble-proximity"),
+    ("BLUETOOTH_BLE_GAMEPAD", "bluetooth-ble-gamepad"),
+    ("BLUETOOTH_BLE_PRESENTER", "bluetooth-ble-presenter"),
+    ("BLUETOOTH_BLE_FILE_TRANSFER", "bluetooth-ble-file-transfer"),
+    ("BLUETOOTH_BLE_DATA_STREAM", "bluetooth-ble-data-stream"),
+    ("BLUETOOTH_BLE_CYCLING", "bluetooth-ble-cycling"),
+    ("BLUETOOTH_BLE_RUNNING", "bluetooth-ble-running"),
+    ("BLUETOOTH_BLE_WEIGHT_SCALE", "bluetooth-ble-weight-scale"),
+    ("POP3", "pop3"),
+    ("S3", "s3"),
+    ("STUN", "stun"),
+    ("WebRTC", "webrtc"),
+    ("BGP", "bgp"),
+    ("OSPF", "ospf"),
+    ("Git", "git"),
+    ("Mercurial", "mercurial"),
+];
+
+/// Why [`ServerRegistry::resolve`] could not find a protocol for the given input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProtocolLookupError {
+    /// A real NetGet protocol by this name exists, but this build was compiled
+    /// without the feature that enables it.
+    NotCompiled {
+        name: &'static str,
+        feature: &'static str,
+    },
+    /// No protocol by this name/keyword is known to NetGet at all, in any build.
+    Unknown {
+        input: String,
+        suggestion: Option<&'static str>,
+    },
+}
+
+impl std::fmt::Display for ProtocolLookupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtocolLookupError::NotCompiled { name, feature } => write!(
+                f,
+                "Protocol '{name}' exists but is not compiled into this build (rebuild with --features {feature})"
+            ),
+            ProtocolLookupError::Unknown {
+                input,
+                suggestion: Some(s),
+            } => write!(f, "Unknown protocol: '{input}'. Did you mean '{s}'?"),
+            ProtocolLookupError::Unknown {
+                input,
+                suggestion: None,
+            } => write!(f, "Unknown protocol: '{input}'"),
+        }
+    }
+}
+
+impl std::error::Error for ProtocolLookupError {}
+
+/// Suggest the closest known protocol name to `input` via Levenshtein edit
+/// distance, if it's plausibly a typo rather than something unrelated.
+fn suggest_protocol_name(
+    input: &str,
+    known: &[(&'static str, &'static str)],
+) -> Option<&'static str> {
+    let input_norm = input.to_lowercase();
+    let mut best: Option<(&'static str, usize)> = None;
+
+    for (name, _feature) in known {
+        let distance = levenshtein(&input_norm, &name.to_lowercase());
+        best = match best {
+            Some((_, best_dist)) if best_dist <= distance => best,
+            _ => Some((name, distance)),
+        };
+    }
+
+    best.and_then(|(name, distance)| {
+        let threshold = (input_norm.chars().count() / 3).max(2);
+        if distance <= threshold {
+            Some(name)
+        } else {
+            None
+        }
+    })
+}
+
+/// Minimal Levenshtein edit distance between two strings. Implemented by hand
+/// (no external dependency) since a "did you mean" suggestion doesn't justify
+/// adding a crate.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut dp: Vec<usize> = (0..=b.len()).collect();
+
+    for i in 1..=a.len() {
+        let mut prev = dp[0];
+        dp[0] = i;
+        for j in 1..=b.len() {
+            let tmp = dp[j];
+            dp[j] = if a[i - 1] == b[j - 1] {
+                prev
+            } else {
+                1 + prev.min(dp[j]).min(dp[j - 1])
+            };
+            prev = tmp;
+        }
+    }
+
+    dp[b.len()]
 }
 
 /// Global singleton registry instance

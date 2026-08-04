@@ -443,6 +443,48 @@ impl ClientRegistry {
         self.protocols.get(protocol_name).cloned()
     }
 
+    /// Resolve user/LLM-supplied input (a protocol name or keyword) to a
+    /// registered client protocol implementation.
+    ///
+    /// Mirrors `ServerRegistry::resolve()`: unlike calling `get()` /
+    /// `parse_from_str()` directly, a failure here distinguishes "this
+    /// protocol exists but wasn't compiled into this build" from "this is not
+    /// a real NetGet client protocol at all", and offers a "did you mean"
+    /// suggestion for likely typos — see [`ClientProtocolLookupError`].
+    pub fn resolve(&self, input: &str) -> Result<Arc<dyn Client>, ClientProtocolLookupError> {
+        // Exact canonical name first — handles a name already resolved by a
+        // previous call.
+        if let Some(p) = self.get(input) {
+            return Ok(p);
+        }
+
+        // Fall back to keyword / stack-name parsing (case-insensitive,
+        // hyphen/space tolerant) against currently-compiled protocols.
+        if let Some(name) = self.parse_from_str(input) {
+            if let Some(p) = self.get(&name) {
+                return Ok(p);
+            }
+        }
+
+        // Not found among compiled-in protocols. Check whether `input` names a
+        // real NetGet client protocol that simply wasn't compiled into this
+        // build.
+        let input_norm = input.to_lowercase().replace(['-', ' '], "_");
+        for (name, feature) in ALL_KNOWN_CLIENT_PROTOCOLS {
+            let name_norm = name.to_lowercase().replace(['-', ' '], "_");
+            if name_norm == input_norm {
+                return Err(ClientProtocolLookupError::NotCompiled { name, feature });
+            }
+        }
+
+        // Truly unknown. Offer a "did you mean" suggestion via edit distance
+        // against every known client protocol name, compiled in or not.
+        Err(ClientProtocolLookupError::Unknown {
+            input: input.to_string(),
+            suggestion: suggest_client_protocol_name(input, ALL_KNOWN_CLIENT_PROTOCOLS),
+        })
+    }
+
     /// Parse client protocol from user input string
     ///
     /// Attempts to match keywords from registered client protocols.
@@ -547,6 +589,199 @@ impl ClientRegistry {
             false
         }
     }
+}
+
+/// All client protocol names known to the netget codebase, paired with the
+/// Cargo feature flag that compiles each one in — independent of which
+/// features are actually enabled in *this* build. This lets
+/// [`ClientRegistry::resolve`] tell "protocol exists but wasn't compiled in"
+/// apart from "no such protocol".
+///
+/// Kept manually in sync with the `#[cfg(feature = "...")]` registrations in
+/// `register_protocols()` above. This is the one acceptable central touchpoint
+/// per CLAUDE.md's decentralization policy (it plays the same role as the
+/// `register()` calls themselves) — when adding a new client protocol, add its
+/// (canonical name, feature) pair here too.
+const ALL_KNOWN_CLIENT_PROTOCOLS: &[(&str, &str)] = &[
+    ("BGP", "bgp"),
+    ("BOOTP", "bootp"),
+    ("Cassandra", "cassandra"),
+    ("DataLink", "datalink"),
+    ("DC", "dc"),
+    ("DHCP", "dhcp"),
+    ("DNS", "dns"),
+    ("DNS-over-HTTPS", "doh"),
+    ("DoT", "dot"),
+    ("etcd", "etcd"),
+    ("ZooKeeper", "zookeeper"),
+    ("gRPC", "grpc"),
+    ("HTTP", "http"),
+    ("HTTP2", "http2"),
+    ("HTTP3", "http3"),
+    ("igmp", "igmp"),
+    ("IPP", "ipp"),
+    ("IS-IS", "isis"),
+    ("JSON-RPC", "jsonrpc"),
+    ("Kafka", "kafka"),
+    ("mDNS", "mdns"),
+    ("AMQP", "amqp"),
+    ("MySQL", "mysql"),
+    ("nfc", "nfc-client"),
+    ("NTP", "ntp"),
+    ("OpenAI", "openai"),
+    ("PostgreSQL", "postgresql"),
+    ("PyPI", "pypi"),
+    ("MSSQL", "mssql"),
+    ("Redis", "redis"),
+    ("ICMP", "icmp"),
+    ("RIP", "rip"),
+    ("SAML", "saml"),
+    ("SIP", "sip"),
+    ("SMTP", "smtp"),
+    ("FTP", "ftp"),
+    ("POP3", "pop3"),
+    ("SNMP", "snmp"),
+    ("SOCKS5", "socks5"),
+    ("SocketFile", "socket_file"),
+    ("SSH", "ssh"),
+    ("SSH Agent", "ssh-agent"),
+    ("Syslog", "syslog"),
+    ("TCP", "tcp"),
+    ("Telnet", "telnet"),
+    ("TLS", "tls"),
+    ("Tor", "tor"),
+    ("BitTorrent DHT", "torrent-dht"),
+    ("BitTorrent Peer Wire", "torrent-peer"),
+    ("BitTorrent Tracker", "torrent-tracker"),
+    ("TURN", "turn"),
+    ("UDP", "udp"),
+    ("WHOIS", "whois"),
+    ("wireguard", "wireguard"),
+    ("XML-RPC", "xmlrpc"),
+    ("XMPP", "xmpp"),
+    ("ARP", "arp"),
+    ("HTTP Proxy", "http_proxy"),
+    ("IMAP", "imap"),
+    ("IRC", "irc"),
+    ("MCP", "mcp"),
+    ("MQTT", "mqtt"),
+    ("MongoDB", "mongodb"),
+    ("NNTP", "nntp"),
+    ("NPM", "npm"),
+    ("Ollama", "ollama"),
+    ("OpenAPI", "openapi"),
+    ("ospf", "ospf"),
+    ("SMB", "smb-client"),
+    ("SQS", "sqs"),
+    ("STUN", "stun"),
+    ("USB", "usb"),
+    ("VNC", "vnc"),
+    ("WebRTC", "webrtc"),
+    ("Bitcoin", "bitcoin"),
+    ("Bluetooth (BLE)", "bluetooth-ble-client"),
+    ("DynamoDB", "dynamodb"),
+    ("Elasticsearch", "elasticsearch"),
+    ("Git", "git"),
+    ("Kubernetes", "kubernetes"),
+    ("LDAP", "ldap"),
+    ("Maven", "maven"),
+    ("NFS", "nfs"),
+    ("OAuth2", "oauth2"),
+    ("OpenIDConnect", "openidconnect"),
+    ("CouchDB", "couchdb"),
+    ("S3", "s3"),
+    ("WebDAV", "webdav"),
+];
+
+/// Why [`ClientRegistry::resolve`] could not find a protocol for the given
+/// input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientProtocolLookupError {
+    /// A real NetGet client protocol by this name exists, but this build was
+    /// compiled without the feature that enables it.
+    NotCompiled {
+        name: &'static str,
+        feature: &'static str,
+    },
+    /// No client protocol by this name/keyword is known to NetGet at all, in
+    /// any build.
+    Unknown {
+        input: String,
+        suggestion: Option<&'static str>,
+    },
+}
+
+impl std::fmt::Display for ClientProtocolLookupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClientProtocolLookupError::NotCompiled { name, feature } => write!(
+                f,
+                "Client protocol '{name}' exists but is not compiled into this build (rebuild with --features {feature})"
+            ),
+            ClientProtocolLookupError::Unknown {
+                input,
+                suggestion: Some(s),
+            } => write!(f, "Unknown client protocol: '{input}'. Did you mean '{s}'?"),
+            ClientProtocolLookupError::Unknown {
+                input,
+                suggestion: None,
+            } => write!(f, "Unknown client protocol: '{input}'"),
+        }
+    }
+}
+
+impl std::error::Error for ClientProtocolLookupError {}
+
+/// Suggest the closest known client protocol name to `input` via Levenshtein
+/// edit distance, if it's plausibly a typo rather than something unrelated.
+fn suggest_client_protocol_name(
+    input: &str,
+    known: &[(&'static str, &'static str)],
+) -> Option<&'static str> {
+    let input_norm = input.to_lowercase();
+    let mut best: Option<(&'static str, usize)> = None;
+
+    for (name, _feature) in known {
+        let distance = levenshtein(&input_norm, &name.to_lowercase());
+        best = match best {
+            Some((_, best_dist)) if best_dist <= distance => best,
+            _ => Some((name, distance)),
+        };
+    }
+
+    best.and_then(|(name, distance)| {
+        let threshold = (input_norm.chars().count() / 3).max(2);
+        if distance <= threshold {
+            Some(name)
+        } else {
+            None
+        }
+    })
+}
+
+/// Minimal Levenshtein edit distance between two strings. Implemented by hand
+/// (no external dependency) since a "did you mean" suggestion doesn't justify
+/// adding a crate.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut dp: Vec<usize> = (0..=b.len()).collect();
+
+    for i in 1..=a.len() {
+        let mut prev = dp[0];
+        dp[0] = i;
+        for j in 1..=b.len() {
+            let tmp = dp[j];
+            dp[j] = if a[i - 1] == b[j - 1] {
+                prev
+            } else {
+                1 + prev.min(dp[j]).min(dp[j - 1])
+            };
+            prev = tmp;
+        }
+    }
+
+    dp[b.len()]
 }
 
 /// Global client protocol registry instance
