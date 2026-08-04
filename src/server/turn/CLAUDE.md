@@ -8,6 +8,20 @@ STUN protocol with allocation and relay capabilities.
 
 **Compliance**: RFC 8656 (TURN), RFC 8489 (STUN), RFC 5766 (obsolete TURN)
 
+> **Status: Incomplete — this is NOT a working relay.**
+>
+> No relay socket is ever bound. `relay_address` is whatever string the model
+> invents; the server never listens on it, never receives peer traffic, and never
+> forwards a byte in either direction. Send and Data indications are parsed and
+> then dropped, because there is no action that could act on them.
+>
+> What does work is the request/response bookkeeping: Allocate, Refresh and
+> CreatePermission produce well-formed replies that echo the transaction ID, and
+> allocations are tracked with lifetimes and expiry. That is enough for a honeypot
+> or a protocol probe, and not enough for NAT traversal. `DevelopmentState` is
+> `Incomplete`, so the protocol is hidden from LLM prompts unless
+> `--include-disabled-protocols` is passed.
+
 **Protocol Purpose**: TURN relays traffic between peers when direct connection impossible due to restrictive NATs or
 firewalls. Essential fallback for WebRTC, VoIP, and real-time communication.
 
@@ -157,21 +171,18 @@ pub struct TurnAllocation {
 }
 ```
 
-**SendIndication** (`TURN_SEND_INDICATION_EVENT`):
+**SendIndication**: no event and no action. `TURN_SEND_INDICATION_EVENT` and the
+`relay_data_to_peer` action have been removed. The action decoded its payload,
+logged "TURN would relay N bytes", and returned `NoAction`; its documented
+`data_base64` field did not exist (the executor read `data` and hex-decoded it,
+so the base64 example in these docs could only ever have failed), and its output
+could not have reached a peer anyway, since an action's output is written back to
+the client socket. The event could not fire either: Send is an *indication*
+(class 1) and the parser's table listed it under class 0.
 
-```json
-{
-  "actions": [
-    {
-      "type": "relay_turn_data",
-      "allocation_id": "abc123",
-      "peer_address": "198.51.100.10:5000",
-      "data_base64": "...",
-      "message": "Relaying data"
-    }
-  ]
-}
-```
+Two async actions, `allocate_relay_address` and `revoke_allocation`, have also
+been removed: they were advertised but `execute_action` had no arm for either, so
+invoking one returned "Unknown TURN action".
 
 ### Event Types
 
@@ -190,10 +201,13 @@ pub struct TurnAllocation {
     - Context: peer_addr, transaction_id, existing_allocations
     - LLM decides: Allow peer or reject
 
-4. **`TURN_SEND_INDICATION_EVENT`**
-    - Triggered: Client sends data through relay
-    - Context: peer_addr, data, existing_allocations
-    - LLM decides: Relay data or drop
+(Send/Data indications produce no event — see above.)
+
+All three events carry `transaction_id` (hex), `peer_addr`, `local_addr`,
+`message_type`, `bytes_received` and `existing_allocations`. These are now declared
+as event parameters; previously the events declared none, so the model was never
+told a transaction ID existed to echo. Static handlers can echo it without an LLM
+call via `"transaction_id": "{{event.transaction_id}}"`.
 
 ## Connection and State Management
 
@@ -233,7 +247,7 @@ pub struct TurnServer {
 
 ### Supported Features
 
-- ✅ Allocate Request/Response (RFC 8656 Section 6.2)
+- ✅ Allocate Request/Response (RFC 8656 Section 6.2)  *(bookkeeping only, no relay)*
 - ✅ Refresh Request/Response (RFC 8656 Section 7)
 - ✅ CreatePermission Request/Response (RFC 8656 Section 9)
 - ✅ Allocation lifetime management and expiration
@@ -243,7 +257,8 @@ pub struct TurnServer {
 
 ### Not Yet Fully Implemented
 
-- ⚠️ **Data Relay**: SendIndication/DataIndication not forwarding data yet
+- ❌ **Data Relay**: not implemented at all; no relay socket is bound and
+  Send/Data indications are dropped
 - ⚠️ **Channel Binding**: ChannelBind/ChannelData methods (RFC 8656 Section 11)
 - ❌ **TCP Allocations**: Only UDP relay addresses
 - ❌ **Dual-Stack Allocations**: IPv4-only (no REQUESTED-ADDRESS-FAMILY)
@@ -268,9 +283,9 @@ pub struct TurnServer {
 
 1. **No Actual Data Relay**
     - Allocation tracking works
-    - SendIndication/DataIndication events generated
-    - But data not forwarded between client and peer
-    - **Status**: Relay forwarding logic pending
+    - Send/Data indications are parsed and dropped (no event, no action)
+    - No relay socket is bound, so `relay_address` is fiction
+    - **Status**: not implemented; protocol marked `Incomplete`
 
 2. **No TCP Support**
     - Only UDP relay addresses
@@ -289,9 +304,19 @@ pub struct TurnServer {
     - Channel Binding reduces header size for frequent peer communication
 
 6. **Simple Allocation IDs**
-    - Currently uses transaction ID as allocation ID
+    - `allocation_id` defaults to the request's transaction ID when the action
+      omits it (as documented). Previously the tracking code required
+      `allocation_id`, `relay_address` and `lifetime_seconds` to all be present,
+      so omitting either optional field sent a success response while recording
+      no allocation at all.
     - Security issue: predictable IDs
     - Should use random UUIDs
+
+7. **Error responses must name their method**
+    - `send_turn_error_response` takes a `method` parameter (`allocate` (default),
+      `refresh`, `create_permission`). It used to hardcode Allocate, so a Refresh
+      or CreatePermission failure came back as an Allocate error, which clients
+      ignore.
 
 ### Security Considerations
 

@@ -19,7 +19,6 @@ use crate::state::app_state::AppState;
 use crate::{console_debug, console_trace};
 use actions::{
     TURN_ALLOCATE_REQUEST_EVENT, TURN_CREATE_PERMISSION_REQUEST_EVENT, TURN_REFRESH_REQUEST_EVENT,
-    TURN_SEND_INDICATION_EVENT,
 };
 
 /// TURN allocation information
@@ -63,7 +62,7 @@ impl TurnServer {
         let server = Arc::new(Self::new());
 
         // Spawn allocation cleanup task
-        Self::spawn_cleanup_task(server.clone(), status_tx.clone());
+        Self::spawn_cleanup_task(&server, status_tx.clone());
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -147,7 +146,10 @@ impl TurnServer {
                                 "AllocateRequest" => &TURN_ALLOCATE_REQUEST_EVENT,
                                 "RefreshRequest" => &TURN_REFRESH_REQUEST_EVENT,
                                 "CreatePermissionRequest" => &TURN_CREATE_PERMISSION_REQUEST_EVENT,
-                                "SendIndication" => &TURN_SEND_INDICATION_EVENT,
+                                // Send/Data indications are recognised by the
+                                // parser but deliberately not surfaced: this
+                                // server has no relay socket, so there is no
+                                // action the model could take on them.
                                 _ => {
                                     debug!("TURN unknown message type: {}", message_type);
                                     let _ = status_clone.send(format!(
@@ -225,22 +227,27 @@ impl TurnServer {
                                             action.get("type").and_then(|v| v.as_str())
                                         {
                                             if action_type == "send_turn_allocate_response" {
-                                                // Track new allocation from action parameters
-                                                if let (
-                                                    Some(alloc_id),
-                                                    Some(relay_addr_str),
-                                                    Some(lifetime),
-                                                ) = (
-                                                    action
-                                                        .get("allocation_id")
-                                                        .and_then(|v| v.as_str()),
-                                                    action
-                                                        .get("relay_address")
-                                                        .and_then(|v| v.as_str()),
-                                                    action
-                                                        .get("lifetime_seconds")
-                                                        .and_then(|v| v.as_u64()),
-                                                ) {
+                                                // Track new allocation from action parameters.
+                                                //
+                                                // allocation_id and lifetime_seconds are both
+                                                // documented as optional, but requiring all three
+                                                // here meant that omitting either one sent a
+                                                // success response while silently recording no
+                                                // allocation at all -- the client then held a
+                                                // relay the server did not know about. Apply the
+                                                // documented defaults instead.
+                                                let alloc_id = action
+                                                    .get("allocation_id")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or(&transaction_id_hex);
+                                                let lifetime = action
+                                                    .get("lifetime_seconds")
+                                                    .and_then(|v| v.as_u64())
+                                                    .unwrap_or(600);
+                                                if let Some(relay_addr_str) = action
+                                                    .get("relay_address")
+                                                    .and_then(|v| v.as_str())
+                                                {
                                                     if let Ok(relay_addr) =
                                                         relay_addr_str.parse::<SocketAddr>()
                                                     {
@@ -334,12 +341,22 @@ impl TurnServer {
         Ok(local_addr)
     }
 
-    /// Spawn task to periodically clean up expired allocations
-    fn spawn_cleanup_task(server: Arc<Self>, status_tx: mpsc::UnboundedSender<String>) {
+    /// Spawn task to periodically clean up expired allocations.
+    ///
+    /// Holds only a weak reference: `register_server_task` stores a single handle
+    /// per server (the accept loop's), so this task cannot be registered for
+    /// abort and must notice on its own when the server has been stopped.
+    fn spawn_cleanup_task(server: &Arc<Self>, status_tx: mpsc::UnboundedSender<String>) {
+        let server = Arc::downgrade(server);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
+
+                let Some(server) = server.upgrade() else {
+                    debug!("TURN server stopped, ending allocation cleanup task");
+                    break;
+                };
 
                 let now = Instant::now();
                 let mut allocations = server.allocations.lock().await;
@@ -388,22 +405,30 @@ impl TurnServer {
         // Extract message type (first 2 bytes)
         let message_type_raw = u16::from_be_bytes([data[0], data[1]]);
 
-        // Message type encoding: 0bMMMMMMMMMMCCCCMM
-        let class = ((message_type_raw & 0x0110) >> 4) | ((message_type_raw & 0x0100) >> 7);
+        // RFC 8489 section 5: C0 is bit 4 and C1 is bit 8, class == C1<<1 | C0.
+        // See the equivalent comment in the STUN server for why the previous
+        // expression was wrong.
+        let c0 = (message_type_raw >> 4) & 0x1;
+        let c1 = (message_type_raw >> 8) & 0x1;
+        let class = (c1 << 1) | c0;
         let method = (message_type_raw & 0x000F)
             | ((message_type_raw & 0x00E0) >> 1)
             | ((message_type_raw & 0x3E00) >> 2);
 
+        // Class values: 0 = request, 1 = indication, 2 = success response,
+        // 3 = error response. Send and Data are *indications* (class 1); the old
+        // table listed them under class 0, so a real Send indication (0x0016)
+        // never matched at all.
         let message_type = match (class, method) {
             (0, 3) => "AllocateRequest",
-            (1, 3) => "AllocateResponse",
-            (2, 3) => "AllocateError",
+            (2, 3) => "AllocateResponse",
+            (3, 3) => "AllocateError",
             (0, 4) => "RefreshRequest",
-            (1, 4) => "RefreshResponse",
+            (2, 4) => "RefreshResponse",
             (0, 8) => "CreatePermissionRequest",
-            (1, 8) => "CreatePermissionResponse",
-            (0, 6) => "SendIndication",
-            (0, 7) => "DataIndication",
+            (2, 8) => "CreatePermissionResponse",
+            (1, 6) => "SendIndication",
+            (1, 7) => "DataIndication",
             _ => "Unknown",
         };
 

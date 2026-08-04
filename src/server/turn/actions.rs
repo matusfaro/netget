@@ -22,14 +22,16 @@ impl TurnProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for TurnProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![allocate_relay_address_action(), revoke_allocation_action()]
+        // Deliberately empty. allocate_relay_address and revoke_allocation were
+        // advertised here but execute_action had no arm for either, so calling
+        // one only ever produced "Unknown TURN action".
+        Vec::new()
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             send_turn_allocate_response_action(),
             send_turn_refresh_response_action(),
             send_turn_create_permission_response_action(),
-            relay_data_to_peer_action(),
             send_turn_error_response_action(),
             ignore_request_action(),
         ]
@@ -50,11 +52,11 @@ impl Protocol for TurnProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual TURN protocol (RFC 8656)")
-            .llm_control("Allocations, permissions, relay decisions")
+            .state(DevelopmentState::Incomplete)
+            .implementation("Manual TURN protocol (RFC 8656), allocation bookkeeping only")
+            .llm_control("Allocate/Refresh/CreatePermission responses and error codes")
             .e2e_testing("turnutils_uclient / WebRTC")
-            .notes("Allocation tracking works, data relay pending")
+            .notes("NOT a working relay: no relay socket is ever bound, so Send/Data indications are ignored and no client traffic is ever forwarded. Allocate/Refresh/CreatePermission responses are well-formed, which is enough for a honeypot or protocol probe but not for NAT traversal. Also no authentication (REALM/NONCE/MESSAGE-INTEGRITY), no channel binding, IPv4 relay addresses only")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -111,7 +113,7 @@ impl Protocol for TurnProtocol {
                         "actions": [{
                             "type": "send_turn_allocate_response",
                             "relay_address": "203.0.113.100:55000",
-                            "transaction_id": "0123456789abcdef01234567",
+                            "transaction_id": "{{event.transaction_id}}",
                             "lifetime_seconds": 600
                         }]
                     }
@@ -151,7 +153,6 @@ impl Server for TurnProtocol {
             "send_turn_allocate_response" => self.execute_send_allocate_response(action),
             "send_turn_refresh_response" => self.execute_send_refresh_response(action),
             "send_turn_create_permission_response" => self.execute_send_permission_response(action),
-            "relay_data_to_peer" => self.execute_relay_data(action),
             "send_turn_error_response" => self.execute_send_error_response(action),
             "ignore_request" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown TURN action: {}", action_type)),
@@ -250,37 +251,6 @@ impl TurnProtocol {
         Ok(ActionResult::Output(packet))
     }
 
-    /// Execute relay data to peer
-    fn execute_relay_data(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let peer_address = action
-            .get("peer_address")
-            .and_then(|v| v.as_str())
-            .context("Missing 'peer_address' field")?;
-
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_str())
-            .context("Missing 'data' field")?;
-
-        // Decode data from hex (with or without 0x prefix)
-        let hex_data = if data.starts_with("0x") {
-            &data[2..]
-        } else {
-            data
-        };
-        let data_bytes = hex::decode(hex_data).context("Invalid hex data")?;
-
-        // For simplicity, we'll just acknowledge the relay request
-        // In a real implementation, this would actually forward data to the peer
-        tracing::info!(
-            "TURN would relay {} bytes to {}",
-            data_bytes.len(),
-            peer_address
-        );
-
-        Ok(ActionResult::NoAction)
-    }
-
     /// Execute TURN error response
     fn execute_send_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let error_code = action
@@ -306,8 +276,26 @@ impl TurnProtocol {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
         }
 
-        // Build TURN error response (using method 3 for Allocate)
-        let packet = Self::build_error_response(&transaction_id_bytes, 3, error_code, reason)?;
+        // The error response must carry the same method as the request it
+        // answers; hardcoding Allocate meant a Refresh or CreatePermission
+        // failure came back as an Allocate error, which clients ignore.
+        let method_name = action
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("allocate");
+        let method = match method_name.to_ascii_lowercase().as_str() {
+            "allocate" => 3,
+            "refresh" => 4,
+            "create_permission" | "createpermission" => 8,
+            other => {
+                return Err(anyhow::anyhow!(
+                    "Unknown 'method' value {other:?}. Valid values are \"allocate\", \
+                     \"refresh\" and \"create_permission\"."
+                ))
+            }
+        };
+
+        let packet = Self::build_error_response(&transaction_id_bytes, method, error_code, reason)?;
 
         Ok(ActionResult::Output(packet))
     }
@@ -608,7 +596,9 @@ fn send_turn_allocate_response_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> TURN allocate {relay_address}")
-                .with_debug("TURN allocate_response: relay={relay_address}, lifetime={lifetime_seconds}s"),
+                .with_debug(
+                    "TURN allocate_response: relay={relay_address}, lifetime={lifetime_seconds}s",
+                ),
         ),
     }
 }
@@ -666,37 +656,6 @@ fn send_turn_create_permission_response_action() -> ActionDefinition {
     }
 }
 
-fn relay_data_to_peer_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "relay_data_to_peer".to_string(),
-        description: "Relay data from client to peer through TURN server".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "peer_address".to_string(),
-                type_hint: "string".to_string(),
-                description: "Peer address to relay data to".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "Data to relay (base64 or hex with 0x prefix)".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "relay_data_to_peer",
-            "peer_address": "203.0.113.50:12345",
-            "data": "SGVsbG8gV29ybGQ="
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> TURN relay to {peer_address}")
-                .with_debug("TURN relay_data_to_peer: peer={peer_address}"),
-        ),
-    }
-}
-
 fn send_turn_error_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_turn_error_response".to_string(),
@@ -717,73 +676,27 @@ fn send_turn_error_response_action() -> ActionDefinition {
             Parameter {
                 name: "transaction_id".to_string(),
                 type_hint: "string".to_string(),
-                description: "Transaction ID from request (hex string)".to_string(),
+                description: "Transaction ID from the request, hex-encoded (24 hex chars). Must match the request or the client will discard the response.".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "method".to_string(),
+                type_hint: "string".to_string(),
+                description: "Which request this error answers: \"allocate\" (default), \"refresh\" or \"create_permission\". Must match the request's method or the client ignores the error.".to_string(),
+                required: false,
             },
         ],
         example: json!({
             "type": "send_turn_error_response",
             "error_code": 508,
             "reason": "Insufficient Capacity",
-            "transaction_id": "0123456789abcdef01234567"
+            "transaction_id": "{{event.transaction_id}}",
+            "method": "allocate"
         }),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> TURN error {error_code}: {reason}")
                 .with_debug("TURN error_response: {error_code} {reason}"),
-        ),
-    }
-}
-
-fn allocate_relay_address_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "allocate_relay_address".to_string(),
-        description: "Manually allocate a relay address (async action)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "client_address".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client address to allocate for".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "relay_address".to_string(),
-                type_hint: "string".to_string(),
-                description: "Relay address to assign".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "allocate_relay_address",
-            "client_address": "192.168.1.100:54321",
-            "relay_address": "203.0.113.100:55000"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("TURN allocating {relay_address} for {client_address}")
-                .with_debug("TURN allocate_relay_address: {client_address} -> {relay_address}"),
-        ),
-    }
-}
-
-fn revoke_allocation_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "revoke_allocation".to_string(),
-        description: "Revoke an existing allocation (async action)".to_string(),
-        parameters: vec![Parameter {
-            name: "allocation_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Allocation ID to revoke".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "revoke_allocation",
-            "allocation_id": "alloc-123"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("TURN revoking allocation {allocation_id}")
-                .with_debug("TURN revoke_allocation: {allocation_id}"),
         ),
     }
 }
@@ -813,10 +726,53 @@ pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_turn_allocate_response",
             "relay_address": "203.0.113.100:55000",
-            "transaction_id": "0123456789abcdef01234567",
+            "transaction_id": "{{event.transaction_id}}",
             "lifetime_seconds": 600
         }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "STUN/TURN transaction ID from the request, hex-encoded (24 hex chars = 12 bytes). MUST be copied into the response: clients discard any reply whose transaction ID differs from the request they sent.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client's IP:port as seen by the server".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "local_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Server's listening IP:port".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Decoded TURN message type, e.g. \"AllocateRequest\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bytes_received".to_string(),
+            type_hint: "number".to_string(),
+            description: "Size of the received datagram in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "existing_allocations".to_string(),
+            type_hint: "array".to_string(),
+            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_turn_allocate_response_action(),
+        send_turn_error_response_action(),
+        ignore_request_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("TURN allocate request")
@@ -831,10 +787,53 @@ pub static TURN_REFRESH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "TURN refresh request received from client",
         json!({
             "type": "send_turn_refresh_response",
-            "transaction_id": "0123456789abcdef01234567",
+            "transaction_id": "{{event.transaction_id}}",
             "lifetime_seconds": 600
         }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "STUN/TURN transaction ID from the request, hex-encoded (24 hex chars = 12 bytes). MUST be copied into the response: clients discard any reply whose transaction ID differs from the request they sent.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client's IP:port as seen by the server".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "local_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Server's listening IP:port".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Decoded TURN message type, e.g. \"AllocateRequest\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bytes_received".to_string(),
+            type_hint: "number".to_string(),
+            description: "Size of the received datagram in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "existing_allocations".to_string(),
+            type_hint: "array".to_string(),
+            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_turn_refresh_response_action(),
+        send_turn_error_response_action(),
+        ignore_request_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("TURN refresh request")
@@ -849,9 +848,52 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
         "TURN create permission request received from client",
         json!({
             "type": "send_turn_create_permission_response",
-            "transaction_id": "0123456789abcdef01234567"
+            "transaction_id": "{{event.transaction_id}}"
         }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "STUN/TURN transaction ID from the request, hex-encoded (24 hex chars = 12 bytes). MUST be copied into the response: clients discard any reply whose transaction ID differs from the request they sent.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client's IP:port as seen by the server".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "local_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Server's listening IP:port".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Decoded TURN message type, e.g. \"AllocateRequest\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bytes_received".to_string(),
+            type_hint: "number".to_string(),
+            description: "Size of the received datagram in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "existing_allocations".to_string(),
+            type_hint: "array".to_string(),
+            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_turn_create_permission_response_action(),
+        send_turn_error_response_action(),
+        ignore_request_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("TURN create permission")
@@ -860,29 +902,10 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
     )
 });
 
-pub static TURN_SEND_INDICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "turn_send_indication",
-        "TURN send indication received from client",
-        json!({
-            "type": "relay_data_to_peer",
-            "peer_address": "203.0.113.50:12345",
-            "data": "SGVsbG8gV29ybGQ="
-        }),
-    )
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("TURN send indication")
-            .with_debug("TURN send indication")
-            .with_trace("TURN send indication: {json_pretty(.)}"),
-    )
-});
-
 fn get_turn_event_types() -> Vec<EventType> {
     vec![
         TURN_ALLOCATE_REQUEST_EVENT.clone(),
         TURN_REFRESH_REQUEST_EVENT.clone(),
         TURN_CREATE_PERMISSION_REQUEST_EVENT.clone(),
-        TURN_SEND_INDICATION_EVENT.clone(),
     ]
 }
