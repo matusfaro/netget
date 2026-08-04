@@ -779,11 +779,7 @@ fn summarize_request(request: &serde_json::Value) -> String {
     }
     // Fall back to a compact, truncated form of the request JSON
     let compact = request.to_string();
-    if compact.len() > 80 {
-        format!("{}…", &compact[..79])
-    } else {
-        compact
-    }
+    crate::utils::truncate_with_suffix(&compact, 79, "…")
 }
 
 /// Build a short one-line summary of the response action array for the log list.

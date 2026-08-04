@@ -200,11 +200,10 @@ async fn execute_script_handler(
             );
 
             // Register SCRIPT conversation for tracking
-            let truncated_desc = if event_description.len() > 30 {
-                format!("SCRIPT \"{}...\"", &event_description[..27])
-            } else {
-                format!("SCRIPT \"{}\"", event_description)
-            };
+            let truncated_desc = format!(
+                "SCRIPT \"{}\"",
+                crate::utils::truncate_for_log(event_description, 27)
+            );
             let conv_id = format!(
                 "script-{}-{:x}",
                 std::time::SystemTime::now()

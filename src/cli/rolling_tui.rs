@@ -810,11 +810,7 @@ async fn execute_single_task(
         },
     };
 
-    let truncated_instruction = if task.instruction.len() > 30 {
-        format!("{}...", &task.instruction[..27])
-    } else {
-        task.instruction.clone()
-    };
+    let truncated_instruction = crate::utils::truncate_for_log(&task.instruction, 27);
 
     // Get rate limiter for scheduled tasks (discards if rate limited)
     let rate_limiter = state.get_rate_limiter().await;
@@ -1429,11 +1425,8 @@ async fn handle_key_event(
                                 let _ = status_tx_clone
                                     .send("[INFO] Web search completed successfully".to_string());
                                 // Truncate result if too long
-                                let result_preview = if result.result.len() > 500 {
-                                    format!("{}... (truncated)", &result.result[..500])
-                                } else {
-                                    result.result.clone()
-                                };
+                                let result_preview =
+                                    crate::utils::truncate_for_log(&result.result, 500);
                                 let _ = status_tx_clone
                                     .send(format!("[DEBUG] Result preview: {}", result_preview));
                             } else {

@@ -37,11 +37,7 @@ pub fn summarize_action(action: &Value) -> String {
 fn summarize_common_action(action: &CommonAction) -> String {
     match action {
         CommonAction::ShowMessage { message } => {
-            let preview = if message.len() > 40 {
-                format!("{}...", &message[..37])
-            } else {
-                message.clone()
-            };
+            let preview = crate::utils::truncate_for_log(&message, 37);
             format!("show_message: \"{}\"", preview)
         }
         CommonAction::OpenServer {
@@ -51,11 +47,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
             instruction,
             ..
         } => {
-            let instr_preview = if instruction.len() > 30 {
-                format!("{}...", &instruction[..27])
-            } else {
-                instruction.clone()
-            };
+            let instr_preview = crate::utils::truncate_for_log(&instruction, 27);
             let binding = if let Some(iface) = interface {
                 format!("interface={}", iface)
             } else if let Some(p) = port {
@@ -70,41 +62,25 @@ fn summarize_common_action(action: &CommonAction) -> String {
         }
         CommonAction::CloseAllServers => "close_all_servers".to_string(),
         CommonAction::UpdateInstruction { instruction } => {
-            let preview = if instruction.len() > 30 {
-                format!("{}...", &instruction[..27])
-            } else {
-                instruction.clone()
-            };
+            let preview = crate::utils::truncate_for_log(&instruction, 27);
             format!("update_instruction: \"{}\"", preview)
         }
         CommonAction::ChangeModel { model } => {
             format!("change_model: {}", model)
         }
         CommonAction::SetMemory { value } => {
-            let preview = if value.len() > 30 {
-                format!("{}...", &value[..27])
-            } else {
-                value.clone()
-            };
+            let preview = crate::utils::truncate_for_log(&value, 27);
             format!("set_memory: \"{}\"", preview)
         }
         CommonAction::AppendMemory { value } => {
-            let preview = if value.len() > 30 {
-                format!("{}...", &value[..27])
-            } else {
-                value.clone()
-            };
+            let preview = crate::utils::truncate_for_log(&value, 27);
             format!("append_memory: \"{}\"", preview)
         }
         CommonAction::AppendToLog {
             output_name,
             content,
         } => {
-            let preview = if content.len() > 30 {
-                format!("{}...", &content[..27])
-            } else {
-                content.clone()
-            };
+            let preview = crate::utils::truncate_for_log(&content, 27);
             format!("append_to_log: {} \"{}\"", output_name, preview)
         }
         CommonAction::ScheduleTask {
@@ -134,11 +110,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
             instruction,
             ..
         } => {
-            let instr_preview = if instruction.len() > 30 {
-                format!("{}...", &instruction[..27])
-            } else {
-                instruction.clone()
-            };
+            let instr_preview = crate::utils::truncate_for_log(&instruction, 27);
             format!(
                 "open_client: {} → {} \"{}\"",
                 protocol, remote_addr, instr_preview
@@ -158,11 +130,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
             client_id,
             instruction,
         } => {
-            let preview = if instruction.len() > 30 {
-                format!("{}...", &instruction[..27])
-            } else {
-                instruction.clone()
-            };
+            let preview = crate::utils::truncate_for_log(&instruction, 27);
             format!("update_client_instruction: #{} \"{}\"", client_id, preview)
         }
         CommonAction::ProvideFeedback { feedback } => {
@@ -203,11 +171,7 @@ fn summarize_protocol_action(action_type: &str, action: &Value) -> String {
         // TCP actions
         "send_tcp_data" => {
             if let Some(data) = action.get("data").and_then(|d| d.as_str()) {
-                let preview = if data.len() > 30 {
-                    format!("{}...", &data[..27])
-                } else {
-                    data.to_string()
-                };
+                let preview = crate::utils::truncate_for_log(&data, 27);
                 format!("send_tcp_data: \"{}\"", preview)
             } else {
                 "send_tcp_data".to_string()

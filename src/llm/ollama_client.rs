@@ -761,7 +761,13 @@ impl OllamaClient {
             request
                 .messages
                 .iter()
-                .map(|m| format!("[{}] {}...", m.role, &m.content[..m.content.len().min(100)]))
+                .map(|m| {
+                    format!(
+                        "[{}] {}",
+                        m.role,
+                        crate::utils::truncate_for_log(&m.content, 100)
+                    )
+                })
                 .collect::<Vec<_>>()
         );
 
@@ -1080,11 +1086,7 @@ impl OllamaClient {
                         warn!("Parse error on attempt {}: {}", attempt, e);
                         warn!(
                             "Malformed response (after XML extraction and markdown stripping): {}",
-                            if json_cleaned.len() > 500 {
-                                format!("{}...", &json_cleaned[..500])
-                            } else {
-                                json_cleaned.to_string()
-                            }
+                            crate::utils::truncate_for_log(&json_cleaned, 500)
                         );
                         trace!("Will retry with corrective feedback (attempt {}/{})", attempt, max_retries + 1);
 

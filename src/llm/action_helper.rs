@@ -149,11 +149,10 @@ pub async fn call_llm_with_actions(
     .await;
 
     // Create conversation handler for network event with tracking
-    let truncated_desc = if event_description.len() > 30 {
-        format!("LLM \"{}...\"", &event_description[..27])
-    } else {
-        format!("LLM \"{}\"", event_description)
-    };
+    let truncated_desc = format!(
+        "LLM \"{}\"",
+        crate::utils::truncate_for_log(event_description, 27)
+    );
 
     // Get rate limiter for network events (discards if rate limited)
     let rate_limiter = state.get_rate_limiter().await;
@@ -460,11 +459,10 @@ pub async fn call_llm(
 
     // Create conversation handler for network event with tracking
     // Note: Network events don't use tools (immediate response), but get retry logic
-    let truncated_desc = if event_description.len() > 30 {
-        format!("LLM \"{}...\"", &event_description[..27])
-    } else {
-        format!("LLM \"{}\"", event_description)
-    };
+    let truncated_desc = format!(
+        "LLM \"{}\"",
+        crate::utils::truncate_for_log(&event_description, 27)
+    );
 
     // Get rate limiter for network events (discards if rate limited)
     let rate_limiter = state.get_rate_limiter().await;

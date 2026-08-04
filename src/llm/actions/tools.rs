@@ -688,14 +688,7 @@ async fn fetch_url(url: &str) -> ToolResult {
                         )
                     } else {
                         // Truncate to reasonable length (10000 chars)
-                        let truncated = if text.len() > 10000 {
-                            format!(
-                                "{}...\n\n[Content truncated to 10000 characters]",
-                                &text[..10000]
-                            )
-                        } else {
-                            text
-                        };
+                        let truncated = crate::utils::truncate_with_notice(&text, 10000);
 
                         debug!("Fetched URL: {} chars", truncated.len());
                         info!("  ✓ Fetched URL: {} chars", truncated.len());

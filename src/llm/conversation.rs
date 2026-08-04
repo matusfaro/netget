@@ -600,11 +600,7 @@ impl ConversationHandler {
                 warn!(
                     "LLM returned unknown action(s): {:?}. Response was: {}",
                     unknown_actions,
-                    if cleaned_response.len() > 500 {
-                        format!("{}...", &cleaned_response[..500])
-                    } else {
-                        cleaned_response.clone()
-                    }
+                    crate::utils::truncate_for_log(&cleaned_response, 500)
                 );
 
                 if let Some(ref tx) = self.status_tx {
@@ -1209,18 +1205,10 @@ impl ConversationHandler {
                         "  Message {}: [{}] {}",
                         idx + 1,
                         msg.role,
-                        if msg.content.len() > 200 {
-                            format!("{}...", &msg.content[..200])
-                        } else {
-                            msg.content.clone()
-                        }
+                        crate::utils::truncate_for_log(&msg.content, 200)
                     );
                     if let Some(ref tx) = self.status_tx {
-                        let preview = if msg.content.len() > 200 {
-                            format!("{}...", &msg.content[..200])
-                        } else {
-                            msg.content.clone()
-                        };
+                        let preview = crate::utils::truncate_for_log(&msg.content, 200);
                         // Send header line
                         let _ = tx.send(format!(
                             "[TRACE] ·  Message {}: [{}]",
@@ -1357,11 +1345,7 @@ impl ConversationHandler {
 
             debug!(
                 "Response (normalized): {}",
-                if normalized_response.len() > 200 {
-                    format!("{}...", &normalized_response[..200])
-                } else {
-                    normalized_response.clone()
-                }
+                crate::utils::truncate_for_log(&normalized_response, 200)
             );
 
             if let Some(ref tx) = self.status_tx {
@@ -1405,22 +1389,18 @@ impl ConversationHandler {
                         warn!("✗ Parse error on attempt {}: {}", attempt, e);
                         warn!(
                             "Malformed response (raw): {}",
-                            if response_text.len() > 500 {
-                                format!("{}...", &response_text[..500])
-                            } else if response_text.is_empty() {
+                            if response_text.is_empty() {
                                 "(empty response)".to_string()
                             } else {
-                                response_text.clone()
+                                crate::utils::truncate_for_log(&response_text, 500)
                             }
                         );
 
                         if let Some(ref tx) = self.status_tx {
-                            let error_preview = if normalized_response.len() > 100 {
-                                format!("{}...", &normalized_response[..100])
-                            } else if normalized_response.is_empty() {
+                            let error_preview = if normalized_response.is_empty() {
                                 "(empty)".to_string()
                             } else {
-                                normalized_response.clone()
+                                crate::utils::truncate_for_log(&normalized_response, 100)
                             };
                             let _ = tx.send(format!(
                                 "[WARN] ✗ Invalid format (attempt {}): {}. Response: {}",
@@ -1441,12 +1421,8 @@ impl ConversationHandler {
                         let correction =
                             crate::llm::prompt::PromptBuilder::build_retry_prompt(&e.to_string());
                         debug!(
-                            "Correction message preview: {}...",
-                            if correction.len() > 200 {
-                                &correction[..200]
-                            } else {
-                                &correction
-                            }
+                            "Correction message preview: {}",
+                            crate::utils::truncate_for_log(&correction, 200)
                         );
 
                         // Track retry instruction in conversation state
@@ -1496,16 +1472,13 @@ impl ConversationHandler {
                 if result.success { "Success" } else { "Error" }
             ));
 
-            // Truncate very long results
+            // Truncate very long results on a char boundary, telling the model
+            // explicitly how much was omitted so it can narrow its next request.
             let result_text = &result.result;
-            if result_text.len() > 2000 {
-                formatted.push_str(&format!(
-                    "Result (truncated): {}...\n",
-                    &result_text[..2000]
-                ));
-            } else {
-                formatted.push_str(&format!("Result: {}\n", result_text));
-            }
+            formatted.push_str(&format!(
+                "Result: {}\n",
+                crate::utils::truncate_with_notice(result_text, 2000)
+            ));
 
             formatted.push('\n');
         }
