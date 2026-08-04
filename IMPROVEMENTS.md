@@ -270,6 +270,76 @@ Fix: mark them `Incomplete` so `is_available_to_llm()` hides them, or implement 
 
 ---
 
+## P1b — Scripting subsystem (the recommended deterministic path)
+
+The MCP `start_server` tool description actively steers callers toward `event_handlers` with
+script handlers over the LLM path. This code is therefore on the hot path, not a corner case.
+
+### 24. Script execution parks a tokio worker thread for up to 30s **[verified]**
+
+`src/scripting/executor.rs::execute_script` is synchronous and is called directly from
+`async fn execute_script_handler` (`src/llm/event_handler_executor.rs:194`) with no
+`spawn_blocking`. `wait_with_timeout` (`:310-341`) polls with
+`std::thread::sleep(100ms)` until the child exits or 30s elapses.
+
+`src/bin/netget.rs` uses bare `#[tokio::main]`, so worker_threads equals the CPU count. Each
+in-flight script parks one worker for its full duration; on an 8-core machine, 8 concurrent
+script-handled requests stall every protocol server, the TUI, and the MCP stdio loop.
+
+Fix: async execution via `tokio::process::Command` + `tokio::time::timeout`.
+
+### 25. Unbounded blocking write to child stdin has no timeout **[static]**
+
+`execute_with_command` (`src/scripting/executor.rs:271-276`) does `write_all` of the entire
+event JSON to the child's stdin *before* reading stdout and *before* entering the timeout
+loop. If the payload exceeds the pipe buffer (~64KB) while the child is blocked writing
+stdout, both deadlock — and since the timeout only starts afterwards, that hang is unbounded.
+Event payloads can be large (HTTP bodies, accumulated TCP buffers). Also, `child.kill()` at
+`:332` is never awaited, so timed-out scripts can linger as zombies.
+
+### 26. Script execution is unsandboxed and undocumented **[verified]**
+
+`python3 -c <code>`, `node -e <code>`, and `go run` are spawned with the code passed straight
+through (`src/scripting/executor.rs:108-135,205`). There is no sandbox, no allowlist, and no
+privilege reduction — scripts run with the full privileges of the netget process.
+
+That may be the right choice for a local tool, but it is currently undocumented, and it means
+**the MCP `start_server` tool is an arbitrary-code-execution surface**: any MCP client, or any
+model driving one, can execute arbitrary code as the user via a script handler. Document the
+trust boundary explicitly; decide separately whether a sandbox is wanted.
+
+---
+
+## P2b — Client half is substantially less finished than the server half
+
+### 27. A client can only be started by an LLM call **[verified]**
+
+There is no MCP tool for clients, no CLI flag, and no deterministic entry point —
+`open_client` exists solely as an LLM action (`src/events/handler.rs`,
+`src/cli/non_interactive.rs:380`). Starting a client always costs a model round-trip and
+cannot be scripted or tested deterministically.
+
+Combined with items 10 (no `JoinHandle`, so clients cannot be stopped) and 5 (61 of 83 client
+test directories never compiled), the client half needs a deliberate completion pass: an MCP
+`start_client`/`stop_client`/`list_clients` surface, task-handle tracking, and its test suite
+turned on.
+
+### 28. `--api-key` on the command line is world-readable **[static]**
+
+`src/cli/args.rs` accepts `--api-key <KEY>`, which places the secret in the process table for
+every local user to read via `ps`. The env-var path (`NETGET_API_KEY` / `OPENAI_API_KEY`) is
+already supported and should be the documented default; consider warning when the flag form
+is used.
+
+### 29. `REQUIRE_DOCS_FOR_OPEN_ACTIONS` is dead configuration **[verified]**
+
+`src/events/handler.rs:20` is a hardcoded `const … = false`, so the "model must read the docs
+before it may open a server" gate never engages, while `is_server_docs_read()` /
+`is_client_docs_read()` state is still tracked to feed it. Either make it a real runtime
+setting or remove it and the state it depends on.
+
+---
+
 ## Suggested order
 
 1. Items 1-4 — remotely-reachable panics and the broken feedback loop.
