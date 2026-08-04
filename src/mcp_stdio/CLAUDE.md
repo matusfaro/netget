@@ -62,14 +62,18 @@ OllamaClient (3 backends)
 
 | Tool | Description | Maps To |
 |------|-------------|---------|
-| `list_protocols` | List available server/client protocols | `ServerRegistry`, `ClientRegistry` |
-| `start_server` | Start protocol server with LLM | `server_startup::start_server_from_action()` |
+| `list_protocols` | List available server/client protocols (both halves carry maturity + description) | `ServerRegistry`, `ClientRegistry` |
+| `start_server` | Start protocol server | `server_startup::start_server_from_action()` |
 | `stop_server` | Stop server by ID | `AppState::remove_server()` |
 | `list_servers` | List running servers | `AppState::get_all_servers()` |
 | `server_status` | Detailed server status | `AppState::get_server()` |
+| `start_client` | Connect a protocol client to a remote server | `client_startup::start_client_from_action()` |
+| `stop_client` | Forget a client by ID (**does not stop its network loop** — see below) | `AppState::remove_client()` |
+| `list_clients` | List clients | `AppState::get_all_clients()` |
+| `client_status` | Detailed client status | `AppState::get_client()` |
 | `get_status` | Overall NetGet status | AppState model + server count |
 | `set_model` | Change LLM model | `AppState::set_ollama_model()` |
-| `get_protocol_docs` | Protocol documentation | `generate_base_stack_documentation()` |
+| `get_protocol_docs` | MCP-shaped protocol documentation | `mcp_stdio::docs::render_protocol_docs()` |
 | `update_server_instruction` | Update server instruction | `AppState::with_server_mut()` |
 | `list_access_logs` | Recent request/response entries (newest first) | `AppState::list_access_logs()` |
 | `get_access_log` | Full request + response for one entry by id | `AppState::get_access_log()` |
@@ -77,6 +81,40 @@ OllamaClient (3 backends)
 | `get_next_llm_request` | (agent mode) Fetch next queued LLM request; optional long-poll | `LlmRequestQueue::wait_and_claim()` |
 | `answer_llm_request` | (agent mode) Answer a queued request with action JSON | `LlmRequestQueue::answer()` |
 | `list_llm_requests` | (agent mode) List outstanding queued requests | `LlmRequestQueue::list()` |
+
+## Protocol documentation (`docs.rs`)
+
+`get_protocol_docs` has its own renderer (`src/mcp_stdio/docs.rs`) rather than
+reusing the TUI LLM's `read_documentation`. The internal renderer describes the
+`open_server` / `open_client` **actions** and a `base_stack` parameter — an API
+no MCP caller can invoke. `docs.rs` renders what an MCP caller actually has:
+
+- the exact `start_server` / `start_client` arguments that apply to the protocol
+  (interface-bound protocols get `interface`/`mac_address` instead of `port`/`host`);
+- its event ids with field names and types, so `event_handlers` scripts can be
+  written without guessing;
+- its action names with parameter schemas and JSON examples;
+- its `startup_params` schema, privilege requirement and maturity.
+
+`llm::actions::tools::execute_read_documentation` is untouched — the TUI's
+`/docs` command and the internal LLM still use it.
+
+## Client control surface
+
+`start_client` / `list_clients` / `client_status` / `stop_client` mirror the
+server tools and route through `cli::client_startup::start_client_from_action`,
+exactly as `start_server` routes through `start_server_from_action`. They take
+the same `instruction` / `event_handlers` / `startup_params` /
+`initial_memory` / `feedback_instructions` / `scheduled_tasks` arguments plus a
+`remote_addr`.
+
+**`stop_client` cannot actually stop a client.** `ClientInstance.handle`
+(`src/state/client.rs:120`) is never populated — there is no
+`register_client_task()` to match `AppState::register_server_task()`, and client
+read loops (e.g. `src/client/tcp/mod.rs:147`) spawn detached. `remove_client()`
+therefore only drops the client from state; its connection loop keeps running and
+keeps invoking the LLM. The tool description says so plainly rather than implying
+it works. Fixing it needs `src/state/` and every `src/client/*/mod.rs`.
 
 ## Access Logs
 

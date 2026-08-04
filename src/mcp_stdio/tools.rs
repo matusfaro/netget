@@ -214,6 +214,60 @@ pub struct StartServerParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct StartClientParams {
+    /// Protocol name. Use list_protocols with type "client" to see what is
+    /// available in this build, and get_protocol_docs for a protocol's event ids,
+    /// actions and startup parameters.
+    pub protocol: String,
+    /// Remote server to connect to, as "host:port" (e.g. "127.0.0.1:6379").
+    pub remote_addr: String,
+    /// Natural language instruction for the LLM that handles each event on this
+    /// connection. This is the LLM FALLBACK path: every event triggers a (slow,
+    /// billable) model call. Prefer `event_handlers` whenever the behavior is
+    /// deterministic.
+    #[serde(default)]
+    pub instruction: Option<String>,
+    /// Event handlers that decide how events are handled WITHOUT an LLM call.
+    /// Same shape as start_server's: an array of
+    /// { "event_pattern": "<event id>" | "*", "handler": {...} }, matched in
+    /// order, first match wins; `handler` is one of {"type":"script",...},
+    /// {"type":"static","actions":[...]} or {"type":"llm","instruction":"..."}.
+    /// Use get_protocol_docs for the protocol's client event ids and action names.
+    #[serde(default)]
+    pub event_handlers: Option<Vec<serde_json::Value>>,
+    /// Optional protocol-specific startup parameters (JSON object). Use
+    /// get_protocol_docs for a protocol's available startup parameters.
+    #[serde(default)]
+    pub startup_params: Option<serde_json::Value>,
+    /// Seed the client's LLM memory before the first event.
+    #[serde(default)]
+    pub initial_memory: Option<String>,
+    /// Natural-language instructions for the automatic feedback loop that adjusts
+    /// this client's behaviour as it runs.
+    #[serde(default)]
+    pub feedback_instructions: Option<String>,
+    /// Client-scoped scheduled LLM tasks. Same shape as start_server's:
+    /// {"task_id":"...", "recurring":true, "interval_secs":60, "instruction":"..."}
+    /// or {"task_id":"...", "recurring":false, "delay_secs":10, "instruction":"..."}.
+    #[serde(default)]
+    pub scheduled_tasks: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StopClientParams {
+    /// Client ID to stop
+    #[serde(deserialize_with = "deserialize_u32_flexible")]
+    pub client_id: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ClientStatusParams {
+    /// Client ID to query
+    #[serde(deserialize_with = "deserialize_u32_flexible")]
+    pub client_id: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct StopServerParams {
     /// Server ID to stop
     #[serde(deserialize_with = "deserialize_u32_flexible")]
@@ -421,10 +475,30 @@ impl NetGetMcpService {
 
         if filter_type == "all" || filter_type == "client" {
             let registry = &crate::protocol::CLIENT_REGISTRY;
-            let protocols = registry.list_protocols();
+            let mut protocols = registry.list_protocols();
+            protocols.sort();
             result.push_str("## Client Protocols\n\n");
+            result.push_str("Start one with `start_client` (needs a `remote_addr`).\n\n");
             for name in &protocols {
-                result.push_str(&format!("- **{}**\n", name));
+                if let Some(proto) = registry.get(name) {
+                    let metadata = proto.metadata();
+                    if !include_disabled
+                        && matches!(
+                            metadata.state,
+                            crate::protocol::metadata::DevelopmentState::Incomplete
+                        )
+                    {
+                        continue;
+                    }
+                    result.push_str(&format!(
+                        "- **{}** ({}) - {}\n",
+                        name,
+                        metadata.state.as_str(),
+                        proto.description()
+                    ));
+                } else {
+                    result.push_str(&format!("- **{}**\n", name));
+                }
             }
             result.push('\n');
         }
@@ -818,6 +892,190 @@ impl NetGetMcpService {
         ))]))
     }
 
+    #[tool(description = "Connect a network protocol client to a remote server. The mirror of start_server: choose HOW it responds the same way — for DETERMINISTIC behavior pass `event_handlers` with a script or static handler (in-process, NO LLM call, instant and reproducible); only use the natural-language `instruction` when the decision genuinely needs reasoning, since it invokes NetGet's LLM on every event. Use get_protocol_docs for the protocol's client event ids, action names and startup parameters.")]
+    async fn start_client(
+        &self,
+        Parameters(params): Parameters<StartClientParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let instruction = params.instruction.unwrap_or_else(|| {
+            format!(
+                "You are a {} client connected to {}. Handle responses appropriately.",
+                params.protocol, params.remote_addr
+            )
+        });
+
+        let scheduled_tasks = match parse_scheduled_tasks(params.scheduled_tasks) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid scheduled_tasks: {}",
+                    e
+                ))]));
+            }
+        };
+
+        // Drive the new client with NetGet's configured LLM client, exactly as
+        // start_server does (the client half reads it from the argument rather
+        // than from AppState, but keep AppState in sync for anything that does).
+        self.state
+            .app_state
+            .set_llm_client(self.state.llm_client.clone())
+            .await;
+
+        info!(
+            "MCP: Connecting {} client to {}",
+            params.protocol, params.remote_addr
+        );
+
+        let client_id = match crate::cli::client_startup::start_client_from_action(
+            &self.state.app_state,
+            &params.protocol,
+            &params.remote_addr,
+            instruction,
+            params.startup_params,
+            params.initial_memory,
+            params.event_handlers,
+            scheduled_tasks,
+            params.feedback_instructions,
+            self.state.llm_client.clone(),
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to start client: {}",
+                    e
+                ))]));
+            }
+        };
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Client #{} ({}) connected to {}.",
+            client_id.as_u32(),
+            params.protocol,
+            params.remote_addr
+        ))]))
+    }
+
+    #[tool(description = "Forget a client by its ID. LIMITATION — this does NOT actually stop the client: NetGet never stores a JoinHandle for a client's network task (there is no register_client_task(), unlike register_server_task() for servers), so the connection's read loop keeps running and keeps invoking the LLM after this call. All this does is drop the client from NetGet's state, after which it disappears from list_clients and client_status. To truly stop a client, stop the process. Servers do not have this problem: stop_server really stops them.")]
+    async fn stop_client(
+        &self,
+        Parameters(params): Parameters<StopClientParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = crate::state::ClientId::new(params.client_id);
+
+        match self.state.app_state.remove_client(client_id).await {
+            Some(client) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Client #{} ({} -> {}) removed from NetGet's state. \
+                 Note: its network loop is NOT stopped — NetGet does not track \
+                 client task handles, so the connection may still be live.",
+                params.client_id, client.protocol_name, client.remote_addr
+            ))])),
+            None => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Client #{} not found",
+                params.client_id
+            ))])),
+        }
+    }
+
+    #[tool(description = "List all clients with their protocol, remote address, status and instruction")]
+    async fn list_clients(&self) -> Result<CallToolResult, McpError> {
+        let clients = self.state.app_state.get_all_clients().await;
+
+        if clients.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No clients currently connected.",
+            )]));
+        }
+
+        let mut clients = clients;
+        clients.sort_by_key(|c| c.id.as_u32());
+
+        let mut result = String::from("## Clients\n\n");
+        for client in &clients {
+            result.push_str(&format!(
+                "- **Client #{}**: {} -> {} ({})\n  Instruction: {}\n  Memory: {}\n\n",
+                client.id.as_u32(),
+                client.protocol_name,
+                client.remote_addr,
+                client.status,
+                if client.instruction.is_empty() {
+                    "(none)"
+                } else {
+                    &client.instruction
+                },
+                if client.memory.is_empty() {
+                    "(empty)"
+                } else {
+                    &client.memory
+                },
+            ));
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "Get detailed status of a specific client")]
+    async fn client_status(
+        &self,
+        Parameters(params): Parameters<ClientStatusParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let client_id = crate::state::ClientId::new(params.client_id);
+
+        match self.state.app_state.get_client(client_id).await {
+            Some(client) => {
+                let mut result = format!(
+                    "## Client #{}\n\n\
+                     - **Protocol**: {}\n\
+                     - **Remote address**: {}\n\
+                     - **Status**: {}\n\
+                     - **Instruction**: {}\n\
+                     - **Memory**: {}\n",
+                    client.id.as_u32(),
+                    client.protocol_name,
+                    client.remote_addr,
+                    client.status,
+                    if client.instruction.is_empty() {
+                        "(none)"
+                    } else {
+                        &client.instruction
+                    },
+                    if client.memory.is_empty() {
+                        "(empty)"
+                    } else {
+                        &client.memory
+                    },
+                );
+
+                if let Some(conn) = &client.connection {
+                    result.push_str(&format!(
+                        "- **Local address**: {}\n\
+                         - **Connected address**: {}\n\
+                         - **Bytes sent/received**: {}/{}\n\
+                         - **Packets sent/received**: {}/{}\n",
+                        conn.local_addr
+                            .map(|a| a.to_string())
+                            .unwrap_or_else(|| "(unknown)".to_string()),
+                        conn.connected_addr
+                            .map(|a| a.to_string())
+                            .unwrap_or_else(|| "(unknown)".to_string()),
+                        conn.bytes_sent,
+                        conn.bytes_received,
+                        conn.packets_sent,
+                        conn.packets_received,
+                    ));
+                }
+
+                Ok(CallToolResult::success(vec![Content::text(result)]))
+            }
+            None => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Client #{} not found",
+                params.client_id
+            ))])),
+        }
+    }
+
     #[tool(
         description = "Agent-LLM mode only (netget --llm-agent): fetch the next queued LLM request for a protocol server so YOU (the calling agent) can answer it in place of a model. Optionally long-poll with wait_seconds. Returns the request id, the prompt (server instruction + the triggering event), and the actions you may use. Reply by calling answer_llm_request with that id and a JSON array of actions. Returns '(no pending requests)' if none arrive within the wait."
     )]
@@ -948,6 +1206,11 @@ impl ServerHandler for NetGetMcpService {
                  request) for responses that genuinely need reasoning or vary \
                  unpredictably. Use get_protocol_docs to see a protocol's event ids and \
                  actions before writing a handler.\n\n\
+                 CLIENTS: start_client / list_clients / client_status / stop_client are \
+                 the mirror of the server tools, for connecting OUT to a remote server \
+                 instead of listening. They take the same instruction and event_handlers \
+                 arguments plus a remote_addr. Caveat: stop_client only drops the client \
+                 from NetGet's state — it does not stop the connection's network loop.\n\n\
                  AGENT-LLM MODE (when netget was started with --llm-agent): there is no \
                  model — YOU answer the LLM calls. When a server needs a reasoned \
                  response it queues a request; fetch it with get_next_llm_request \

@@ -11,6 +11,34 @@ use crate::llm::OllamaClient;
 use crate::state::app_state::AppState;
 use crate::state::ClientId;
 
+/// Resolve a caller-supplied client protocol name to the registry's canonical
+/// key, accepting any casing (and the registry's keyword aliases).
+///
+/// `CLIENT_REGISTRY` is keyed by each protocol's own spelling — "TCP", "Redis",
+/// "HTTP" — so a plain `get("tcp")` misses. This mirrors what
+/// `server_startup::start_server_from_action` gets from
+/// `ServerRegistry::parse_from_str`.
+pub fn resolve_client_protocol(protocol: &str) -> Option<String> {
+    let registry = &crate::protocol::CLIENT_REGISTRY;
+    if registry.get(protocol).is_some() {
+        return Some(protocol.to_string());
+    }
+    let upper = protocol.to_uppercase();
+    if registry.get(&upper).is_some() {
+        return Some(upper);
+    }
+    let lower = protocol.to_lowercase();
+    if registry.get(&lower).is_some() {
+        return Some(lower);
+    }
+    // Case-insensitive scan, then the registry's keyword parser as a last resort.
+    registry
+        .list_protocols()
+        .into_iter()
+        .find(|name| name.eq_ignore_ascii_case(protocol))
+        .or_else(|| registry.parse_from_str(protocol))
+}
+
 /// Start a specific client by ID
 pub async fn start_client_by_id(
     state: &AppState,
@@ -41,9 +69,9 @@ pub async fn start_client_by_id(
     // Actually connect the client using the registry
     use crate::state::client::ClientStatus;
 
-    // Get protocol implementation from registry
-    let protocol = crate::protocol::CLIENT_REGISTRY
-        .get(&protocol_name)
+    // Get protocol implementation from registry (accepting any casing)
+    let protocol = resolve_client_protocol(&protocol_name)
+        .and_then(|name| crate::protocol::CLIENT_REGISTRY.get(&name))
         .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol_name))?;
 
     // Build type-safe startup params if provided
@@ -119,16 +147,21 @@ pub async fn start_client_from_action(
 ) -> Result<ClientId> {
     use crate::state::client::ClientStatus;
 
-    // Get protocol from registry
+    // Get protocol from registry. Registry keys are the protocols' own casing
+    // ("TCP", "Redis", …), so resolve the caller's spelling to the canonical name
+    // first — the same normalization `start_server_from_action` does — and store
+    // that canonical name on the instance so later lookups by protocol_name work.
+    let protocol = resolve_client_protocol(protocol)
+        .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
     let protocol_impl = crate::protocol::CLIENT_REGISTRY
-        .get(protocol)
+        .get(&protocol)
         .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
 
     // Create client instance
     let client = crate::state::client::ClientInstance {
         id: ClientId::new(0), // Will be assigned by add_client
         remote_addr: remote_addr.to_string(),
-        protocol_name: protocol.to_string(),
+        protocol_name: protocol.clone(),
         instruction: instruction.clone(),
         memory: String::new(),
         status: ClientStatus::Connecting,
@@ -228,8 +261,19 @@ pub async fn start_client_from_action(
         None
     };
 
-    // Create a temporary status channel (commands don't use rolling TUI status)
-    let (status_tx, _status_rx) = mpsc::unbounded_channel();
+    // Create a status channel. This path (the /load command, the open_client
+    // action, and the MCP start_client tool) has no rolling TUI to render into,
+    // but dropping the receiver would make every `status_tx.send()` in the
+    // client's connection loop fail silently, so drain it to tracing instead.
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        while let Some(msg) = status_rx.recv().await {
+            if msg == "__UPDATE_UI__" {
+                continue;
+            }
+            tracing::info!("{}", msg);
+        }
+    });
 
     // Build connect context
     let connect_ctx = crate::protocol::ConnectContext {

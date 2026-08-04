@@ -292,3 +292,284 @@ async fn agent_request_times_out() {
 
     client.cancel().await.expect("shutdown");
 }
+
+/// `get_protocol_docs` must describe the MCP surface, not the internal TUI LLM's
+/// `open_server`/`open_client` actions or its `base_stack` parameter.
+#[tokio::test]
+async fn protocol_docs_describe_the_mcp_surface() {
+    let client = connect().await;
+
+    let docs = call(
+        &client,
+        "get_protocol_docs",
+        serde_json::json!({ "protocol": "tcp" }),
+    )
+    .await;
+    assert_ne!(docs.is_error, Some(true), "get_protocol_docs errored");
+    let text = text_of(&docs);
+
+    for forbidden in ["open_server", "open_client", "base_stack"] {
+        assert!(
+            !text.contains(forbidden),
+            "MCP docs must not mention '{}':\n{}",
+            forbidden,
+            text
+        );
+    }
+
+    // The tool arguments an MCP caller actually has.
+    for expected in [
+        "start_server",
+        "`event_handlers`",
+        "`startup_params`",
+        "`instruction`",
+        "privilege required",
+        "maturity",
+    ] {
+        assert!(
+            text.contains(expected),
+            "expected '{}' in MCP docs:\n{}",
+            expected,
+            text
+        );
+    }
+
+    // Event ids with their field names, which handlers are written against.
+    assert!(
+        text.contains("tcp_data_received"),
+        "expected tcp event ids in docs:\n{}",
+        text
+    );
+    assert!(
+        text.contains("`encoding`"),
+        "expected event field names in docs:\n{}",
+        text
+    );
+    // Action names with parameter schemas.
+    assert!(
+        text.contains("send_tcp_data"),
+        "expected action names in docs:\n{}",
+        text
+    );
+
+    // Unknown protocols still report what is available.
+    let missing = call(
+        &client,
+        "get_protocol_docs",
+        serde_json::json!({ "protocol": "definitely_not_a_protocol" }),
+    )
+    .await;
+    assert_eq!(missing.is_error, Some(true));
+    assert!(text_of(&missing).contains("not found"));
+
+    client.cancel().await.expect("shutdown");
+}
+
+/// `send_first` must actually reach the protocol: a TCP server started with it
+/// speaks first, and the same server without it does not.
+#[tokio::test]
+async fn send_first_produces_a_greeting_banner() {
+    let client = connect().await;
+
+    let banner_handler = serde_json::json!([{
+        "event_pattern": "tcp_connection_opened",
+        "handler": {
+            "type": "static",
+            "actions": [{ "type": "send_tcp_data", "data": "220 banner\r\n" }]
+        }
+    }]);
+
+    let started = call(
+        &client,
+        "start_server",
+        serde_json::json!({
+            "protocol": "tcp",
+            "port": 0,
+            "send_first": true,
+            "event_handlers": banner_handler,
+        }),
+    )
+    .await;
+    assert_ne!(
+        started.is_error,
+        Some(true),
+        "start_server errored: {}",
+        text_of(&started)
+    );
+    let port = parse_number_after(&text_of(&started), "listening on 127.0.0.1:") as u16;
+    assert!(port > 0, "expected a bound port in: {}", text_of(&started));
+
+    let mut sock = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("tcp connect");
+    let mut buf = vec![0u8; 64];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(5), sock.read(&mut buf))
+        .await
+        .expect("no banner within 5s — send_first was ignored")
+        .expect("socket read");
+    assert!(
+        String::from_utf8_lossy(&buf[..n]).contains("220 banner"),
+        "unexpected banner: {:?}",
+        String::from_utf8_lossy(&buf[..n])
+    );
+
+    // Control: without send_first the server waits for the client.
+    let started = call(
+        &client,
+        "start_server",
+        serde_json::json!({
+            "protocol": "tcp",
+            "port": 0,
+            "event_handlers": banner_handler,
+        }),
+    )
+    .await;
+    let port = parse_number_after(&text_of(&started), "listening on 127.0.0.1:") as u16;
+    let mut sock = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("tcp connect");
+    let mut buf = vec![0u8; 64];
+    let quiet = tokio::time::timeout(std::time::Duration::from_millis(1500), sock.read(&mut buf))
+        .await;
+    assert!(
+        quiet.is_err(),
+        "server sent data without send_first: {:?}",
+        quiet.map(|r| r.map(|n| String::from_utf8_lossy(&buf[..n]).to_string()))
+    );
+
+    client.cancel().await.expect("shutdown");
+}
+
+/// A malformed `scheduled_tasks` entry is reported to the caller rather than
+/// silently dropped.
+#[tokio::test]
+async fn scheduled_tasks_are_validated() {
+    let client = connect().await;
+
+    let result = call(
+        &client,
+        "start_server",
+        serde_json::json!({
+            "protocol": "tcp",
+            "port": 0,
+            "scheduled_tasks": [{ "not_a_task": true }],
+        }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text_of(&result).contains("scheduled_tasks"),
+        "expected a scheduled_tasks error, got: {}",
+        text_of(&result)
+    );
+
+    client.cancel().await.expect("shutdown");
+}
+
+/// The client control surface: start_client / list_clients / client_status /
+/// stop_client, driven against a NetGet TCP server started in the same session.
+#[tokio::test]
+async fn client_tools_manage_a_real_connection() {
+    let client = connect().await;
+
+    // The tools are advertised.
+    let tools = client.list_all_tools().await.expect("list tools");
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    for expected in ["start_client", "stop_client", "list_clients", "client_status"] {
+        assert!(
+            names.contains(&expected),
+            "expected tool '{}' in {:?}",
+            expected,
+            names
+        );
+    }
+
+    // The client half of list_protocols carries maturity and a description.
+    let protocols = call(
+        &client,
+        "list_protocols",
+        serde_json::json!({ "type": "client" }),
+    )
+    .await;
+    let text = text_of(&protocols);
+    assert!(
+        text.to_lowercase().contains("tcp"),
+        "expected tcp client in: {}",
+        text
+    );
+    assert!(
+        text.contains("Experimental") || text.contains("Beta") || text.contains("Stable"),
+        "expected maturity on client protocols in: {}",
+        text
+    );
+
+    assert!(text_of(&call(&client, "list_clients", serde_json::json!({})).await)
+        .contains("No clients"));
+
+    // Something to connect to.
+    let started = call(
+        &client,
+        "start_server",
+        serde_json::json!({ "protocol": "tcp", "port": 0 }),
+    )
+    .await;
+    let port = parse_number_after(&text_of(&started), "listening on 127.0.0.1:") as u16;
+
+    // Lowercase protocol names must resolve against the client registry's own casing.
+    let connected = call(
+        &client,
+        "start_client",
+        serde_json::json!({
+            "protocol": "tcp",
+            "remote_addr": format!("127.0.0.1:{}", port),
+            "instruction": "no-op",
+        }),
+    )
+    .await;
+    assert_ne!(
+        connected.is_error,
+        Some(true),
+        "start_client errored: {}",
+        text_of(&connected)
+    );
+    let client_id = parse_number_after(&text_of(&connected), "Client #");
+
+    let listed = text_of(&call(&client, "list_clients", serde_json::json!({})).await);
+    assert!(
+        listed.contains(&format!("Client #{}", client_id)),
+        "expected the new client in: {}",
+        listed
+    );
+
+    let status = text_of(
+        &call(
+            &client,
+            "client_status",
+            serde_json::json!({ "client_id": client_id }),
+        )
+        .await,
+    );
+    assert!(
+        status.contains("Connected"),
+        "expected a connected client: {}",
+        status
+    );
+
+    let stopped = call(
+        &client,
+        "stop_client",
+        serde_json::json!({ "client_id": client_id }),
+    )
+    .await;
+    assert_ne!(stopped.is_error, Some(true));
+
+    let missing = call(
+        &client,
+        "client_status",
+        serde_json::json!({ "client_id": client_id }),
+    )
+    .await;
+    assert_eq!(missing.is_error, Some(true), "client should be gone");
+
+    client.cancel().await.expect("shutdown");
+}
