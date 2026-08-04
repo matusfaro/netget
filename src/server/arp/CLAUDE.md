@@ -239,13 +239,33 @@ ARP is stateless:
 
 ### 1. Requires Root/Admin Privileges
 
-**Why**: Promiscuous mode and packet injection require raw socket access
+**Why**: libpcap needs a capture handle on the interface. There is no platform-specific code path
+in this module - `pcap::Capture::open()` is the single privileged operation on every OS, but what
+it needs differs:
 
-**Workaround**:
+- **Linux**: root, or `sudo setcap cap_net_raw,cap_net_admin+ep /path/to/netget`.
+- **macOS / BSD**: root, **or** read/write access to `/dev/bpf*`. On a stock macOS those nodes are
+  `crw------- root:wheel`, so unprivileged capture fails even for a user in the `access_bpf`
+  group; Wireshark's *ChmodBPF* launch daemon is what normally relaxes them. Beware the trap that
+  `pcap::Device::list()` **succeeds without any privilege** (it is just `getifaddrs`), so device
+  enumeration is not evidence that capture will work - see the note at `src/privilege.rs:129-144`.
+- **Windows**: `arp` is not built into the `dist-windows` feature set.
 
-- Linux: Run as root or use `sudo setcap cap_net_raw+ep /path/to/netget`
-- macOS: Run as root or use `sudo`
-- Windows: Run as Administrator
+**Failure mode**: starting the capture is *not* fire-and-forget. `spawn_with_llm` awaits a
+`oneshot` readiness signal from the blocking pcap task and returns `Err` if the handle could not be
+opened, so `server_startup` records `ServerStatus::Error(..)`. An unprivileged MCP caller sees:
+
+```
+Failed to start server: failed to open pcap capture on 'en0' (needs root, or read access to
+/dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)
+```
+
+and a bad interface name gives `no such capture device 'nosuch0'`. The server is never reported as
+`Running` while capturing nothing.
+
+**Default interface**: `default_binding()` resolves to `lo` on Linux/Windows and `lo0` on
+macOS/BSD (`DEFAULT_LOOPBACK_INTERFACE` in `actions.rs`). Note ARP is not observable on loopback -
+pass a real NIC (`en0`, `eth0`) via the `interface` argument for anything useful.
 
 **Test Impact**: E2E tests must run with privileges.
 

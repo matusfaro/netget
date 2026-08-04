@@ -11,6 +11,29 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+/// Name of the loopback interface on this platform.
+///
+/// Linux and Windows call it `lo`; macOS and the BSDs call it `lo0`. Hardcoding `lo` made the
+/// default binding unresolvable on macOS ("Device 'lo' not found").
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+const DEFAULT_LOOPBACK_INTERFACE: &str = "lo0";
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+)))]
+const DEFAULT_LOOPBACK_INTERFACE: &str = "lo";
+
 /// ARP protocol action handler
 pub struct ArpProtocol;
 
@@ -24,7 +47,9 @@ impl ArpProtocol {
 impl Protocol for ArpProtocol {
     fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
         // ARP uses interface-based binding (loopback by default)
-        Some(crate::protocol::BindingDefaults::interface_based("lo"))
+        Some(crate::protocol::BindingDefaults::interface_based(
+            DEFAULT_LOOPBACK_INTERFACE,
+        ))
     }
 
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
@@ -273,7 +298,9 @@ fn send_arp_reply_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> ARP reply {sender_ip} is-at {sender_mac}")
-                .with_debug("ARP send_arp_reply: {sender_mac}/{sender_ip} -> {target_mac}/{target_ip}"),
+                .with_debug(
+                    "ARP send_arp_reply: {sender_mac}/{sender_ip} -> {target_mac}/{target_ip}",
+                ),
         ),
     }
 }
@@ -309,7 +336,7 @@ pub static ARP_REQUEST_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "sender_ip": "192.168.1.100",
             "target_mac": "11:22:33:44:55:66",
             "target_ip": "192.168.1.1"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {

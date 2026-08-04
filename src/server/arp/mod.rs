@@ -71,47 +71,64 @@ impl ArpServer {
             interface
         );
 
+        // Retained by this function; the capture task takes ownership of `status_tx`.
+        let status_tx_ready = status_tx.clone();
+
         let protocol = Arc::new(ArpProtocol::new());
 
-        // ARP/pcap is blocking, so we run it in a blocking task
+        // ARP/pcap is blocking, so we run it in a blocking task.
+        //
+        // Opening the pcap handle is the step that requires privileges (root, or read/write
+        // access to /dev/bpf* on macOS and the BSDs, or CAP_NET_RAW on Linux). It therefore
+        // MUST NOT be fire-and-forget: we hand the outcome back over a oneshot and only return
+        // Ok once the capture is genuinely live, so a failure surfaces as ServerStatus::Error
+        // instead of a server that reports Running while capturing nothing.
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+
         let interface_clone = interface.clone();
         let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
-            // Find device
-            let device = match Self::find_device(&interface_clone) {
-                Ok(d) => d,
-                Err(e) => {
-                    console_error!(status_tx, "Failed to find device: {}", e);
-                    return;
-                }
+            let open_captures = || -> Result<(Capture<pcap::Active>, Capture<pcap::Active>)> {
+                let device = Self::find_device(&interface_clone).with_context(|| {
+                    format!("no such capture device '{}'", interface_clone)
+                })?;
+
+                // Open capture for receiving
+                let mut cap_rx = Capture::from_device(device.clone())
+                    .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
+                    .and_then(|c| c.open())
+                    .with_context(|| {
+                        format!(
+                            "failed to open pcap capture on '{}' (needs root, or \
+                             read access to /dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)",
+                            interface_clone
+                        )
+                    })?;
+
+                // Apply ARP filter to receiving capture
+                cap_rx
+                    .filter("arp", true)
+                    .context("failed to apply the 'arp' BPF filter")?;
+
+                // Open capture for sending (separate instance)
+                let cap_tx = Capture::from_device(device)
+                    .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
+                    .and_then(|c| c.open())
+                    .with_context(|| {
+                        format!("failed to open pcap injection handle on '{}'", interface_clone)
+                    })?;
+
+                Ok((cap_rx, cap_tx))
             };
 
-            // Open capture for receiving
-            let mut cap_rx = match Capture::from_device(device.clone())
-                .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
-                .and_then(|c| c.open())
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    console_error!(status_tx, "Failed to open capture: {}", e);
-                    return;
+            let (mut cap_rx, mut cap_tx) = match open_captures() {
+                Ok(handles) => {
+                    let _ = ready_tx.send(Ok(()));
+                    handles
                 }
-            };
-
-            // Apply ARP filter to receiving capture
-            if let Err(e) = cap_rx.filter("arp", true) {
-                console_error!(status_tx, "Failed to apply ARP filter: {}", e);
-                return;
-            }
-
-            // Open capture for sending (separate instance)
-            let mut cap_tx = match Capture::from_device(device)
-                .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
-                .and_then(|c| c.open())
-            {
-                Ok(c) => c,
                 Err(e) => {
-                    console_error!(status_tx, "Failed to open capture for sending: {}", e);
+                    console_error!(status_tx, "ARP capture startup failed: {:#}", e);
+                    let _ = ready_tx.send(Err(e));
                     return;
                 }
             };
@@ -302,6 +319,20 @@ impl ArpServer {
                 }
             }
         });
+
+        // Wait for the blocking task to report whether the capture actually came up.
+        match ready_rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "ARP capture task on '{}' exited before signalling readiness",
+                    interface
+                ))
+            }
+        }
+
+        console_info!(status_tx_ready, "ARP capture active on {}", interface);
 
         Ok(interface)
     }
