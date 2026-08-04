@@ -40,6 +40,7 @@ Delete an entry once its context is no longer useful.
 | 5 — 76 orphaned test directories | `87e02967`, `84a4fb24`, `1e842bf0`, `9fd32787` | All 15 server and 61 client directories wired in; both orphan sets are now empty, so the CI gate added in `45b8bde4` passes |
 | 45 — mock harness misrouted the docs step | `98c54d4e` | Context extraction classified the *startup* call as an `http_request` event, because the documentation retry embeds `### Event: <id>` headings. Now classified on the prompt template rather than wording. **`--test server` 5/24 → 18/24, `server::tcp` 0/10 → 10/10, `server::dns` 0/4 → 4/4, `--test examples` 13/34 → 34/34, `--test client` 5/9 → 12/13** |
 | — tests phoning external endpoints | `da4c86f5` | The DoT and Git client tests connect to `dns.google:853`, `1.1.1.1:853` and `github.com`. Harmless while orphaned; wiring them in made the calls live, violating the localhost-only policy |
+| 51 — remaining HTTP test failures | `2528629` | 7/10 → 10/10 in `tests/server/http/`; mocks keyed on `uri` where the event emits `path`, and a `write_file` action HTTP does not have, replaced with the real `append_to_log` |
 | — HTTP family defects | `3c414406`, `f2d4cf3e`, `e9eec1cb`, `e32cf485` | 204 responses were served as empty 200; a model status of 999 or a CRLF header panicked the connection task; HTTP/2's `request_filter` was accepted and silently ignored because the hyper path is dead code; HTTP/3 documented as the QUIC transport it actually is |
 
 ### Independent verification after landing
@@ -671,6 +672,20 @@ All test-side, none in `src/`:
 - 3 × `server::http::e2e_scheduled_tasks_test` wait for the log line
   `[TASK] Created one-shot task` while NetGet emits `[TASK] Scheduled one-shot task`
   (`src/events/handler.rs:1237,1242`).
+
+### 52. `scheduled_tasks` on `open_server` never reports task creation **[verified]**
+
+`start_server_from_action` (`src/cli/server_startup.rs`, roughly `:480-520`) handles the
+`scheduled_tasks` array by calling `state.add_task(task).await` with **no `status_tx.send(...)`
+at all** — so creating a task this way is completely silent, in the TUI and over MCP alike.
+The standalone `schedule_task` action does log (`src/events/handler.rs:1237,1242`), so the two
+paths disagree.
+
+Found while fixing item 51, where I had misdiagnosed three failing tests as a log-string
+mismatch. The agent applied the exact string fix I specified, watched the tests still fail,
+and traced it to this gap rather than accepting the premise — the right call. The tests now
+assert on task *execution*, which does fire reliably, and the missing status line is left for
+whoever owns `server_startup.rs`.
 
 ---
 
