@@ -51,8 +51,10 @@ memberships. This implementation provides LLM control over multicast group manag
 
 **Requirements**:
 
-- Root privileges or `CAP_NET_RAW` capability
-- Linux platform (uses libc socket syscall)
+- Root privileges (Linux also accepts `CAP_NET_RAW`)
+- Any Unix: `AF_INET`, `SOCK_RAW` and `IPPROTO_IGMP` are POSIX constants, not Linux-specific, so
+  the same code path runs on Linux, macOS and the BSDs. Windows is excluded from `dist-windows`
+  because there is no raw-socket path there.
 - Multicast-enabled network interface
 
 **Implementation Details**:
@@ -162,8 +164,19 @@ Server maintains `IgmpServerState`:
 
 **Raw Socket Support**: ✅ Fully implemented
 
-- Uses `libc::socket()` with SOCK_RAW and IPPROTO_IGMP
-- Requires root privileges or CAP_NET_RAW capability
+- Uses `libc::socket()` with SOCK_RAW and IPPROTO_IGMP, then takes ownership via
+  `Socket::from_raw_fd`. The fd is validated (`>= 0`) **before** the wrap - wrapping first would
+  break `from_raw_fd`'s safety contract and make `Drop` call `close(-1)`.
+- Requires root privileges or CAP_NET_RAW capability. Declared as
+  `PrivilegeRequirement::RawSockets` in the protocol metadata.
+- Socket creation and setup failures propagate out of `Server::spawn()` (dual-logged), so the
+  server is recorded as `ServerStatus::Error(..)` and never as `Running`. An unprivileged MCP
+  caller sees:
+
+  ```
+  Failed to start server: Failed to create raw IGMP socket on 127.0.0.1: Operation not permitted
+  (os error 1) (IGMP needs root/CAP_NET_RAW - re-run netget with sudo)
+  ```
 - Receives and parses real IGMP packets from network
 
 **Multicast Group Management**: ✅ Fully implemented
@@ -189,9 +202,17 @@ Server maintains `IgmpServerState`:
     - Current implementation is host-side only
     - Router would need to send queries and track group members
 
-3. **Platform**: Linux-only
-    - Uses Linux-specific libc constants
-    - Not tested on other Unix platforms
+3. **Platform**: Unix (Linux / macOS / BSD)
+    - Uses only portable POSIX constants (`AF_INET` / `SOCK_RAW` / `IPPROTO_IGMP`); the earlier
+      "Linux-only" claim in this document was wrong
+    - Exercised mainly on Linux; macOS compiles and startup is verified, but multicast behaviour
+      there is less covered
+    - Windows: not built (`igmp` is excluded from the `dist-windows` feature set)
+
+4. **No interface selection**: IGMP is the one raw-socket protocol here with no `default_binding()`,
+   so it takes the legacy port-based startup path and a `port` argument is **required** even though
+   raw sockets ignore ports. An `interface` passed via MCP is silently discarded; the socket binds
+   to the `host` address instead (0.0.0.0 when unset).
 
 ### Future Enhancements
 

@@ -48,14 +48,20 @@ impl Protocol for IgmpProtocol {
         vec!["igmp", "multicast"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Raw socket IGMP with socket2")
+            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .implementation("Raw AF_INET/SOCK_RAW/IPPROTO_IGMP socket (libc + socket2)")
             .llm_control("Full control - multicast group membership, query responses")
             .e2e_testing("Manual IGMP packet construction")
-            .notes("IGMPv2 support, multicast group management")
+            .notes(
+                "IGMPv2 support, multicast group management. \
+                 Requires root/CAP_NET_RAW; Unix only (no Windows raw-socket path)",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -265,6 +271,12 @@ fn build_igmp_v2_leave(group: Ipv4Addr) -> Result<Vec<u8>> {
 
 /// Calculate Internet Checksum (RFC 1071)
 fn calculate_checksum(data: &[u8]) -> u16 {
+    // `data.len() - 1` below underflows for an empty slice, which would then index far out of
+    // range and panic. Guard explicitly rather than relying on every caller.
+    if data.is_empty() {
+        return !0u16;
+    }
+
     let mut sum: u32 = 0;
     let mut i = 0;
 
@@ -410,29 +422,29 @@ pub static IGMP_QUERY_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         }),
     )
     .with_parameters(vec![
-            Parameter {
-                name: "query_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "Type of query (General or Group-Specific)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "group_address".to_string(),
-                type_hint: "string".to_string(),
-                description: "Multicast group address (0.0.0.0 for general query)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "max_response_time".to_string(),
-                type_hint: "number".to_string(),
-                description: "Maximum response time in deciseconds".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            send_membership_report_action(),
-            ignore_message_action(),
-        ])
+        Parameter {
+            name: "query_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Type of query (General or Group-Specific)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "group_address".to_string(),
+            type_hint: "string".to_string(),
+            description: "Multicast group address (0.0.0.0 for general query)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "max_response_time".to_string(),
+            type_hint: "number".to_string(),
+            description: "Maximum response time in deciseconds".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_membership_report_action(),
+        ignore_message_action(),
+    ])
 });
 
 pub static IGMP_REPORT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -461,12 +473,12 @@ pub static IGMP_LEAVE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         }),
     )
     .with_parameters(vec![Parameter {
-            name: "group_address".to_string(),
-            type_hint: "string".to_string(),
-            description: "Multicast group address being left".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![ignore_message_action()])
+        name: "group_address".to_string(),
+        type_hint: "string".to_string(),
+        description: "Multicast group address being left".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![ignore_message_action()])
 });
 
 pub fn get_igmp_event_types() -> Vec<EventType> {

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use socket2::Socket;
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::FromRawFd;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
@@ -141,24 +141,29 @@ impl IgmpServer {
                 .to_string(),
         );
 
-        // Create raw socket for IGMP (protocol 2)
-        // This requires CAP_NET_RAW capability or root privileges
-        // SOCK_RAW = 3, IPPROTO_IGMP = 2
-        let socket = unsafe {
-            Socket::from_raw_fd(libc::socket(
-                libc::AF_INET,
-                libc::SOCK_RAW,
-                libc::IPPROTO_IGMP,
-            ))
-        };
-        if socket.as_raw_fd() < 0 {
-            return Err(anyhow::anyhow!(
-                "Failed to create raw IGMP socket (need root privileges)"
-            ));
+        // Create raw socket for IGMP (protocol 2).
+        // AF_INET/SOCK_RAW/IPPROTO_IGMP are POSIX constants available on Linux, macOS and the
+        // BSDs alike; raw sockets require root (or CAP_NET_RAW on Linux) on all of them.
+        //
+        // The fd MUST be validated *before* handing it to `Socket::from_raw_fd`: that function's
+        // safety contract requires an open, exclusively-owned descriptor, and wrapping -1 would
+        // also make the eventual `Drop` call `close(-1)`.
+        let raw_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_IGMP) };
+        if raw_fd < 0 {
+            let os_err = std::io::Error::last_os_error();
+            let msg = format!(
+                "Failed to create raw IGMP socket on {}: {} \
+                 (IGMP needs root/CAP_NET_RAW - re-run netget with sudo)",
+                listen_addr.ip(),
+                os_err
+            );
+            error!("{}", msg);
+            let _ = status_tx.send(format!("[ERROR] {}", msg));
+            return Err(anyhow::anyhow!(msg));
         }
-
-        // Set socket to reuse address
-        socket.set_reuse_address(true)?;
+        // SAFETY: `raw_fd` was just returned by `socket(2)`, is >= 0, is open, and nothing else
+        // owns it, so transferring ownership to `Socket` is sound.
+        let socket = unsafe { Socket::from_raw_fd(raw_fd) };
 
         // Bind to the interface address (0.0.0.0 to listen on all interfaces)
         let bind_addr = std::net::SocketAddrV4::new(
@@ -168,14 +173,31 @@ impl IgmpServer {
             },
             0, // Port is ignored for raw sockets
         );
-        socket.bind(&bind_addr.into())?;
 
-        // Set socket to non-blocking mode for tokio
-        socket.set_nonblocking(true)?;
+        // Any of these can still fail (e.g. binding an address the host does not own). Report the
+        // failure on both channels and propagate so the server is marked Error, never Running.
+        let setup = (|| -> Result<()> {
+            socket
+                .set_reuse_address(true)
+                .context("set_reuse_address failed")?;
+            socket
+                .bind(&bind_addr.into())
+                .with_context(|| format!("bind to {} failed", bind_addr))?;
+            socket
+                .set_nonblocking(true)
+                .context("set_nonblocking failed")?;
+            Ok(())
+        })();
+        if let Err(e) = setup {
+            let msg = format!("IGMP raw socket setup failed: {:#}", e);
+            error!("{}", msg);
+            let _ = status_tx.send(format!("[ERROR] {}", msg));
+            return Err(e);
+        }
 
         // Get the local address (for display purposes)
         let local_addr = SocketAddr::new(
-            std::net::IpAddr::V4(bind_addr.ip().clone()),
+            std::net::IpAddr::V4(*bind_addr.ip()),
             2, // IGMP protocol number
         );
 
@@ -190,7 +212,15 @@ impl IgmpServer {
         // Convert socket2::Socket to std::net::UdpSocket for tokio
         // Even though this is a raw socket, we can wrap it as UdpSocket
         let std_socket: std::net::UdpSocket = socket.into();
-        let socket = Arc::new(tokio::net::UdpSocket::from_std(std_socket)?);
+        let socket = Arc::new(
+            tokio::net::UdpSocket::from_std(std_socket)
+                .inspect_err(|e| {
+                    let msg = format!("IGMP failed to register raw socket with tokio: {}", e);
+                    error!("{}", msg);
+                    let _ = status_tx.send(format!("[ERROR] {}", msg));
+                })
+                .context("failed to register IGMP raw socket with the tokio reactor")?,
+        );
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -530,7 +560,14 @@ impl IgmpServer {
                         });
                     }
                     Err(e) => {
-                        error!("IGMP receive error: {}", e);
+                        // A raw socket that keeps erroring would otherwise spin this loop at
+                        // 100% CPU forever, so stop the capture loop and say so loudly.
+                        error!("IGMP receive error, stopping capture loop: {}", e);
+                        let _ = status_tx.send(format!(
+                            "[ERROR] IGMP receive error, stopping capture loop: {}",
+                            e
+                        ));
+                        break;
                     }
                 }
             }
