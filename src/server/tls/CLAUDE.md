@@ -115,6 +115,8 @@ Triggered when decrypted data is received from client.
 Event parameters:
 
 - `data` (string) - Received data (UTF-8 if printable, hex if binary)
+- `encoding` (string) - `"utf8"` or `"hex"`, saying which form `data` is in. Pass
+  the same value to `send_tls_data` to round-trip binary.
 
 Available actions:
 
@@ -132,7 +134,10 @@ Send data over TLS connection (encrypted automatically).
 
 Parameters:
 
-- `data` (string, required) - Data to send
+- `data` (string, required) - Payload, interpreted according to `encoding`
+- `encoding` (string, optional) - `"utf8"` (default) sends the string's bytes
+  verbatim; `"hex"` decodes the string as hex first, so `"48656c6c6f"` sends the
+  five bytes `Hello`
 
 Example:
 
@@ -142,6 +147,21 @@ Example:
   "data": "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"
 }
 ```
+
+Binary example:
+
+```json
+{
+  "type": "send_tls_data",
+  "data": "0001a2ff",
+  "encoding": "hex"
+}
+```
+
+`tls_data_received` reports binary payloads as hex, so hex was the natural thing
+for a model to send back — but the executor only ever took `.as_bytes()`, putting
+the literal ASCII hex digits on the wire. There is deliberately no auto-detection:
+`"48656c6c6f"` is both valid text and valid hex, so the caller must say which.
 
 #### `wait_for_more`
 
@@ -199,14 +219,17 @@ Example:
 3. **Register**: Connection logged in INFO messages, added to ServerInstance
 4. **Split Stream**: Read and write halves separated for concurrent I/O
 5. **Event Loop**: Read data, call LLM, send responses
-6. **Close**: Connection ends on client disconnect, error, or LLM close action
+6. **Close**: Connection ends on client disconnect, error, or LLM close action.
+   `close_this_connection` shuts the TLS write half down so the peer sees
+   close_notify and EOF; it used to only drop the bookkeeping entry, leaving the
+   socket open indefinitely.
 
 ### State Management
 
 - Each connection has independent state (Idle/Processing/Accumulating)
 - Queued data per connection
-- Memory field for LLM context (not currently used, future enhancement)
 - Write half stored in Arc<Mutex<>> for safe concurrent access
+- (A `memory` field existed but only ever assigned itself; it has been removed)
 
 ### Concurrent Connections
 
@@ -216,14 +239,13 @@ Example:
 
 ## Known Limitations
 
-### 1. Self-Signed Certificates Only
+### 1. Self-Signed Certificate by Default
 
-- No support for custom certificates (future enhancement)
-- No CA-signed certificate loading
+- A self-signed certificate is generated when no certificate is configured
+- Custom certificates **are** supported: pass the `cert_path` and `key_path`
+  startup parameters together (supplying only one is an error)
 - No certificate rotation/renewal
-- Testing requires disabling certificate verification on clients
-
-**Workaround**: Modify `tls_cert_manager` to load custom certificates from files.
+- With the default self-signed certificate, clients must disable verification
 
 ### 2. No Client Authentication
 

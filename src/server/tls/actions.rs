@@ -74,10 +74,10 @@ impl Protocol for TlsProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("TLS transport layer using tokio-rustls with self-signed certificates")
-            .llm_control("Full control over application protocol on top of TLS")
-            .e2e_testing("Native TLS client for testing")
-            .notes("Generic TLS server for custom protocols - LLM implements application layer")
+            .implementation("TLS transport layer using tokio-rustls; self-signed certificate by default, or cert_path/key_path")
+            .llm_control("Full control over application protocol on top of TLS; text or hex payloads")
+            .e2e_testing("openssl s_client / native TLS client")
+            .notes("Generic TLS server for custom protocols - LLM implements application layer. No client certificate authentication (no mTLS)")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -221,7 +221,59 @@ impl TlsProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        Ok(ActionResult::Output(decode_outbound_data(data, &action)?))
+    }
+}
+
+/// Turn the `data` field of an outbound action into the exact bytes to put on
+/// the wire, honouring the action's optional `encoding` field.
+///
+/// - `encoding` absent or `"utf8"`: the string's UTF-8 bytes are sent verbatim.
+/// - `encoding` = `"hex"`: `data` is decoded as hex, so `"48656c6c6f"` sends the
+///   five bytes `Hello`.
+///
+/// `tls_data_received` hands binary payloads to the model as hex, so without this
+/// the round trip was asymmetric: a model echoing back what it was given put the
+/// literal ASCII hex digits on the wire.
+///
+/// There is deliberately no auto-detection: `"48656c6c6f"` is both valid text and
+/// valid hex, so the caller must say which it means.
+fn decode_outbound_data(data: &str, action: &serde_json::Value) -> Result<Vec<u8>> {
+    let encoding = action
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf8");
+
+    match encoding {
+        "utf8" => Ok(data.as_bytes().to_vec()),
+        "hex" => {
+            // Tolerate whitespace/`0x` grouping that models frequently emit.
+            let cleaned: String = data
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace() && *c != ':')
+                .collect();
+            let cleaned = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
+
+            if cleaned.len() % 2 != 0 {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex in 'data': expected an even number of hex digits, got {} \
+                     ({data:?}). Each byte is two hex digits, e.g. \"48656c6c6f\" = \"Hello\".",
+                    cleaned.len()
+                ));
+            }
+
+            hex::decode(cleaned).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid hex in 'data' ({data:?}): {e}. Use only 0-9/a-f, two digits per \
+                     byte, e.g. \"48656c6c6f\" = \"Hello\". To send this string as literal \
+                     text instead, omit 'encoding' or set it to \"utf8\"."
+                )
+            })
+        }
+        other => Err(anyhow::anyhow!(
+            "Unknown 'encoding' value {other:?}. Valid values are \"utf8\" (default, send the \
+             string's bytes as-is) and \"hex\" (decode the string as hex first)."
+        )),
     }
 }
 
@@ -229,13 +281,21 @@ impl TlsProtocol {
 fn send_tls_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_tls_data".to_string(),
-        description: "Send data over the current TLS connection".to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Data to send (text or hex for binary)".to_string(),
-            required: true,
-        }],
+        description: "Send data over the current TLS connection (TLS encryption is applied automatically)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Payload to send. Interpreted according to 'encoding'.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "encoding".to_string(),
+                type_hint: "string".to_string(),
+                description: "How to interpret 'data': \"utf8\" (default) sends the string's bytes verbatim; \"hex\" decodes it as hex first, so \"48656c6c6f\" sends the 5 bytes \"Hello\". Use \"hex\" for binary protocols - tls_data_received reports binary payloads as hex.".to_string(),
+                required: false,
+            },
+        ],
         example: json!({
             "type": "send_tls_data",
             "data": "Hello over TLS\r\n"
@@ -322,12 +382,20 @@ pub static TLS_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "data": "OK Data received\r\n"
         }),
     )
-    .with_parameters(vec![Parameter {
-        name: "data".to_string(),
-        type_hint: "string".to_string(),
-        description: "The data received (as hex string if binary, UTF-8 if printable)".to_string(),
-        required: true,
-    }])
+    .with_parameters(vec![
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "The data received. Printable payloads arrive as text; anything else arrives hex-encoded. Check 'encoding' to tell which.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How 'data' is encoded: \"utf8\" (printable text) or \"hex\" (binary). To echo a hex payload back, pass the same encoding to send_tls_data.".to_string(),
+            required: true,
+        },
+    ])
     .with_actions(vec![
         SEND_TLS_DATA_ACTION.clone(),
         WAIT_FOR_MORE_ACTION.clone(),

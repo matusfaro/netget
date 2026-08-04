@@ -38,7 +38,6 @@ enum ConnectionState {
 struct ConnectionData {
     state: ConnectionState,
     queued_data: Vec<u8>,
-    memory: String,
     write_half: Arc<Mutex<tokio::io::WriteHalf<tokio_rustls::server::TlsStream<TcpStream>>>>,
 }
 
@@ -312,7 +311,6 @@ impl TlsServer {
             ConnectionData {
                 state: ConnectionState::Idle,
                 queued_data: Vec::new(),
-                memory: String::new(),
                 write_half: write_half.clone(),
             },
         );
@@ -392,6 +390,9 @@ impl TlsServer {
                             }
                             ActionResult::CloseConnection => {
                                 connections.lock().await.remove(&connection_id);
+                                if let Err(e) = write_half.lock().await.shutdown().await {
+                                    debug!("TLS shutdown on {} returned: {}", connection_id, e);
+                                }
                                 let _ = status_tx.send(format!(
                                     "✗ Closed TLS connection {connection_id} after banner"
                                 ));
@@ -446,10 +447,17 @@ impl TlsServer {
             return;
         }
 
-        // Merge any queued data with new data
+        // Merge any queued data with new data.
+        //
+        // The lock was released after the state check above, so the reader task
+        // may have removed this connection in the meantime (client disconnected).
+        // Unwrapping here panicked the task on that race, and a panicked task
+        // leaves the server reporting Running.
         let all_data = {
             let mut conns = connections.lock().await;
-            let conn_data = conns.get_mut(&connection_id).unwrap();
+            let Some(conn_data) = conns.get_mut(&connection_id) else {
+                return; // Connection closed while we were waiting for the lock
+            };
             conn_data.state = ConnectionState::Processing;
             let mut merged = conn_data.queued_data.clone();
             merged.extend_from_slice(&data);
@@ -458,15 +466,6 @@ impl TlsServer {
         };
 
         loop {
-            // Get memory
-            let memory = {
-                let conns = connections.lock().await;
-                conns
-                    .get(&connection_id)
-                    .map(|c| c.memory.clone())
-                    .unwrap_or_default()
-            };
-
             // Get write_half for context
             let write_half = {
                 let conns = connections.lock().await;
@@ -477,21 +476,25 @@ impl TlsServer {
                 return; // Connection not found
             };
 
-            // Format data for event parameter
-            let data_str = if all_data
+            // Format data for event parameter. The encoding is reported
+            // alongside so the model can echo binary back through
+            // send_tls_data with encoding="hex" instead of sending the ASCII
+            // hex digits.
+            let printable = all_data
                 .iter()
-                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
-            {
-                String::from_utf8_lossy(&all_data).to_string()
+                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace());
+            let (data_str, encoding) = if printable {
+                (String::from_utf8_lossy(&all_data).to_string(), "utf8")
             } else {
-                hex::encode(&all_data)
+                (hex::encode(&all_data), "hex")
             };
 
             // Create data received event
             let event = Event::new(
                 &TLS_DATA_RECEIVED_EVENT,
                 serde_json::json!({
-                    "data": data_str
+                    "data": data_str,
+                    "encoding": encoding
                 }),
             );
 
@@ -508,13 +511,6 @@ impl TlsServer {
             {
                 Ok(execution_result) => {
                     debug!("LLM TLS response received");
-
-                    // Update memory
-                    connections
-                        .lock()
-                        .await
-                        .entry(connection_id)
-                        .and_modify(|conn| conn.memory = memory.clone());
 
                     // Display messages
                     for msg in execution_result.messages {
@@ -598,9 +594,18 @@ impl TlsServer {
                         return;
                     }
 
-                    // Handle close_connection
+                    // Handle close_connection.
+                    //
+                    // Dropping the map entry alone left the socket open forever
+                    // (the reader task kept blocking on read and the client never
+                    // saw a close), so close_this_connection did not close
+                    // anything. Shut the TLS write half down to send close_notify
+                    // and let the peer's read return EOF.
                     if should_close {
                         connections.lock().await.remove(&connection_id);
+                        if let Err(e) = write_half.lock().await.shutdown().await {
+                            debug!("TLS shutdown on {} returned: {}", connection_id, e);
+                        }
                         let _ = status_tx.send(format!("✗ Closed TLS connection {connection_id}"));
                         return;
                     }
