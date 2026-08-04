@@ -56,20 +56,27 @@ pub async fn start_server_by_id(
     let metadata = protocol.metadata();
     let system_caps = state.get_system_capabilities().await;
 
-    // Determine if the actual port being used requires privileges
+    // Decide whether this start is blocked for lack of privilege.
+    //
+    // `is_met_by()` is the single source of truth: it maps each requirement onto
+    // the capability that actually satisfies it (`RawSockets` -> raw-socket
+    // access, `Root` -> root, `PrivilegedPort` -> privileged-port binding).
+    // Anything else ANDed in here silently overrides it - in particular, gating a
+    // `RawSockets` protocol on `can_bind_privileged_ports` let it through on a
+    // host that cannot open raw sockets.
+    let privilege_met = metadata.privilege_requirement.is_met_by(&system_caps);
+
     let requires_privileges = match &metadata.privilege_requirement {
         crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(_) => {
-            // Only require privileges if actually binding to a privileged port
+            // Only require privileges if actually binding to a privileged port.
             // Port 0 means OS-assigned port, which will always be unprivileged (>1024)
-            server.port > 0 && server.port < 1024
+            server.port > 0 && server.port < 1024 && !privilege_met
         }
-        _ => {
-            // For other requirements (RawSockets, Root, etc.), check as normal
-            !metadata.privilege_requirement.is_met_by(&system_caps)
-        }
+        // RawSockets, Root, None: the requirement itself is the whole test.
+        _ => !privilege_met,
     };
 
-    if requires_privileges && !system_caps.can_bind_privileged_ports {
+    if requires_privileges {
         let error_msg = format!(
             "Cannot start {} server on port {}: {}. Current capabilities: {}",
             protocol_name,
@@ -397,28 +404,35 @@ pub async fn start_server_from_action(
     let metadata = protocol_impl.metadata();
     let system_caps = state.get_system_capabilities().await;
 
-    // Determine if the actual port being used requires privileges
+    // Decide whether this start is blocked for lack of privilege.
+    //
+    // As in `start_server_by_id`, `is_met_by()` is the only test: it already maps
+    // each requirement onto the capability that satisfies it. ANDing an unrelated
+    // capability on top (e.g. `can_bind_privileged_ports` for a `RawSockets`
+    // protocol) let unprivileged starts through.
+    let privilege_met = metadata.privilege_requirement.is_met_by(&system_caps);
+
     let requires_privileges = match &metadata.privilege_requirement {
         crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(_) => {
-            // Only require privileges if actually binding to a privileged port
+            // Only require privileges if actually binding to a privileged port.
             // Port 0 means OS-assigned port, which will always be unprivileged (>1024)
             // final_port has already been resolved to an actual port number
-            match final_port {
+            let privileged_port = match final_port {
                 Some(p) => p > 0 && p < 1024,
                 None => false, // Interface-based protocols don't use ports
-            }
+            };
+            privileged_port && !privilege_met
         }
-        _ => {
-            // For other requirements (RawSockets, Root, etc.), check as normal
-            !metadata.privilege_requirement.is_met_by(&system_caps)
-        }
+        // RawSockets, Root, None: the requirement itself is the whole test.
+        _ => !privilege_met,
     };
 
-    if requires_privileges && !system_caps.can_bind_privileged_ports {
+    if requires_privileges {
         let error_msg = format!(
-            "Cannot start {} server: {}",
+            "Cannot start {} server: {}. Current capabilities: {}",
             protocol,
-            metadata.privilege_requirement.description()
+            metadata.privilege_requirement.description(),
+            system_caps.description()
         );
         return Err(anyhow::anyhow!(error_msg));
     }
@@ -580,9 +594,24 @@ pub async fn start_server_from_action(
             Ok(server_id)
         }
         Err(e) => {
+            // The server never came up, so nothing about it is inspectable or
+            // controllable: it has no listener, no connections and no task. Leaving
+            // the instance registered only makes `list_servers` accumulate zombie
+            // `Error` rows that can never transition anywhere, each holding a
+            // ServerId and any log files it opened. The error is returned to the
+            // caller (and, for MCP, becomes the tool error), so dropping the
+            // registration loses nothing.
             state
                 .update_server_status(server_id, ServerStatus::Error(e.to_string()))
                 .await;
+            state.remove_server(server_id).await;
+            let _ = status_tx.send(format!(
+                "[ERROR] Server #{} ({}) failed to start: {}",
+                server_id.as_u32(),
+                protocol,
+                e
+            ));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
             Err(e)
         }
     }
