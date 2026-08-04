@@ -152,7 +152,10 @@ impl OspfClient {
         let protocol = Arc::new(OspfClientProtocol::new());
         let protocol_for_loop = protocol.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
                 if let Err(e) = call_llm_for_client(
                     &llm_clone,
@@ -172,11 +175,17 @@ impl OspfClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Spawn receive loop
         let socket_fd_for_send = socket_fd;
         let protocol = protocol_for_loop;
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
 
             loop {
@@ -311,6 +320,9 @@ impl OspfClient {
             let _ = status_tx.send(format!("[CLIENT] OSPF client {} disconnected", client_id));
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

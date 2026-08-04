@@ -108,13 +108,21 @@ the same `instruction` / `event_handlers` / `startup_params` /
 `initial_memory` / `feedback_instructions` / `scheduled_tasks` arguments plus a
 `remote_addr`.
 
-**`stop_client` cannot actually stop a client.** `ClientInstance.handle`
-(`src/state/client.rs:120`) is never populated — there is no
-`register_client_task()` to match `AppState::register_server_task()`, and client
-read loops (e.g. `src/client/tcp/mod.rs:147`) spawn detached. `remove_client()`
-therefore only drops the client from state; its connection loop keeps running and
-keeps invoking the LLM. The tool description says so plainly rather than implying
-it works. Fixing it needs `src/state/` and every `src/client/*/mod.rs`.
+**`stop_client` really stops a client.** `AppState::register_client_task()`
+stores every background task a client spawns in `ClientInstance.handles` (a `Vec`,
+not a single slot — several protocols spawn more than one task), and
+`remove_client()` aborts them all. Dropping a Tokio `JoinHandle` only detaches the
+task, so the abort is what releases the socket and stops further LLM calls.
+
+Client protocols register their tasks from `connect_with_llm_actions`. A few spawn
+sites are still unregistered because they have no `app_state` / `client_id` in
+scope: `amqp`, `oauth2`, and the non-async helper spawns in `maven` and
+`bluetooth`. For those, `stop_client` still only drops the bookkeeping.
+
+Related: clients also carry a per-session LLM call budget
+(`AppState::try_consume_client_llm_call`, default 100, override with
+`NETGET_CLIENT_LLM_CALL_LIMIT`, `0` = unlimited) so a non-converging client cannot
+loop forever.
 
 ## Access Logs
 

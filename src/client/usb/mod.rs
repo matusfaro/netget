@@ -281,12 +281,18 @@ impl UsbClient {
 
         // Spawn monitoring task (USB devices don't actively send data like sockets)
         // The LLM will initiate transfers via actions
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Keep client alive - cleanup handled on disconnect
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(fake_addr)
     }

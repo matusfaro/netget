@@ -70,7 +70,10 @@ impl OpenIdConnectClient {
         let _status_tx_clone = status_tx.clone();
         let _llm_client_clone = llm_client.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Wait for initial LLM call to discover configuration
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -82,6 +85,9 @@ impl OpenIdConnectClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Trigger initial discovery
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -425,7 +431,10 @@ impl OpenIdConnectClient {
         let oidc_client_id_clone = oidc_client_id.clone();
         let oidc_client_secret_clone = oidc_client_secret.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let start_time = std::time::Instant::now();
             let mut poll_count = 0;
             let interval_duration = std::time::Duration::from_secs(interval);
@@ -559,6 +568,9 @@ impl OpenIdConnectClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(())
     }
@@ -796,7 +808,10 @@ impl OpenIdConnectClient {
         let protocol_clone = protocol.clone();
         let state_clone = state.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Accept one connection
             match listener.accept().await {
                 Ok((mut socket, _addr)) => {
@@ -948,6 +963,9 @@ impl OpenIdConnectClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(())
     }

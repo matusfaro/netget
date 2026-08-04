@@ -133,7 +133,10 @@ impl S3Client {
         let status_tx_clone = status_tx.clone();
         let region_clone = region.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             use crate::client::s3::actions::S3_CLIENT_CONNECTED_EVENT;
 
             // Get initial instruction
@@ -235,6 +238,9 @@ impl S3Client {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (S3 is HTTP-based)
         Ok("0.0.0.0:0".parse().unwrap())

@@ -59,7 +59,10 @@ impl NtpClient {
         let socket_clone = socket.clone();
 
         // Spawn task to handle LLM-directed queries
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Initial LLM call to get first action (usually query_time)
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                 let protocol = Arc::new(crate::client::ntp::actions::NtpClientProtocol::new());
@@ -169,6 +172,9 @@ impl NtpClient {
                 .await;
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

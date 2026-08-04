@@ -60,7 +60,10 @@ impl Pop3Client {
         let protocol = Arc::new(Pop3ClientProtocol);
 
         // Spawn read loop
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             if let Err(e) = Self::read_loop(
                 reader,
                 write_half,
@@ -76,6 +79,9 @@ impl Pop3Client {
                 error!("POP3 client {} read loop error: {}", client_id, e);
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

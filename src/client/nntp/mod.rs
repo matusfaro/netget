@@ -84,7 +84,10 @@ impl NntpClient {
         }));
 
         // Spawn read loop
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
             let mut line = String::new();
 
@@ -367,6 +370,9 @@ impl NntpClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

@@ -438,7 +438,9 @@ impl NetGetMcpService {
         }
     }
 
-    #[tool(description = "List all available network protocols that can be started as servers or clients")]
+    #[tool(
+        description = "List all available network protocols that can be started as servers or clients"
+    )]
     async fn list_protocols(
         &self,
         Parameters(params): Parameters<ListProtocolsParams>,
@@ -506,7 +508,9 @@ impl NetGetMcpService {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    #[tool(description = "Start a network protocol server. Choose HOW it responds: for DETERMINISTIC behavior (echo, fixed/canned responses, simple routing, high throughput) pass `event_handlers` with a script or static handler — these run in-process with NO LLM call (instant, free, reproducible). Only use the natural-language `instruction` when responses genuinely need reasoning or vary unpredictably; it invokes NetGet's LLM on every request. Prefer event_handlers whenever the logic is fixed.")]
+    #[tool(
+        description = "Start a network protocol server. Choose HOW it responds: for DETERMINISTIC behavior (echo, fixed/canned responses, simple routing, high throughput) pass `event_handlers` with a script or static handler — these run in-process with NO LLM call (instant, free, reproducible). Only use the natural-language `instruction` when responses genuinely need reasoning or vary unpredictably; it invokes NetGet's LLM on every request. Prefer event_handlers whenever the logic is fixed."
+    )]
     async fn start_server(
         &self,
         Parameters(params): Parameters<StartServerParams>,
@@ -609,7 +613,9 @@ impl NetGetMcpService {
         }
     }
 
-    #[tool(description = "List all running servers with their status, protocol, port, and connection count")]
+    #[tool(
+        description = "List all running servers with their status, protocol, port, and connection count"
+    )]
     async fn list_servers(&self) -> Result<CallToolResult, McpError> {
         let servers = self.state.app_state.get_all_servers().await;
 
@@ -683,7 +689,9 @@ impl NetGetMcpService {
         }
     }
 
-    #[tool(description = "Get overall NetGet status including the configured model and running servers")]
+    #[tool(
+        description = "Get overall NetGet status including the configured model and running servers"
+    )]
     async fn get_status(&self) -> Result<CallToolResult, McpError> {
         let servers = self.state.app_state.get_all_servers().await;
         let model = self
@@ -734,16 +742,15 @@ impl NetGetMcpService {
         ))]))
     }
 
-    #[tool(description = "Get MCP-shaped documentation for a protocol: the exact start_server/start_client arguments that apply, the protocol's event ids with their field names and types (needed to write an event_handlers script), its action names with parameter schemas and examples, its startup parameters, its privilege requirement, and its maturity.")]
+    #[tool(
+        description = "Get MCP-shaped documentation for a protocol: the exact start_server/start_client arguments that apply, the protocol's event ids with their field names and types (needed to write an event_handlers script), its action names with parameter schemas and examples, its startup parameters, its privilege requirement, and its maturity."
+    )]
     async fn get_protocol_docs(
         &self,
         Parameters(params): Parameters<GetProtocolDocsParams>,
     ) -> Result<CallToolResult, McpError> {
-        match crate::mcp_stdio::docs::render_protocol_docs(
-            &params.protocol,
-            &self.state.app_state,
-        )
-        .await
+        match crate::mcp_stdio::docs::render_protocol_docs(&params.protocol, &self.state.app_state)
+            .await
         {
             Some(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
             None => {
@@ -794,7 +801,9 @@ impl NetGetMcpService {
         }
     }
 
-    #[tool(description = "List recent request/response access-log entries across all servers (newest first). Use get_access_log with an entry id to see the full request and response.")]
+    #[tool(
+        description = "List recent request/response access-log entries across all servers (newest first). Use get_access_log with an entry id to see the full request and response."
+    )]
     async fn list_access_logs(
         &self,
         Parameters(params): Parameters<ListAccessLogsParams>,
@@ -832,7 +841,9 @@ impl NetGetMcpService {
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
-    #[tool(description = "Get the full request and response for a single access-log entry by id (from list_access_logs)")]
+    #[tool(
+        description = "Get the full request and response for a single access-log entry by id (from list_access_logs)"
+    )]
     async fn get_access_log(
         &self,
         Parameters(params): Parameters<GetAccessLogParams>,
@@ -892,7 +903,9 @@ impl NetGetMcpService {
         ))]))
     }
 
-    #[tool(description = "Connect a network protocol client to a remote server. The mirror of start_server: choose HOW it responds the same way — for DETERMINISTIC behavior pass `event_handlers` with a script or static handler (in-process, NO LLM call, instant and reproducible); only use the natural-language `instruction` when the decision genuinely needs reasoning, since it invokes NetGet's LLM on every event. Use get_protocol_docs for the protocol's client event ids, action names and startup parameters.")]
+    #[tool(
+        description = "Connect a network protocol client to a remote server. The mirror of start_server: choose HOW it responds the same way — for DETERMINISTIC behavior pass `event_handlers` with a script or static handler (in-process, NO LLM call, instant and reproducible); only use the natural-language `instruction` when the decision genuinely needs reasoning, since it invokes NetGet's LLM on every event. Use get_protocol_docs for the protocol's client event ids, action names and startup parameters."
+    )]
     async fn start_client(
         &self,
         Parameters(params): Parameters<StartClientParams>,
@@ -958,7 +971,9 @@ impl NetGetMcpService {
         ))]))
     }
 
-    #[tool(description = "Forget a client by its ID. LIMITATION — this does NOT actually stop the client: NetGet never stores a JoinHandle for a client's network task (there is no register_client_task(), unlike register_server_task() for servers), so the connection's read loop keeps running and keeps invoking the LLM after this call. All this does is drop the client from NetGet's state, after which it disappears from list_clients and client_status. To truly stop a client, stop the process. Servers do not have this problem: stop_server really stops them.")]
+    #[tool(
+        description = "Stop a client by its ID. Aborts every background task the client owns (read loop, transport driver, in-flight requests), which releases its socket and stops any further LLM calls, then drops it from NetGet's state so it disappears from list_clients and client_status. Note that a handful of client protocols do not yet register their tasks; for those this still only drops the bookkeeping — see src/mcp_stdio/CLAUDE.md for the current list."
+    )]
     async fn stop_client(
         &self,
         Parameters(params): Parameters<StopClientParams>,
@@ -967,9 +982,8 @@ impl NetGetMcpService {
 
         match self.state.app_state.remove_client(client_id).await {
             Some(client) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Client #{} ({} -> {}) removed from NetGet's state. \
-                 Note: its network loop is NOT stopped — NetGet does not track \
-                 client task handles, so the connection may still be live.",
+                "Client #{} ({} -> {}) stopped: its registered background tasks were \
+                 aborted and it was removed from NetGet's state.",
                 params.client_id, client.protocol_name, client.remote_addr
             ))])),
             None => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -979,7 +993,9 @@ impl NetGetMcpService {
         }
     }
 
-    #[tool(description = "List all clients with their protocol, remote address, status and instruction")]
+    #[tool(
+        description = "List all clients with their protocol, remote address, status and instruction"
+    )]
     async fn list_clients(&self) -> Result<CallToolResult, McpError> {
         let clients = self.state.app_state.get_all_clients().await;
 
@@ -1107,8 +1123,8 @@ impl NetGetMcpService {
             prompt.push_str(&format!("### {}\n{}\n\n", m.role, m.content));
         }
 
-        let actions_json = serde_json::to_string_pretty(&req.tools)
-            .unwrap_or_else(|_| "[]".to_string());
+        let actions_json =
+            serde_json::to_string_pretty(&req.tools).unwrap_or_else(|_| "[]".to_string());
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1209,8 +1225,8 @@ impl ServerHandler for NetGetMcpService {
                  CLIENTS: start_client / list_clients / client_status / stop_client are \
                  the mirror of the server tools, for connecting OUT to a remote server \
                  instead of listening. They take the same instruction and event_handlers \
-                 arguments plus a remote_addr. Caveat: stop_client only drops the client \
-                 from NetGet's state — it does not stop the connection's network loop.\n\n\
+                 arguments plus a remote_addr. stop_client aborts the client's background \
+                 tasks, releasing its socket and stopping further LLM calls.\n\n\
                  AGENT-LLM MODE (when netget was started with --llm-agent): there is no \
                  model — YOU answer the LLM calls. When a server needs a reasoned \
                  response it queues a request; fetch it with get_next_llm_request \

@@ -172,7 +172,8 @@ impl SshClient {
         let status_tx_clone = status_tx.clone();
 
         // Call LLM with connected event
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let handle = tokio::spawn(async move {
             if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
                 // Call LLM with connected event
                 match call_llm_for_client(
@@ -220,6 +221,7 @@ impl SshClient {
                 }
             }
         });
+        task_registrar.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
     }

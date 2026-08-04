@@ -50,12 +50,14 @@ impl DnsClient {
             .await
             .context("Failed to create DNS client")?;
 
-        // Spawn background task for the client
-        tokio::spawn(async move {
+        // Spawn the hickory transport driver. Registered so that stopping the client
+        // tears the UDP socket down instead of leaving it running detached.
+        let bg_handle = tokio::spawn(async move {
             if let Err(e) = bg.await {
                 error!("DNS client {} transport driver stopped: {}", client_id, e);
             }
         });
+        app_state.register_client_task(client_id, bg_handle).await;
 
         // Get local address (best effort)
         let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
@@ -72,7 +74,12 @@ impl DnsClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Drive the LLM conversation in a background task.
+        // Drive the LLM conversation in a registered background task.
+        //
+        // It used to run inline here, so `connect()` did not return until the LLM
+        // stopped asking for queries — and an LLM that never stops asking meant
+        // `connect()` never returned. Running it as a tracked task means the caller
+        // gets its address immediately and `stop_client` can abort the conversation.
         let conversation_state = app_state.clone();
         let conversation_llm = llm_client.clone();
         let conversation_tx = status_tx.clone();
@@ -143,7 +150,7 @@ impl DnsClient {
 
             debug!("DNS client {} conversation task finished", client_id);
         });
-        let _ = handle;
+        app_state.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
     }

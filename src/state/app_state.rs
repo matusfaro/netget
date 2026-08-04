@@ -346,6 +346,18 @@ struct AppStateInner {
     /// Kept here rather than on `ClientInstance` so the budget is owned by the
     /// component that enforces it; the entry is dropped by `remove_client`.
     client_llm_calls: HashMap<ClientId, u32>,
+    /// Background tasks owned by each live client (read loops, transport drivers,
+    /// in-flight requests, …).
+    ///
+    /// A `Vec` per client, not a single slot: several protocols spawn more than one
+    /// task per connection (DNS spawns the hickory transport driver *and* the LLM
+    /// conversation task), and keeping only the last one — as
+    /// `register_server_task` does for servers — would silently leak the rest.
+    ///
+    /// Lives here rather than on `ClientInstance` because the handles are only ever
+    /// touched through `register_client_task` / `remove_client`, and `ClientInstance`
+    /// is constructed by callers outside this module.
+    client_tasks: HashMap<ClientId, Vec<tokio::task::JoinHandle<()>>>,
 }
 
 /// Default ceiling on LLM calls per client session.
@@ -438,6 +450,7 @@ impl AppState {
                 next_access_log_id: 1,
                 client_llm_call_limit: client_llm_call_limit_from_env(),
                 client_llm_calls: HashMap::new(),
+                client_tasks: HashMap::new(),
             })),
         }
     }
@@ -1463,11 +1476,20 @@ impl AppState {
         id
     }
 
-    /// Remove a client instance
+    /// Remove a client instance, aborting every background task it owns.
+    ///
+    /// Dropping a `JoinHandle` only DETACHES the task in Tokio — it keeps running,
+    /// keeps its socket open and keeps calling the LLM. Every handle registered via
+    /// [`Self::register_client_task`] is therefore aborted explicitly here, which is
+    /// what makes `stop_client` actually stop a client rather than just forgetting it.
     pub async fn remove_client(&self, id: ClientId) -> Option<ClientInstance> {
         let mut inner = self.inner.write().await;
         let client = inner.clients.remove(&id);
         inner.client_llm_calls.remove(&id);
+
+        for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
+            handle.abort();
+        }
 
         // Set mode to Idle if no more clients and no servers
         if inner.clients.is_empty() && inner.servers.is_empty() {
@@ -1475,6 +1497,39 @@ impl AppState {
         }
 
         client
+    }
+
+    /// Register a background task owned by a client so it can be aborted on stop.
+    ///
+    /// Client `connect()` implementations call this with the `JoinHandle` of every
+    /// task they spawn — read loop, transport driver, in-flight request — right
+    /// after spawning it. Unlike `register_server_task`, handles ACCUMULATE: a
+    /// client that spawns three tasks gets all three aborted, none silently dropped.
+    ///
+    /// If the client is already gone (raced with `stop_client`), the task is aborted
+    /// on the spot so it cannot outlive its owner.
+    pub async fn register_client_task(&self, id: ClientId, handle: tokio::task::JoinHandle<()>) {
+        let mut inner = self.inner.write().await;
+        if !inner.clients.contains_key(&id) {
+            handle.abort();
+            return;
+        }
+        let tasks = inner.client_tasks.entry(id).or_default();
+        // Drop already-finished handles so protocols that register a task per request
+        // (HTTP, for instance) do not grow this vector without bound.
+        tasks.retain(|h| !h.is_finished());
+        tasks.push(handle);
+    }
+
+    /// Number of background tasks currently tracked for a client
+    pub async fn client_task_count(&self, id: ClientId) -> usize {
+        self.inner
+            .read()
+            .await
+            .client_tasks
+            .get(&id)
+            .map(|t| t.len())
+            .unwrap_or(0)
     }
 
     /// Consume one LLM call from a client's budget.

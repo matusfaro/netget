@@ -67,7 +67,10 @@ impl Http2Client {
 
         // For HTTP/2 client, we'll spawn a background task that processes LLM-requested actions
         // The actual requests are made on-demand via actions, not in a read loop
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // This task monitors for client disconnection requests
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -79,6 +82,9 @@ impl Http2Client {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (HTTP/2 is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())

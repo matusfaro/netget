@@ -65,7 +65,10 @@ impl WebdavClient {
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Send initial connected event to LLM
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                 let protocol =
                     Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
@@ -127,6 +130,9 @@ impl WebdavClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (WebDAV is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())

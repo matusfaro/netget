@@ -273,7 +273,10 @@ impl TorClient {
         }));
 
         // Spawn read loop
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 8192];
 
             loop {
@@ -477,6 +480,9 @@ impl TorClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

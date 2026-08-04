@@ -166,7 +166,10 @@ impl HttpProxyClient {
         let client_data_clone = client_data.clone();
 
         // Spawn task to handle tunnel establishment if needed
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Check if we have a tunnel target to establish
             if let Some(tunnel_target) = app_state_clone
                 .with_client_mut(client_id, |client| {
@@ -209,13 +212,19 @@ impl HttpProxyClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Spawn read loop
         let app_state_clone = app_state.clone();
         let status_tx_clone = status_tx.clone();
         let write_half_clone = write_half_arc.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
 
             // First, check if we need to read CONNECT response
@@ -526,6 +535,9 @@ impl HttpProxyClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

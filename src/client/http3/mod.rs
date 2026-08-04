@@ -67,7 +67,10 @@ impl Http3Client {
         info!("HTTP/3 client {} initialized successfully", client_id);
 
         // Spawn background monitoring task
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -78,6 +81,9 @@ impl Http3Client {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return the remote address
         Ok(remote_sock_addr)

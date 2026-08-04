@@ -104,7 +104,10 @@ impl IppClient {
                                         let llm_clone = llm_client.clone();
                                         let app_state_clone = app_state.clone();
                                         let status_clone = status_tx.clone();
-                                        tokio::spawn(async move {
+                                        // Registered with AppState so stop_client can abort this task —
+                                        // dropping a JoinHandle only detaches it in Tokio.
+                                        let task_registrar = app_state.clone();
+                                        let task_handle = tokio::spawn(async move {
                                             // Small delay to ensure server is ready
                                             tokio::time::sleep(std::time::Duration::from_millis(
                                                 100,
@@ -121,6 +124,9 @@ impl IppClient {
                                                 error!("IPP Get-Printer-Attributes failed: {}", e);
                                             }
                                         });
+                                        task_registrar
+                                            .register_client_task(client_id, task_handle)
+                                            .await;
                                     }
                                     "ipp_print_job" => {
                                         // Execute Print-Job operation
@@ -146,7 +152,10 @@ impl IppClient {
                                         let llm_clone = llm_client.clone();
                                         let app_state_clone = app_state.clone();
                                         let status_clone = status_tx.clone();
-                                        tokio::spawn(async move {
+                                        // Registered with AppState so stop_client can abort this task —
+                                        // dropping a JoinHandle only detaches it in Tokio.
+                                        let task_registrar = app_state.clone();
+                                        let task_handle = tokio::spawn(async move {
                                             // Small delay to ensure server is ready
                                             tokio::time::sleep(std::time::Duration::from_millis(
                                                 100,
@@ -166,6 +175,9 @@ impl IppClient {
                                                 error!("IPP Print-Job failed: {}", e);
                                             }
                                         });
+                                        task_registrar
+                                            .register_client_task(client_id, task_handle)
+                                            .await;
                                     }
                                     "ipp_get_job_attributes" => {
                                         // Execute Get-Job-Attributes operation
@@ -178,7 +190,10 @@ impl IppClient {
                                         let llm_clone = llm_client.clone();
                                         let app_state_clone = app_state.clone();
                                         let status_clone = status_tx.clone();
-                                        tokio::spawn(async move {
+                                        // Registered with AppState so stop_client can abort this task —
+                                        // dropping a JoinHandle only detaches it in Tokio.
+                                        let task_registrar = app_state.clone();
+                                        let task_handle = tokio::spawn(async move {
                                             // Small delay to ensure server is ready
                                             tokio::time::sleep(std::time::Duration::from_millis(
                                                 100,
@@ -196,6 +211,9 @@ impl IppClient {
                                                 error!("IPP Get-Job-Attributes failed: {}", e);
                                             }
                                         });
+                                        task_registrar
+                                            .register_client_task(client_id, task_handle)
+                                            .await;
                                     }
                                     _ => {
                                         info!("Unknown IPP custom action: {}", name);
@@ -221,7 +239,10 @@ impl IppClient {
         }
 
         // Spawn background task to monitor for client disconnection
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -232,6 +253,9 @@ impl IppClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (IPP is HTTP-based, connectionless)
         Ok("0.0.0.0:0".parse().unwrap())

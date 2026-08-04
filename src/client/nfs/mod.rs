@@ -93,7 +93,10 @@ impl NfsClient {
         let status_tx_clone = status_tx.clone();
         let fh_cache_clone = fh_cache.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             if let Err(e) = Self::handle_nfs_operations(
                 connection_arc,
                 fh_cache_clone,
@@ -109,6 +112,9 @@ impl NfsClient {
                 error!("NFS client {} handler error: {}", client_id, e);
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy socket address (NFS doesn't use direct sockets)
         Ok(format!("{}:2049", server).parse()?)

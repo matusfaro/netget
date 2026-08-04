@@ -115,7 +115,7 @@ impl HttpClient {
                                     let state_clone = app_state.clone();
                                     let status_clone = status_tx.clone();
 
-                                    tokio::spawn(async move {
+                                    let request_handle = tokio::spawn(async move {
                                         if let Err(e) = HttpClient::make_request(
                                             client_id,
                                             method,
@@ -131,6 +131,12 @@ impl HttpClient {
                                             error!("HTTP request failed: {}", e);
                                         }
                                     });
+                                    // Registered so an in-flight request (and the LLM
+                                    // call it makes on completion) is aborted when the
+                                    // client is stopped.
+                                    app_state
+                                        .register_client_task(client_id, request_handle)
+                                        .await;
                                 }
                             }
                             Ok(ClientActionResult::Disconnect) => {
@@ -159,7 +165,8 @@ impl HttpClient {
 
         // For HTTP client, we'll spawn a background task that processes LLM-requested actions
         // The actual requests are made on-demand via actions, not in a read loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let handle = tokio::spawn(async move {
             // This task monitors for client disconnection requests
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -171,6 +178,9 @@ impl HttpClient {
                 }
             }
         });
+        // Registered so stop_client tears this down immediately instead of leaving it
+        // to notice the removal on its next 5s poll.
+        task_registrar.register_client_task(client_id, handle).await;
 
         // Return a dummy local address (HTTP is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())

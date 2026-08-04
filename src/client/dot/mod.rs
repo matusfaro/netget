@@ -128,7 +128,10 @@ impl DotClient {
         let read_llm_client = llm_client.clone();
         let read_status_tx = status_tx.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             if let Err(e) = Self::read_loop(
                 read_half,
                 write_for_read,
@@ -143,6 +146,9 @@ impl DotClient {
                 error!("DoT client {} read loop error: {}", client_id, e);
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {

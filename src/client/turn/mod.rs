@@ -129,7 +129,10 @@ impl TurnClient {
         let client_data_clone = client_data.clone();
         let protocol_clone = protocol.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 2048]; // TURN messages typically < 2KB
 
             loop {
@@ -337,6 +340,9 @@ impl TurnClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

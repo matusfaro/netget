@@ -97,6 +97,17 @@ Convergence itself is a separate concern, handled by the per-client LLM call bud
 100) `call_llm_for_client` fails instead of contacting the model, which drains the
 queue and ends the session.
 
+### 7. The conversation runs in a registered background task
+
+`connect_with_llm_actions` spawns the connected-event LLM conversation rather than
+running it inline, and registers both that task and the hickory transport driver
+with `AppState::register_client_task()`. Two consequences:
+
+- `connect()` returns as soon as the socket is up, instead of blocking until the
+  LLM stops asking for queries (it previously never returned for a runaway client).
+- `stop_client` / `remove_client` aborts both tasks, so the UDP socket is released
+  and no further LLM calls happen.
+
 ## LLM Integration
 
 ### Available Actions

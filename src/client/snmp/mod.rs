@@ -169,7 +169,10 @@ impl SnmpClient {
             let config = Arc::new(config);
 
             // Spawn initial LLM call
-            tokio::spawn(async move {
+            // Registered with AppState so stop_client can abort this task —
+            // dropping a JoinHandle only detaches it in Tokio.
+            let task_registrar = app_state.clone();
+            let task_handle = tokio::spawn(async move {
                 match call_llm_for_client(
                     &llm_clone,
                     &state_clone,
@@ -212,6 +215,9 @@ impl SnmpClient {
                     }
                 }
             });
+            task_registrar
+                .register_client_task(client_id, task_handle)
+                .await;
         }
 
         Ok(local_addr)

@@ -119,7 +119,10 @@ impl XmlRpcClient {
                                 let method_clone = method.to_string();
                                 let params_clone = params.clone();
 
-                                tokio::spawn(async move {
+                                // Registered with AppState so stop_client can abort this task —
+                                // dropping a JoinHandle only detaches it in Tokio.
+                                let task_registrar = app_state.clone();
+                                let task_handle = tokio::spawn(async move {
                                     let _ = Self::call_method(
                                         client_id,
                                         method_clone,
@@ -130,6 +133,9 @@ impl XmlRpcClient {
                                     )
                                     .await;
                                 });
+                                task_registrar
+                                    .register_client_task(client_id, task_handle)
+                                    .await;
                             }
                         }
                         Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
@@ -146,7 +152,10 @@ impl XmlRpcClient {
         }
 
         // Spawn background task that monitors for client disconnection
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -157,6 +166,9 @@ impl XmlRpcClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (XML-RPC is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())

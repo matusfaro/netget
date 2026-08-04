@@ -128,8 +128,10 @@ impl RedisClient {
             }
         }
 
-        // Spawn read loop for Redis responses
-        tokio::spawn(async move {
+        // Spawn read loop for Redis responses. Registered with AppState so
+        // stop_client can abort it and release the socket.
+        let task_registrar = app_state.clone();
+        let handle = tokio::spawn(async move {
             loop {
                 // Read Redis RESP response
                 // Simplified: just read line-by-line
@@ -230,6 +232,7 @@ impl RedisClient {
                 }
             }
         });
+        task_registrar.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
     }

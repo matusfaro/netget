@@ -99,7 +99,10 @@ impl SmbClient {
         let status_tx_clone = status_tx.clone();
         let remote_addr_clone = remote_addr.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Send initial connected event to LLM
             if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
                 let protocol = Arc::new(SmbClientProtocol::new());
@@ -179,6 +182,9 @@ impl SmbClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

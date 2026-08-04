@@ -113,7 +113,8 @@ impl MysqlClient {
             let app_state_clone = app_state.clone();
             let status_tx_clone = status_tx.clone();
 
-            tokio::spawn(async move {
+            let task_registrar = app_state.clone();
+            let handle = tokio::spawn(async move {
                 match call_llm_for_client(
                     &llm_client,
                     &app_state_clone,
@@ -157,6 +158,7 @@ impl MysqlClient {
                     }
                 }
             });
+            task_registrar.register_client_task(client_id, handle).await;
         }
 
         Ok(socket_addr)

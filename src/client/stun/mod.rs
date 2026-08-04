@@ -82,7 +82,10 @@ impl StunClient {
             let app_state_clone = app_state.clone();
             let status_tx_clone = status_tx.clone();
 
-            tokio::spawn(async move {
+            // Registered with AppState so stop_client can abort this task —
+            // dropping a JoinHandle only detaches it in Tokio.
+            let task_registrar = app_state.clone();
+            let task_handle = tokio::spawn(async move {
                 match call_llm_for_client(
                     &llm_clone,
                     &app_state_clone,
@@ -124,10 +127,16 @@ impl StunClient {
                     }
                 }
             });
+            task_registrar
+                .register_client_task(client_id, task_handle)
+                .await;
         }
 
         // Spawn background task that monitors for client removal
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -138,6 +147,9 @@ impl StunClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(bound_addr)
     }

@@ -163,7 +163,10 @@ impl CassandraClient {
         // Spawn background task for handling state machine
         // Note: Cassandra is request-response, so we don't have a continuous read loop
         // Instead, queries are executed on-demand via async actions
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             info!("Cassandra client {} task started", client_id);
 
             // Keep connection alive and monitor status
@@ -185,6 +188,9 @@ impl CassandraClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(socket_addr)
     }

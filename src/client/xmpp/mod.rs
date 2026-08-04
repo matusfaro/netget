@@ -145,7 +145,10 @@ impl XmppClientConnection {
         }
 
         // Spawn event loop that handles both sending and receiving
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     // Handle outgoing stanzas
@@ -223,6 +226,9 @@ impl XmppClientConnection {
             let _ = status_tx.send(format!("[CLIENT] XMPP client {} disconnected", client_id));
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return dummy local address (XMPP handles this internally)
         Ok("0.0.0.0:0".parse().unwrap())

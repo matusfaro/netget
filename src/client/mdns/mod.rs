@@ -69,7 +69,10 @@ impl MdnsClient {
             let app_state_clone = app_state.clone();
             let status_tx_clone = status_tx.clone();
 
-            tokio::spawn(async move {
+            // Registered with AppState so stop_client can abort this task —
+            // dropping a JoinHandle only detaches it in Tokio.
+            let task_registrar = app_state.clone();
+            let task_handle = tokio::spawn(async move {
                 match call_llm_for_client(
                     &llm_client_clone,
                     &app_state_clone,
@@ -112,11 +115,17 @@ impl MdnsClient {
                     }
                 }
             });
+            task_registrar
+                .register_client_task(client_id, task_handle)
+                .await;
         }
 
         // Spawn monitoring task to check for client disconnection
         let app_state_monitor = app_state.clone();
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -127,6 +136,9 @@ impl MdnsClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (mDNS is multicast UDP)
         Ok("224.0.0.251:5353".parse().unwrap())
@@ -172,7 +184,10 @@ impl MdnsClient {
                         let status_tx_browse = status_tx.clone();
                         let protocol_browse = protocol.clone();
 
-                        tokio::spawn(async move {
+                        // Registered with AppState so stop_client can abort this task —
+                        // dropping a JoinHandle only detaches it in Tokio.
+                        let task_registrar = app_state.clone();
+                        let task_handle = tokio::spawn(async move {
                             loop {
                                 // Use recv_timeout to avoid blocking forever
                                 match receiver.recv_timeout(Duration::from_secs(10)) {
@@ -341,6 +356,9 @@ impl MdnsClient {
                                 }
                             }
                         });
+                        task_registrar
+                            .register_client_task(client_id, task_handle)
+                            .await;
                     }
                     "resolve_hostname" => {
                         let hostname = data["hostname"]

@@ -104,7 +104,10 @@ impl BluetoothClient {
         let status_tx_clone = status_tx.clone();
         let llm_client_clone = llm_client.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Initial scan if requested
             if remote_addr.is_empty() || remote_addr == "scan" {
                 if let Err(e) = Self::perform_scan(
@@ -159,6 +162,9 @@ impl BluetoothClient {
 
             info!("Bluetooth client {} event loop ended", client_id);
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy socket address (BLE doesn't use IP sockets)
         Ok("0.0.0.0:0".parse().unwrap())

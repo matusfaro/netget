@@ -62,7 +62,10 @@ impl GitClient {
             .unwrap_or_default();
 
         // Spawn task to handle LLM-driven Git operations
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let protocol = Arc::new(GitClientProtocol::new());
             let mut repo_path: Option<PathBuf> = None;
             let mut username: Option<String> = None;
@@ -136,6 +139,9 @@ impl GitClient {
             // Git client doesn't have a persistent connection, so we just mark it as done
             debug!("Git client {} operations completed", client_id);
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(dummy_addr)
     }

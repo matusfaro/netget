@@ -155,7 +155,10 @@ impl CouchDbClient {
         // For CouchDB, we don't have a persistent read loop like TCP clients
         // Instead, operations are driven by LLM actions
         // We'll spawn a task to keep the client alive and handle periodic operations
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
@@ -176,6 +179,9 @@ impl CouchDbClient {
                 // For now, we just keep the client alive
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

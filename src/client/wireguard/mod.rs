@@ -212,7 +212,10 @@ impl WireguardClient {
         let server_key_clone = server_key.clone();
         let client_clone = client.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             Self::monitoring_loop(
                 client_id,
                 client_clone,
@@ -228,6 +231,9 @@ impl WireguardClient {
             // Clean up on exit
             WIREGUARD_CLIENTS.write().await.remove(&client_id);
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Call LLM with connected event
         let event = Event::new(

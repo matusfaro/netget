@@ -151,8 +151,11 @@ impl TcpClient {
             }
         }
 
-        // Spawn read loop
-        tokio::spawn(async move {
+        // Spawn read loop. The handle is registered with AppState so that
+        // stop_client / remove_client can abort it — dropping a JoinHandle only
+        // detaches the task, leaving the socket open and the LLM being called.
+        let task_registrar = app_state.clone();
+        let handle = tokio::spawn(async move {
             info!("TCP client {} read loop started", client_id);
             let mut buffer = vec![0u8; 8192];
 
@@ -282,6 +285,7 @@ impl TcpClient {
                 }
             }
         });
+        task_registrar.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
     }

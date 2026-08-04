@@ -100,7 +100,7 @@ impl PostgresqlClient {
 
         // Spawn connection task
         let status_tx_clone = status_tx.clone();
-        tokio::spawn(async move {
+        let connection_handle = tokio::spawn(async move {
             if let Err(e) = connection.await {
                 error!("PostgreSQL client {} connection error: {}", client_id, e);
                 let _ = status_tx_clone.send(format!(
@@ -109,6 +109,9 @@ impl PostgresqlClient {
                 ));
             }
         });
+        app_state
+            .register_client_task(client_id, connection_handle)
+            .await;
 
         // Send connected event to LLM
         let client_arc = Arc::new(tokio::sync::Mutex::new(client));
@@ -135,7 +138,8 @@ impl PostgresqlClient {
             let app_state_clone = app_state.clone();
             let status_tx_clone = status_tx.clone();
 
-            tokio::spawn(async move {
+            let task_registrar = app_state.clone();
+            let handle = tokio::spawn(async move {
                 match call_llm_for_client(
                     &llm_client_clone,
                     &app_state_clone,
@@ -265,6 +269,7 @@ impl PostgresqlClient {
                     }
                 }
             });
+            task_registrar.register_client_task(client_id, handle).await;
         }
 
         Ok(local_addr)

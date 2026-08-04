@@ -60,7 +60,10 @@ impl WhoisClient {
         let write_half_arc = Arc::new(Mutex::new(write_half));
 
         // Spawn task to handle LLM interaction
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Call LLM with connected event to get initial query
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                 let protocol = Arc::new(WhoisClientProtocol::new());
@@ -236,6 +239,9 @@ impl WhoisClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

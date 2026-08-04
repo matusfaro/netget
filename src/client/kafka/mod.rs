@@ -205,7 +205,10 @@ impl KafkaClient {
 
         // Spawn producer monitoring task
         let _producer_arc = Arc::new(producer);
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -216,6 +219,9 @@ impl KafkaClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return dummy address
         Ok("0.0.0.0:0".parse().unwrap())
@@ -334,7 +340,10 @@ impl KafkaClient {
 
         // Spawn consumer loop
         let consumer_arc = Arc::new(consumer);
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 // Poll for messages
                 match consumer_arc.recv().await {
@@ -442,6 +451,9 @@ impl KafkaClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return dummy address
         Ok("0.0.0.0:0".parse().unwrap())

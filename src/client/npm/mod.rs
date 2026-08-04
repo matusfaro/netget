@@ -73,7 +73,10 @@ impl NpmClient {
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to monitor for disconnection
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -84,6 +87,9 @@ impl NpmClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Return a dummy local address (NPM is HTTP-based)
         Ok("0.0.0.0:0".parse().unwrap())

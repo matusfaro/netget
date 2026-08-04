@@ -105,7 +105,8 @@ impl MqttClient {
         let status_tx_clone = status_tx.clone();
 
         // Spawn MQTT event loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let handle = tokio::spawn(async move {
             handle_mqtt_events(
                 eventloop,
                 mqtt_client_clone,
@@ -117,6 +118,7 @@ impl MqttClient {
             )
             .await;
         });
+        task_registrar.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
     }

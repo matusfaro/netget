@@ -79,7 +79,10 @@ impl TorrentPeerClient {
         let status_tx_clone = status_tx.clone();
         let write_half_clone = write_half_arc.clone();
         let llm_client_clone = llm_client.clone();
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // First, wait for handshake
             let mut handshake_buf = vec![0u8; 68]; // 1 + 19 + 8 + 20 + 20
             match read_half.read_exact(&mut handshake_buf).await {
@@ -280,6 +283,9 @@ impl TorrentPeerClient {
             ));
             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -299,7 +305,10 @@ impl TorrentPeerClient {
                 .unwrap_or_default();
             let write_half_clone = write_half_arc.clone();
 
-            tokio::spawn(async move {
+            // Registered with AppState so stop_client can abort this task —
+            // dropping a JoinHandle only detaches it in Tokio.
+            let task_registrar = app_state.clone();
+            let task_handle = tokio::spawn(async move {
                 match call_llm_for_client(
                     &llm_client,
                     &app_state,
@@ -338,6 +347,9 @@ impl TorrentPeerClient {
                     }
                 }
             });
+            task_registrar
+                .register_client_task(client_id, task_handle)
+                .await;
         }
 
         Ok(local_addr)

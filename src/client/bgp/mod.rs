@@ -158,7 +158,10 @@ impl BgpClient {
         let app_state_clone = app_state.clone();
         let status_tx_clone = status_tx.clone();
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             if let Err(e) = Self::read_loop(
                 read_half,
                 write_half_clone,
@@ -173,6 +176,9 @@ impl BgpClient {
                 error!("BGP client {} read loop error: {}", client_id, e);
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

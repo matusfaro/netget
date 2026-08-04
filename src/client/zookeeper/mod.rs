@@ -45,14 +45,14 @@ impl ZookeeperClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] ZooKeeper client {} connected",
-            client_id
-        ));
+        let _ = status_tx.send(format!("[CLIENT] ZooKeeper client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn task to handle LLM-driven operations
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // In a real implementation, we would:
             // 1. Connect using zookeeper-async
             // 2. Set up watchers
@@ -73,6 +73,9 @@ impl ZookeeperClient {
             //     // Execute actions
             // }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

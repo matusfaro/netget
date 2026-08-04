@@ -98,7 +98,10 @@ impl ImapClient {
         let session_arc = Arc::new(Mutex::new(session));
         let protocol = Arc::new(actions::ImapClientProtocol::new());
 
-        tokio::spawn(async move {
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
             // Call LLM with connected event
             let event = Event::new(
                 &IMAP_CLIENT_CONNECTED_EVENT,
@@ -156,6 +159,9 @@ impl ImapClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }
