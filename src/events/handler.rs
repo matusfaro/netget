@@ -81,7 +81,8 @@ fn log_open_server_summary(
     // Startup params
     if let Some(params) = startup_params {
         if !params.is_null() {
-            let params_str = serde_json::to_string_pretty(params).unwrap_or_else(|_| params.to_string());
+            let params_str =
+                serde_json::to_string_pretty(params).unwrap_or_else(|_| params.to_string());
             let _ = status_tx.send("[INFO]   Startup Params:".to_string());
             for line in format_indented_dimmed_lines(&params_str, 8) {
                 let _ = status_tx.send(format!("[INFO] {}", line));
@@ -91,12 +92,17 @@ fn log_open_server_summary(
 
     // Event handlers summary
     if let Some(handlers) = event_handlers {
-        let _ = status_tx.send(format!("[INFO]   Event Handlers: {} configured", handlers.len()));
+        let _ = status_tx.send(format!(
+            "[INFO]   Event Handlers: {} configured",
+            handlers.len()
+        ));
         for handler in handlers {
-            let event_pattern = handler.get("event_pattern")
+            let event_pattern = handler
+                .get("event_pattern")
                 .and_then(|v| v.as_str())
                 .unwrap_or("*");
-            let handler_type = handler.get("handler")
+            let handler_type = handler
+                .get("handler")
                 .and_then(|h| h.get("type"))
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown");
@@ -105,7 +111,8 @@ fn log_open_server_summary(
 
             // For script handlers, show the script code (dimmed)
             if handler_type == "script" {
-                if let Some(code) = handler.get("handler")
+                if let Some(code) = handler
+                    .get("handler")
                     .and_then(|h| h.get("code"))
                     .and_then(|c| c.as_str())
                 {
@@ -122,10 +129,9 @@ fn log_open_server_summary(
 
             // For static handlers, show the actions (dimmed)
             if handler_type == "static" {
-                if let Some(actions) = handler.get("handler")
-                    .and_then(|h| h.get("actions"))
-                {
-                    let actions_str = serde_json::to_string_pretty(actions).unwrap_or_else(|_| actions.to_string());
+                if let Some(actions) = handler.get("handler").and_then(|h| h.get("actions")) {
+                    let actions_str = serde_json::to_string_pretty(actions)
+                        .unwrap_or_else(|_| actions.to_string());
                     let truncated = if actions_str.len() > 300 {
                         format!("{}...", &actions_str[..300])
                     } else {
@@ -141,12 +147,19 @@ fn log_open_server_summary(
 
     // Scheduled tasks summary
     if let Some(tasks) = scheduled_tasks {
-        let _ = status_tx.send(format!("[INFO]   Scheduled Tasks: {} configured", tasks.len()));
+        let _ = status_tx.send(format!(
+            "[INFO]   Scheduled Tasks: {} configured",
+            tasks.len()
+        ));
         for task in tasks {
             let timing = if task.recurring {
-                task.interval_secs.map(|i| format!("every {}s", i)).unwrap_or_else(|| "recurring".to_string())
+                task.interval_secs
+                    .map(|i| format!("every {}s", i))
+                    .unwrap_or_else(|| "recurring".to_string())
             } else {
-                task.delay_secs.map(|d| format!("after {}s", d)).unwrap_or_else(|| "one-shot".to_string())
+                task.delay_secs
+                    .map(|d| format!("after {}s", d))
+                    .unwrap_or_else(|| "one-shot".to_string())
             };
             let _ = status_tx.send(format!("[INFO]     • {} ({})", task.task_id, timing));
             // Task instruction (dimmed)
@@ -218,7 +231,8 @@ fn log_open_client_summary(
     // Startup params
     if let Some(params) = startup_params {
         if !params.is_null() {
-            let params_str = serde_json::to_string_pretty(params).unwrap_or_else(|_| params.to_string());
+            let params_str =
+                serde_json::to_string_pretty(params).unwrap_or_else(|_| params.to_string());
             let _ = status_tx.send("[INFO]   Startup Params:".to_string());
             for line in format_indented_dimmed_lines(&params_str, 8) {
                 let _ = status_tx.send(format!("[INFO] {}", line));
@@ -228,12 +242,17 @@ fn log_open_client_summary(
 
     // Event handlers summary (same logic as server)
     if let Some(handlers) = event_handlers {
-        let _ = status_tx.send(format!("[INFO]   Event Handlers: {} configured", handlers.len()));
+        let _ = status_tx.send(format!(
+            "[INFO]   Event Handlers: {} configured",
+            handlers.len()
+        ));
         for handler in handlers {
-            let event_pattern = handler.get("event_pattern")
+            let event_pattern = handler
+                .get("event_pattern")
                 .and_then(|v| v.as_str())
                 .unwrap_or("*");
-            let handler_type = handler.get("handler")
+            let handler_type = handler
+                .get("handler")
                 .and_then(|h| h.get("type"))
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown");
@@ -241,7 +260,8 @@ fn log_open_client_summary(
             let _ = status_tx.send(format!("[INFO]     • {} → {}", event_pattern, handler_type));
 
             if handler_type == "script" {
-                if let Some(code) = handler.get("handler")
+                if let Some(code) = handler
+                    .get("handler")
                     .and_then(|h| h.get("code"))
                     .and_then(|c| c.as_str())
                 {
@@ -257,10 +277,9 @@ fn log_open_client_summary(
             }
 
             if handler_type == "static" {
-                if let Some(actions) = handler.get("handler")
-                    .and_then(|h| h.get("actions"))
-                {
-                    let actions_str = serde_json::to_string_pretty(actions).unwrap_or_else(|_| actions.to_string());
+                if let Some(actions) = handler.get("handler").and_then(|h| h.get("actions")) {
+                    let actions_str = serde_json::to_string_pretty(actions)
+                        .unwrap_or_else(|_| actions.to_string());
                     let truncated = if actions_str.len() > 300 {
                         format!("{}...", &actions_str[..300])
                     } else {
@@ -276,12 +295,19 @@ fn log_open_client_summary(
 
     // Scheduled tasks summary
     if let Some(tasks) = scheduled_tasks {
-        let _ = status_tx.send(format!("[INFO]   Scheduled Tasks: {} configured", tasks.len()));
+        let _ = status_tx.send(format!(
+            "[INFO]   Scheduled Tasks: {} configured",
+            tasks.len()
+        ));
         for task in tasks {
             let timing = if task.recurring {
-                task.interval_secs.map(|i| format!("every {}s", i)).unwrap_or_else(|| "recurring".to_string())
+                task.interval_secs
+                    .map(|i| format!("every {}s", i))
+                    .unwrap_or_else(|| "recurring".to_string())
             } else {
-                task.delay_secs.map(|d| format!("after {}s", d)).unwrap_or_else(|| "one-shot".to_string())
+                task.delay_secs
+                    .map(|d| format!("after {}s", d))
+                    .unwrap_or_else(|| "one-shot".to_string())
             };
             let _ = status_tx.send(format!("[INFO]     • {} ({})", task.task_id, timing));
             let truncated = if task.instruction.len() > 100 {
@@ -753,8 +779,14 @@ impl EventHandler {
                         protocol.as_ref().map(|p| p.as_ref() as &dyn Server);
 
                     // User input context - no specific server/client (global actions)
-                    match execute_actions(action_values.clone(), &self.state, protocol_ref, None, None)
-                        .await
+                    match execute_actions(
+                        action_values.clone(),
+                        &self.state,
+                        protocol_ref,
+                        None,
+                        None,
+                    )
+                    .await
                     {
                         Ok(result) => {
                             // Display messages
@@ -808,7 +840,7 @@ impl EventHandler {
                 // If not, return DocumentationRequired error which will trigger a retry with docs
                 if !self.state.is_server_docs_read().await {
                     // Fetch documentation for this protocol
-                    use crate::llm::actions::tools::{ToolAction, execute_tool};
+                    use crate::llm::actions::tools::{execute_tool, ToolAction};
                     let doc_tool = ToolAction::ReadDocumentation {
                         protocols: vec![protocol.clone()],
                         protocol: None,
@@ -817,11 +849,19 @@ impl EventHandler {
                     // Execute the tool to get documentation
                     let approval_tx = self.state.get_web_approval_channel().await;
                     let web_search_mode = self.state.get_web_search_mode().await;
-                    let tool_result = execute_tool(&doc_tool, approval_tx.as_ref(), web_search_mode, Some(&self.state)).await;
+                    let tool_result = execute_tool(
+                        &doc_tool,
+                        approval_tx.as_ref(),
+                        web_search_mode,
+                        Some(&self.state),
+                    )
+                    .await;
 
                     if tool_result.success {
                         // Mark docs as read so we don't loop forever
-                        self.state.mark_server_protocols_documented(&[protocol.clone()]).await;
+                        self.state
+                            .mark_server_protocols_documented(&[protocol.clone()])
+                            .await;
 
                         // Build the original action JSON for reference
                         let original_action = serde_json::json!({
@@ -921,7 +961,8 @@ impl EventHandler {
                             || error_msg.contains("bind");
 
                         // Check if it's a validation error about missing or invalid parameters (retryable)
-                        let is_validation_error = error_msg.contains("Invalid event handler configuration")
+                        let is_validation_error = error_msg
+                            .contains("Invalid event handler configuration")
                             || error_msg.contains("Missing 'instruction' field")
                             || error_msg.contains("instruction is required");
 
@@ -967,7 +1008,8 @@ impl EventHandler {
                             });
                         } else {
                             // Fatal error - propagate as fatal
-                            let _ = status_tx.send(format!("[ERROR] Failed to start server: {}", error_msg));
+                            let _ = status_tx
+                                .send(format!("[ERROR] Failed to start server: {}", error_msg));
                             return Err(ActionExecutionError::Fatal(e));
                         }
                     }
@@ -1224,7 +1266,7 @@ impl EventHandler {
                 // If not, return DocumentationRequired error which will trigger a retry with docs
                 if !self.state.is_client_docs_read().await {
                     // Fetch documentation for this protocol
-                    use crate::llm::actions::tools::{ToolAction, execute_tool};
+                    use crate::llm::actions::tools::{execute_tool, ToolAction};
                     let doc_tool = ToolAction::ReadDocumentation {
                         protocols: vec![protocol.clone()],
                         protocol: None,
@@ -1233,11 +1275,19 @@ impl EventHandler {
                     // Execute the tool to get documentation
                     let approval_tx = self.state.get_web_approval_channel().await;
                     let web_search_mode = self.state.get_web_search_mode().await;
-                    let tool_result = execute_tool(&doc_tool, approval_tx.as_ref(), web_search_mode, Some(&self.state)).await;
+                    let tool_result = execute_tool(
+                        &doc_tool,
+                        approval_tx.as_ref(),
+                        web_search_mode,
+                        Some(&self.state),
+                    )
+                    .await;
 
                     if tool_result.success {
                         // Mark docs as read so we don't loop forever
-                        self.state.mark_client_protocols_documented(&[protocol.clone()]).await;
+                        self.state
+                            .mark_client_protocols_documented(&[protocol.clone()])
+                            .await;
 
                         // Build the original action JSON for reference
                         let original_action = serde_json::json!({
@@ -1596,24 +1646,21 @@ impl EventHandler {
                         if let Ok(id) = id_str.parse::<u32>() {
                             DatabaseOwner::Server(crate::state::ServerId::new(id))
                         } else {
-                            let _ = status_tx.send(format!(
-                                "[ERROR] Invalid server ID in owner: {}",
-                                owner_str
-                            ));
+                            let _ = status_tx
+                                .send(format!("[ERROR] Invalid server ID in owner: {}", owner_str));
                             return Ok(());
                         }
                     } else if let Some(id_str) = owner_str.strip_prefix("client-") {
                         if let Ok(id) = id_str.parse::<u32>() {
                             DatabaseOwner::Client(crate::state::ClientId::new(id))
                         } else {
-                            let _ = status_tx.send(format!(
-                                "[ERROR] Invalid client ID in owner: {}",
-                                owner_str
-                            ));
+                            let _ = status_tx
+                                .send(format!("[ERROR] Invalid client ID in owner: {}", owner_str));
                             return Ok(());
                         }
                     } else {
-                        let _ = status_tx.send(format!("[ERROR] Invalid owner format: {}", owner_str));
+                        let _ =
+                            status_tx.send(format!("[ERROR] Invalid owner format: {}", owner_str));
                         return Ok(());
                     }
                 } else {
@@ -1630,7 +1677,12 @@ impl EventHandler {
                 // Create database
                 match self
                     .state
-                    .create_database(name.clone(), db_path.clone(), db_owner.clone(), schema_ddl.as_deref())
+                    .create_database(
+                        name.clone(),
+                        db_path.clone(),
+                        db_owner.clone(),
+                        schema_ddl.as_deref(),
+                    )
                     .await
                 {
                     Ok(db_id) => {
@@ -1642,7 +1694,8 @@ impl EventHandler {
                         // Show schema if provided
                         if let Some(db) = self.state.get_database(db_id).await {
                             if !db.tables.is_empty() {
-                                let _ = status_tx.send(format!("[DB] Schema: {}", db.schema_summary()));
+                                let _ =
+                                    status_tx.send(format!("[DB] Schema: {}", db.schema_summary()));
                             }
                         }
                     }
@@ -1679,6 +1732,18 @@ impl EventHandler {
     }
 
     /// Parse event handlers from JSON array into EventHandlerConfig
+    ///
+    /// Static handlers are validated here rather than at the first packet:
+    /// * every action name must exist in the action catalog of the protocol(s) that
+    ///   declare an event matching the handler's `event_pattern` (see
+    ///   [`action_catalog_for_pattern`]), and
+    /// * every `{{event.…}}` reference must be well formed
+    ///   ([`EventHandlerType::validate`]).
+    ///
+    /// Both used to fail silently at dispatch time — the peer got the protocol default,
+    /// no error reached the caller, and the access log recorded the action as though it
+    /// had run. Reporting them here means `start_server` / `open_server` rejects the
+    /// configuration outright.
     pub fn parse_event_handlers(
         handlers_json: Vec<serde_json::Value>,
     ) -> Result<crate::scripting::EventHandlerConfig> {
@@ -1743,6 +1808,32 @@ impl EventHandler {
                 }
                 _ => anyhow::bail!("Unknown handler type: {}", handler_type_str),
             };
+
+            // Reject a malformed `{{event.…}}` reference now rather than at the first
+            // packet. Only the shape is checkable without an event; whether a well-formed
+            // reference resolves is decided by `interpolate_actions` at dispatch.
+            //
+            // The *field name* of a well-formed reference is deliberately NOT checked
+            // here, even though a specific `event_pattern` resolves to an event type whose
+            // `parameters` list looks like the right oracle. It is not one yet: several
+            // protocols emit event data keys they never declare — `http_request` declares
+            // `method`/`path`/`query_string`/`query`/`headers` but also emits `body`,
+            // `body_bytes` and `body_is_binary` (`src/server/http/mod.rs`) — so rejecting
+            // undeclared names would break handlers that work today. This becomes
+            // checkable once every protocol's declared `parameters` are known to cover the
+            // keys it actually emits.
+            handler_type.validate().map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid event handler for {}: {}",
+                    describe_pattern(&event_pattern),
+                    e
+                )
+            })?;
+
+            // Reject action names the protocol cannot execute.
+            if let EventHandlerType::Static { ref actions } = handler_type {
+                validate_static_action_names(&event_pattern, actions)?;
+            }
 
             config.add_handler(EventHandler::new(event_pattern, handler_type));
         }
@@ -1954,7 +2045,9 @@ impl EventHandler {
         ui.add_llm_message("".to_string());
         ui.add_llm_message("To switch backend:".to_string());
         ui.add_llm_message("  /backend ollama [url]              - Switch to Ollama".to_string());
-        ui.add_llm_message("  /backend openai <url> [api-key]    - Switch to OpenAI-compatible".to_string());
+        ui.add_llm_message(
+            "  /backend openai <url> [api-key]    - Switch to OpenAI-compatible".to_string(),
+        );
         Ok(())
     }
 
@@ -2460,4 +2553,184 @@ impl EventHandler {
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Static event-handler validation
+// ---------------------------------------------------------------------------
+
+/// Common action names the executor handles itself, before any protocol is consulted.
+///
+/// Mirrors the variants of [`crate::llm::CommonAction`]; an action naming one of these is
+/// valid for every protocol, so it must never be rejected as unknown.
+const COMMON_ACTION_NAMES: &[&str] = &[
+    "show_message",
+    "open_server",
+    "close_server",
+    "close_all_servers",
+    "open_client",
+    "close_client",
+    "close_all_clients",
+    "close_connection_by_id",
+    "reconnect_client",
+    "update_client_instruction",
+    "update_instruction",
+    "change_model",
+    "set_memory",
+    "append_memory",
+    "append_to_log",
+    "schedule_task",
+    "cancel_task",
+    "provide_feedback",
+    #[cfg(feature = "sqlite")]
+    "create_database",
+    #[cfg(feature = "sqlite")]
+    "delete_database",
+];
+
+/// How many valid action names to spell out in an error before summarising the rest.
+const MAX_LISTED_ACTIONS: usize = 40;
+
+/// The set of action names a handler for `pattern` is allowed to use, plus a label
+/// describing where that set came from.
+struct ActionCatalog {
+    /// Valid action names, sorted
+    names: std::collections::BTreeSet<String>,
+    /// Human-readable scope, e.g. `TCP` or `TCP, HTTP`
+    scope: String,
+}
+
+/// Render an event pattern for an error message.
+fn describe_pattern(pattern: &crate::scripting::EventPattern) -> String {
+    use crate::scripting::EventPattern;
+    match pattern {
+        EventPattern::Specific(id) => format!("event '{}'", id),
+        EventPattern::Wildcard => "the wildcard event pattern".to_string(),
+    }
+}
+
+/// Collect every action name a protocol can execute in response to an event matching
+/// `pattern`, or `None` if the protocol declares no event matching it.
+///
+/// `get_sync_actions()` is the protocol-wide catalog for event responses; each matching
+/// event type may additionally advertise its own actions, so both are unioned.
+fn protocol_actions_for_pattern<P>(
+    protocol: &P,
+    pattern: &crate::scripting::EventPattern,
+) -> Option<Vec<String>>
+where
+    P: crate::llm::actions::protocol_trait::Protocol + ?Sized,
+{
+    let event_types = protocol.get_event_types();
+    let matching: Vec<_> = event_types
+        .iter()
+        .filter(|et| pattern.matches(&et.id))
+        .collect();
+    if matching.is_empty() {
+        return None;
+    }
+
+    let mut names: Vec<String> = protocol
+        .get_sync_actions()
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    for event_type in matching {
+        names.extend(event_type.actions.iter().map(|a| a.name.clone()));
+    }
+    Some(names)
+}
+
+/// Build the action catalog for a handler's event pattern.
+///
+/// Protocols are matched by the events they declare: a pattern of `tcp_data_received`
+/// resolves to TCP alone and yields TCP's catalog; a wildcard pattern matches every
+/// protocol and yields the union. Both server and client registries are consulted because
+/// `parse_event_handlers` serves `start_server` and `start_client` alike.
+///
+/// If no compiled protocol declares a matching event (an event id we do not know about),
+/// the catalog is empty and validation is skipped rather than rejecting the handler.
+fn action_catalog_for_pattern(pattern: &crate::scripting::EventPattern) -> ActionCatalog {
+    let mut names: std::collections::BTreeSet<String> = COMMON_ACTION_NAMES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    let mut scopes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for (_, protocol) in crate::protocol::server_registry::registry().all_protocols() {
+        if let Some(actions) = protocol_actions_for_pattern(protocol.as_ref(), pattern) {
+            scopes.insert(protocol.protocol_name().to_string());
+            names.extend(actions);
+        }
+    }
+
+    for protocol in crate::protocol::client_registry::CLIENT_REGISTRY.get_all() {
+        if let Some(actions) = protocol_actions_for_pattern(protocol.as_ref(), pattern) {
+            scopes.insert(protocol.protocol_name().to_string());
+            names.extend(actions);
+        }
+    }
+
+    if scopes.is_empty() {
+        // Nothing declares this event: no catalog to validate against.
+        return ActionCatalog {
+            names: std::collections::BTreeSet::new(),
+            scope: String::new(),
+        };
+    }
+
+    let scope = scopes.into_iter().collect::<Vec<_>>().join(", ");
+    ActionCatalog { names, scope }
+}
+
+/// Reject static handler actions whose `type` no matching protocol can execute.
+///
+/// Without this a typo'd action name is accepted by `start_server` and only surfaces when
+/// the first packet arrives — where it produces no response at all.
+fn validate_static_action_names(
+    pattern: &crate::scripting::EventPattern,
+    actions: &[serde_json::Value],
+) -> Result<()> {
+    let catalog = action_catalog_for_pattern(pattern);
+    if catalog.names.is_empty() {
+        // No protocol declares an event matching this pattern; nothing to check against.
+        return Ok(());
+    }
+
+    for action in actions {
+        let Some(name) = action.get("type").and_then(|v| v.as_str()) else {
+            anyhow::bail!(
+                "Static handler action for {} has no \"type\" field: {}",
+                describe_pattern(pattern),
+                action
+            );
+        };
+
+        if catalog.names.contains(name) {
+            continue;
+        }
+
+        let listed: Vec<&str> = catalog
+            .names
+            .iter()
+            .take(MAX_LISTED_ACTIONS)
+            .map(|s| s.as_str())
+            .collect();
+        let overflow = catalog.names.len().saturating_sub(listed.len());
+        let mut valid = listed.join(", ");
+        if overflow > 0 {
+            valid.push_str(&format!(", … ({} more)", overflow));
+        }
+
+        anyhow::bail!(
+            "Unknown action \"{}\" in the static handler for {}. \
+             Valid actions for {}: {}",
+            name,
+            describe_pattern(pattern),
+            catalog.scope,
+            valid
+        );
+    }
+
+    Ok(())
 }
