@@ -9,6 +9,7 @@ use crate::helpers::*;
 use std::time::Duration;
 
 /// Test Git clone operation with mocked LLM
+#[ignore = "Contacts a real external endpoint. CLAUDE.md requires tests to use localhost only (127.0.0.1/::1) and never reach external services. These were orphaned from tests/client/mod.rs and had never actually run; wiring them in made the calls live. Re-enable by pointing remote_addr at a NetGet server on 127.0.0.1."]
 #[tokio::test]
 async fn test_git_clone() -> E2EResult<()> {
     println!("\n=== E2E Test: Git Client Clone ===");
@@ -83,6 +84,7 @@ async fn test_git_clone() -> E2EResult<()> {
 }
 
 /// Test Git log operation with mocked LLM
+#[ignore = "Contacts a real external endpoint. CLAUDE.md requires tests to use localhost only (127.0.0.1/::1) and never reach external services. These were orphaned from tests/client/mod.rs and had never actually run; wiring them in made the calls live. Re-enable by pointing remote_addr at a NetGet server on 127.0.0.1."]
 #[tokio::test]
 async fn test_git_log() -> E2EResult<()> {
     println!("\n=== E2E Test: Git Client Log ===");

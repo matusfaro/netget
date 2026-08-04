@@ -9,6 +9,7 @@ use crate::helpers::{E2EResult, NetGetConfig};
 
 /// Test DoT client basic query with mocks
 /// LLM calls: 3 (startup, connected event, response event)
+#[ignore = "Contacts a real external endpoint. CLAUDE.md requires tests to use localhost only (127.0.0.1/::1) and never reach external services. These were orphaned from tests/client/mod.rs and had never actually run; wiring them in made the calls live. Re-enable by pointing remote_addr at a NetGet server on 127.0.0.1."]
 #[tokio::test]
 async fn test_dot_client_basic_query() -> E2EResult<()> {
     println!("\n=== E2E Test: DoT Client Basic Query with Mocks ===");
@@ -85,6 +86,7 @@ async fn test_dot_client_basic_query() -> E2EResult<()> {
 
 /// Test DoT client with multiple queries
 /// LLM calls: 5 (startup, connected, 3 responses)
+#[ignore = "Contacts a real external endpoint. CLAUDE.md requires tests to use localhost only (127.0.0.1/::1) and never reach external services. These were orphaned from tests/client/mod.rs and had never actually run; wiring them in made the calls live. Re-enable by pointing remote_addr at a NetGet server on 127.0.0.1."]
 #[tokio::test]
 async fn test_dot_client_multiple_queries() -> E2EResult<()> {
     println!("\n=== E2E Test: DoT Client Multiple Queries with Mocks ===");
