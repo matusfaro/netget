@@ -2,86 +2,135 @@
 
 ## Overview
 
-FTP (File Transfer Protocol) server implementation following RFC 959. This implementation provides LLM-controlled responses to FTP commands over the control channel.
+FTP (RFC 959) **control connection** server. Every reply the client sees is produced by a
+handler — script, static or LLM. There is no filesystem behind it: the model invents the
+directory listings and file contents, and nothing is read from or written to disk.
+
+**Status**: Experimental
+**Port**: 21 (privileged — `privilege_requirement` is `PrivilegedPort(21)`)
+**Feature**: `ftp` (no extra crates; `ftp = []` in `Cargo.toml`)
+**Files**: `mod.rs` (accept loop, session I/O), `actions.rs` (actions, event, metadata)
+
+## What this is not
+
+Read this before choosing FTP for anything.
+
+**There is no data connection.** `PASV`, `EPSV` and `PORT` are not implemented — the server
+never opens a second socket. Everything is written on the control connection. A real FTP
+client (`ftp`, `lftp`, `curl`, FileZilla) will therefore:
+
+- happily complete the login handshake (`USER`/`PASS`/`SYST`/`PWD` are plain replies), and
+- fail or hang on anything that needs a transfer (`LIST`, `NLST`, `RETR`, `STOR`), because the
+  handler's `PASV` reply is whatever the model made up and no data socket is listening behind it.
+
+`send_ftp_list` and `send_ftp_data` write their bytes on the control connection anyway. That is
+useful against a raw client (`nc localhost 2121`) and against an attacker who is reading the
+transcript, and it is useless for interoperating with a real client. The action descriptions say
+so; do not treat listing support as working file transfer.
+
+Also missing: FTPS / `AUTH TLS`, binary vs ASCII mode (`TYPE` is just another reply), `REST`,
+and any notion of a current working directory — the model tracks the cwd in its own memory or
+not at all.
 
 ## Architecture
 
-### Control Channel Only
+### Connection flow
 
-This implementation handles only the FTP control channel (command/response). Data channel operations (PORT/PASV mode) are simulated through inline responses. This simplifies the implementation while still allowing useful FTP interactions.
+1. Accept TCP (`create_reusable_tcp_listener`, so restarts do not hit `EADDRINUSE`).
+2. Register the connection in `ServerInstance` so it appears in the TUI.
+3. Raise `ftp_command` with `command = "CONNECTION_ESTABLISHED"` and write whatever the handler
+   returns — this is how the mandatory 220 greeting is produced.
+4. Read command lines with `BufReader::read_line`, raise `ftp_command` per line, write the
+   handler's output, repeat.
+5. On `close_connection`, EOF, or a write error, mark the connection closed.
 
-### Connection Flow
+The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
+`stop_server` aborts it and releases port 21. `spawn_with_llm_actions` propagates bind failure
+with `?`, so a port clash is reported as `Error` and not as a phantom `Running` server.
 
-1. Client connects to control port (typically 21)
-2. Server sends 220 greeting (via LLM)
-3. Client sends commands (USER, PASS, LIST, etc.)
-4. Server responds via LLM-controlled actions
-5. Session ends with QUIT command
+### Startup parameters
 
-## Library Choices
+None. The previously advertised `passive_port_range` was never read by any code — there is no
+passive mode to configure — and has been removed. `send_first` is not declared either: the
+server always sends the greeting event itself, so passing `send_first` would only earn an
+"unsupported" warning from `server_startup`.
 
-- **tokio**: Async TCP handling
-- **No external FTP library**: Manual line-based parsing for full LLM control
+### Error handling
+
+A handler failure is not silent. The greeting path logs the error (the client would otherwise
+wait forever for a 220 with nothing in the log); the command path logs it, replies
+`421 Service not available, closing control connection`, and closes.
 
 ## LLM Integration
 
-### Events
+`call_llm` is used for both the greeting and every command, so script and static handlers run
+in-process with **zero** LLM calls (`call_llm` → `try_execute_event_handler`). Only when no
+handler matches does the model get invoked, once per command line.
 
-| Event | Description | Parameters |
-|-------|-------------|------------|
-| `ftp_command` | FTP command received | `command` - full command string |
+### Event
+
+| Event         | When                                            | Parameters |
+|---------------|-------------------------------------------------|------------|
+| `ftp_command` | connection accepted, and once per command line  | `command`  |
+
+`command` is the raw line with the trailing CRLF stripped — not upper-cased, not split into
+verb and argument. The single sentinel value `CONNECTION_ESTABLISHED` means "TCP connection
+accepted, send your 220 greeting"; it is never sent by a client.
 
 ### Actions
 
-| Action | Description | Parameters |
-|--------|-------------|------------|
-| `send_ftp_response` | Single-line response | `code`, `message` |
-| `send_ftp_multiline` | Multi-line response | `code`, `lines[]` |
-| `send_ftp_data` | Raw data | `data` |
-| `send_ftp_list` | Directory listing | `entries[]` |
-| `wait_for_more` | Wait for more input | - |
-| `close_connection` | Close connection | - |
+| Action                | Sends                                                     | Parameters        |
+|-----------------------|-----------------------------------------------------------|-------------------|
+| `send_ftp_response`   | `<code> <message>\r\n`                                    | `code`, `message` |
+| `send_ftp_multiline`  | `<code>-<line>\r\n` … `<code> <last>\r\n`                 | `code`, `lines[]` |
+| `send_ftp_data`       | raw text + CRLF, **on the control connection**            | `data`            |
+| `send_ftp_list`       | one CRLF-terminated line per entry, **on the control connection** | `entries[]` |
+| `wait_for_more`       | nothing — read another line first                         | –                 |
+| `close_connection`    | nothing — closes the control connection                   | –                 |
 
-### Common FTP Response Codes
+`code` is validated: it must be a three-digit RFC 959 code in 100–599. Out-of-range values and a
+missing `code` or `message` are errors, not silently substituted defaults — a wrong reply code
+is worse than a visible failure. `send_ftp_data` normalises the ending so exactly one CRLF is
+written (a bare `\n` is upgraded; previously this path emitted a lone `\r` and truncated the
+line for the client).
 
-- 220: Service ready (greeting)
-- 230: User logged in
-- 250: Requested file action okay
-- 257: "PATHNAME" created
-- 331: User name okay, need password
-- 350: Requested file action pending further information
-- 421: Service not available
-- 425: Can't open data connection
-- 450: Requested file action not taken
-- 500: Syntax error, command unrecognized
-- 530: Not logged in
-- 550: Requested action not taken (file unavailable)
+There are no async (user-triggered) actions.
 
-## Limitations
+### Common reply codes
 
-1. **No Data Channel**: True data transfers (PORT/PASV) not implemented
-2. **No TLS**: FTPS/implicit TLS not supported
-3. **Control Channel Only**: All data must be sent inline or simulated
-4. **No Binary Mode**: Only ASCII text transfers conceptually supported
+220 ready · 221 goodbye · 230 logged in · 250 command ok · 257 pathname created ·
+331 need password · 421 service unavailable · 425 cannot open data connection ·
+500 syntax error · 530 not logged in · 550 file unavailable
 
-## Example Usage
+## Storage
 
-```
-User: Start an FTP server on port 2121 that allows anonymous login
-
-LLM Response:
-- On CONNECTION_ESTABLISHED: send_ftp_response(220, "FTP Server Ready")
-- On USER anonymous: send_ftp_response(331, "Anonymous login okay, send email as password")
-- On PASS *: send_ftp_response(230, "Anonymous user logged in")
-- On SYST: send_ftp_response(215, "UNIX Type: L8")
-- On PWD: send_ftp_response(257, "\"/\" is current directory")
-- On LIST: send_ftp_response(150, "Opening data connection") then send_ftp_list([entries])
-- On QUIT: send_ftp_response(221, "Goodbye") then close_connection
-```
+None, by design. The protocol holds no files, no directory tree and no cwd. Directory listings
+and file contents come from the handler on every request; `send_ftp_list` formats strings the
+model supplies and nothing else.
 
 ## Testing
 
-Test with standard FTP clients:
-- `nc localhost 2121` (raw commands)
-- `lftp localhost:2121`
-- `ftp localhost 2121`
+**There is no E2E test for FTP** (`tests/server/ftp/` does not exist). This is the largest gap
+in the protocol. Until one exists, verify by hand:
+
+```
+nc localhost 2121
+USER anonymous
+PASS a@b.c
+SYST
+PWD
+QUIT
+```
+
+A real FTP client can be used to exercise login, but not transfers — see "What this is not".
+
+## Example prompt
+
+```
+listen on port 2121 via ftp
+Reply 220 "NetGet FTP" to CONNECTION_ESTABLISHED
+Accept user anonymous with any password (331 then 230)
+SYST -> 215 "UNIX Type: L8"
+PWD  -> 257 "\"/\" is current directory"
+QUIT -> 221 "Goodbye" then close_connection
+```

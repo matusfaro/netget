@@ -69,14 +69,40 @@ impl FtpServer {
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
 
                         tokio::spawn(async move {
+                            // Register the connection so it shows up in the TUI and in
+                            // list_connections, and so stop_server accounts for it.
+                            use crate::state::server::{
+                                ConnectionState as ServerConnectionState, ConnectionStatus,
+                                ProtocolConnectionInfo,
+                            };
+                            let now = std::time::Instant::now();
+                            let conn_state = ServerConnectionState {
+                                id: connection_id,
+                                remote_addr,
+                                local_addr: local_addr_conn,
+                                bytes_sent: 0,
+                                bytes_received: 0,
+                                packets_sent: 0,
+                                packets_received: 0,
+                                last_activity: now,
+                                status: ConnectionStatus::Active,
+                                status_changed_at: now,
+                                protocol_info: ProtocolConnectionInfo::empty(),
+                            };
+                            state_clone
+                                .add_connection_to_server(server_id, conn_state)
+                                .await;
+                            let _ = status_clone.send("__UPDATE_UI__".to_string());
+
                             if let Err(e) = FtpSession::handle_session(
                                 stream,
                                 connection_id,
                                 server_id,
                                 llm_clone,
-                                state_clone,
+                                state_clone.clone(),
                                 status_clone.clone(),
                                 protocol_clone,
                             )
@@ -86,6 +112,11 @@ impl FtpServer {
                                 let _ =
                                     status_clone.send(format!("[ERROR] FTP session error: {}", e));
                             }
+
+                            state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
@@ -151,7 +182,7 @@ impl FtpSession {
         server_id: crate::state::ServerId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        _status_tx: &mpsc::UnboundedSender<String>,
+        status_tx: &mpsc::UnboundedSender<String>,
         protocol: &Arc<FtpProtocol>,
     ) -> Result<()>
     where
@@ -159,6 +190,9 @@ impl FtpSession {
     {
         use tokio::io::AsyncWriteExt;
 
+        // The client will not speak until it has seen a 2xx greeting, so this event is the
+        // handler's only chance to produce one. `CONNECTION_ESTABLISHED` is a sentinel, not a
+        // command the client sent - see FTP_COMMAND_EVENT.
         let greeting_event = Event::new(
             &FTP_COMMAND_EVENT,
             serde_json::json!({
@@ -166,7 +200,7 @@ impl FtpSession {
             }),
         );
 
-        if let Ok(execution_result) = call_llm(
+        match call_llm(
             llm_client,
             app_state,
             server_id,
@@ -176,11 +210,19 @@ impl FtpSession {
         )
         .await
         {
-            for protocol_result in execution_result.protocol_results {
-                if let ActionResult::Output(data) = protocol_result {
-                    stream.write_all(&data).await?;
-                    stream.flush().await?;
+            Ok(execution_result) => {
+                for protocol_result in execution_result.protocol_results {
+                    if let ActionResult::Output(data) = protocol_result {
+                        stream.write_all(&data).await?;
+                        stream.flush().await?;
+                    }
                 }
+            }
+            Err(e) => {
+                // Swallowing this used to leave the client waiting for a greeting that never
+                // came, with nothing logged to explain the hang.
+                error!("FTP greeting handler failed on connection {connection_id}: {e}");
+                let _ = status_tx.send(format!("[ERROR] FTP greeting failed: {e}"));
             }
         }
 
@@ -222,8 +264,8 @@ impl FtpSession {
                 }),
             );
 
-            // Get LLM response
-            if let Ok(execution_result) = call_llm(
+            // Get handler/LLM response
+            match call_llm(
                 &llm_client,
                 &app_state,
                 server_id,
@@ -233,21 +275,34 @@ impl FtpSession {
             )
             .await
             {
-                for protocol_result in execution_result.protocol_results {
-                    match protocol_result {
-                        ActionResult::Output(data) => {
-                            write_half.write_all(&data).await?;
-                            write_half.flush().await?;
+                Ok(execution_result) => {
+                    for protocol_result in execution_result.protocol_results {
+                        match protocol_result {
+                            ActionResult::Output(data) => {
+                                write_half.write_all(&data).await?;
+                                write_half.flush().await?;
 
-                            let response = String::from_utf8_lossy(&data);
-                            debug!("FTP sent: {}", response.trim());
-                            console_debug!(status_tx, "FTP sent: {}", response.trim());
+                                let response = String::from_utf8_lossy(&data);
+                                debug!("FTP sent: {}", response.trim());
+                                console_debug!(status_tx, "FTP sent: {}", response.trim());
+                            }
+                            ActionResult::CloseConnection => {
+                                return Ok(());
+                            }
+                            _ => {}
                         }
-                        ActionResult::CloseConnection => {
-                            return Ok(());
-                        }
-                        _ => {}
                     }
+                }
+                Err(e) => {
+                    // Do not leave the client hanging with no diagnostic: RFC 959 421 tells it
+                    // the service is unavailable and the control connection is closing.
+                    error!("FTP handler failed for command {command:?}: {e}");
+                    let _ = status_tx.send(format!("[ERROR] FTP handler failed: {e}"));
+                    let _ = write_half
+                        .write_all(b"421 Service not available, closing control connection\r\n")
+                        .await;
+                    let _ = write_half.flush().await;
+                    return Ok(());
                 }
             }
         }

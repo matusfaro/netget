@@ -23,12 +23,12 @@ impl FtpProtocol {
     }
 
     fn execute_send_ftp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let code = action.get("code").and_then(|v| v.as_u64()).unwrap_or(500);
+        let code = parse_ftp_code(&action)?;
 
         let message = action
             .get("message")
             .and_then(|v| v.as_str())
-            .unwrap_or("Error");
+            .context("Missing 'message' parameter (the human-readable text after the code)")?;
 
         let response = format!("{} {}\r\n", code, message);
 
@@ -37,7 +37,7 @@ impl FtpProtocol {
     }
 
     fn execute_send_ftp_multiline(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let code = action.get("code").and_then(|v| v.as_u64()).unwrap_or(200);
+        let code = parse_ftp_code(&action)?;
 
         let lines = action
             .get("lines")
@@ -46,6 +46,9 @@ impl FtpProtocol {
             .unwrap_or_default();
 
         if lines.is_empty() {
+            // Degenerate case: a multiline response with no lines is just a single-line
+            // response. Fall back to 'message' so the client still gets a valid reply
+            // rather than a bare code.
             let message = action
                 .get("message")
                 .and_then(|v| v.as_str())
@@ -76,11 +79,11 @@ impl FtpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        // Ensure data ends with CRLF
+        // Ensure data ends with exactly one CRLF.
         let formatted = if data.ends_with("\r\n") {
             data.to_string()
-        } else if data.ends_with('\n') {
-            format!("{}\r", data.trim_end_matches('\n'))
+        } else if let Some(stripped) = data.strip_suffix('\n') {
+            format!("{}\r\n", stripped)
         } else {
             format!("{}\r\n", data)
         };
@@ -114,18 +117,34 @@ impl Default for FtpProtocol {
     }
 }
 
+/// Read and validate the `code` field of an FTP reply action.
+///
+/// RFC 959 replies are always a three-digit code, so anything outside 100-599 is a
+/// mistake the client cannot interpret. Returning an error (rather than silently
+/// substituting 500) makes the failure visible instead of shipping a wrong reply.
+fn parse_ftp_code(action: &serde_json::Value) -> Result<u64> {
+    let code = action
+        .get("code")
+        .and_then(|v| v.as_u64())
+        .context("Missing 'code' parameter (a three-digit RFC 959 reply code, e.g. 220)")?;
+
+    if !(100..=599).contains(&code) {
+        return Err(anyhow::anyhow!(
+            "Invalid FTP reply code {code}: RFC 959 codes are three digits in the range 100-599 \
+             (e.g. 220 ready, 230 logged in, 331 need password, 550 not found)."
+        ));
+    }
+
+    Ok(code)
+}
+
 // Implement Protocol trait (common functionality)
 impl Protocol for FtpProtocol {
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        use crate::llm::actions::ParameterDefinition;
-        vec![ParameterDefinition {
-            name: "passive_port_range".to_string(),
-            type_hint: "string".to_string(),
-            description: "Port range for passive mode data connections (default: 20000-20099)"
-                .to_string(),
-            required: false,
-            example: json!("20000-20099"),
-        }]
+        // This server implements the FTP control connection only - there is no PASV/PORT
+        // data connection, so there is no passive port range to configure. It also always
+        // sends the 220 greeting itself, so it declares no `send_first` either.
+        Vec::new()
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -161,14 +180,20 @@ impl Protocol for FtpProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(21))
             .implementation("Manual line-based parsing with tokio")
-            .llm_control("All FTP commands + responses")
-            .e2e_testing("curl, lftp, or raw TCP client")
-            .notes("Basic FTP functionality, control channel only (no data channel)")
+            .llm_control("All FTP replies on the control connection")
+            .e2e_testing("raw TCP client (nc); real FTP clients cannot transfer files")
+            .notes(
+                "Control connection only: PASV/PORT are not implemented, so LIST/RETR/STOR \
+                 cannot complete against a real FTP client. No TLS. No E2E test.",
+            )
             .build()
     }
 
@@ -187,13 +212,15 @@ impl Protocol for FtpProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // NOTE: no `send_first` here. The server always emits ftp_command with
+        // command="CONNECTION_ESTABLISHED" on connect so the handler can produce the 220
+        // greeting; passing send_first would only produce an "unsupported" warning.
         StartupExamples::new(
             // LLM mode: LLM handles all FTP responses intelligently
             json!({
                 "type": "open_server",
                 "port": 21,
                 "base_stack": "ftp",
-                "send_first": true,
                 "instruction": "FTP server that allows anonymous login and responds to FTP commands"
             }),
             // Script mode: Code-based deterministic responses
@@ -201,7 +228,6 @@ impl Protocol for FtpProtocol {
                 "type": "open_server",
                 "port": 21,
                 "base_stack": "ftp",
-                "send_first": true,
                 "event_handlers": [{
                     "event_pattern": "ftp_command",
                     "handler": {
@@ -216,7 +242,6 @@ impl Protocol for FtpProtocol {
                 "type": "open_server",
                 "port": 21,
                 "base_stack": "ftp",
-                "send_first": true,
                 "event_handlers": [{
                     "event_pattern": "ftp_command",
                     "handler": {
@@ -279,18 +304,29 @@ impl Server for FtpProtocol {
 fn send_ftp_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_ftp_response".to_string(),
-        description: "Send an FTP response with code and message".to_string(),
+        description: "Send a single-line RFC 959 reply on the FTP control connection. The bytes \
+            put on the wire are exactly \"<code> <message>\\r\\n\" - do not include the code in \
+            'message' and do not add your own line ending. This is the normal way to answer every \
+            FTP command."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "code".to_string(),
                 type_hint: "number".to_string(),
-                description: "FTP response code (e.g., 220, 230, 250, 550)".to_string(),
+                description: "Three-digit RFC 959 reply code, 100-599. 220 ready, 221 goodbye, \
+                    230 logged in, 250 command ok, 257 pathname created, 331 need password, \
+                    500 syntax error, 530 not logged in, 550 file unavailable. Any value outside \
+                    100-599 is rejected"
+                    .to_string(),
                 required: true,
             },
             Parameter {
                 name: "message".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response message".to_string(),
+                description: "Human-readable text placed after the code on the same line. Must \
+                    not contain CR or LF - use send_ftp_multiline for a reply spanning several \
+                    lines"
+                    .to_string(),
                 required: true,
             },
         ],
@@ -310,18 +346,27 @@ fn send_ftp_response_action() -> ActionDefinition {
 fn send_ftp_multiline_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_ftp_multiline".to_string(),
-        description: "Send a multiline FTP response (for FEAT, HELP, etc.)".to_string(),
+        description: "Send a multi-line RFC 959 reply, used for FEAT, HELP, STAT and similar. \
+            Every line but the last is written as \"<code>-<line>\\r\\n\" and the last as \
+            \"<code> <line>\\r\\n\", which is what tells the client the reply has ended. Supply \
+            only the text of each line; the code and separators are added for you."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "code".to_string(),
                 type_hint: "number".to_string(),
-                description: "FTP response code".to_string(),
+                description: "Three-digit RFC 959 reply code, 100-599, repeated on every line of \
+                    the reply (e.g. 211 for FEAT, 214 for HELP)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
                 name: "lines".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of response lines".to_string(),
+                description: "Array of strings, one per line of the reply, in order. Include the \
+                    closing line (e.g. \"End\") yourself. If this is omitted or empty the action \
+                    falls back to sending a single-line reply using the 'message' field"
+                    .to_string(),
                 required: true,
             },
         ],
@@ -341,11 +386,18 @@ fn send_ftp_multiline_action() -> ActionDefinition {
 fn send_ftp_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_ftp_data".to_string(),
-        description: "Send raw data (for inline data transfer)".to_string(),
+        description: "Write raw text on the FTP CONTROL connection, terminated with CRLF. \
+            WARNING: this server implements no data connection (PASV/PORT are not supported), so \
+            this does NOT perform an FTP file transfer - the bytes appear inline in the command \
+            channel. A real FTP client will reject or misparse them. Use it only with raw clients \
+            such as `nc`, or to send a reply line that send_ftp_response cannot express."
+            .to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "Data to send (will auto-add CRLF if not present)".to_string(),
+            description: "Text to write on the control connection. Exactly one trailing CRLF is \
+                ensured: a bare \"\\n\" is upgraded to \"\\r\\n\" and a missing ending is added"
+                .to_string(),
             required: true,
         }],
         example: json!({
@@ -364,11 +416,19 @@ fn send_ftp_data_action() -> ActionDefinition {
 fn send_ftp_list_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_ftp_list".to_string(),
-        description: "Send directory listing entries".to_string(),
+        description: "Write directory listing lines, one per entry, each terminated with CRLF. \
+            WARNING: a real FTP client expects a LIST/NLST listing on a separate data connection, \
+            and this server has none - the lines go out on the control connection instead, where \
+            a real client will not accept them. Useful for raw clients (`nc`) and for showing a \
+            plausible listing to an attacker; not for interoperating with `ftp`/`lftp`/`curl`."
+            .to_string(),
         parameters: vec![Parameter {
             name: "entries".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of directory entries in Unix ls -l format".to_string(),
+            description: "Array of strings, one per directory entry, already formatted as \
+                `ls -l` output (permissions, links, owner, group, size, date, name). Do not \
+                include line endings; CRLF is appended to each entry"
+                .to_string(),
             required: true,
         }],
         example: json!({
@@ -435,17 +495,24 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 // FTP Event Type Constants
 // ============================================================================
 
-/// FTP command event - triggered when client sends an FTP command
+/// FTP command event - triggered on connect and for every command line thereafter
 pub static FTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ftp_command",
-        "FTP command received from client",
+        "A client connected, or sent a command line on the FTP control connection. This is the \
+         only FTP event: the connect case is signalled by the literal command \
+         'CONNECTION_ESTABLISHED', for which you must reply with a 220 greeting before the client \
+         will send anything else.",
         json!({"type": "send_ftp_response", "code": 220, "message": "FTP Server Ready"}),
     )
     .with_parameters(vec![Parameter {
         name: "command".to_string(),
         type_hint: "string".to_string(),
-        description: "The FTP command received (e.g., 'USER anonymous', 'LIST', 'RETR file.txt')"
+        description: "The command line as sent by the client, with the trailing CRLF stripped \
+            (e.g. 'USER anonymous', 'PASS x@y.z', 'SYST', 'PWD', 'LIST', 'RETR file.txt', \
+            'QUIT'). The verb is NOT upper-cased or split out for you. One exception: the \
+            literal value 'CONNECTION_ESTABLISHED' is not from the client - it means the TCP \
+            connection has just been accepted and the server is waiting for your 220 greeting"
             .to_string(),
         required: true,
     }])
