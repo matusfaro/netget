@@ -451,8 +451,43 @@ pub async fn call_llm(
         all_actions.push(crate::llm::actions::common::provide_feedback_action());
     }
 
-    // Add event-specific actions (these are the actions available for this event type)
-    all_actions.extend(event.event_type.actions.clone());
+    // Add event-specific actions (these are the actions available for this event type).
+    //
+    // The event's own list is authoritative and is deliberately narrower than the protocol's
+    // full set: SSH's `ssh_auth` accepts `ssh_auth_decision` and nothing else, and unioning in
+    // `get_sync_actions()` would offer the model `sftp_error` as a way to answer an
+    // authentication request. So a narrowing is preserved wherever a protocol expressed one.
+    //
+    // What is never intended is an *empty* list on a protocol that declares sync actions: the
+    // model is then handed only set_memory/append_memory/show_message/append_to_log, and every
+    // protocol action it returns is rejected as unknown, retried twice, and fails. That shape
+    // silently disabled sixteen protocols, so it is reported and repaired instead of shipped.
+    if event.event_type.has_no_usable_actions() {
+        let fallback = protocol.get_sync_actions();
+        if !fallback.is_empty() {
+            error!(
+                "BUG: event '{}' of protocol '{}' declares no actions of its own, so the model \
+                 would be offered none of the protocol's {} sync action(s) and anything \
+                 protocol-specific it returned would be rejected as an unknown action. Falling \
+                 back to the full sync action set. Fix by adding .with_actions(...) to the event \
+                 type, or .with_no_actions() if it genuinely needs none.",
+                event.id(),
+                protocol.protocol_name(),
+                fallback.len()
+            );
+            debug_assert!(
+                false,
+                "event type '{}' ({}) declares no actions while the protocol declares {}; add \
+                 .with_actions(...) to the event type or .with_no_actions() if intentional",
+                event.id(),
+                protocol.protocol_name(),
+                fallback.len()
+            );
+            all_actions.extend(fallback);
+        }
+    } else {
+        all_actions.extend(event.event_type.actions.clone());
+    }
 
     debug!(
         "LLM call for event '{}' (server #{}, {} actions available)",

@@ -21,7 +21,21 @@ pub struct EventType {
 
     /// Actions that can be used to respond to this event
     /// These are protocol-specific sync actions
+    ///
+    /// This list — not [`Server::get_sync_actions`](crate::llm::actions::Server::get_sync_actions)
+    /// — is what `call_llm` advertises to the model, so an event that leaves it empty offers the
+    /// model nothing protocol-specific and every protocol action it returns is rejected as
+    /// unknown. Narrowing is deliberate and supported (SSH's `ssh_auth` accepts only
+    /// `ssh_auth_decision`), but *silently* empty is always a bug. If an event genuinely needs no
+    /// protocol action, say so with [`EventType::with_no_actions`] rather than leaving this empty.
     pub actions: Vec<ActionDefinition>,
+
+    /// Set by [`EventType::with_no_actions`] to record that this event was *deliberately* left
+    /// without protocol actions, as opposed to having had `with_actions(...)` forgotten.
+    ///
+    /// `call_llm` treats an empty `actions` list as a bug unless this is set: see
+    /// [`EventType::has_no_usable_actions`].
+    no_actions_intentional: bool,
 
     /// Parameters describing the expected structure of event data
     /// This documents what fields should be present in the event data JSON
@@ -74,6 +88,7 @@ impl EventType {
             id: id.into(),
             description: description.into(),
             actions: Vec::new(),
+            no_actions_intentional: false,
             parameters: Vec::new(),
             response_example,
             alternative_examples: Vec::new(),
@@ -91,6 +106,28 @@ impl EventType {
     pub fn with_actions(mut self, actions: Vec<ActionDefinition>) -> Self {
         self.actions.extend(actions);
         self
+    }
+
+    /// Declare that this event deliberately offers the model no protocol-specific action.
+    ///
+    /// Use this for events that are purely informational (a connection closed, a peer went away)
+    /// where the only sensible responses are the common actions — `set_memory`, `show_message`,
+    /// `append_to_log`. It exists so that "this event needs no action" is written down and
+    /// distinguishable from "somebody forgot `with_actions(...)`", which is the failure mode that
+    /// silently disabled sixteen protocols. `call_llm` reports the latter and repairs it at
+    /// runtime; see [`EventType::has_no_usable_actions`].
+    pub fn with_no_actions(mut self) -> Self {
+        self.no_actions_intentional = true;
+        self
+    }
+
+    /// True when this event advertises no protocol action *and* never said it meant to.
+    ///
+    /// This is exactly the bug shape: the protocol declares sync actions, but the event type the
+    /// model is prompted with lists none of them, so the model's only vocabulary is the common
+    /// actions and every protocol action it produces is rejected as unknown.
+    pub fn has_no_usable_actions(&self) -> bool {
+        self.actions.is_empty() && !self.no_actions_intentional
     }
 
     /// Add a parameter describing expected event data field
