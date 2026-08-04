@@ -331,9 +331,20 @@ server scope.
 
 Assume other agents work in this repo concurrently.
 
+- **Never `git add -A`, `git add .`, or `git commit -a`.** Stage explicit paths only. This is
+  not style: a broad `git add` sweeps up whatever other agents have half-written, and a
+  half-written change committed without its other half breaks `master` for everyone. It has
+  happened twice — once landing a caller without its callee (`CertificateCache::new` gaining a
+  third argument in `proxy/mod.rs` while `proxy/cert_cache.rs` stayed uncommitted, so HEAD
+  stopped compiling), and once landing 24 import swaps without the module they imported.
 - **Shared files** (`Cargo.toml`, both registries, `server/mod.rs`, `client/mod.rs`, both test
   `mod.rs` files, `state/server.rs`): use `Edit`, add incrementally, never overwrite wholesale.
-- **Pause and report** if you hit an error in code you did not modify.
+- **Pause and report** if you hit an error in code you did not modify. It is almost always
+  another agent mid-edit; retry rather than "fixing" their file.
+- **Verify HEAD, not the working tree.** During parallel work the working tree is routinely
+  mid-edit and its failures belong to nobody. Check the committed state in a throwaway
+  worktree: `git worktree add --detach <tmp> HEAD && cargo check --all-features` with its own
+  `CARGO_TARGET_DIR`. Remove the worktree afterwards.
 - `--ollama-lock` serializes LLM API access (default in tests). Concurrent `git` work should
   use worktrees.
 - Never `pkill cargo`; use `./cargo-isolated-kill.sh`.
