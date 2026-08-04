@@ -254,6 +254,13 @@ mcp-http = ["dep:rmcp", "dep:schemars", "dep:axum", "rmcp/client", "rmcp/transpo
 # Excluded everywhere: stun/turn (ancient nix 0.8 dep), smb-client (libsmbclient),
 # embedded-llm (LLM backend, not a protocol; heavy llama.cpp build).
 # Excluded on Linux: bluetooth-ble* (libdbus), nfc* (libpcsclite), datalink/arp/isis (libpcap).
+# icmp is included here (not libpcap-gated: it only pulls in pnet's packet parsing +
+# socket2 raw sockets). It builds on Linux/macOS because pnet_datalink's Linux (AF_PACKET)
+# and macOS (BPF) backends are plain libc syscalls with no external link dependency. It is
+# NOT added to dist-windows: pnet_datalink's Windows backend hard-links against WinPcap/
+# Npcap's Packet.lib (#[link(name = "Packet")] in pnet_datalink::bindings::winpcap)
+# unconditionally, regardless of which pnet module is actually used, and that SDK is not
+# present on the windows-2022 CI runner.
 dist = [
     "portable-base",
     "mcp-stdio",
@@ -268,11 +275,13 @@ dist = [
     # Unix-only VPNs; move out of dist if they break musl/windows legs
     "wireguard",
     "openvpn",
+    "icmp",
 ]
 # macOS ships CoreBluetooth, PC/SC, and libpcap with the OS, so these are safe to bundle.
 dist-darwin = [
     "dist",
     "isis",   # libpcap ships with macOS
+    "arp",    # ARP also just needs pnet + libpcap, same as isis/datalink above
     "bluetooth-ble",
     "bluetooth-ble-client",
     "bluetooth-ble-keyboard",
