@@ -1,9 +1,6 @@
 use std::net::{TcpListener, UdpSocket};
 use tracing::{debug, warn};
 
-#[cfg(feature = "datalink")]
-use pcap;
-
 /// System capabilities detected at startup
 #[derive(Debug, Clone)]
 pub struct SystemCapabilities {
@@ -62,14 +59,14 @@ impl SystemCapabilities {
 fn is_running_as_root() -> bool {
     #[cfg(unix)]
     {
-        // Check effective user ID using std::os::unix
-        use std::os::unix::fs::MetadataExt;
-        // Try to check our own UID - if we can read /proc/self (Linux) or similar
-        // Alternative: try to bind to a privileged port as a test
-        // For now, use a simple heuristic: try to create a file in /root (fails if not root)
-        std::fs::metadata("/root").map(|m| m.uid()).unwrap_or(1000) == 0
-            || std::env::var("USER").unwrap_or_default() == "root"
-            || std::env::var("LOGNAME").unwrap_or_default() == "root"
+        // geteuid() is the actual answer. The previous implementation stat'd /root
+        // and compared $USER/$LOGNAME, which is wrong in both directions: it reported
+        // root under `sudo -E` (which preserves $USER) or in any container with a
+        // world-readable /root, and reported non-root for a root account whose home
+        // is not /root.
+        //
+        // SAFETY: geteuid() takes no arguments, cannot fail, and touches no memory.
+        unsafe { libc::geteuid() == 0 }
     }
 
     #[cfg(windows)]
@@ -118,83 +115,65 @@ fn can_bind_privileged_port() -> bool {
     false
 }
 
-/// Check if we have raw socket access (needed for pcap/DataLink)
-/// This actually tests if we can access pcap devices, not just if we're root
+/// Check whether this process can actually open a raw socket or capture handle.
+///
+/// This must *probe*, not infer. The previous implementation called
+/// `pcap::Device::list()`, which is a thin wrapper over `getifaddrs(3)` and
+/// succeeds for any unprivileged user — so it reported `true` unconditionally,
+/// which in turn made the `RawSockets` pre-flight in `server_startup` never fire.
+/// Every raw-socket protocol then failed later with an opaque `EPERM` from its
+/// own socket call instead of a clear refusal at startup.
+///
+/// Caveat worth knowing: `SystemCapabilities` has a single flag here, but two
+/// distinct capabilities are involved — raw IP sockets (ICMP, IGMP, OSPF) and
+/// L2 capture via BPF/AF_PACKET (ARP, DataLink, IS-IS). They can differ: a macOS
+/// user in the ChmodBPF group has `/dev/bpf*` access without being root. Both are
+/// probed below and either grants the flag.
 fn has_raw_socket_capability() -> bool {
-    // Try to list pcap devices - this is what DataLink actually needs to work
-    // This will fail if:
-    // - Linux: Don't have CAP_NET_RAW capability
-    // - macOS: Can't access /dev/bpf* devices
-    // - Windows: Can't access WinPcap/Npcap driver
-    #[cfg(feature = "datalink")]
+    #[cfg(unix)]
     {
-        match pcap::Device::list() {
-            Ok(devices) => {
-                debug!(
-                    "Successfully listed {} pcap devices - have raw socket access",
-                    devices.len()
-                );
-                true
-            }
-            Err(e) => {
-                debug!("Failed to list pcap devices: {} - no raw socket access", e);
-                false
-            }
+        if is_running_as_root() {
+            return true;
         }
-    }
 
-    #[cfg(not(feature = "datalink"))]
-    {
-        // If datalink feature not enabled, fall back to platform-specific checks
-        #[cfg(target_os = "linux")]
+        // A raw IP socket is the definitive test for ICMP/IGMP/OSPF-style access:
+        // it succeeds exactly with CAP_NET_RAW on Linux, and only as root on
+        // macOS/BSD. Note SOCK_RAW specifically — Linux lets unprivileged users
+        // open SOCK_DGRAM ICMP sockets via ping_group_range, which is not the
+        // capability these protocols need.
+        //
+        // SAFETY: socket(2) with constant arguments; the fd is closed immediately
+        // on success and nothing else touches it.
+        let raw_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP) };
+        if raw_fd >= 0 {
+            unsafe { libc::close(raw_fd) };
+            debug!("Opened a raw ICMP socket - raw socket access available");
+            return true;
+        }
+
+        // No raw socket, but L2 capture may still be permitted via relaxed BPF
+        // device permissions (the ChmodBPF arrangement on macOS).
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
         {
-            // If root, we have it
-            if is_running_as_root() {
-                return true;
-            }
-
-            // Check for CAP_NET_RAW capability
-            // Try to parse /proc/self/status for CapEff
-            if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-                for line in status.lines() {
-                    if line.starts_with("CapEff:") {
-                        if let Some(cap_hex) = line.split_whitespace().nth(1) {
-                            if let Ok(caps) = u64::from_str_radix(cap_hex, 16) {
-                                // CAP_NET_RAW is bit 13 (0x2000)
-                                const CAP_NET_RAW: u64 = 1 << 13;
-                                let has_cap = (caps & CAP_NET_RAW) != 0;
-                                debug!(
-                                    "Checked CAP_NET_RAW via /proc: caps=0x{:x}, has_cap={}",
-                                    caps, has_cap
-                                );
-                                return has_cap;
-                            }
-                        }
-                    }
+            for n in 0..4 {
+                if std::fs::File::open(format!("/dev/bpf{}", n)).is_ok() {
+                    debug!("Opened /dev/bpf{} - L2 capture available without root", n);
+                    return true;
                 }
             }
-
-            debug!("Could not detect CAP_NET_RAW capability");
-            false
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            // macOS doesn't have fine-grained capabilities
-            // Need root or BPF device access
-            is_running_as_root()
-        }
+        debug!(
+            "No raw socket and no capture device: raw ICMP socket failed ({}), \
+             not root. Raw-socket protocols will be refused at startup.",
+            std::io::Error::last_os_error()
+        );
+        false
+    }
 
-        #[cfg(target_os = "windows")]
-        {
-            // Windows requires administrator privileges for WinPcap/Npcap
-            is_running_as_root()
-        }
-
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-            // Unknown platform - assume root is needed
-            is_running_as_root()
-        }
+    #[cfg(windows)]
+    {
+        // Npcap/WinPcap driver access requires Administrator.
+        is_running_as_root()
     }
 }
