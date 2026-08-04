@@ -260,8 +260,15 @@ Fix: mark them `Incomplete` so `is_available_to_llm()` hides them, or implement 
 
 ### 22. Documentation drift **[verified]**
 
-- 27 of 116 server protocols have no E2E test at all, including Beta-rated `tcp`, `http`,
-  `dns`, `dhcp`, `ssh`, `snmp`, `udp`, `ntp`.
+- **Correction to an earlier claim in this file**: it previously said 27 server protocols had
+  no E2E test. That was wrong — it counted only files named `e2e_test.rs`. Every directory
+  under `tests/server/` has at least one test file; 25 protocols simply name theirs `test.rs`,
+  including `tcp`, `http`, `dns`, `ssh`, `snmp`, `ntp`, `dhcp`, `udp`, `mysql`, `postgresql`,
+  `smtp`, `imap` and `nfs`, and those are correctly declared in both their own `mod.rs` and
+  `tests/server/mod.rs`. The coverage problem is not absence of tests; it is item 5 (15 server
+  and 61 client directories orphaned from the parent `mod.rs`) plus tests that are wired and
+  failing — all 4 of `tests/server/dns/test.rs` fail at HEAD, independent of any change made
+  in this pass. Verify with `ls tests/server/*/` rather than grepping for `e2e_test.rs`.
 - `openvpn` declares `DevelopmentState::Stable` and describes itself as "production-ready",
   but its key material is HKDF-derived from hardcoded constants
   (`src/server/openvpn/mod.rs:441-461`) — every peer gets identical keys — and its control
@@ -418,6 +425,51 @@ project's stated preference and is a trap if easy servers ever gain handler supp
 `src/cli/server_startup.rs` still uses the older `parse_from_str` + `get` pair at roughly
 `:52` and `:227`, so callers keep getting the bare `Unknown protocol: arp`. Two-line adoption,
 described in that commit.
+
+### 37. Static handlers cannot interpolate event data **[verified]**
+
+`execute_static_handler` (`src/llm/event_handler_executor.rs:243`) emits its configured actions
+verbatim, with no substitution from the triggering event. That makes static mode unusable for
+every request/response protocol needing a correlation id — DNS `query_id`, DHCP/BOOTP `xid`,
+SNMP `request-id`, STUN/NTP transaction fields — because the reply cannot echo the client's
+random value. The DNS family's own `StartupExamples` taught `"query_id": 0`, i.e. actively
+documented a broken configuration, until `6a384617` replaced them.
+
+Script handlers do not have this problem (they receive the event on stdin), so the workaround
+is "use a script", but that means spawning an interpreter to copy one field. A small
+templating substitution (e.g. `{{event.query_id}}`) in static actions would make the cheapest
+deterministic path viable for the whole UDP family. Until then, say so plainly in the static
+handler's documentation.
+
+### 38. DNS responses omitted the question section **[fixed — `6a384617`, recorded as a lesson]**
+
+RFC 1035 §4.1.2 requires a response to repeat the question, and glibc, systemd-resolved and
+`dig` all discard responses whose question doesn't match. A protocol rated **Beta** — defined
+in CLAUDE.md as "human reviewed, works with real clients" — therefore did not work with real
+clients, and its tests passed because they used a lenient client. Worth treating as the
+canonical argument for validating Beta claims against a real off-the-shelf client rather than
+against our own test harness.
+
+### 39. `open_server`'s documentation gate makes mocked tests fragile **[static]**
+
+`src/events/handler.rs:844` forces a `DocumentationRequired` retry on first use of
+`open_server`. Mock configurations that don't answer that retry never start their server, which
+is why all 4 `tests/server/dns/test.rs` tests and 7 in `tests/examples/` fail at HEAD while
+DoT/DoH/mDNS survive. Either the gate should be off by default (compare
+`REQUIRE_DOCS_FOR_OPEN_ACTIONS` at `:20`, which is a hardcoded `false` — see item 29) or the
+mock helper should answer it centrally so every protocol's tests don't have to.
+
+### 40. Smaller protocol-level defects found in review **[static]**
+
+- `src/server/svn/actions.rs:56` declares `PrivilegedPort(3690)`; 3690 > 1024, so the check can
+  never fire. Any `PrivilegedPort` above 1023 is dead by construction — worth a debug assertion.
+- `tests/server/dot/e2e_test.rs:132,155,172` hardcode `"query_id": 1` instead of using
+  `respond_with_actions_from_event`, violating CLAUDE.md's dynamic-mock rule. They pass only
+  because the raw TLS client never checks the id, so they prove nothing about correlation.
+- No `ProtocolConnectionInfo` data is recorded for DNS, and DoT/DoH register no connections at
+  all, so they are invisible to the connection list and to connection-scoped scheduled tasks.
+- `'secure dns'` is claimed as a keyword by both DoT and DoH; the collision is warned about at
+  startup and never resolved.
 
 ---
 
