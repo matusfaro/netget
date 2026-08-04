@@ -39,8 +39,23 @@ Delete an entry once its context is no longer useful.
 | — Syslog filters could never match | udpinfra pass | `facility`/`severity` were emitted with `{:?}` as `log_kern`/`sev_err` while every doc and example prompt says `kern`/`err`. Numeric codes added alongside, which is how the docs describe filtering |
 | — HTTP family defects | `3c414406`, `f2d4cf3e`, `e9eec1cb`, `e32cf485` | 204 responses were served as empty 200; a model status of 999 or a CRLF header panicked the connection task; HTTP/2's `request_filter` was accepted and silently ignored because the hyper path is dead code; HTTP/3 documented as the QUIC transport it actually is |
 
-Verified together end to end after landing: a Python script handler returning
-`{"data":"48454c4c4f","encoding":"hex"}` puts `HELLO` on the wire, with no LLM call.
+### Independent verification after landing
+
+Each of these was re-checked against a freshly built binary, driven over MCP stdio, separately
+from the agent that made the change — because several of the bugs above were ones our own
+tests had been passing straight through.
+
+- **Script handler + TCP encoding together**: a Python handler returning
+  `{"data":"48454c4c4f","encoding":"hex"}` puts `HELLO` on the wire, with no LLM call.
+- **DNS against `dig`**: `dig @127.0.0.1 -p … example.com A` returns `status: NOERROR` with the
+  question section echoed and the transaction id matched — the real-resolver check the Beta
+  rating always implied.
+- **NTP against a raw client**: 48-byte reply, version 4 echoed, mode 4, and the origin
+  timestamp byte-identical to the client's transmit timestamp (`1d7a39180519de39`). Driven
+  through a *static* handler, so the per-datagram fix holds on the zero-LLM path too.
+- **DHCP remote panic**: a datagram declaring `hlen = 255` no longer kills the socket task —
+  the server answered a well-formed request afterwards, echoing xid `deadbeef`, confirming both
+  the panic guard and the per-datagram correlation fix.
 
 ---
 
