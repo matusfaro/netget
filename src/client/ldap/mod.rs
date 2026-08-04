@@ -14,7 +14,7 @@ use crate::client::ldap::actions::{
     LDAP_CLIENT_BIND_RESPONSE_EVENT, LDAP_CLIENT_CONNECTED_EVENT,
     LDAP_CLIENT_MODIFY_RESPONSE_EVENT, LDAP_CLIENT_SEARCH_RESULTS_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

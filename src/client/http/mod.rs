@@ -12,7 +12,7 @@ use tracing::{error, info};
 use crate::client::http::actions::{
     HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -46,7 +46,8 @@ impl HttpClient {
 
         // Store client in protocol_data
         // Ensure base_url has http:// scheme
-        let base_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+        let base_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://")
+        {
             remote_addr.clone()
         } else {
             format!("http://{}", remote_addr)
@@ -103,7 +104,8 @@ impl HttpClient {
                             Ok(ClientActionResult::Custom { name, data }) => {
                                 if name == "http_request" {
                                     // Extract request parameters
-                                    let method = data["method"].as_str().unwrap_or("GET").to_string();
+                                    let method =
+                                        data["method"].as_str().unwrap_or("GET").to_string();
                                     let path = data["path"].as_str().unwrap_or("/").to_string();
                                     let headers = data["headers"].as_object().cloned();
                                     let body = data["body"].as_str().map(|s| s.to_string());
@@ -123,7 +125,9 @@ impl HttpClient {
                                             state_clone,
                                             llm_clone,
                                             status_clone,
-                                        ).await {
+                                        )
+                                        .await
+                                        {
                                             error!("HTTP request failed: {}", e);
                                         }
                                     });
@@ -136,7 +140,9 @@ impl HttpClient {
                             Ok(ClientActionResult::WaitForMore) => {
                                 // No action needed
                             }
-                            Ok(ClientActionResult::SendData(_)) | Ok(ClientActionResult::NoAction) | Ok(ClientActionResult::Multiple(_)) => {
+                            Ok(ClientActionResult::SendData(_))
+                            | Ok(ClientActionResult::NoAction)
+                            | Ok(ClientActionResult::Multiple(_)) => {
                                 // These are not applicable for HTTP client in this context
                             }
                             Err(e) => {

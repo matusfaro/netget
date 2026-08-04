@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
 use crate::client::tcp::actions::{TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::patterns;
@@ -111,7 +111,11 @@ impl TcpClient {
                     let protocol = crate::client::tcp::actions::TcpClientProtocol::new();
                     for action in result.actions {
                         match protocol.execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::SendData(
+                                    bytes,
+                                ),
+                            ) => {
                                 let mut write_guard = write_half_for_connected.lock().await;
                                 if let Err(e) = write_guard.write_all(&bytes).await {
                                     error!("Failed to send data after connect: {}", e);
@@ -121,11 +125,15 @@ impl TcpClient {
                                     info!("Sent {} {}", bytes.len(), patterns::TCP_CLIENT_SENT);
                                 }
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 info!("LLM requested disconnect after connect");
                                 return Ok(local_addr);
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::WaitForMore,
+                            ) => {
                                 // Just wait for data
                             }
                             Ok(_) => {
@@ -151,7 +159,11 @@ impl TcpClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
-                        info!("TCP client {} {}", client_id, patterns::TCP_CLIENT_DISCONNECTED);
+                        info!(
+                            "TCP client {} {}",
+                            client_id,
+                            patterns::TCP_CLIENT_DISCONNECTED
+                        );
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
@@ -162,7 +174,12 @@ impl TcpClient {
                     }
                     Ok(n) => {
                         let data = buffer[..n].to_vec();
-                        info!("TCP client {} received {} {}", client_id, n, patterns::TCP_CLIENT_RECEIVED);
+                        info!(
+                            "TCP client {} received {} {}",
+                            client_id,
+                            n,
+                            patterns::TCP_CLIENT_RECEIVED
+                        );
                         trace!("TCP client {} received {} bytes", client_id, n);
 
                         // Handle data with LLM

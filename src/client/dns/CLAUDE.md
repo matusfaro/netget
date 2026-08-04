@@ -77,6 +77,26 @@ DNS uses UDP, which is connectionless:
 - Client maintains a single UDP socket for all queries
 - Queries can be sent concurrently (hickory-client handles this)
 
+### 6. Action loop is iterative, not recursive (important)
+
+`execute_dns_action` handles ONE action and *returns* whatever follow-up actions the
+LLM asked for. `run_dns_actions` owns the work queue and drains it. Nothing calls
+itself.
+
+This used to be self-recursive — `execute_dns_action` awaited the LLM after a
+response and then called itself for each follow-up. Each level is a separately
+polled boxed future, so stack depth grew with the number of query/response rounds:
+an LLM that never stopped asking for another query overflowed the stack after ~200
+rounds and took the whole NetGet process down (`IMPROVEMENTS.md` item 49). With the
+queue, stack depth is constant regardless of how many rounds occur.
+
+**If you add another follow-up path here, return the actions — do not recurse.**
+
+Convergence itself is a separate concern, handled by the per-client LLM call budget
+(`src/client/llm_budget.rs`): after `NETGET_CLIENT_LLM_CALL_LIMIT` calls (default
+100) `call_llm_for_client` fails instead of contacting the model, which drains the
+queue and ends the session.
+
 ## LLM Integration
 
 ### Available Actions

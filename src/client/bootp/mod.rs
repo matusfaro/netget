@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
 use crate::client::bootp::actions::{BOOTP_CLIENT_CONNECTED_EVENT, BOOTP_REPLY_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

@@ -23,7 +23,7 @@ type WGApi = defguard_wireguard_rs::WGApi<defguard_wireguard_rs::Kernel>;
 use crate::client::wireguard::actions::{
     WIREGUARD_CLIENT_CONNECTED_EVENT, WIREGUARD_CLIENT_DISCONNECTED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;

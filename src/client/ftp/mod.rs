@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
 use crate::client::ftp::actions::{FTP_CLIENT_CONNECTED_EVENT, FTP_CLIENT_RESPONSE_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -51,9 +51,10 @@ impl FtpClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Resolve and connect
-        let stream = TcpStream::connect(&remote_addr)
-            .await
-            .context(format!("Failed to connect to FTP server at {}", remote_addr))?;
+        let stream = TcpStream::connect(&remote_addr).await.context(format!(
+            "Failed to connect to FTP server at {}",
+            remote_addr
+        ))?;
 
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
@@ -114,9 +115,11 @@ impl FtpClient {
                     let protocol = crate::client::ftp::actions::FtpClientProtocol::new();
                     for action in result.actions {
                         match protocol.execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(
-                                bytes,
-                            )) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::SendData(
+                                    bytes,
+                                ),
+                            ) => {
                                 let mut write_guard = write_half_for_connected.lock().await;
                                 if let Err(e) = write_guard.write_all(&bytes).await {
                                     error!("Failed to send FTP command after connect: {}", e);
@@ -127,11 +130,15 @@ impl FtpClient {
                                     info!("FTP client sent: {}", cmd.trim());
                                 }
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 info!("LLM requested disconnect after connect");
                                 return Ok(local_addr);
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::WaitForMore,
+                            ) => {
                                 // Just wait for data
                             }
                             Ok(_) => {
@@ -247,10 +254,7 @@ impl FtpClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!(
-                                                "LLM error for FTP client {}: {}",
-                                                client_id, e
-                                            );
+                                            error!("LLM error for FTP client {}: {}", client_id, e);
                                         }
                                     }
                                 }

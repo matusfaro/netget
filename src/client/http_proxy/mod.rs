@@ -15,7 +15,7 @@ use crate::client::http_proxy::actions::{
     HTTP_PROXY_CLIENT_CONNECTED_EVENT, HTTP_PROXY_RESPONSE_RECEIVED_EVENT,
     HTTP_PROXY_TUNNEL_ESTABLISHED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

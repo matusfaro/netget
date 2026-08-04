@@ -251,7 +251,28 @@ mod dns_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: First DNS response received - send second query
+                // ORDER MATTERS. `and_event_data_contains` is a SUBSTRING match
+                // (`field.contains(value)`), and the mock server answers with the FIRST
+                // rule that matches — exhausted `expect_calls` does not retire a rule.
+                // So a `query_type == "A"` rule also matches the "AAAA" response. With
+                // the A rule first, the AAAA response was answered with "send another
+                // AAAA query", which is exactly the loop that made this test issue 211
+                // LLM calls and overflow NetGet's stack (IMPROVEMENTS.md item 49).
+                //
+                // The AAAA rule must therefore come first: "A" does not contain "AAAA",
+                // so the first response still falls through to the A rule.
+                //
+                // Mock 3: Second DNS response received (AAAA) - done
+                .on_event("dns_response_received")
+                .and_event_data_contains("query_type", "AAAA")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: First DNS response received (A) - send second query
                 .on_event("dns_response_received")
                 .and_event_data_contains("query_type", "A")
                 .respond_with_actions(serde_json::json!([
@@ -260,16 +281,6 @@ mod dns_client_tests {
                         "domain": "google.com",
                         "query_type": "AAAA",
                         "recursion_desired": true
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: Second DNS response received - done
-                .on_event("dns_response_received")
-                .and_event_data_contains("query_type", "AAAA")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
                     }
                 ]))
                 .expect_calls(1)

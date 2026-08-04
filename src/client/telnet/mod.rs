@@ -14,7 +14,7 @@ use tracing::{debug, error, info, trace};
 use crate::client::telnet::actions::{
     TELNET_CLIENT_CONNECTED_EVENT, TELNET_CLIENT_DATA_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::patterns;
@@ -130,19 +130,26 @@ impl TelnetClient {
                                     if let Some(command) = action["command"].as_str() {
                                         let command_line = format!("{}\r\n", command);
                                         let mut write_guard = write_half_for_connected.lock().await;
-                                        if let Err(e) = write_guard.write_all(command_line.as_bytes()).await {
+                                        if let Err(e) =
+                                            write_guard.write_all(command_line.as_bytes()).await
+                                        {
                                             error!("Failed to send command after connect: {}", e);
                                         } else if let Err(e) = write_guard.flush().await {
                                             error!("Failed to flush after connect: {}", e);
                                         } else {
-                                            info!("{} {}", patterns::TELNET_CLIENT_SENT_COMMAND, command);
+                                            info!(
+                                                "{} {}",
+                                                patterns::TELNET_CLIENT_SENT_COMMAND,
+                                                command
+                                            );
                                         }
                                     }
                                 }
                                 "send_text" => {
                                     if let Some(text) = action["text"].as_str() {
                                         let mut write_guard = write_half_for_connected.lock().await;
-                                        if let Err(e) = write_guard.write_all(text.as_bytes()).await {
+                                        if let Err(e) = write_guard.write_all(text.as_bytes()).await
+                                        {
                                             error!("Failed to send text after connect: {}", e);
                                         } else if let Err(e) = write_guard.flush().await {
                                             error!("Failed to flush after connect: {}", e);
@@ -182,7 +189,11 @@ impl TelnetClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
-                        info!("Telnet client {} {}", client_id, patterns::TELNET_CLIENT_DISCONNECTED);
+                        info!(
+                            "Telnet client {} {}",
+                            client_id,
+                            patterns::TELNET_CLIENT_DISCONNECTED
+                        );
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;

@@ -13,7 +13,7 @@ use tracing::{debug, error, info};
 use crate::client::openapi::actions::{
     OPENAPI_CLIENT_CONNECTED_EVENT, OPENAPI_OPERATION_RESPONSE_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -57,36 +57,32 @@ impl OpenApiClient {
 
         // Parse OpenAPI spec
         #[cfg(feature = "openapi")]
-        let parsed_spec: OpenAPI = serde_yaml::from_str(&spec_yaml)
-            .context("Failed to parse OpenAPI spec (YAML)")?;
+        let parsed_spec: OpenAPI =
+            serde_yaml::from_str(&spec_yaml).context("Failed to parse OpenAPI spec (YAML)")?;
 
         #[cfg(not(feature = "openapi"))]
         let parsed_spec = ();
 
         // Determine base URL (from spec or override)
         #[cfg(feature = "openapi")]
-        let base_url = if let Some(override_url) =
-            startup_params.get("base_url").and_then(|v| v.as_str())
-        {
-            override_url.to_string()
-        } else if let Some(server) = parsed_spec.servers.first() {
-            server.url.clone()
-        } else {
-            // Default: use remote_addr with http://
-            if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
-                remote_addr.clone()
+        let base_url =
+            if let Some(override_url) = startup_params.get("base_url").and_then(|v| v.as_str()) {
+                override_url.to_string()
+            } else if let Some(server) = parsed_spec.servers.first() {
+                server.url.clone()
             } else {
-                format!("http://{}", remote_addr)
-            }
-        };
+                // Default: use remote_addr with http://
+                if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+                    remote_addr.clone()
+                } else {
+                    format!("http://{}", remote_addr)
+                }
+            };
 
         #[cfg(not(feature = "openapi"))]
         let base_url = format!("http://{}", remote_addr);
 
-        info!(
-            "OpenAPI client {} using base URL: {}",
-            client_id, base_url
-        );
+        info!("OpenAPI client {} using base URL: {}", client_id, base_url);
 
         // Build reqwest client
         let _http_client = reqwest::Client::builder()
@@ -100,8 +96,10 @@ impl OpenApiClient {
             .with_client_mut(client_id, |client| {
                 client.set_protocol_field("spec".to_string(), serde_json::json!(spec_yaml));
                 client.set_protocol_field("base_url".to_string(), serde_json::json!(base_url));
-                client
-                    .set_protocol_field("http_client".to_string(), serde_json::json!("initialized"));
+                client.set_protocol_field(
+                    "http_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
             })
             .await;
 
@@ -242,7 +240,9 @@ impl OpenApiClient {
                             .as_object()
                             .map(|obj| {
                                 obj.iter()
-                                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| (k.clone(), s.to_string()))
+                                    })
                                     .collect()
                             })
                             .unwrap_or_default();
@@ -250,7 +250,9 @@ impl OpenApiClient {
                             .as_object()
                             .map(|obj| {
                                 obj.iter()
-                                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| (k.clone(), s.to_string()))
+                                    })
                                     .collect()
                             })
                             .unwrap_or_default();
@@ -477,10 +479,7 @@ impl OpenApiClient {
 
     /// Find operation in spec by operation_id
     #[cfg(feature = "openapi")]
-    fn find_operation(
-        spec: &OpenAPI,
-        operation_id: &str,
-    ) -> Result<(String, String)> {
+    fn find_operation(spec: &OpenAPI, operation_id: &str) -> Result<(String, String)> {
         for (path, path_item) in &spec.paths {
             for (method, operation) in &path_item.operations {
                 let op_id = operation
@@ -502,10 +501,7 @@ impl OpenApiClient {
     }
 
     /// Substitute path parameters in template
-    fn substitute_path_params(
-        template: &str,
-        params: &HashMap<String, String>,
-    ) -> Result<String> {
+    fn substitute_path_params(template: &str, params: &HashMap<String, String>) -> Result<String> {
         let mut path = template.to_string();
 
         // Replace {param} with values

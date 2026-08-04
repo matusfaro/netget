@@ -14,14 +14,14 @@ use crate::client::openidconnect::actions::{
     OIDC_CLIENT_DISCOVERED_EVENT, OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
     OIDC_CLIENT_USERINFO_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::console_error;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::console_error;
 
 use openidconnect::{
     core::{CoreClient, CoreProviderMetadata, CoreTokenResponse, CoreUserInfoClaims},

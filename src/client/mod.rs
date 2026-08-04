@@ -4,6 +4,10 @@
 //! Each protocol provides LLM-controlled client behavior for connecting
 //! to remote servers and exchanging data.
 
+// Shared plumbing: budget-checked LLM entry point used by every client protocol.
+// See the module docs for why clients need a hard call ceiling.
+pub mod llm_budget;
+
 // arp client
 #[cfg(feature = "arp")]
 pub mod arp;

@@ -30,10 +30,10 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::client::webrtc::actions::{
-    WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
-    WEBRTC_CLIENT_CHANNEL_OPENED_EVENT, WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT,
+    WEBRTC_CLIENT_CHANNEL_OPENED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
+    WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -93,25 +93,29 @@ impl WebRtcClient {
         );
 
         // Parse signaling mode from remote_addr
-        let signaling_mode = if remote_addr.starts_with("ws://") || remote_addr.starts_with("wss://") {
-            // WebSocket signaling: ws://server:port/peer_id or wss://server:port/peer_id
-            let parts: Vec<&str> = remote_addr.rsplitn(2, '/').collect();
-            if parts.len() != 2 {
-                return Err(anyhow::anyhow!(
-                    "Invalid WebSocket URL format. Expected: ws://server:port/peer_id"
-                ));
-            }
-            let peer_id = parts[0].to_string();
-            let url = parts[1].to_string();
-            SignalingMode::WebSocket {
-                url: format!("{}/", url), // Reconstruct base URL
-                peer_id,
-            }
-        } else {
-            SignalingMode::Manual
-        };
+        let signaling_mode =
+            if remote_addr.starts_with("ws://") || remote_addr.starts_with("wss://") {
+                // WebSocket signaling: ws://server:port/peer_id or wss://server:port/peer_id
+                let parts: Vec<&str> = remote_addr.rsplitn(2, '/').collect();
+                if parts.len() != 2 {
+                    return Err(anyhow::anyhow!(
+                        "Invalid WebSocket URL format. Expected: ws://server:port/peer_id"
+                    ));
+                }
+                let peer_id = parts[0].to_string();
+                let url = parts[1].to_string();
+                SignalingMode::WebSocket {
+                    url: format!("{}/", url), // Reconstruct base URL
+                    peer_id,
+                }
+            } else {
+                SignalingMode::Manual
+            };
 
-        info!("WebRTC client {} using signaling mode: {:?}", client_id, signaling_mode);
+        info!(
+            "WebRTC client {} using signaling mode: {:?}",
+            client_id, signaling_mode
+        );
 
         // Create a MediaEngine
         let mut m = MediaEngine::default();
@@ -182,12 +186,17 @@ impl WebRtcClient {
                     info!("WebRTC client {} connection state: {:?}", client_id, state);
                     match state {
                         RTCPeerConnectionState::Connected => {
-                            app_state.update_client_status(client_id, ClientStatus::Connected).await;
-                            let _ = status_tx.send(format!("[CLIENT] WebRTC client {} connected", client_id));
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Connected)
+                                .await;
+                            let _ = status_tx
+                                .send(format!("[CLIENT] WebRTC client {} connected", client_id));
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
                         }
                         RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                            app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
                             let _ = status_tx
                                 .send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -299,7 +308,10 @@ impl WebRtcClient {
             })
             .await;
 
-        info!("WebRTC client {} generated SDP offer (manual mode)", client_id);
+        info!(
+            "WebRTC client {} generated SDP offer (manual mode)",
+            client_id
+        );
         let _ = status_tx.send(format!(
             "[CLIENT] WebRTC client {} waiting for SDP answer",
             client_id
@@ -320,7 +332,10 @@ impl WebRtcClient {
         status_tx: mpsc::UnboundedSender<String>,
         llm_client: OllamaClient,
     ) -> Result<()> {
-        info!("WebRTC client {} connecting to signaling server: {}", client_id, url);
+        info!(
+            "WebRTC client {} connecting to signaling server: {}",
+            client_id, url
+        );
 
         // Connect to WebSocket signaling server
         let (ws_stream, _) = connect_async(&url)
@@ -370,11 +385,20 @@ impl WebRtcClient {
             )
             .await
             {
-                Ok(ClientLlmResult { actions: _, memory_updates: _ }) => {
-                    debug!("WebRTC client {} processed signaling connected event", client_id);
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates: _,
+                }) => {
+                    debug!(
+                        "WebRTC client {} processed signaling connected event",
+                        client_id
+                    );
                 }
                 Err(e) => {
-                    warn!("LLM error for WebRTC client {} signaling connected: {}", client_id, e);
+                    warn!(
+                        "LLM error for WebRTC client {} signaling connected: {}",
+                        client_id, e
+                    );
                 }
             }
         }
@@ -392,7 +416,10 @@ impl WebRtcClient {
             .await
             .context("No local description")?;
 
-        info!("WebRTC client {} generated SDP offer (WebSocket mode)", client_id);
+        info!(
+            "WebRTC client {} generated SDP offer (WebSocket mode)",
+            client_id
+        );
 
         // Send offer to signaling server (to be forwarded to remote peer)
         // Note: This assumes a target peer ID is known. In practice, the LLM might provide this
@@ -414,7 +441,11 @@ impl WebRtcClient {
             while let Some(msg_result) = ws_rx.next().await {
                 match msg_result {
                     Ok(WsMessage::Text(text)) => {
-                        trace!("WebRTC client {} received signaling message: {}", client_id, text);
+                        trace!(
+                            "WebRTC client {} received signaling message: {}",
+                            client_id,
+                            text
+                        );
 
                         // Parse signaling message
                         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -422,11 +453,12 @@ impl WebRtcClient {
 
                             match msg_type {
                                 Some("registered") => {
-                                    info!("WebRTC client {} registered with signaling server", client_id);
-                                    let _ = status_tx_ws.send(format!(
-                                        "[CLIENT] Registered as '{}'",
-                                        peer_id
-                                    ));
+                                    info!(
+                                        "WebRTC client {} registered with signaling server",
+                                        client_id
+                                    );
+                                    let _ = status_tx_ws
+                                        .send(format!("[CLIENT] Registered as '{}'", peer_id));
                                 }
                                 Some("answer") => {
                                     // Received SDP answer from remote peer
@@ -471,7 +503,9 @@ impl WebRtcClient {
                                     trace!("WebRTC client {} received ICE candidate", client_id);
                                 }
                                 Some("error") => {
-                                    if let Some(error_msg) = msg.get("message").and_then(|v| v.as_str()) {
+                                    if let Some(error_msg) =
+                                        msg.get("message").and_then(|v| v.as_str())
+                                    {
                                         error!(
                                             "WebRTC client {} signaling error: {}",
                                             client_id, error_msg
@@ -483,13 +517,19 @@ impl WebRtcClient {
                                     }
                                 }
                                 _ => {
-                                    trace!("WebRTC client {} unknown signaling message type", client_id);
+                                    trace!(
+                                        "WebRTC client {} unknown signaling message type",
+                                        client_id
+                                    );
                                 }
                             }
                         }
                     }
                     Ok(WsMessage::Close(_)) => {
-                        info!("WebRTC client {} signaling server closed connection", client_id);
+                        info!(
+                            "WebRTC client {} signaling server closed connection",
+                            client_id
+                        );
                         break;
                     }
                     Err(e) => {
@@ -529,7 +569,10 @@ impl WebRtcClient {
             let label = label_on_open.clone();
 
             Box::pin(async move {
-                info!("WebRTC client {} data channel '{}' opened", client_id, label);
+                info!(
+                    "WebRTC client {} data channel '{}' opened",
+                    client_id, label
+                );
                 let _ = status_tx.send(format!(
                     "[CLIENT] WebRTC client {} channel '{}' opened",
                     client_id, label
@@ -570,7 +613,10 @@ impl WebRtcClient {
                             }
                         }
                         Err(e) => {
-                            error!("LLM error for WebRTC client {} on channel open: {}", client_id, e);
+                            error!(
+                                "LLM error for WebRTC client {} on channel open: {}",
+                                client_id, e
+                            );
                         }
                     }
                 }
@@ -758,7 +804,10 @@ impl WebRtcClient {
         // Set remote description
         pc_clone.set_remote_description(answer).await?;
 
-        info!("WebRTC client {} connection established (manual mode)", client_id);
+        info!(
+            "WebRTC client {} connection established (manual mode)",
+            client_id
+        );
 
         Ok(())
     }
@@ -771,7 +820,10 @@ impl WebRtcClient {
         _status_tx: mpsc::UnboundedSender<String>,
         _llm_client: OllamaClient,
     ) -> Result<()> {
-        info!("WebRTC client {} creating channel '{}'", client_id, channel_label);
+        info!(
+            "WebRTC client {} creating channel '{}'",
+            client_id, channel_label
+        );
 
         // Get peer connection pointer
         let pc_ptr = app_state
@@ -793,7 +845,10 @@ impl WebRtcClient {
 
         // Create new data channel
         let _data_channel = pc_clone.create_data_channel(&channel_label, None).await?;
-        info!("WebRTC client {} created channel '{}'", client_id, channel_label);
+        info!(
+            "WebRTC client {} created channel '{}'",
+            client_id, channel_label
+        );
 
         // Get client data (stored somewhere - need to track this)
         // For now, we'll create a new client data structure

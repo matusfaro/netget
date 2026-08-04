@@ -4,7 +4,7 @@ pub mod actions;
 pub use actions::AmqpClientProtocol;
 
 use crate::client::amqp::actions::AMQP_CLIENT_CONNECTED_EVENT;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
@@ -35,7 +35,10 @@ impl AmqpClient {
             lapin::ConnectionProperties::default(),
         )
         .await
-        .context(format!("Failed to connect to AMQP broker at {}", remote_addr))?;
+        .context(format!(
+            "Failed to connect to AMQP broker at {}",
+            remote_addr
+        ))?;
 
         // Get local address (placeholder since lapin doesn't expose it)
         let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -93,7 +96,10 @@ impl AmqpClient {
             state_clone
                 .update_client_status(client_id_clone, ClientStatus::Disconnected)
                 .await;
-            let _ = status_tx_clone.send(format!("[CLIENT] AMQP client {} disconnected", client_id_clone));
+            let _ = status_tx_clone.send(format!(
+                "[CLIENT] AMQP client {} disconnected",
+                client_id_clone
+            ));
             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         });
 

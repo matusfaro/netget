@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
 use crate::client::doh::actions::{DOH_CLIENT_CONNECTED_EVENT, DOH_CLIENT_RESPONSE_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

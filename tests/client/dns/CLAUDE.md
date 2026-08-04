@@ -175,6 +175,28 @@ Connect to 8.8.8.8:53 via DNS. First query A records for google.com, then query 
 - **LLM overhead:** ~80-90% of test time
 - **DNS query latency:** ~10-100ms per query
 
+## Mock rule ordering (`test_dns_client_multiple_queries`)
+
+`and_event_data_contains(key, value)` is a **substring** match
+(`field.contains(value)` in `tests/helpers/mock_matcher.rs`), and the mock server
+answers with the **first** rule that matches — `expect_calls(N)` does not retire a
+rule once it is exhausted.
+
+So a rule keyed on `query_type == "A"` also matches an `"AAAA"` response. With the
+A rule declared first, the AAAA response was answered with "send another AAAA
+query", and the client looped: 211 LLM calls, then a stack overflow
+(`IMPROVEMENTS.md` item 49).
+
+**The AAAA rule must be declared before the A rule.** `"A"` does not contain
+`"AAAA"`, so the first response still falls through correctly. When adding record
+types here, order the rules longest-value-first, or pick values that cannot be
+substrings of one another.
+
+The client side is now defended independently — the action loop is iterative rather
+than recursive, and a per-client LLM call budget (default 100, see
+`src/client/llm_budget.rs`) hard-stops any non-converging client — so a mistake of
+this shape now fails the mock expectations instead of killing the process.
+
 ## Known Issues
 
 ### Issue 1: Public DNS Server Dependency

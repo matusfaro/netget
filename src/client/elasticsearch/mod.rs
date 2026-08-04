@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 use crate::client::elasticsearch::actions::{
     ELASTICSEARCH_CLIENT_CONNECTED_EVENT, ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

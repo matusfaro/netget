@@ -14,7 +14,7 @@ use crate::client::turn::actions::{
     TURN_CLIENT_ALLOCATED_EVENT, TURN_CLIENT_CONNECTED_EVENT, TURN_CLIENT_DATA_RECEIVED_EVENT,
     TURN_CLIENT_PERMISSION_CREATED_EVENT, TURN_CLIENT_REFRESHED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

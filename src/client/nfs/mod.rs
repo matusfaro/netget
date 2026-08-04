@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client as ClientTrait, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;

@@ -10,7 +10,7 @@
 pub mod actions;
 
 use crate::client::nfc::actions::*;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
@@ -51,7 +51,9 @@ impl NfcClient {
 
         // Extract reader selection from startup params
         let reader_index = startup_params["reader_index"].as_u64().unwrap_or(0) as usize;
-        let reader_name = startup_params["reader_name"].as_str().map(|s| s.to_string());
+        let reader_name = startup_params["reader_name"]
+            .as_str()
+            .map(|s| s.to_string());
 
         // Create PC/SC context
         #[cfg(feature = "nfc-client")]
@@ -117,7 +119,10 @@ impl NfcClient {
         #[cfg(feature = "nfc-client")]
         {
             let readers_json: Vec<String> = readers.clone();
-            let event = Event::new(&NFC_READERS_LISTED_EVENT, json!({ "readers": readers_json }));
+            let event = Event::new(
+                &NFC_READERS_LISTED_EVENT,
+                json!({ "readers": readers_json }),
+            );
 
             // Get default instruction from startup params or use default
             let instruction = startup_params["instruction"]
@@ -177,6 +182,8 @@ impl NfcClient {
         _client_id: ClientId,
         _startup_params: Value,
     ) -> Result<SocketAddr> {
-        Err(anyhow!("NFC client support not compiled (feature 'nfc-client' disabled)"))
+        Err(anyhow!(
+            "NFC client support not compiled (feature 'nfc-client' disabled)"
+        ))
     }
 }

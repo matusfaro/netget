@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
 use crate::client::dns::actions::{DNS_CLIENT_CONNECTED_EVENT, DNS_CLIENT_RESPONSE_RECEIVED_EVENT};
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -51,7 +51,11 @@ impl DnsClient {
             .context("Failed to create DNS client")?;
 
         // Spawn background task for the client
-        tokio::spawn(bg);
+        tokio::spawn(async move {
+            if let Err(e) = bg.await {
+                error!("DNS client {} transport driver stopped: {}", client_id, e);
+            }
+        });
 
         // Get local address (best effort)
         let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
@@ -68,8 +72,20 @@ impl DnsClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Send initial connected event to LLM
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+        // Drive the LLM conversation in a background task.
+        let conversation_state = app_state.clone();
+        let conversation_llm = llm_client.clone();
+        let conversation_tx = status_tx.clone();
+        let handle = tokio::spawn(async move {
+            let app_state = conversation_state;
+            let llm_client = conversation_llm;
+            let status_tx = conversation_tx;
+
+            let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+                debug!("DNS client {} has no instruction; nothing to drive", client_id);
+                return;
+            };
+
             let protocol = Arc::new(DnsClientProtocol::new());
             let event = Event::new(
                 &DNS_CLIENT_CONNECTED_EVENT,
@@ -107,42 +123,76 @@ impl DnsClient {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
 
-                    // Execute initial actions (if any)
-                    for action in actions {
-                        if let Err(e) = Self::execute_dns_action(
-                            &client_arc,
-                            &protocol,
-                            action,
-                            client_id,
-                            &app_state,
-                            &llm_client,
-                            &status_tx,
-                        )
-                        .await
-                        {
-                            error!("DNS client {} action error: {}", client_id, e);
-                        }
-                    }
+                    // Drain the initial actions and every follow-up they produce.
+                    // Iterative, not recursive — see run_dns_actions.
+                    Self::run_dns_actions(
+                        &client_arc,
+                        &protocol,
+                        actions,
+                        client_id,
+                        &app_state,
+                        &llm_client,
+                        &status_tx,
+                    )
+                    .await;
                 }
                 Err(e) => {
                     error!("LLM error for DNS client {}: {}", client_id, e);
                 }
             }
 
-            // Spawn a task to handle ongoing interactions
-            // DNS is request-response, so we don't have a continuous read loop
-            // Instead, the LLM will trigger queries via async actions
-            tokio::spawn(async move {
-                // Keep the client alive and handle any cleanup
-                // The actual queries are triggered by LLM actions
-                debug!("DNS client {} handler task started", client_id);
-            });
-        }
+            debug!("DNS client {} conversation task finished", client_id);
+        });
+        let _ = handle;
 
         Ok(local_addr)
     }
 
-    /// Execute a DNS action from the LLM
+    /// Execute a batch of DNS actions from the LLM, plus every follow-up action the
+    /// LLM produces in response.
+    ///
+    /// This used to be self-recursive: `execute_dns_action` awaited the LLM, then
+    /// called itself for each follow-up action. Because each level is a separately
+    /// polled boxed future, stack depth grew with the number of round-trips — a
+    /// non-converging LLM loop (see `tests/client/dns`) overflowed the stack after a
+    /// couple of hundred queries and took the whole process down, rather than just
+    /// stalling the one client.
+    ///
+    /// It is now an explicit work queue: follow-up actions are pushed onto `pending`
+    /// and drained iteratively, so stack depth is constant no matter how many
+    /// query/response rounds occur. Convergence itself is enforced separately by the
+    /// per-client LLM call budget (`crate::client::llm_budget`), which makes
+    /// `call_llm_for_client` start failing once the ceiling is hit and drains this
+    /// queue.
+    async fn run_dns_actions(
+        client: &Arc<Mutex<AsyncClient>>,
+        protocol: &Arc<DnsClientProtocol>,
+        initial_actions: Vec<serde_json::Value>,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let mut pending: std::collections::VecDeque<serde_json::Value> =
+            initial_actions.into_iter().collect();
+
+        while let Some(action) = pending.pop_front() {
+            match Self::execute_dns_action(
+                client, protocol, action, client_id, app_state, llm_client, status_tx,
+            )
+            .await
+            {
+                Ok(follow_ups) => pending.extend(follow_ups),
+                Err(e) => error!("DNS client {} action error: {}", client_id, e),
+            }
+        }
+    }
+
+    /// Execute a single DNS action from the LLM.
+    ///
+    /// Returns any follow-up actions the LLM asked for; the caller
+    /// ([`Self::run_dns_actions`]) queues them. This function never calls itself.
+    #[allow(clippy::too_many_arguments)]
     fn execute_dns_action<'a>(
         client: &'a Arc<Mutex<AsyncClient>>,
         protocol: &'a Arc<DnsClientProtocol>,
@@ -151,8 +201,9 @@ impl DnsClient {
         app_state: &'a Arc<AppState>,
         llm_client: &'a OllamaClient,
         status_tx: &'a mpsc::UnboundedSender<String>,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<serde_json::Value>>> + Send + 'a>> {
         Box::pin(async move {
+            let mut follow_ups: Vec<serde_json::Value> = Vec::new();
             match protocol.execute_action(action)? {
                 crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }
                     if name == "dns_query" =>
@@ -387,20 +438,10 @@ impl DnsClient {
                                             app_state.set_memory_for_client(client_id, mem).await;
                                         }
 
-                                        // Execute follow-up actions
-                                        for action in actions {
-                                            if let Err(e) = Self::execute_dns_action(
-                                                client, protocol, action, client_id, app_state,
-                                                llm_client, status_tx,
-                                            )
-                                            .await
-                                            {
-                                                error!(
-                                                    "DNS client {} follow-up action error: {}",
-                                                    client_id, e
-                                                );
-                                            }
-                                        }
+                                        // Hand follow-up actions back to the caller's work
+                                        // queue rather than recursing into them here —
+                                        // recursion here is what overflowed the stack.
+                                        follow_ups.extend(actions);
                                     }
                                     Err(e) => {
                                         error!("LLM error for DNS client {}: {}", client_id, e);
@@ -429,7 +470,7 @@ impl DnsClient {
                 }
             }
 
-            Ok(())
+            Ok(follow_ups)
         })
     }
 

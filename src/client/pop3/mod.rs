@@ -3,7 +3,7 @@ pub mod actions;
 use crate::client::pop3::actions::{
     POP3_CLIENT_CONNECTED_EVENT, POP3_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
@@ -33,14 +33,7 @@ impl Pop3Client {
     ) -> Result<SocketAddr> {
         // TODO: Add TLS support when rustls API is stable
         // For now, only plain POP3 is supported
-        Self::connect_plain(
-            remote_addr,
-            llm_client,
-            app_state,
-            status_tx,
-            client_id,
-        )
-        .await
+        Self::connect_plain(remote_addr, llm_client, app_state, status_tx, client_id).await
     }
 
     async fn connect_plain(
@@ -113,10 +106,7 @@ impl Pop3Client {
         // Get client instruction and memory
         let (instruction, memory) = app_state
             .with_client_mut(client_id, |client| {
-                (
-                    client.instruction.to_string(),
-                    client.memory.clone(),
-                )
+                (client.instruction.to_string(), client.memory.clone())
             })
             .await
             .unwrap_or_default();
@@ -166,10 +156,7 @@ impl Pop3Client {
                         continue;
                     }
 
-                    debug!(
-                        "POP3 client {} received response: {}",
-                        client_id, response
-                    );
+                    debug!("POP3 client {} received response: {}", client_id, response);
 
                     // Check if this is a multiline response
                     let is_multiline = response.starts_with("+OK")
@@ -197,10 +184,7 @@ impl Pop3Client {
                     // Get updated instruction and memory
                     let (instruction, memory) = app_state
                         .with_client_mut(client_id, |client| {
-                            (
-                                client.instruction.to_string(),
-                                client.memory.clone(),
-                            )
+                            (client.instruction.to_string(), client.memory.clone())
                         })
                         .await
                         .unwrap_or_default();

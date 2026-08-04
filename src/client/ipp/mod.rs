@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::client::ipp::actions::IPP_CLIENT_CONNECTED_EVENT;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -93,7 +93,10 @@ impl IppClient {
 
                     for action in result.actions {
                         match protocol.execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
+                                name,
+                                data,
+                            }) => {
                                 match name.as_str() {
                                     "ipp_get_printer_attributes" => {
                                         // Execute Get-Printer-Attributes operation
@@ -103,29 +106,41 @@ impl IppClient {
                                         let status_clone = status_tx.clone();
                                         tokio::spawn(async move {
                                             // Small delay to ensure server is ready
-                                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
                                             if let Err(e) = IppClient::get_printer_attributes(
                                                 client_id,
                                                 app_state_clone,
                                                 llm_clone,
                                                 status_clone,
-                                            ).await {
+                                            )
+                                            .await
+                                            {
                                                 error!("IPP Get-Printer-Attributes failed: {}", e);
                                             }
                                         });
                                     }
                                     "ipp_print_job" => {
                                         // Execute Print-Job operation
-                                        let job_name = data.get("job_name")
+                                        let job_name = data
+                                            .get("job_name")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("Untitled")
                                             .to_string();
-                                        let document_format = data.get("document_format")
+                                        let document_format = data
+                                            .get("document_format")
                                             .and_then(|v| v.as_str())
                                             .map(|s| s.to_string());
-                                        let document_data = data.get("document_data")
+                                        let document_data = data
+                                            .get("document_data")
                                             .and_then(|v| v.as_array())
-                                            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect::<Vec<u8>>())
+                                            .map(|arr| {
+                                                arr.iter()
+                                                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                                    .collect::<Vec<u8>>()
+                                            })
                                             .unwrap_or_default();
 
                                         let llm_clone = llm_client.clone();
@@ -133,7 +148,10 @@ impl IppClient {
                                         let status_clone = status_tx.clone();
                                         tokio::spawn(async move {
                                             // Small delay to ensure server is ready
-                                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
                                             if let Err(e) = IppClient::print_job(
                                                 client_id,
                                                 job_name,
@@ -142,30 +160,39 @@ impl IppClient {
                                                 app_state_clone,
                                                 llm_clone,
                                                 status_clone,
-                                            ).await {
+                                            )
+                                            .await
+                                            {
                                                 error!("IPP Print-Job failed: {}", e);
                                             }
                                         });
                                     }
                                     "ipp_get_job_attributes" => {
                                         // Execute Get-Job-Attributes operation
-                                        let job_id = data.get("job_id")
+                                        let job_id = data
+                                            .get("job_id")
                                             .and_then(|v| v.as_i64())
-                                            .unwrap_or(0) as i32;
+                                            .unwrap_or(0)
+                                            as i32;
 
                                         let llm_clone = llm_client.clone();
                                         let app_state_clone = app_state.clone();
                                         let status_clone = status_tx.clone();
                                         tokio::spawn(async move {
                                             // Small delay to ensure server is ready
-                                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
                                             if let Err(e) = IppClient::get_job_attributes(
                                                 client_id,
                                                 job_id,
                                                 app_state_clone,
                                                 llm_clone,
                                                 status_clone,
-                                            ).await {
+                                            )
+                                            .await
+                                            {
                                                 error!("IPP Get-Job-Attributes failed: {}", e);
                                             }
                                         });
@@ -175,7 +202,9 @@ impl IppClient {
                                     }
                                 }
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 info!("LLM requested disconnect after connect");
                                 return Ok("0.0.0.0:0".parse().unwrap());
                             }

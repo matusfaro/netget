@@ -22,12 +22,12 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error};
 
-use crate::state::ClientId;
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::state::ClientId;
 use crate::{console_debug, console_info};
 
 pub use actions::IcmpClientProtocol;
@@ -255,9 +255,7 @@ impl IcmpClient {
                                 }
                             }
                             IcmpTypes::TimeExceeded => {
-                                if let Some(time_exceeded) =
-                                    TimeExceededPacket::new(icmp_payload)
-                                {
+                                if let Some(time_exceeded) = TimeExceededPacket::new(icmp_payload) {
                                     let code = time_exceeded.get_icmp_code().0;
                                     Some(Event::new(
                                         &ICMP_TIME_EXCEEDED_EVENT,
@@ -285,7 +283,9 @@ impl IcmpClient {
 
                         if let Some(event) = event_opt {
                             // Get instruction for LLM call
-                            if let Some(instruction) = state_clone.get_instruction_for_client(client_id).await {
+                            if let Some(instruction) =
+                                state_clone.get_instruction_for_client(client_id).await
+                            {
                                 // Call LLM
                                 match call_llm_for_client(
                                     &llm_clone,
@@ -404,11 +404,11 @@ impl IcmpClient {
                             identifier,
                             sequence
                         );
-                    /* TODO: Timestamp support requires pnet to add timestamp packet types
-                    } else if name == "send_timestamp_request" {
-                        // TODO: Implement timestamp request
-                        debug!("Timestamp request not yet implemented");
-                    */
+                        /* TODO: Timestamp support requires pnet to add timestamp packet types
+                        } else if name == "send_timestamp_request" {
+                            // TODO: Implement timestamp request
+                            debug!("Timestamp request not yet implemented");
+                        */
                     }
                 }
                 ClientActionResult::WaitForMore => {

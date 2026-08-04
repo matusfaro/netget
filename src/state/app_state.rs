@@ -339,6 +339,34 @@ struct AppStateInner {
     access_logs: std::collections::VecDeque<AccessLogEntry>,
     /// Next access-log entry id to assign
     next_access_log_id: u64,
+    /// Maximum LLM calls a single client session may make (0 = unlimited)
+    client_llm_call_limit: u32,
+    /// LLM calls consumed so far, per client session.
+    ///
+    /// Kept here rather than on `ClientInstance` so the budget is owned by the
+    /// component that enforces it; the entry is dropped by `remove_client`.
+    client_llm_calls: HashMap<ClientId, u32>,
+}
+
+/// Default ceiling on LLM calls per client session.
+///
+/// Clients drive their own event loops, so a response handler that always
+/// re-issues a request loops forever: the observed DNS-client runaway made 211
+/// model calls before the process died. 100 is well above any legitimate
+/// LLM-driven client session (the busiest real one — an SSH session issuing a
+/// command per response — is a handful of calls) while capping the blast radius of
+/// a non-converging loop to a bounded, affordable number of round-trips.
+///
+/// Override with `NETGET_CLIENT_LLM_CALL_LIMIT`; `0` disables the cap.
+pub const DEFAULT_CLIENT_LLM_CALL_LIMIT: u32 = 100;
+
+/// Read the per-client LLM call limit from the environment, falling back to
+/// [`DEFAULT_CLIENT_LLM_CALL_LIMIT`] when unset or unparseable.
+fn client_llm_call_limit_from_env() -> u32 {
+    std::env::var("NETGET_CLIENT_LLM_CALL_LIMIT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(DEFAULT_CLIENT_LLM_CALL_LIMIT)
 }
 
 impl AppState {
@@ -408,6 +436,8 @@ impl AppState {
                 documented_client_protocols: std::collections::HashSet::new(),
                 access_logs: std::collections::VecDeque::new(),
                 next_access_log_id: 1,
+                client_llm_call_limit: client_llm_call_limit_from_env(),
+                client_llm_calls: HashMap::new(),
             })),
         }
     }
@@ -631,7 +661,10 @@ impl AppState {
                 server.feedback_buffer.push(feedback);
                 Ok(())
             } else {
-                anyhow::bail!("Server {} has no feedback_instructions configured", server_id)
+                anyhow::bail!(
+                    "Server {} has no feedback_instructions configured",
+                    server_id
+                )
             }
         } else {
             anyhow::bail!("Server {} not found", server_id)
@@ -654,7 +687,10 @@ impl AppState {
                 client.feedback_buffer.push(feedback);
                 Ok(())
             } else {
-                anyhow::bail!("Client {} has no feedback_instructions configured", client_id)
+                anyhow::bail!(
+                    "Client {} has no feedback_instructions configured",
+                    client_id
+                )
             }
         } else {
             anyhow::bail!("Client {} not found", client_id)
@@ -726,12 +762,22 @@ impl AppState {
 
     /// Check if server documentation has been read (enables open_server)
     pub async fn is_server_docs_read(&self) -> bool {
-        !self.inner.read().await.documented_server_protocols.is_empty()
+        !self
+            .inner
+            .read()
+            .await
+            .documented_server_protocols
+            .is_empty()
     }
 
     /// Check if client documentation has been read (enables open_client)
     pub async fn is_client_docs_read(&self) -> bool {
-        !self.inner.read().await.documented_client_protocols.is_empty()
+        !self
+            .inner
+            .read()
+            .await
+            .documented_client_protocols
+            .is_empty()
     }
 
     /// Mark server protocols as documented
@@ -847,7 +893,10 @@ impl AppState {
     }
 
     /// Configure the rate limiter
-    pub async fn configure_rate_limiter(&self, config: crate::llm::RateLimiterConfig) -> anyhow::Result<()> {
+    pub async fn configure_rate_limiter(
+        &self,
+        config: crate::llm::RateLimiterConfig,
+    ) -> anyhow::Result<()> {
         let rate_limiter = self.inner.read().await.rate_limiter.clone();
         rate_limiter.update_config(config).await
     }
@@ -1371,10 +1420,8 @@ impl AppState {
                         serde_json::Value::Number(block_number.into()),
                     );
                     // Update total bytes
-                    let current_total = obj
-                        .get("total_bytes")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let current_total =
+                        obj.get("total_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
                     obj.insert(
                         "total_bytes".to_string(),
                         serde_json::Value::Number((current_total + block_bytes as u64).into()),
@@ -1420,6 +1467,7 @@ impl AppState {
     pub async fn remove_client(&self, id: ClientId) -> Option<ClientInstance> {
         let mut inner = self.inner.write().await;
         let client = inner.clients.remove(&id);
+        inner.client_llm_calls.remove(&id);
 
         // Set mode to Idle if no more clients and no servers
         if inner.clients.is_empty() && inner.servers.is_empty() {
@@ -1427,6 +1475,62 @@ impl AppState {
         }
 
         client
+    }
+
+    /// Consume one LLM call from a client's budget.
+    ///
+    /// Returns `Ok(calls_used)` while the client is under its cap, and `Err(message)`
+    /// once the cap is reached. Clients hand-roll their own event loops and at least
+    /// one of them (DNS) could re-enter the LLM path indefinitely; an unbounded loop
+    /// burns real money against a paid endpoint, so the budget is a hard stop rather
+    /// than a warning.
+    ///
+    /// The limit is per client session (not per event) and is configurable via
+    /// [`Self::set_client_llm_call_limit`] or `NETGET_CLIENT_LLM_CALL_LIMIT`
+    /// (`0` disables the cap entirely).
+    pub async fn try_consume_client_llm_call(&self, id: ClientId) -> Result<u32, String> {
+        let mut inner = self.inner.write().await;
+        let limit = inner.client_llm_call_limit;
+        if !inner.clients.contains_key(&id) {
+            // Client already removed — nothing to budget. Let the caller proceed and
+            // discover the removal through its own state checks.
+            return Ok(0);
+        }
+        let used = inner.client_llm_calls.entry(id).or_insert(0);
+
+        if limit > 0 && *used >= limit {
+            return Err(format!(
+                "client {} exceeded its LLM call budget ({} calls). \
+                 The client's event loop is not converging — it keeps invoking the model \
+                 instead of terminating. Refusing further LLM calls; stop the client or \
+                 raise NETGET_CLIENT_LLM_CALL_LIMIT (0 = unlimited).",
+                id, limit
+            ));
+        }
+
+        *used += 1;
+        Ok(*used)
+    }
+
+    /// Number of LLM calls a client has consumed so far
+    pub async fn get_client_llm_calls(&self, id: ClientId) -> u32 {
+        self.inner
+            .read()
+            .await
+            .client_llm_calls
+            .get(&id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Get the per-client LLM call cap (0 = unlimited)
+    pub async fn get_client_llm_call_limit(&self) -> u32 {
+        self.inner.read().await.client_llm_call_limit
+    }
+
+    /// Set the per-client LLM call cap (0 = unlimited)
+    pub async fn set_client_llm_call_limit(&self, limit: u32) {
+        self.inner.write().await.client_llm_call_limit = limit;
     }
 
     /// Get a client instance (cloned)
@@ -1662,12 +1766,22 @@ impl AppState {
 
     /// Get easy ID for a given server ID (returns None if server is not managed by an easy protocol)
     pub async fn get_easy_for_server(&self, server_id: ServerId) -> Option<EasyId> {
-        self.inner.read().await.server_to_easy.get(&server_id).copied()
+        self.inner
+            .read()
+            .await
+            .server_to_easy
+            .get(&server_id)
+            .copied()
     }
 
     /// Get easy ID for a given client ID (returns None if client is not managed by an easy protocol)
     pub async fn get_easy_for_client(&self, client_id: ClientId) -> Option<EasyId> {
-        self.inner.read().await.client_to_easy.get(&client_id).copied()
+        self.inner
+            .read()
+            .await
+            .client_to_easy
+            .get(&client_id)
+            .copied()
     }
 
     /// Get easy protocol instance
@@ -1729,7 +1843,12 @@ impl AppState {
     where
         F: FnOnce(&mut EasyInstance) -> R,
     {
-        self.inner.write().await.easy_instances.get_mut(&easy_id).map(f)
+        self.inner
+            .write()
+            .await
+            .easy_instances
+            .get_mut(&easy_id)
+            .map(f)
     }
 
     // ========== Backwards Compatibility Methods ==========
@@ -2197,13 +2316,7 @@ impl AppState {
     pub async fn list_access_logs(&self, limit: Option<usize>) -> Vec<AccessLogEntry> {
         let inner = self.inner.read().await;
         let take = limit.unwrap_or(ACCESS_LOG_CAPACITY);
-        inner
-            .access_logs
-            .iter()
-            .rev()
-            .take(take)
-            .cloned()
-            .collect()
+        inner.access_logs.iter().rev().take(take).cloned().collect()
     }
 
     /// Look up a single access-log entry by id.
@@ -2342,7 +2455,9 @@ impl AppState {
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        inner._database_manager.delete_databases_by_server(server_id)
+        inner
+            ._database_manager
+            .delete_databases_by_server(server_id)
     }
 
     /// Delete all databases owned by a client (called when client disconnects)
@@ -2352,7 +2467,9 @@ impl AppState {
         client_id: crate::state::ClientId,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        inner._database_manager.delete_databases_by_client(client_id)
+        inner
+            ._database_manager
+            .delete_databases_by_client(client_id)
     }
 
     /// Test-only helper to add a server with a specific ID (bypasses auto-increment)
@@ -2382,7 +2499,10 @@ impl AppState {
 
     /// Get Tor client instance by client ID
     #[cfg(feature = "tor")]
-    pub async fn get_tor_client(&self, client_id: ClientId) -> Option<Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>> {
+    pub async fn get_tor_client(
+        &self,
+        client_id: ClientId,
+    ) -> Option<Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>> {
         let inner = self.inner.read().await;
         inner.tor_clients.get(&client_id).cloned()
     }

@@ -15,7 +15,7 @@ use tracing::{error, info, trace};
 use crate::client::redis::actions::{
     REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::patterns;
@@ -94,12 +94,20 @@ impl RedisClient {
                                     if let Some(command) = action["command"].as_str() {
                                         let command_bytes = encode_redis_command(command);
                                         let mut write_guard = write_half_for_connected.lock().await;
-                                        if let Err(e) = write_guard.write_all(&command_bytes).await {
-                                            error!("Failed to send Redis command after connect: {}", e);
+                                        if let Err(e) = write_guard.write_all(&command_bytes).await
+                                        {
+                                            error!(
+                                                "Failed to send Redis command after connect: {}",
+                                                e
+                                            );
                                         } else if let Err(e) = write_guard.flush().await {
                                             error!("Failed to flush after connect: {}", e);
                                         } else {
-                                            info!("{} {}", patterns::REDIS_CLIENT_SENT_COMMAND, command);
+                                            info!(
+                                                "{} {}",
+                                                patterns::REDIS_CLIENT_SENT_COMMAND,
+                                                command
+                                            );
                                         }
                                     }
                                 }
@@ -128,7 +136,11 @@ impl RedisClient {
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        info!("Redis client {} {}", client_id, patterns::REDIS_CLIENT_DISCONNECTED);
+                        info!(
+                            "Redis client {} {}",
+                            client_id,
+                            patterns::REDIS_CLIENT_DISCONNECTED
+                        );
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;

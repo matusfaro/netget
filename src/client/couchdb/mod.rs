@@ -12,7 +12,7 @@ use tracing::{error, info};
 use crate::client::couchdb::actions::{
     COUCHDB_CLIENT_CONNECTED_EVENT, COUCHDB_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
@@ -137,7 +137,11 @@ impl CouchDbClient {
                                 action_queue.extend(follow_up_actions.into_iter().rev());
                             }
                             Err(e) => {
-                                console_error!(status_tx, "Error executing action after connect: {}", e);
+                                console_error!(
+                                    status_tx,
+                                    "Error executing action after connect: {}",
+                                    e
+                                );
                             }
                         }
                     }
@@ -320,12 +324,7 @@ async fn execute_couchdb_action(
                 .get("document")
                 .ok_or_else(|| anyhow::anyhow!("Missing document"))?;
 
-            console_info!(
-                status_tx,
-                "Creating document in {}: {:?}",
-                db_name,
-                doc_id
-            );
+            console_info!(status_tx, "Creating document in {}: {:?}", db_name, doc_id);
 
             let client_guard = client.lock().await;
 
@@ -368,8 +367,14 @@ async fn execute_couchdb_action(
                         console_info!(
                             status_tx,
                             "Document created: {} (rev: {})",
-                            result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                            result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
+                            result
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown"),
+                            result
+                                .get("rev")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
                         );
                         return Ok(send_response_event(
                             client_id,
@@ -387,7 +392,10 @@ async fn execute_couchdb_action(
                             status_tx,
                             "Failed to create document: {} - {}",
                             status,
-                            result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown error")
+                            result
+                                .get("reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown error")
                         );
                         return Ok(send_response_event(
                             client_id,
@@ -396,8 +404,14 @@ async fn execute_couchdb_action(
                             serde_json::json!({}),
                             Some(format!(
                                 "{}: {}",
-                                result.get("error").and_then(|v| v.as_str()).unwrap_or("error"),
-                                result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown")
+                                result
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("error"),
+                                result
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
                             )),
                             app_state,
                             llm_client,
@@ -555,8 +569,14 @@ async fn execute_couchdb_action(
                         console_info!(
                             status_tx,
                             "Document updated: {} (new rev: {})",
-                            result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                            result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
+                            result
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown"),
+                            result
+                                .get("rev")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
                         );
                         return Ok(send_response_event(
                             client_id,
@@ -572,7 +592,11 @@ async fn execute_couchdb_action(
                     } else {
                         // Check for conflict (409)
                         if status.as_u16() == 409 {
-                            console_error!(status_tx, "Conflict updating document {}: revision mismatch", doc_id);
+                            console_error!(
+                                status_tx,
+                                "Conflict updating document {}: revision mismatch",
+                                doc_id
+                            );
                             send_conflict_event(
                                 client_id,
                                 db_name,
@@ -589,7 +613,10 @@ async fn execute_couchdb_action(
                             status_tx,
                             "Failed to update document: {} - {}",
                             status,
-                            result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown error")
+                            result
+                                .get("reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown error")
                         );
                         return Ok(send_response_event(
                             client_id,
@@ -598,8 +625,14 @@ async fn execute_couchdb_action(
                             serde_json::json!({}),
                             Some(format!(
                                 "{}: {}",
-                                result.get("error").and_then(|v| v.as_str()).unwrap_or("error"),
-                                result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown")
+                                result
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("error"),
+                                result
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
                             )),
                             app_state,
                             llm_client,
@@ -685,8 +718,14 @@ async fn execute_couchdb_action(
                         console_info!(
                             status_tx,
                             "Document deleted: {} (rev: {})",
-                            result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                            result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
+                            result
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown"),
+                            result
+                                .get("rev")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
                         );
                         return Ok(send_response_event(
                             client_id,
@@ -958,7 +997,10 @@ async fn execute_couchdb_action(
             }
         }
         "query_view" => {
-            console_info!(status_tx, "View queries not yet fully implemented in couch_rs");
+            console_info!(
+                status_tx,
+                "View queries not yet fully implemented in couch_rs"
+            );
             return Ok(send_response_event(
                 client_id,
                 "query_view",
@@ -1015,7 +1057,10 @@ async fn send_response_event(
     status_tx: &mpsc::UnboundedSender<String>,
 ) -> Vec<serde_json::Value> {
     if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
 
         let mut event_data = serde_json::json!({
             "operation": operation,

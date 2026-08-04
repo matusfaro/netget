@@ -13,7 +13,7 @@ use crate::client::xmpp::actions::{
     XMPP_CLIENT_CONNECTED_EVENT, XMPP_CLIENT_MESSAGE_RECEIVED_EVENT,
     XMPP_CLIENT_PRESENCE_RECEIVED_EVENT,
 };
-use crate::llm::action_helper::call_llm_for_client;
+use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
