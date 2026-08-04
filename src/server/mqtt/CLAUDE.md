@@ -1,254 +1,181 @@
 # MQTT Protocol Implementation
 
-## Overview
+MQTT 3.1.1 broker. Control packets are parsed and built by hand in `mod.rs`; the LLM (or
+a script/static handler) decides every acknowledgement and every message delivery.
 
-MQTT (Message Queuing Telemetry Transport) broker for IoT messaging. This is a **placeholder implementation** that
-registers the protocol but does not yet provide full broker functionality.
+**State**: Experimental — LLM-authored, not human-reviewed. Verified with a raw-socket
+MQTT client driving CONNECT / SUBSCRIBE / PUBLISH at QoS 0, 1 and 2, plus PINGREQ.
+**Port**: 1883 by default. **Privilege**: `None` (1883 > 1024).
+**Stack**: `ETH>IP>TCP>MQTT`. **Spec**: MQTT 3.1.1 (OASIS / ISO-IEC 20922).
 
-**Status**: Alpha (Application Protocol - Placeholder)
-**RFC**: None (MQTT is documented in OASIS standards, not IETF RFCs)
-**OASIS Standards**: MQTT v3.1.1 (ISO/IEC 20922), MQTT v5.0
-**Port**: 1883 (default), 8883 (TLS)
+This replaces a placeholder that returned empty vectors from `get_sync_actions()` and
+`get_event_types()` while advertising itself as `Experimental`. It answered CONNECT with
+a hardcoded CONNACK and PINGREQ with PINGRESP, ignored PUBLISH and SUBSCRIBE entirely,
+never called the LLM, and `execute_action` errored on every input.
 
-## Current Implementation Status
+## Why hand-written rather than rumqttd
 
-### ✅ Completed
+`rumqttd` is a dependency of the `mqtt` feature but is not used. It owns its own session,
+subscription and routing model — precisely the part the LLM has to own here — and exposes
+no hook for "ask something else whether this CONNECT is acceptable". MQTT 3.1.1 control
+packets are a varint length, length-prefixed UTF-8 strings and a handful of fixed-size
+acknowledgements, so the codec is ~200 lines and every byte is inspectable.
 
-- Protocol registration in NetGet architecture
-- Feature flag (`mqtt`) in Cargo.toml
-- Module structure (`src/server/mqtt/`)
-- Protocol trait implementation (`MqttProtocol`)
-- Connection info enum variant (`ProtocolConnectionInfo::Mqtt`)
-- Keyword-based protocol detection (`mqtt`, `mosquitto`, `message queue`)
-- Metadata with Alpha status and explanatory notes
+## What the model sees
 
-### ❌ Not Yet Implemented
+| Event | Fired when | Must be answered with |
+|---|---|---|
+| `mqtt_connect` | CONNECT received | `mqtt_connack` |
+| `mqtt_publish` | client published | `mqtt_puback` (QoS 1), `mqtt_pubrec` (QoS 2), nothing (QoS 0) |
+| `mqtt_subscribe` | SUBSCRIBE received | `mqtt_suback` |
+| `mqtt_unsubscribe` | UNSUBSCRIBE received | `mqtt_unsuback` |
 
-- rumqttd broker integration
-- MQTT packet parsing and handling
-- Client connection management
-- PUBLISH/SUBSCRIBE message routing
-- Topic filtering and wildcards
-- QoS levels (0, 1, 2)
-- Retained messages
-- LLM control points for authorization and message handling
-- MQTT v5.0 features
+`mqtt_connect` carries `client_id`, `username`, `has_password`, `clean_session`,
+`keep_alive`, `protocol_name`, `protocol_level`, `will_topic`, `will_message`. The
+password itself is not surfaced.
 
-## Planned Architecture
+`mqtt_publish` carries `client_id`, `topic`, `payload`, `payload_is_text`,
+`payload_size`, `qos`, `retain`, `duplicate`, `packet_id`, and `connected_clients` — the
+list of client ids currently attached to this server, so the model can forward the
+message without guessing names.
 
-### Library Choices (Planned)
+`mqtt_subscribe` carries `packet_id` and `topics`, an ordered list of
+`{"filter": "...", "qos": N}`.
 
-**rumqttd v0.20** - MQTT broker implementation
+### Correlation identifiers
 
-- Embeddable MQTT broker written in Rust
-- Supports MQTT v3.1.1 (stable) and v5.0 (in progress)
-- Provides `Broker` API and `Link` API for event subscription
-- QoS 0, 1, and 2 support
-- TLS, retained messages, last will
-- Feature-rich configuration via `rumqttd::Config`
+MQTT correlates by **packet identifier**, and every acknowledgement must echo the one
+from the request or the client retries forever.
 
-**rumqttc v0.24** - MQTT client (for E2E testing)
+- `packet_id` is exposed on `mqtt_publish`, `mqtt_subscribe` and `mqtt_unsubscribe`, so a
+  static handler can echo it with `{{event.packet_id}}` — no script and no model call:
 
-- Same ecosystem as rumqttd
-- Async/sync APIs
-- MQTT v3.1.1 and v5.0 support
+  ```json
+  {"event_pattern": "mqtt_publish",
+   "handler": {"type": "static",
+     "actions": [{"type": "mqtt_puback", "packet_id": "{{event.packet_id}}"}]}}
+  ```
 
-**Rationale**: rumqttd is production-ready and embeddable, making it ideal for LLM-controlled broker. Alternative would
-be manual implementation using `mqtt-protocol` crate for parsing, but rumqttd provides complete broker logic.
+- `mqtt_suback`'s `granted_qos` must have one entry per filter in the event's `topics`,
+  in the same order.
+- QoS 0 publishes carry no packet identifier; the event reports `packet_id: 0` and no
+  acknowledgement exists.
 
-### LLM Control Points (Planned)
+### Payloads are text, never bytes
 
-The LLM will control broker behavior through actions:
+`payload` is the message body decoded as UTF-8. If the bytes are not valid UTF-8,
+`payload_is_text` is false, `payload` holds a lossy rendering and `payload_size` gives
+the true byte count. Nothing base64 or hex encoded is ever put in an event or an action —
+a model cannot reliably read or write it.
 
-**Startup Parameters** (`open_server` action):
+## Actions
 
-- `port` - MQTT broker port (default: 1883)
-- `max_clients` - Maximum concurrent clients (default: 100)
-- `max_qos` - Maximum QoS level allowed (0, 1, or 2, default: 2)
-- `allow_anonymous` - Allow clients without authentication (default: true)
-- `enable_tls` - Enable TLS on port 8883
+**Sync** (in response to a client packet):
 
-**Event Types** (planned):
+| Action | Parameters |
+|---|---|
+| `mqtt_connack` | `return_code` (0 accept; 1-5 refuse), `session_present` |
+| `mqtt_suback` | `packet_id`, `granted_qos` (0/1/2 to grant, 128 to refuse, one per filter) |
+| `mqtt_puback` | `packet_id` |
+| `mqtt_pubrec` | `packet_id` |
+| `mqtt_unsuback` | `packet_id` |
+| `mqtt_publish` | `topic`, `payload`, `qos`, `retain`, `packet_id`, `to_client_id` |
+| `close_this_connection` | — |
 
-- `mqtt_connect` - Client attempts to connect (includes client_id, username, clean_session flag)
-- `mqtt_publish` - Client publishes to topic (includes client_id, topic, payload, qos, retain)
-- `mqtt_subscribe` - Client subscribes to topic filter (includes client_id, topic, max_qos)
-- `mqtt_disconnect` - Client disconnects gracefully
+**Async** (user-triggered, no connection context):
 
-**Sync Actions** (network event triggered):
+| Action | Parameters |
+|---|---|
+| `mqtt_publish_to_client` | `server_id`, `client_id` (or `"*"`), `topic`, `payload`, `qos`, `retain`, `packet_id` |
+| `list_mqtt_clients` | `server_id` |
 
-- `accept_connection` - Accept/reject CONNECT packet with reason code
-- `authorize_publish` - Allow/deny PUBLISH to specific topic
-- `authorize_subscribe` - Allow/deny SUBSCRIBE to topic filter
-- `publish_message` - Broker-initiated publish to topic
-- `set_retained_message` - Set/update retained message for topic
-- `disconnect_client` - Forcibly disconnect client with reason code
+Every declared parameter is read by `execute_action`; there are no dead actions and no
+undeclared executor branches. Sync actions write to the connection they were produced
+for, through that connection's single writer channel, so a packet can never interleave
+with one the read loop is emitting. `mqtt_publish` with `to_client_id` writes to another
+client's channel instead; `"*"` fans out to every client on the server.
 
-**Async Actions** (user-triggered):
+## Routing: the model does it, not the broker
 
-- `publish_to_topic` - Manually publish message from UI/user input
-- `update_auth_policy` - Change authentication requirements at runtime
-- `list_clients` - Get list of connected clients and their subscriptions
+**There is no subscription table and no retained-message store in Rust.** After a client
+publishes, nothing is delivered automatically. The model remembers who subscribed to what
+(server memory, or a script's own state) and issues `mqtt_publish` with `to_client_id` for
+each recipient. `connected_clients` in the publish event and the `list_mqtt_clients`
+action give it the live client ids.
 
-### Logging Strategy (Planned)
+The only cross-request state the broker keeps is a directory of **live socket senders**
+keyed by `(server id, client id)`, so that a named recipient can be written to. Nothing
+survives a disconnect; no message, subscription, topic or retained value is stored.
 
-**ERROR**:
+## What the broker answers by itself
 
-- Failed to start broker
-- Critical broker crashes
-- TLS certificate errors
-- Fatal configuration errors
+Two cases, both pure transport bookkeeping with no semantics to decide:
 
-**WARN**:
+- **PINGREQ → PINGRESP** (keep-alive).
+- **PUBREL → PUBCOMP**, the second half of the QoS 2 handshake, echoing the packet
+  identifier.
 
-- Client authentication failures
-- Client connection rejected (quota/policy)
-- Invalid MQTT packets
-- Subscription to unauthorized topics
-- QoS downgrade enforcement
+## Failure behaviour
 
-**INFO**:
+A protocol that stays silent leaves the client blocked until its own timeout, so every
+event that owes a mandatory reply has a default:
 
-- Broker started/stopped
-- Client connected/disconnected (client_id, IP)
-- Client subscribed/unsubscribed to topics
-- Retained message count changes
+| Event | If the handler produces no reply | Rationale |
+|---|---|---|
+| `mqtt_connect` | CONNACK, return code 0 (accept), logged at WARN | CONNACK is mandatory (3.2); refusing on an LLM outage would make the server useless as a honeypot |
+| `mqtt_publish` QoS 1 / 2 | PUBACK / PUBREC echoing `packet_id` | otherwise the client republishes forever |
+| `mqtt_subscribe` | SUBACK granting the QoS each filter asked for, logged at WARN | SUBACK is mandatory (3.8.4) |
+| `mqtt_unsubscribe` | UNSUBACK echoing `packet_id` | mandatory (3.10.4) |
 
-**DEBUG**:
+"Produces no reply" is checked per **packet type**, not "wrote anything": a handler that
+forwards a PUBLISH but forgets the PUBACK still gets the PUBACK default.
 
-- Connection details (client_id, username, clean_session flag)
-- Publish summaries (client_id → topic, QoS, payload size)
-- Subscribe summaries (client_id → topic filter, max QoS)
-- Authorization decisions (allow/deny with reason)
-- Message delivery confirmations
+Errors that close the connection: a malformed CONNECT, a second CONNECT on one connection
+(3.1.0-2), QoS 3, a SUBSCRIBE with no filter, a malformed packet, and any packet larger
+than `max_packet_size`.
 
-**TRACE**:
+## Limits
 
-- Full MQTT packet dumps (CONNECT, CONNACK, PUBLISH, SUBSCRIBE, etc. in hex)
-- Pretty-printed JSON payloads (if payload is JSON)
-- Wildcard topic matching traces
-- QoS handshake details (PUBACK, PUBREC, PUBREL, PUBCOMP)
-- Retained message lookup traces
+The fixed header allows a 268 435 455 byte remaining length; trusting it would let one
+client request a 256 MiB allocation per packet. `max_packet_size` (startup parameter,
+default 256 KiB, hard maximum 16 MiB) is checked before any allocation, and the
+connection is closed when it is exceeded. Every parse function is bounds-checked with
+`get()`/`checked_add`; no input can panic the read loop.
 
-**Dual Logging Pattern**: All logs use both `debug!()/trace!()/etc.` macros AND `status_tx.send()` for TUI visibility.
+## Startup parameters
 
-## Known Limitations
+- `max_packet_size` (integer, optional, default 262144, clamped to 64..=16777216)
 
-### Current Limitations (Placeholder)
+## Not implemented
 
-- **No broker functionality** - Protocol registered but returns error when spawned
-- **No LLM integration** - Actions defined but not executable
-- **No E2E tests** - Test infrastructure not yet created
+- **MQTT 5.0** — `protocol_level` is reported so a handler can refuse a v5 client with
+  CONNACK return code 1.
+- **TLS (8883) and WebSocket transport.**
+- **Retained messages** — the RETAIN flag is reported inbound and settable outbound, but
+  nothing is stored, so a late subscriber receives nothing automatically.
+- **Last will and testament** — `will_topic` and `will_message` are surfaced, but the
+  broker never publishes the will on an unclean disconnect.
+- **Session persistence** (`clean_session=false`), **QoS 2 duplicate suppression**,
+  **keep-alive enforcement** (an idle client is not disconnected), **topic wildcard
+  matching** in Rust (the model interprets `+` and `#` itself), **`$SYS` topics**,
+  **clustering**, **bridging**, **authentication beyond passing the username to the
+  model**.
+- **Per-connection byte and packet counters** are not updated after the initial insert.
 
-### Future Limitations (Post-Implementation)
+## Testing
 
-- **MQTT v5.0 incomplete** - rumqttd v5 support still in progress, v3.1.1 stable
-- **No clustering** - Single-node broker only
-- **No persistence** - Messages and subscriptions not persisted across restarts (unless rumqttd config provides this)
-- **No bridge/federation** - Cannot bridge to other MQTT brokers
-- **No authentication plugins** - Only LLM-controlled auth, no LDAP/database integration
+`tests/server/mqtt/e2e_test.rs` (declared in `tests/server/mod.rs`). Its
+`test_mqtt_keyword_detection` still asserts that starting an MQTT broker fails, and its
+docstring still describes a placeholder — both predate this implementation and are
+outside this change.
 
-## Example Prompts (Planned)
-
-### Basic MQTT Broker
-
-```
-Listen on port 1883 via MQTT. Accept all client connections. Allow publishing and subscribing to any topic. Use QoS 0 for all messages.
-```
-
-### Authenticated Broker with Authorization
-
-```
-Start an MQTT broker on port 1883. Require authentication - accept username "sensor" with password "secret123". Allow this client to publish to "devices/+" topics and subscribe to "commands/+" topics. Reject all other clients or unauthorized topic access.
-```
-
-### IoT Temperature Monitoring
-
-```
-Create an MQTT broker on port 1883. Accept clients with client_id starting with "sensor_". Allow them to publish temperature readings to "home/room/temp" topics. Any client can subscribe to "home/#" to monitor all readings. When temperature exceeds 30°C, publish an alert to "alerts/high_temp" topic.
-```
-
-### Multi-Client Pub/Sub Test
-
-```
-Start MQTT broker on port 1883. Accept all connections. Allow any client to publish to "test/+" topics and subscribe to "test/#" wildcard. Support QoS 0, 1, and 2. Enable retained messages so late subscribers get last value.
-```
-
-## Implementation Roadmap
-
-### Phase 1: Basic Broker (Priority)
-
-- [ ] Integrate rumqttd `Broker::new()` and `Broker::start()`
-- [ ] Subscribe to broker events via `broker.link()`
-- [ ] Parse CONNECT packets and create `mqtt_connect` events
-- [ ] Implement `accept_connection` action
-- [ ] Track connected clients in `ServerInstance`
-- [ ] Implement basic logging (INFO level for lifecycle)
-
-### Phase 2: Pub/Sub Core
-
-- [ ] Parse PUBLISH packets and create `mqtt_publish` events
-- [ ] Implement `authorize_publish` action
-- [ ] Implement `publish_message` action for broker-initiated publishes
-- [ ] Parse SUBSCRIBE packets and create `mqtt_subscribe` events
-- [ ] Implement `authorize_subscribe` action
-- [ ] Track client subscriptions in connection info
-
-### Phase 3: QoS and Retained Messages
-
-- [ ] Implement QoS 1 and 2 handshakes
-- [ ] Implement retained message support
-- [ ] Add `set_retained_message` action
-- [ ] Test with QoS-aware MQTT clients
-
-### Phase 4: Advanced Features
-
-- [ ] TLS support (port 8883)
-- [ ] Last will and testament
-- [ ] Session persistence (clean_session=false)
-- [ ] Scripting mode for deterministic routing
-- [ ] WebSocket transport (ws:// and wss://)
-
-### Phase 5: Testing and Documentation
-
-- [ ] Create E2E tests with rumqttc client
-- [ ] Test authorization scenarios
-- [ ] Test QoS levels 0, 1, 2
-- [ ] Test retained messages and wildcards
-- [ ] Create `tests/server/mqtt/CLAUDE.md` documentation
-- [ ] Target < 10 LLM calls for test suite
+Real-client verification used during review, via `--mcp-stdio` with static handlers so no
+model is involved: a raw-socket MQTT 3.1.1 client sending CONNECT, SUBSCRIBE, PUBLISH at
+QoS 0/1/2 and PINGREQ, asserting CONNACK, SUBACK with the requested QoS, PUBACK/PUBREC
+echoing the packet identifier, and PINGRESP.
 
 ## References
 
-- [MQTT v3.1.1 Specification (OASIS)](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)
-- [MQTT v5.0 Specification (OASIS)](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html)
-- [rumqttd Documentation](https://docs.rs/rumqttd/latest/rumqttd/)
-- [rumqttc Documentation](https://docs.rs/rumqttc/latest/rumqttc/)
-- [MQTT Essentials (HiveMQ)](https://www.hivemq.com/mqtt-essentials/)
-- [mosquitto (Reference MQTT Broker)](https://mosquitto.org/)
-
-## Notes for Future Implementer
-
-1. **rumqttd Link API** - Use `broker.link(client_id)` to subscribe to all broker events. Events arrive as `Link` enum
-   variants (Connect, Publish, Subscribe, etc.).
-
-2. **Client Tracking** - Each MQTT client should have a `ProtocolConnectionInfo::Mqtt` entry with `client_id` and
-   `subscriptions` list. Update subscriptions when client subscribes/unsubscribes.
-
-3. **Topic Wildcards** - MQTT supports `+` (single level) and `#` (multi-level) wildcards. LLM should understand these
-   for authorization decisions.
-
-4. **QoS Semantics**:
-    - QoS 0: At most once (fire and forget)
-    - QoS 1: At least once (requires PUBACK)
-    - QoS 2: Exactly once (requires PUBREC/PUBREL/PUBCOMP handshake)
-    - rumqttd handles QoS handshakes automatically; LLM just authorizes publish/subscribe
-
-5. **Scripting Potential** - MQTT is excellent for scripting mode. Topic routing rules are deterministic. Server startup
-   can generate Python/JavaScript script to handle all routing without LLM calls.
-
-6. **Payload Encoding** - MQTT payloads are binary. LLM should receive base64-encoded payload if binary, UTF-8 string if
-   text. Consider automatic JSON pretty-printing for DEBUG/TRACE logs.
-
-7. **Performance** - MQTT is designed for high-throughput IoT scenarios. Scripting mode is essential for production use.
-   Without scripting, each publish/subscribe triggers LLM call (2-5s latency).
+- [MQTT 3.1.1 (OASIS)](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)
+- [rumqttc](https://docs.rs/rumqttc/) — client used by the E2E tests
+- Testing notes: `tests/server/mqtt/CLAUDE.md`
