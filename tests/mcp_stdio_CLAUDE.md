@@ -22,12 +22,23 @@ features specifically so these tests can act as an MCP client.
    `start_server`, `stop_server`, `get_status`) are advertised.
 2. `call_list_protocols_returns_tcp` — calls the `list_protocols` tool with
    `type=server` and asserts the compiled-in `tcp` protocol appears in the output.
+3. `agent_mode_exposes_queue_tools` — with `--llm-agent`, asserts the
+   `get_next_llm_request` / `answer_llm_request` / `list_llm_requests` tools are
+   advertised and `get_status` reports the `agent` backend.
+4. `agent_answers_tcp_request_end_to_end` — with `--llm-agent`, starts a real TCP
+   server, connects a client and sends a line, fetches the queued LLM request via
+   `get_next_llm_request`, answers it with a `send_tcp_data` action, and asserts the
+   bytes arrive on the socket. This exercises the full producer→queue→agent→execute
+   path with **no model**.
+5. `agent_request_times_out` — with `--llm-agent --llm-agent-timeout 1`, claims a
+   request but never answers it; after the timeout the backend expires it, so a late
+   `answer_llm_request` fails.
 
 ## LLM call budget
 
-**Zero.** Both tests only call tools that read the protocol registry / app state.
-`start_server` (which would invoke the LLM) is intentionally not exercised here —
-that path is covered by the protocol E2E suites.
+**Zero real model calls.** The agent-mode tests *are* the model: the queue backend
+never contacts Ollama/OpenAI; the test harness answers the queued requests directly.
+The non-agent tests only read the protocol registry / app state.
 
 ## Running
 

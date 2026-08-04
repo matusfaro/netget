@@ -5,6 +5,7 @@
 // New action system
 pub mod action_helper;
 pub mod actions; // Centralized helper for LLM calls
+pub mod agent_queue; // Agent-answered LLM request queue (MCP --llm-agent mode)
 pub mod conversation; // Conversation-based LLM interaction
 pub mod conversation_state; // Conversation history management
 pub mod default_instructions; // Default instructions registry
@@ -62,6 +63,9 @@ pub use conversation_state::{ConversationMessage, ConversationState, MessageRole
 
 // Message type from ollama_client module
 pub use ollama_client::Message;
+
+// Agent-answered LLM request queue
+pub use agent_queue::{LlmRequestQueue, PendingLlmRequest};
 
 // Event instructions
 pub use default_instructions::{resolve_instructions, DEFAULT_INSTRUCTIONS};

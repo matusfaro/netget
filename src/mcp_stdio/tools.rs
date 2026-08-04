@@ -88,6 +88,7 @@ where
 }
 
 use crate::cli::Args;
+use crate::llm::agent_queue::LlmRequestQueue;
 use crate::llm::OllamaClient;
 use crate::settings::Settings;
 use crate::state::app_state::AppState;
@@ -99,6 +100,9 @@ use crate::state::app_state::AppState;
 pub(crate) struct SharedState {
     app_state: AppState,
     llm_client: OllamaClient,
+    /// Present only in `--llm-agent` mode: the queue protocol servers submit LLM
+    /// requests to and the MCP tools answer from.
+    agent_queue: Option<Arc<LlmRequestQueue>>,
     _status_tx: mpsc::UnboundedSender<String>,
 }
 
@@ -225,6 +229,47 @@ pub struct UpdateServerInstructionParams {
     pub instruction: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetNextLlmRequestParams {
+    /// Seconds to long-poll for a request when none is immediately pending
+    /// (0 = return right away). Capped at 120 to stay under the client's tool-call timeout.
+    #[serde(default, deserialize_with = "deserialize_option_u32_flexible")]
+    pub wait_seconds: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnswerLlmRequestParams {
+    /// The request id returned by get_next_llm_request
+    #[serde(deserialize_with = "deserialize_u64_flexible")]
+    pub request_id: u64,
+    /// NetGet actions to execute, as a JSON array. Each object has a `type` field
+    /// naming the action plus its parameters (same shape shown by get_access_log).
+    pub actions: Vec<serde_json::Value>,
+}
+
+/// Ensure a named pipe (FIFO) exists at `path`, creating it if absent.
+#[cfg(unix)]
+fn ensure_fifo(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    if path.exists() {
+        return Ok(());
+    }
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| anyhow::anyhow!("invalid FIFO path: {}", path.display()))?;
+    // 0o600: owner read/write only.
+    let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error())
+            .map_err(|e| anyhow::anyhow!("failed to create FIFO {}: {}", path.display(), e));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_fifo(_path: &std::path::Path) -> anyhow::Result<()> {
+    anyhow::bail!("--llm-agent-pipe (named pipes) is only supported on Unix platforms")
+}
+
 // === Tool implementations ===
 
 #[tool_router]
@@ -245,11 +290,32 @@ impl NetGetMcpService {
     ) -> anyhow::Result<Arc<SharedState>> {
         let lock_enabled = args.ollama_lock;
 
-        // Create the LLM client (Ollama or OpenAI-compatible) from CLI args
-        let llm_client = crate::cli::create_llm_client(args, lock_enabled)?;
-
         // Create app state
         let app_state = AppState::new();
+
+        // Build the LLM client. Three mutually-exclusive sources:
+        //   --llm-agent      → queue requests for the calling MCP agent (no model)
+        //   --openai-url     → OpenAI-compatible endpoint
+        //   (default)        → local Ollama
+        let (llm_client, agent_queue) = if args.llm_agent {
+            let pipe = args.llm_agent_pipe.clone();
+            if let Some(ref path) = pipe {
+                ensure_fifo(path)?;
+            }
+            let queue = Arc::new(LlmRequestQueue::new(pipe));
+            let timeout = std::time::Duration::from_secs(args.llm_agent_timeout);
+            let client = OllamaClient::new_queue(queue.clone(), timeout);
+
+            // Pre-seed a placeholder model so `ensure_model_selected` never reaches
+            // out to Ollama's /api/tags (no real model is involved in this mode).
+            if args.model.is_none() {
+                app_state.set_ollama_model(Some("agent".to_string())).await;
+            }
+            (client, Some(queue))
+        } else {
+            let client = crate::cli::create_llm_client(args, lock_enabled)?;
+            (client, None)
+        };
 
         // Status channel (messages go to stderr in MCP mode)
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
@@ -262,6 +328,7 @@ impl NetGetMcpService {
         let state = Arc::new(SharedState {
             app_state,
             llm_client,
+            agent_queue,
             _status_tx: status_tx,
         });
 
@@ -723,6 +790,118 @@ impl NetGetMcpService {
             count
         ))]))
     }
+
+    #[tool(
+        description = "Agent-LLM mode only (netget --llm-agent): fetch the next queued LLM request for a protocol server so YOU (the calling agent) can answer it in place of a model. Optionally long-poll with wait_seconds. Returns the request id, the prompt (server instruction + the triggering event), and the actions you may use. Reply by calling answer_llm_request with that id and a JSON array of actions. Returns '(no pending requests)' if none arrive within the wait."
+    )]
+    async fn get_next_llm_request(
+        &self,
+        Parameters(params): Parameters<GetNextLlmRequestParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let Some(queue) = self.state.agent_queue.as_ref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Agent-LLM mode is not enabled. Start netget with --llm-agent to queue LLM requests for the agent.",
+            )]));
+        };
+
+        // Cap the long-poll to stay comfortably under typical MCP client tool-call timeouts.
+        let wait = params.wait_seconds.unwrap_or(0).min(120);
+        let req = queue
+            .wait_and_claim(std::time::Duration::from_secs(wait as u64))
+            .await;
+
+        let Some(req) = req else {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "(no pending requests)",
+            )]));
+        };
+
+        // Render the prompt (system + user messages) and the available actions.
+        let mut prompt = String::new();
+        for m in &req.messages {
+            prompt.push_str(&format!("### {}\n{}\n\n", m.role, m.content));
+        }
+
+        let actions_json = serde_json::to_string_pretty(&req.tools)
+            .unwrap_or_else(|_| "[]".to_string());
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let age = now_ms.saturating_sub(req.created_unix_ms) / 1000;
+
+        let result = format!(
+            "## LLM request #{}\n\n\
+             - **Queued**: {}s ago\n\n\
+             ### Prompt\n{}\n\
+             ### Available actions (tool schemas)\n```json\n{}\n```\n\n\
+             To answer, call `answer_llm_request` with:\n\
+             ```json\n{{ \"request_id\": {}, \"actions\": [ /* one or more action objects */ ] }}\n```\n\
+             Each action object needs a `type` field naming the action, plus its parameters. \
+             See `get_access_log` for worked examples of the action JSON a protocol expects.",
+            req.id, age, prompt, actions_json, req.id,
+        );
+
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(
+        description = "Agent-LLM mode only: answer a queued LLM request (from get_next_llm_request). `actions` is a JSON array of NetGet action objects — each with a `type` field and its parameters — that the protocol server will execute (e.g. [{\"type\":\"send_tcp_data\",\"data\":\"...\"}]). This unblocks the waiting connection."
+    )]
+    async fn answer_llm_request(
+        &self,
+        Parameters(params): Parameters<AnswerLlmRequestParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let Some(queue) = self.state.agent_queue.as_ref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Agent-LLM mode is not enabled. Start netget with --llm-agent.",
+            )]));
+        };
+
+        match queue.answer(params.request_id, params.actions) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Answered LLM request #{}.",
+                params.request_id
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
+        }
+    }
+
+    #[tool(
+        description = "Agent-LLM mode only: list outstanding queued LLM requests (pending and claimed-but-unanswered) for monitoring."
+    )]
+    async fn list_llm_requests(&self) -> Result<CallToolResult, McpError> {
+        let Some(queue) = self.state.agent_queue.as_ref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Agent-LLM mode is not enabled. Start netget with --llm-agent.",
+            )]));
+        };
+
+        let pending = queue.list();
+        if pending.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No outstanding LLM requests.",
+            )]));
+        }
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let mut out = String::from("## Outstanding LLM requests\n\n");
+        for r in &pending {
+            let age = now_ms.saturating_sub(r.created_unix_ms) / 1000;
+            out.push_str(&format!(
+                "- **#{}** — {} — queued {}s ago\n",
+                r.id,
+                if r.claimed { "claimed" } else { "pending" },
+                age
+            ));
+        }
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
 }
 
 #[tool_handler]
@@ -741,7 +920,15 @@ impl ServerHandler for NetGetMcpService {
                  natural-language `instruction` (the LLM fallback, one model call per \
                  request) for responses that genuinely need reasoning or vary \
                  unpredictably. Use get_protocol_docs to see a protocol's event ids and \
-                 actions before writing a handler.",
+                 actions before writing a handler.\n\n\
+                 AGENT-LLM MODE (when netget was started with --llm-agent): there is no \
+                 model — YOU answer the LLM calls. When a server needs a reasoned \
+                 response it queues a request; fetch it with get_next_llm_request \
+                 (optionally long-poll via wait_seconds), then reply with \
+                 answer_llm_request(request_id, actions). If --llm-agent-pipe was set, a \
+                 line with the new request id is written to that FIFO on each enqueue so \
+                 you can block-read it instead of polling. Unanswered requests error out \
+                 after the configured timeout. list_llm_requests shows what is outstanding.",
             )
     }
 
