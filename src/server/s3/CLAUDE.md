@@ -76,14 +76,15 @@ S3 uses a RESTful design where resources are accessed via HTTP methods and URL p
 3. Extract bucket/key from path using `parse_s3_path()`
 4. Determine operation based on method + path structure
 5. Create `S3_REQUEST_EVENT` with operation, bucket, key
-6. Call LLM via `action_helper::call_llm()`
+6. Call LLM via `action_helper::call_llm()` (which first tries any script/static handler, so
+   those cost no model call)
 7. Process action result:
     - `s3_object`: Build HTTP response with object content
     - `s3_object_list`: Build ListObjects XML
     - `s3_bucket_list`: Build ListBuckets XML
     - `s3_error`: Build S3 error XML
 8. Return HTTP response
-9. Close connection (HTTP/1.1 without keep-alive)
+9. Keep the connection open for further requests
 
 ### Response Format
 
@@ -131,10 +132,39 @@ Hello, World!
 
 **Sync Actions** (network event context required):
 
-- `send_s3_object`: Return object content with metadata
-- `send_s3_object_list`: Return list of objects in bucket
-- `send_s3_bucket_list`: Return list of all buckets
-- `send_s3_error`: Return S3 error response
+- `send_s3_object` — `content` (string, required), `encoding` (`"utf8"` default or
+  `"base64"`), `content_type`, `etag`. Answers GetObject.
+- `send_s3_object_list` — `objects` (array of `{key, size, last_modified, etag}`),
+  `is_truncated`. Answers ListObjects/ListObjectsV2.
+- `send_s3_bucket_list` — `buckets` (array of `{name, creation_date}`). Answers ListBuckets.
+- `send_s3_error` — `error_code`, `message`, `status_code`. Answers any failure.
+
+There is no dedicated success action for PutObject, CreateBucket, DeleteObject or
+HeadObject: they fall through to an empty `200 OK`, which real SDKs accept but which
+carries no `ETag` (PutObject), `Location` (CreateBucket) or `Content-Length`/`Last-Modified`
+(HeadObject). Use `send_s3_error` to reject them.
+
+The generic actions (`show_message`, memory operations, …) are supplied centrally by
+`get_network_event_common_actions()`.
+
+### Binary object bodies
+
+Object bodies are the one place in this protocol where the payload is genuinely binary, so
+the general "no bytes in action parameters" rule needs a stated exception rather than a
+silent one. `send_s3_object` takes an explicit `encoding` field, following the
+`send_tcp_data` precedent:
+
+- omitted, or `"utf8"` — the characters of `content` are the object bytes (text, JSON, XML)
+- `"base64"` — `content` is decoded as base64, so arbitrary binary objects work
+- anything else is rejected with an error naming the valid values
+
+There is **no auto-detection**: a base64-looking string is sent literally unless `encoding`
+says otherwise. Invalid base64 fails the action with a message the model sees, rather than
+putting the literal base64 characters into the object body. (Before this was implemented,
+`content` was documented as "will be base64-decoded if needed" and never decoded at all.)
+
+Object bodies still travel through the model's context, so multi-MB objects remain
+impractical regardless of encoding.
 
 **Event Types**:
 
@@ -151,6 +181,7 @@ Hello, World!
     {
       "type": "send_s3_object",
       "content": "Hello, World!",
+      "encoding": "utf8",
       "content_type": "text/plain",
       "etag": "\"d41d8cd98f00b204e9800998ecf8427e\""
     }
@@ -241,18 +272,19 @@ Hello, World!
 
 1. Server accepts TCP connection on port 9000
 2. Create `ConnectionId` for tracking
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::S3`
+3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::empty()` (that type is a
+   generic `serde_json::Value` wrapper, not a per-protocol enum)
 4. Spawn HTTP service handler
-5. `http1::Builder` serves single request
-6. Connection closed after response sent
+5. `http1::Builder::serve_connection` serves the connection, including keep-alive
+6. Connection closed when the client closes it
 
 ### State Tracking
 
 - Connection state stored in `ServerInstance.connections` HashMap
-- Protocol-specific: `recent_operations` Vec (operation, bucket, key, time)
-- Tracks: remote_addr, local_addr, bytes_sent/received
-- Status: Active → Closed after each request
-- HTTP/1.1 without keep-alive (new connection per request)
+- No protocol-specific connection state is recorded; there is no `recent_operations` list
+- Tracks: remote_addr, local_addr. `bytes_sent`/`bytes_received` are initialised to 0 and
+  never updated
+- Status: Active → Closed when the connection ends
 
 ### Concurrency
 
@@ -266,9 +298,11 @@ Hello, World!
 ### Protocol Features
 
 - **No persistent storage** - data only exists in LLM conversation context
-- **No authentication** - AWS signature verification not implemented
+- **No authentication** - AWS signature verification not implemented, and the protocol
+  declares **no startup parameters**. `require_authentication`, `access_key`, `secret_key`
+  and `region` were declared until they were removed: `spawn()` never read any of them, so
+  they advertised authentication the server does not perform
 - **HTTP/1.1 only** - no HTTP/2 support
-- **No keep-alive** - new connection per request
 - **No streaming** - full request/response buffering
 - **Limited operations** - only common CRUD operations supported
 - **No multipart uploads** - large files not supported efficiently
@@ -280,9 +314,14 @@ Hello, World!
 ### XML Generation
 
 - Manual XML construction (no library)
-- Basic structure only (sufficient for common operations)
-- May not include all AWS S3 XML fields
-- No XML validation
+- **All interpolated values are XML-escaped** (`xml_escape` in `mod.rs`). They were not
+  before: a single `&`, `<` or `>` in an object key, bucket name or error message produced
+  a body that is not well-formed XML, and the AWS CLI silently discards an unparseable
+  `<Error>` document and reports a bare HTTP status - so `NoSuchKey` arrived at the client
+  as an anonymous `404`
+- `ListBucketResult` carries `Name`, `Prefix`, `MaxKeys`, `KeyCount`, `IsTruncated` and a
+  `StorageClass` per object
+- Still no XML validation, and no pagination tokens (`ContinuationToken`, `StartAfter`)
 
 ### Data Management
 
@@ -295,7 +334,8 @@ Hello, World!
 ## Known Issues
 
 1. **Data consistency**: LLM may forget or hallucinate data between requests
-2. **Binary content**: Binary data must be represented as text/base64 for LLM
+2. **Binary content**: supported via `"encoding": "base64"` on `send_s3_object`; the bytes
+   still pass through the model context, so large objects remain impractical
 3. **Large responses**: Very large object lists may exceed response size limits
 4. **Path parsing**: Complex query parameters not parsed (pagination tokens, etc.)
 5. **Error codes**: Limited AWS error code vocabulary

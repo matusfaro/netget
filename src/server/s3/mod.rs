@@ -222,7 +222,7 @@ async fn handle_s3_request_with_llm(
             // Look for S3-specific response actions
             for result in execution_result.protocol_results {
                 // Try to process this action result as S3 response
-                let response = process_s3_action_result(result, &status_tx).await;
+                let response = process_s3_action_result(result, bucket.as_deref(), &status_tx);
                 // Return the first successful response
                 return response;
             }
@@ -241,15 +241,69 @@ async fn handle_s3_request_with_llm(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/xml")
-                .body(Full::new(Bytes::from(format!(
-                    r#"<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>InternalError</Code>
-  <Message>{}</Message>
-</Error>"#,
-                    e
+                .body(Full::new(Bytes::from(build_error_xml(
+                    "InternalError",
+                    &e.to_string(),
                 ))))
                 .unwrap())
+        }
+    }
+}
+
+/// Escape a value for inclusion in XML character data or an attribute.
+///
+/// Every value below reaches the wire from either the request path (bucket and object
+/// keys) or model output (error messages, ETags, dates). None of it was escaped before,
+/// so a single `&` in a key or message produced a body that is not well-formed XML. Real
+/// clients do not recover from that: the AWS CLI silently discards an `<Error>` document
+/// it cannot parse and reports a bare HTTP status, losing the S3 error code entirely.
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Build an S3 `<Error>` document.
+fn build_error_xml(code: &str, message: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+  <Code>{}</Code>
+  <Message>{}</Message>
+</Error>"#,
+        xml_escape(code),
+        xml_escape(message)
+    )
+}
+
+/// Attach a header whose value came from model output.
+///
+/// `http::HeaderValue` rejects control characters and non-ASCII bytes, and
+/// `Builder::body()` surfaces that as an error which the old `.unwrap()` turned into a
+/// panic - killing the connection task on a malformed model response. Skip the header
+/// instead and say so in the log.
+fn header_or_skip(
+    builder: hyper::http::response::Builder,
+    name: &'static str,
+    value: &str,
+) -> hyper::http::response::Builder {
+    match hyper::header::HeaderValue::from_str(value) {
+        Ok(v) => builder.header(name, v),
+        Err(_) => {
+            error!(
+                "Dropping S3 {} header: {:?} is not a valid HTTP header value",
+                name, value
+            );
+            builder
         }
     }
 }
@@ -308,30 +362,31 @@ fn parse_s3_path(method: &Method, path: &str) -> (Option<String>, Option<String>
 }
 
 /// Process LLM action result and build HTTP response
-async fn process_s3_action_result(
+fn process_s3_action_result(
     action_result: ActionResult,
+    bucket: Option<&str>,
     status_tx: &mpsc::UnboundedSender<String>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     match action_result {
         ActionResult::Custom { name, data } => {
             match name.as_str() {
                 "s3_object" => {
-                    // Send object content
-                    let content = data
-                        .get("content")
+                    // `content_b64` is the canonical form produced by
+                    // `S3Protocol::execute_action`, which already validated and decoded
+                    // the model's `content`/`encoding` pair. It cannot fail to decode here.
+                    use base64::Engine;
+                    let content: Vec<u8> = data
+                        .get("content_b64")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                        .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
+                        .unwrap_or_default();
 
                     let content_type = data
                         .get("content_type")
                         .and_then(|v| v.as_str())
                         .unwrap_or("application/octet-stream");
 
-                    let etag = data
-                        .get("etag")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("\"default-etag\"");
+                    let etag = data.get("etag").and_then(|v| v.as_str());
 
                     debug!(
                         "Sending S3 object ({} bytes, {})",
@@ -340,19 +395,24 @@ async fn process_s3_action_result(
                     );
                     let _ = status_tx.send(format!("[DEBUG] → S3 object {} bytes", content.len()));
 
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", content_type)
-                        .header("ETag", etag)
+                    let mut builder = Response::builder().status(StatusCode::OK);
+                    builder = header_or_skip(builder, "Content-Type", content_type);
+                    if let Some(etag) = etag {
+                        builder = header_or_skip(builder, "ETag", etag);
+                    }
+
+                    Ok(builder
                         .body(Full::new(Bytes::from(content)))
-                        .unwrap())
+                        .unwrap_or_else(|_| {
+                            Response::new(Full::new(Bytes::new()))
+                        }))
                 }
                 "s3_object_list" => {
                     // Send list of objects as XML
                     let objects = data
                         .get("objects")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.clone())
+                        .cloned()
                         .unwrap_or_default();
 
                     let is_truncated = data
@@ -360,7 +420,7 @@ async fn process_s3_action_result(
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
 
-                    let xml = build_list_objects_xml(&objects, is_truncated);
+                    let xml = build_list_objects_xml(bucket, &objects, is_truncated);
 
                     debug!("Sending S3 object list ({} objects)", objects.len());
                     let _ = status_tx.send(format!(
@@ -379,7 +439,7 @@ async fn process_s3_action_result(
                     let buckets = data
                         .get("buckets")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.clone())
+                        .cloned()
                         .unwrap_or_default();
 
                     let xml = build_list_buckets_xml(&buckets);
@@ -413,14 +473,7 @@ async fn process_s3_action_result(
                         .and_then(|v| v.as_u64())
                         .unwrap_or(500) as u16;
 
-                    let xml = format!(
-                        r#"<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>{}</Code>
-  <Message>{}</Message>
-</Error>"#,
-                        error_code, message
-                    );
+                    let xml = build_error_xml(error_code, message);
 
                     debug!("Sending S3 error: {} ({})", error_code, status_code);
                     let _ = status_tx.send(format!(
@@ -481,7 +534,8 @@ fn build_list_buckets_xml(buckets: &[serde_json::Value]) -> String {
       <Name>{}</Name>
       <CreationDate>{}</CreationDate>
     </Bucket>"#,
-            name, creation_date
+            xml_escape(name),
+            xml_escape(creation_date)
         ));
     }
 
@@ -495,7 +549,16 @@ fn build_list_buckets_xml(buckets: &[serde_json::Value]) -> String {
 }
 
 /// Build ListObjects XML response
-fn build_list_objects_xml(objects: &[serde_json::Value], is_truncated: bool) -> String {
+///
+/// `Name`, `Prefix`, `MaxKeys` and `KeyCount` are always-present elements of a real
+/// `ListBucketResult`; omitting them left SDKs deserializing a bucket listing with no
+/// bucket name and no key count. `bucket` comes from the request path, since the
+/// listing action carries only the objects.
+fn build_list_objects_xml(
+    bucket: Option<&str>,
+    objects: &[serde_json::Value],
+    is_truncated: bool,
+) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
@@ -503,7 +566,13 @@ fn build_list_objects_xml(objects: &[serde_json::Value], is_truncated: bool) -> 
 
     xml.push_str(&format!(
         r#"
+  <Name>{}</Name>
+  <Prefix></Prefix>
+  <MaxKeys>1000</MaxKeys>
+  <KeyCount>{}</KeyCount>
   <IsTruncated>{}</IsTruncated>"#,
+        xml_escape(bucket.unwrap_or("")),
+        objects.len(),
         is_truncated
     ));
 
@@ -526,8 +595,12 @@ fn build_list_objects_xml(objects: &[serde_json::Value], is_truncated: bool) -> 
     <Size>{}</Size>
     <LastModified>{}</LastModified>
     <ETag>{}</ETag>
+    <StorageClass>STANDARD</StorageClass>
   </Contents>"#,
-            key, size, last_modified, etag
+            xml_escape(key),
+            size,
+            xml_escape(last_modified),
+            xml_escape(etag)
         ));
     }
 

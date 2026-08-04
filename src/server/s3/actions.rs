@@ -26,76 +26,94 @@ impl S3Protocol {
 
 /// S3 request event - triggered when an S3 API request is received
 pub static S3_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("s3_request", "S3 API request received", json!({"type": "placeholder", "event_id": "s3_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "operation".to_string(),
-                type_hint: "string".to_string(),
-                description: "S3 operation (GetObject, PutObject, ListBuckets, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "bucket".to_string(),
-                type_hint: "string".to_string(),
-                description: "Bucket name (if applicable)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "key".to_string(),
-                type_hint: "string".to_string(),
-                description: "Object key/path (if applicable)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "request_details".to_string(),
-                type_hint: "object".to_string(),
-                description: "Additional request details (headers, query params, etc.)".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            send_s3_object_action(),
-            send_s3_object_list_action(),
-            send_s3_bucket_list_action(),
-            send_s3_error_action(),
-            show_message_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("S3 {operation} {bucket}/{key}")
-                .with_debug("S3 {operation} bucket={bucket}, key={key}")
-                .with_trace("S3: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "s3_request",
+        "S3 API request received",
+        json!({"type": "placeholder", "event_id": "s3_request"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "S3 operation (GetObject, PutObject, ListBuckets, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bucket".to_string(),
+            type_hint: "string".to_string(),
+            description: "Bucket name (if applicable)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "key".to_string(),
+            type_hint: "string".to_string(),
+            description: "Object key/path (if applicable)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "request_details".to_string(),
+            type_hint: "object".to_string(),
+            description: "Additional request details (headers, query params, etc.)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_s3_object_action(),
+        send_s3_object_list_action(),
+        send_s3_bucket_list_action(),
+        send_s3_error_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("S3 {operation} {bucket}/{key}")
+            .with_debug("S3 {operation} bucket={bucket}, key={key}")
+            .with_trace("S3: {json_pretty(.)}"),
+    )
 });
 
 fn send_s3_object_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_s3_object".to_string(),
-        description: "Send S3 object content in response to GetObject request".to_string(),
+        description: "Send the body of an S3 object in response to a GetObject request. \
+                      'content' holds the object bytes and the optional 'encoding' field says how \
+                      to turn it into bytes: omit 'encoding' (or use \"utf8\") for text objects, \
+                      or set \"encoding\": \"base64\" to send arbitrary binary content. There is \
+                      no auto-detection - a base64-looking string is sent literally unless you \
+                      set \"encoding\": \"base64\"."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "content".to_string(),
                 type_hint: "string".to_string(),
-                description: "Object content (will be base64-decoded if needed)".to_string(),
+                description: "Object body. Interpreted according to 'encoding': as literal text \
+                              by default, or as base64-encoded bytes when \
+                              \"encoding\": \"base64\""
+                    .to_string(),
                 required: true,
             },
+            encoding_parameter(),
             Parameter {
                 name: "content_type".to_string(),
                 type_hint: "string".to_string(),
-                description: "Content-Type header (e.g., 'text/plain', 'application/json')"
+                description: "Content-Type header (e.g., 'text/plain', 'application/json'). \
+                              Must be a single line of printable ASCII; an unusable value is \
+                              replaced with 'application/octet-stream'"
                     .to_string(),
                 required: false,
             },
             Parameter {
                 name: "etag".to_string(),
                 type_hint: "string".to_string(),
-                description: "ETag for the object".to_string(),
+                description: "ETag for the object, normally the quoted MD5 of the body. Must be \
+                              a single line of printable ASCII; an unusable value is dropped"
+                    .to_string(),
                 required: false,
             },
         ],
         example: json!({
             "type": "send_s3_object",
             "content": "Hello, World!",
+            "encoding": "utf8",
             "content_type": "text/plain",
             "etag": "\"d41d8cd98f00b204e9800998ecf8427e\""
         }),
@@ -206,25 +224,62 @@ fn send_s3_error_action() -> ActionDefinition {
     }
 }
 
-fn show_message_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "show_message".to_string(),
-        description: "Display a message in the TUI output panel".to_string(),
-        parameters: vec![Parameter {
-            name: "message".to_string(),
-            type_hint: "string".to_string(),
-            description: "Message to display".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "show_message",
-            "message": "Stored object in bucket"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> S3 message: {message}")
-                .with_debug("S3 show_message: message='{message}'"),
-        ),
+/// Shared `encoding` parameter for the outbound object body.
+///
+/// Object bodies are the one place in this protocol where the payload is genuinely
+/// binary, so - following the `send_tcp_data` precedent - the encoding is stated
+/// explicitly by the caller and actually decoded by [`decode_object_content`],
+/// rather than guessed.
+fn encoding_parameter() -> Parameter {
+    Parameter {
+        name: "encoding".to_string(),
+        type_hint: "string".to_string(),
+        description: "How to convert 'content' into the object bytes. \"utf8\" (the default when \
+                      omitted) sends the characters of 'content' unchanged - use it for text, \
+                      JSON, XML and other textual objects. \"base64\" decodes 'content' as \
+                      base64 - use it for images, archives and any other binary object, e.g. \
+                      {\"content\": \"SGVsbG8=\", \"encoding\": \"base64\"} sends the 5 bytes \
+                      'Hello', whereas the same 'content' without \"encoding\": \"base64\" sends \
+                      the 8 characters S-G-V-s-b-G-8-=. No other values are accepted"
+            .to_string(),
+        required: false,
+    }
+}
+
+/// Turn the `content` field of `send_s3_object` into the exact object bytes,
+/// honouring the action's optional `encoding` field.
+///
+/// Returns the bytes re-encoded as base64 for transport through
+/// [`ActionResult::Custom`], whose payload is JSON and so cannot carry raw bytes.
+/// The server side decodes this canonical form, which it produced itself and which
+/// therefore cannot fail.
+fn decode_object_content(content: &str, action: &Value) -> Result<String> {
+    use base64::Engine;
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    let encoding = action
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf8");
+
+    match encoding {
+        "utf8" => Ok(engine.encode(content.as_bytes())),
+        "base64" => {
+            // Tolerate the whitespace and line wrapping models often emit.
+            let cleaned: String = content.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+            engine.decode(cleaned.as_bytes()).map(|_| cleaned).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid base64 in 'content': {e}. Use standard base64 with padding, e.g. \
+                     \"SGVsbG8=\" for the 5 bytes 'Hello'. To send this string as literal text, \
+                     omit 'encoding' or set it to \"utf8\"."
+                )
+            })
+        }
+        other => Err(anyhow::anyhow!(
+            "Invalid 'encoding' value {other:?}. Valid values are \"utf8\" (default, send the \
+             characters of 'content' as-is) and \"base64\" (decode 'content' as base64-encoded \
+             bytes)."
+        )),
     }
 }
 
@@ -234,43 +289,12 @@ pub fn get_s3_event_types() -> Vec<EventType> {
 
 impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "port".to_string(),
-                type_hint: "number".to_string(),
-                description: "Port to listen on (default: 9000)".to_string(),
-                required: false,
-                example: json!(9000),
-            },
-            ParameterDefinition {
-                name: "require_authentication".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether to require AWS Signature V4 authentication".to_string(),
-                required: false,
-                example: json!(false),
-            },
-            ParameterDefinition {
-                name: "access_key".to_string(),
-                type_hint: "string".to_string(),
-                description: "AWS access key for authentication (if enabled)".to_string(),
-                required: false,
-                example: json!("minioadmin"),
-            },
-            ParameterDefinition {
-                name: "secret_key".to_string(),
-                type_hint: "string".to_string(),
-                description: "AWS secret key for authentication (if enabled)".to_string(),
-                required: false,
-                example: json!("minioadmin"),
-            },
-            ParameterDefinition {
-                name: "region".to_string(),
-                type_hint: "string".to_string(),
-                description: "S3 region name (default: us-east-1)".to_string(),
-                required: false,
-                example: json!("us-east-1"),
-            },
-        ]
+        // Deliberately empty. `port` is a top-level `open_server` field, not a startup
+        // parameter, and this protocol performs no authentication: `require_authentication`,
+        // `access_key`, `secret_key` and `region` used to be declared here but `spawn()`
+        // never read any of them, so accepting them told the caller that requests would be
+        // authenticated when every request was in fact served unconditionally.
+        vec![]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -311,7 +335,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
             .implementation("hyper v1.5 HTTP with manual S3 REST API")
             .llm_control("All S3 operations (GetObject, PutObject, ListBuckets)")
             .e2e_testing("aws-sdk-s3 / rust-s3 client")
-            .notes("Virtual objects (no persistence)")
+            .notes("Virtual objects (no persistence); no SigV4 auth; binary bodies via encoding=base64")
             .build()
     }
 
@@ -403,8 +427,12 @@ impl Server for S3Protocol {
                 let content = action
                     .get("content")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing content"))?
-                    .to_string();
+                    .ok_or_else(|| anyhow::anyhow!("Missing content"))?;
+
+                // Decode here so an invalid 'encoding' or malformed base64 surfaces as an
+                // action failure the model is told about, instead of silently putting the
+                // literal characters of a base64 string into the object body.
+                let content_b64 = decode_object_content(content, &action)?;
 
                 let content_type = action
                     .get("content_type")
@@ -419,7 +447,7 @@ impl Server for S3Protocol {
                 Ok(ActionResult::Custom {
                     name: "s3_object".to_string(),
                     data: json!({
-                        "content": content,
+                        "content_b64": content_b64,
                         "content_type": content_type,
                         "etag": etag
                     }),
