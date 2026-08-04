@@ -8,6 +8,8 @@ The LLM controls BOOTREQUEST/BOOTREPLY flow using structured actions.
 **Status**: Experimental
 **RFC**: RFC 951 (BOOTP), RFC 1542 (BOOTP Extensions)
 **Port**: 67 (server), 68 (client) - UDP
+**Privilege**: declares `PrivilegeRequirement::PrivilegedPort(67)`; any port above 1023 needs none.
+**Test coverage**: `tests/server/bootp/e2e_test.rs`, mocked.
 
 ## Library Choices
 
@@ -34,19 +36,27 @@ The LLM responds to BOOTP requests with semantic actions:
 
 Each action includes network configuration parameters (IP, server IP, boot file, server hostname, gateway).
 
-### 2. Request Context Preservation
+### 2. Request Context Preservation (correlation)
 
 BOOTP responses must echo specific fields from the request:
 
-- Transaction ID (xid) - Matches request to response
-- Client hardware address (chaddr) - Client's MAC address
-- Operation code - BOOTREQUEST → BOOTREPLY
+- **Transaction ID (xid)** — the client matches replies by it and discards anything else, so a wrong
+  xid looks exactly like a timeout
+- **Client hardware address (chaddr)** — who the reply is for
+- **Relay address (giaddr)** — defaulted into the reply so a relayed client still receives it
+- Operation code — BOOTREQUEST → BOOTREPLY
 
-**Implementation**: `BootpRequestContext` stored in Arc<Mutex<Option<...>>>
+**Implementation**: `BootpRequestContext { xid, chaddr, op, ciaddr, giaddr, sname, file }` held in an
+`Arc<Mutex<Option<…>>>` on the protocol instance, and **a fresh `BootpProtocol` instance is created
+per received datagram** in the socket loop.
 
-- Set when request is parsed
-- Accessed during action execution
-- Contains: xid, chaddr, op, ciaddr, giaddr, sname, file
+The per-datagram instance is the fix for a real race: the instance used to be shared by the whole
+server while each request set the context and then awaited an LLM call lasting seconds, so two
+overlapping clients overwrote each other's transaction id.
+
+`send_bootp_reply` also accepts explicit `xid` and `client_mac` parameters that override the context
+for replies built out of band; omitting them (the normal case) echoes the request. The event exposes
+`xid` and `gateway_ip` so a handler can see the correlation values.
 
 ### 3. Stateless Per-Request Processing
 
@@ -76,10 +86,21 @@ BOOTP's primary purpose is network boot configuration:
 
 Each BOOTP request creates a "connection" entry:
 
-- Connection ID: Unique per request
-- Protocol info: `ProtocolConnectionInfo::Bootp` with recent_requests list
-- Tracks request type and timestamp
-- Status: Active during processing
+- Connection ID: unique per request
+- Protocol info: `ProtocolConnectionInfo::empty()` — no BOOTP-specific payload is attached
+- Records the peer address and byte/packet counts
+- Status: Active, and never reaped
+
+### 7. Malformed-Packet Handling
+
+Two panics are reachable here and both are guarded:
+
+- `hlen` comes straight off the wire and dhcproto does not validate it, while
+  `Message::chaddr()` slices a fixed `[u8; 16]` with it — `hlen > 16` panics inside the library.
+  That parse runs in the socket task, so one datagram would kill the listener while the server still
+  reported `Running`. `parse_bootp_message` rejects such datagrams before touching `chaddr()`
+- `set_fname_str` / `set_sname_str` `assert!` on values longer than 128 / 64 bytes, and those values
+  come from the LLM. `send_bootp_reply` checks the lengths and returns an error instead
 
 ## LLM Integration
 
@@ -89,9 +110,14 @@ Each BOOTP request creates a "connection" entry:
 
 Event parameters:
 
-- `op_code` (string) - BootRequest or BootReply
-- `client_mac` (string) - Client MAC address (hex)
-- `client_ip` (string) - Client IP address (if set, usually 0.0.0.0 initially)
+- `op_code` (string) - `BootRequest` or `BootReply` (dhcproto's `Opcode` Debug spelling — match it
+  case-sensitively)
+- `client_mac` (string) - client hardware address as lower-case hex **without separators**
+  (`001122334455`, not `00:11:22:33:44:55`). Handlers and prompts that match on a MAC must use this
+  form; `send_bootp_reply`'s own `client_mac` parameter accepts either
+- `client_ip` (string) - ciaddr, usually `0.0.0.0` initially
+- `xid` (number) - transaction id; `send_bootp_reply` echoes it automatically
+- `gateway_ip` (string) - giaddr of the relay the request came through; echoed automatically
 
 ### Available Actions
 
@@ -103,13 +129,18 @@ Parameters:
 
 - `assigned_ip` (required) - IP address to assign (e.g., "192.168.1.100")
 - `server_ip` (optional) - BOOTP/TFTP server IP (default: "0.0.0.0")
-- `boot_file` (optional) - Boot file path (e.g., "boot/pxeboot.n12")
-- `server_hostname` (optional) - Server hostname (e.g., "bootserver.local")
-- `gateway_ip` (optional) - Gateway/relay IP (default: "0.0.0.0")
+- `boot_file` (optional) - Boot file path (e.g., "boot/pxeboot.n12"), at most 128 bytes
+- `server_hostname` (optional) - Server hostname (e.g., "bootserver.local"), at most 64 bytes
+- `gateway_ip` (optional) - Gateway/relay IP (default: the request's giaddr)
+- `xid` (optional) - transaction id override; omit to echo the request
+- `client_mac` (optional) - hardware address override; omit to echo the request
 
 #### `send_bootp_response` (Advanced)
 
-Send custom BOOTP response packet as hex string.
+Send a complete packet as hex, at least 236 bytes. The field is decoded **strictly** as hex —
+whitespace, `:` separators and a leading `0x` are stripped, anything else that fails to decode
+returns an error instead of being sent as literal ASCII. Nothing is echoed into a raw packet, so the
+xid at bytes 4-7 must match the request.
 
 #### `ignore_request`
 

@@ -22,6 +22,16 @@ use actions::BootpRequestContext;
 #[cfg(feature = "bootp")]
 use dhcproto::{v4, Decodable, Decoder};
 
+/// Render a hardware address the way the `bootp_request` event reports it: lower-case hex
+/// with no separators, e.g. `001122334455`.
+///
+/// The separator-free form is what `tests/server/bootp/e2e_test.rs` matches on, so it is
+/// the contract. `send_bootp_reply`'s `client_mac` parameter accepts either this or the
+/// colon-separated form when a handler supplies one explicitly.
+pub fn format_mac(bytes: &[u8]) -> String {
+    hex::encode(bytes)
+}
+
 /// BOOTP server that forwards requests to LLM
 pub struct BootpServer;
 
@@ -38,8 +48,6 @@ impl BootpServer {
         let local_addr = socket.local_addr()?;
         info!("BOOTP server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] BOOTP server listening on {}", local_addr));
-
-        let protocol = Arc::new(BootpProtocol::new());
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -106,44 +114,55 @@ impl BootpServer {
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let socket_clone = socket.clone();
-                        let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
+                            // One protocol instance per request. The instance carries the
+                            // request context (xid, chaddr, giaddr) used to build the reply,
+                            // so two clients whose LLM calls overlap can never read each
+                            // other's transaction ID.
+                            let protocol = BootpProtocol::new();
+
                             #[cfg(feature = "bootp")]
-                            if let Some((_, context)) = parsed_info.as_ref() {
-                                if let Some(ctx) = context {
-                                    protocol_clone.set_request_context(ctx.clone());
-                                }
+                            if let Some((_, Some(ctx))) = parsed_info.as_ref() {
+                                protocol.set_request_context(ctx.clone());
                             }
 
                             // Extract event data
                             #[cfg(feature = "bootp")]
-                            let (op_code, client_mac, client_ip) =
+                            let (op_code, client_mac, client_ip, xid, gateway_ip) =
                                 if let Some((_, Some(ctx))) = &parsed_info {
                                     (
                                         format!("{:?}", ctx.op),
-                                        hex::encode(&ctx.chaddr),
+                                        crate::server::bootp::format_mac(&ctx.chaddr),
                                         ctx.ciaddr.to_string(),
+                                        Some(ctx.xid),
+                                        ctx.giaddr.to_string(),
                                     )
                                 } else {
                                     (
                                         "unknown".to_string(),
                                         "unknown".to_string(),
                                         "0.0.0.0".to_string(),
+                                        None,
+                                        "0.0.0.0".to_string(),
                                     )
                                 };
 
                             #[cfg(not(feature = "bootp"))]
-                            let (op_code, client_mac, client_ip) = (
+                            let (op_code, client_mac, client_ip, xid, gateway_ip) = (
                                 "unknown".to_string(),
                                 "unknown".to_string(),
+                                "0.0.0.0".to_string(),
+                                None::<u32>,
                                 "0.0.0.0".to_string(),
                             );
 
                             let event_data = serde_json::json!({
                                 "op_code": op_code,
                                 "client_mac": client_mac,
-                                "client_ip": client_ip
+                                "client_ip": client_ip,
+                                "xid": xid,
+                                "gateway_ip": gateway_ip
                             });
 
                             let event = Event::new(&BOOTP_REQUEST_EVENT, event_data);
@@ -160,7 +179,7 @@ impl BootpServer {
                                 server_id,
                                 None,
                                 &event,
-                                protocol_clone.as_ref(),
+                                &protocol,
                             )
                             .await
                             {
@@ -248,6 +267,18 @@ impl BootpServer {
     fn parse_bootp_message(data: &[u8]) -> Option<(String, Option<BootpRequestContext>)> {
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {
+                // `hlen` comes straight off the wire without validation, and
+                // `Message::chaddr()` slices a fixed [u8; 16] with it - a datagram
+                // declaring hlen > 16 panics inside dhcproto. This loop runs in the
+                // socket task, so that panic would kill the server. Reject instead.
+                if msg.hlen() as usize > 16 {
+                    tracing::warn!(
+                        "Dropping BOOTP datagram with invalid hlen {} (max 16)",
+                        msg.hlen()
+                    );
+                    return None;
+                }
+
                 let op = msg.opcode();
 
                 // Build human-readable description
