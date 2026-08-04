@@ -1,391 +1,139 @@
-# Telnet Protocol Implementation
+# Telnet Server Implementation
 
 ## Overview
 
-Telnet server implementing basic terminal server functionality for remote shell access. The LLM controls terminal
-responses, command handling, and interactive prompt behavior. Focuses on line-based text interaction rather than full
-Telnet protocol negotiation.
+A line-based text server on the Telnet port. Every byte the client sees is produced by a
+handler — script, static or LLM. It is deliberately **Telnet-lite**: no option negotiation, no
+terminal emulation, no filesystem behind it.
 
-**Status**: Alpha (Application Protocol)
-**RFC**: RFC 854 (Telnet Protocol Specification), RFC 855 (Telnet Option Specifications)
-**Port**: 23 (standard Telnet port)
+**Status**: Experimental
+**Port**: 23 (privileged — `privilege_requirement` is `PrivilegedPort(23)`)
+**Feature**: `telnet`
+**Files**: `mod.rs` (accept loop, read loop), `actions.rs` (actions, events, metadata)
 
-## Library Choices
+## What this is not
 
-- **nectar** - Telnet protocol library (imported but not actively used)
-    - Originally intended for Telnet option negotiation
-    - Currently bypassed in favor of simple line-based reading
-    - Kept as dependency for potential future enhancements
-- **tokio** - Async runtime and I/O
-    - `TcpListener` for accepting connections
-    - `BufReader` for line-based reading
-    - `AsyncWriteExt` for sending responses
-- **No full Telnet implementation** - Simplified text-only approach
+**No IAC option negotiation.** RFC 854's `IAC WILL/WONT/DO/DONT` sequences are not parsed and
+not answered — they arrive as ordinary bytes inside the first `telnet_message_received`
+message. A real `telnet(1)` client opens by sending several negotiation sequences, so the first
+message a handler sees will contain 0xFF-prefixed junk and the client will never get the echo
+and line-mode settings it asked for. **Test with `nc`, not `telnet`.** The previous version of
+this document claimed the `telnet` CLI "works"; that is only true in the sense that bytes flow.
 
-**Rationale**: Full Telnet protocol is complex (option negotiation, IAC commands, binary mode, etc.). Current
-implementation treats Telnet as simple line-based text protocol, similar to raw TCP but with terminal conventions. This
-gives LLM control over terminal interaction without Telnet complexity.
+Also absent: character-at-a-time mode, server-side line editing, terminal type / window size
+(`TTYPE`, `NAWS`), ANSI handling (colour codes are just bytes you emit), TLS or any encryption,
+and any form of authentication that the handler does not invent for itself.
 
-## Architecture Decisions
+### Not a dependency, despite `Cargo.toml`
 
-### 1. Simplified Telnet Protocol
+`Cargo.toml` has `telnet = ["nectar"]`, but no code in this module references `nectar` — the
+codec is `tokio::io::BufReader::read_line`. The dependency is dead weight; removing it is an
+edit to `Cargo.toml`, which this module does not own.
 
-Current implementation is **Telnet-lite**:
+## Architecture
 
-- Line-based reading (split on newlines)
-- No Telnet option negotiation (IAC, WILL, WONT, DO, DONT)
-- No special character handling (IAC escape sequences)
-- No binary mode
-- Just raw text lines (like raw TCP)
+### Connection flow
 
-**Rationale**: LLM can control text-based terminal interaction without understanding Telnet binary protocol. Full Telnet
-support can be added later if needed.
+1. Accept TCP (`create_reusable_tcp_listener`).
+2. Register the connection in `ServerInstance` (with `ProtocolConnectionInfo::empty()` — there
+   is no Telnet-specific connection info variant, and byte/packet counters stay at zero because
+   nothing updates them).
+3. If started with `send_first: true`, raise `telnet_connection_opened` and write the result —
+   this is the only way to greet before the client types.
+4. `read_line` in a loop; per line, raise `telnet_message_received`, write the result.
+5. `close_connection` sets a flag that breaks the read loop and shuts the socket down.
+6. Mark the connection closed in `ServerInstance`.
 
-### 2. Action-Based LLM Control
+The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
+`stop_server` aborts it and releases port 23. `spawn_with_llm_actions` propagates bind failure
+with `?`.
 
-The LLM receives text lines and responds with actions:
+Processing is strictly sequential: one line is fully handled before the next is read. There is
+no Idle/Processing/Accumulating state machine and no `queued_data` — TCP backpressure does the
+queueing. (Earlier revisions of this file described a state machine that does not exist.)
 
-- `send_telnet_message` - Send raw message (exact bytes, no modification)
-- `send_telnet_line` - Send line with auto-added `\r\n`
-- `send_telnet_prompt` - Send command prompt (e.g., "$ ")
-- `wait_for_more` - Buffer more data before responding
-- `close_connection` - Close client connection
+### Fixed failure modes
 
-### 3. Line-Based Message Processing
-
-Telnet message flow:
-
-1. Accept TCP connection
-2. Read lines with `BufReader::read_line()` (splits on `\n`)
-3. Send line to LLM as `telnet_message_received` event
-4. LLM returns actions (e.g., `send_telnet_line`)
-5. Execute actions (send responses)
-6. Loop for next line
-
-**Note**: Very similar to IRC implementation, both use line-based text protocol.
-
-### 4. Automatic Line Termination
-
-Terminal convention handling:
-
-- Received messages: Preserved as-is from `read_line()` (includes `\n`)
-- `send_telnet_line`: Auto-adds `\r\n` if not present
-- `send_telnet_message`: Sends exact bytes (no modification)
-- `send_telnet_prompt`: Sends prompt without newline (for inline prompts like "$ ")
-
-### 5. Dual Logging
-
-- **DEBUG**: Message summary with 100-char preview ("Telnet received 12 bytes: help")
-- **TRACE**: Full text message ("Telnet data (text): \"help\\n\"")
-- Both go to netget.log and TUI Status panel
-
-### 6. Connection Management
-
-Each Telnet client gets:
-
-- Unique `ConnectionId`
-- Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::Telnet`
-- Tracked bytes sent/received, packets sent/received
-- State: Active until client disconnects or LLM closes
+- `send_telnet_line` used to turn a `line` ending in `"\n"` into one ending in a lone `"\r"`,
+  losing the line feed. It now always ends the line with exactly one CRLF.
+- Log previews sliced `&text[..100]`, which panics when byte 100 falls inside a multi-byte
+  UTF-8 character — reachable from any client that sends non-ASCII. Previews now truncate on a
+  character boundary (`preview()` in `mod.rs`).
+- `close_connection` broke out of the action loop only, leaving the read loop running and the
+  socket open; it now closes the connection.
+- Responses were round-tripped through `String::from_utf8_lossy` before being written, which
+  silently replaced any non-UTF-8 byte with U+FFFD. Bytes are now written verbatim.
+- `read_line` errors (non-UTF-8 input) were swallowed by `while let Ok(..)` and looked like a
+  clean disconnect; they are now logged.
 
 ## LLM Integration
 
-### Event Type
+`call_llm` is used for both events, so script and static handlers run in-process with **zero**
+LLM calls (`call_llm` → `try_execute_event_handler`).
 
-**`telnet_message_received`** - Triggered when Telnet client sends a message
+### Events
 
-Event parameters:
+| Event                      | When                                              | Parameters |
+|----------------------------|---------------------------------------------------|------------|
+| `telnet_connection_opened` | on connect, **only if `send_first: true`**        | –          |
+| `telnet_message_received`  | one complete line arrived                         | `message`  |
 
-- `message` (string) - The Telnet message line received
+`message` is the line with its trailing CR/LF and surrounding whitespace trimmed.
 
-### Available Actions
+### Actions
 
-#### `send_telnet_message`
+| Action                 | Bytes written                                  | Parameters          |
+|------------------------|------------------------------------------------|---------------------|
+| `send_telnet_message`  | `message` verbatim, nothing added               | `message` (required)|
+| `send_telnet_line`     | `line` + exactly one CRLF                       | `line` (required)   |
+| `send_telnet_prompt`   | `prompt` verbatim, no newline (default `"> "`)  | `prompt` (optional) |
+| `wait_for_more`        | nothing — read the next line first              | –                   |
+| `close_connection`     | nothing — closes the connection                 | –                   |
 
-Send raw Telnet message (exact bytes, no modification).
+`send_telnet_message` is the escape hatch for exact control (e.g. a banner and prompt in one
+write, or a byte sequence with no line ending). There are no async (user-triggered) actions.
 
-Parameters:
+### Startup parameters
 
-- `message` (required) - Message to send (sent as-is)
+| Parameter    | Type    | Effect                                              |
+|--------------|---------|-----------------------------------------------------|
+| `send_first` | boolean | `true` raises `telnet_connection_opened` on connect |
 
-Example:
+## Storage
 
-```json
-{
-  "type": "send_telnet_message",
-  "message": "Welcome to NetGet Telnet!\r\n$ "
-}
-```
+None. The protocol holds no session state, no filesystem and no user database. Anything that
+looks like state — the current directory, a login prompt sequence, a command history — lives in
+the handler's own memory.
 
-Use case: When you need exact control over bytes (e.g., prompt without newline).
+## Testing
 
-#### `send_telnet_line`
-
-Send line of text (automatically adds `\r\n` if not present).
-
-Parameters:
-
-- `line` (required) - Line of text to send
-
-Example:
-
-```json
-{
-  "type": "send_telnet_line",
-  "line": "Hello! You are connected to NetGet Telnet server."
-}
-```
-
-Sends: `Hello! You are connected to NetGet Telnet server.\r\n`
-
-Use case: Most common action for sending responses.
-
-#### `send_telnet_prompt`
-
-Send command prompt (e.g., "$ " or "> ").
-
-Parameters:
-
-- `prompt` (optional) - Prompt text (default: "> ")
-
-Example:
-
-```json
-{
-  "type": "send_telnet_prompt",
-  "prompt": "netget> "
-}
-```
-
-Sends: `netget> ` (no newline)
-
-Use case: Interactive shell prompts.
-
-#### `wait_for_more`
-
-Wait for more data before responding.
-
-Example:
-
-```json
-{
-  "type": "wait_for_more"
-}
-```
-
-Use case: Multi-line input accumulation.
-
-#### `close_connection`
-
-Close the Telnet connection.
-
-Example:
-
-```json
-{
-  "type": "close_connection"
-}
-```
-
-## Connection Management
-
-### Connection Lifecycle
-
-1. **Accept**: TCP listener accepts connection
-2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Telnet`
-3. **Split**: Stream split into ReadHalf and WriteHalf
-4. **Track**: WriteHalf stored in `Arc<Mutex<WriteHalf>>` for sending
-5. **Read Loop**: Continuous line reading until disconnect
-6. **Close**: Connection removed when client closes or LLM sends `close_connection`
-
-### State Management
-
-- `ProtocolState`: Idle/Processing/Accumulating (prevents concurrent LLM calls)
-- `queued_data`: Data buffered while LLM is processing
-- Connection stays in ServerInstance until closed
-- UI updates on every message (bytes sent/received, last activity)
-
-## Known Limitations
-
-### 1. No Telnet Option Negotiation
-
-- No IAC (Interpret As Command) handling
-- No WILL/WONT/DO/DONT negotiation
-- No terminal type negotiation (TTYPE)
-- No window size negotiation (NAWS)
-- No echo control negotiation
-
-**Impact**: Client terminal emulators may send option negotiation that's ignored. Basic text I/O works, but advanced
-terminal features don't.
-
-### 2. No Special Character Handling
-
-- No Ctrl+C (interrupt) detection
-- No Ctrl+D (EOF) handling
-- No escape sequence processing
-- No color/formatting codes
-
-**Workaround**: Use raw TCP if advanced terminal control is needed, or add Telnet protocol parsing.
-
-### 3. No TLS/SSH Support
-
-- Plain TCP only (port 23)
-- No encryption
-- Credentials sent in clear text
-
-**Security Risk**: Telnet is insecure by design. Use SSH for production (not implemented).
-
-### 4. Line-Based Only
-
-- No character-by-character input (like raw terminal mode)
-- No backspace editing on server side
-- User's terminal handles line editing, server gets full lines
-
-### 5. Feature Gate Required
-
-Implementation is conditionally compiled:
-
-```rust
-#[cfg(feature = "telnet")]
-impl TelnetServer { ... }
-```
-
-Must compile with `--features telnet` to enable protocol.
-
-## Example Prompts
-
-### Basic Echo Server
+**There is no E2E test for Telnet** (`tests/server/telnet/` does not exist). Verify by hand
+with a raw client, which avoids the IAC problem:
 
 ```
-listen on port 23 via telnet
-Send "Welcome to NetGet Telnet" when clients connect
-Echo back any text you receive with "> " prefix
+nc localhost 2323
+help
+exit
 ```
 
-### Interactive Shell
+## Example prompts
+
+### Interactive shell
 
 ```
-listen on port 23 via telnet
-Act as a simple shell
-Send "$ " prompt after each response
-Support commands:
-  - help: show available commands
-  - date: show current date/time
-  - echo <text>: echo the text
-  - exit: close connection
+listen on port 2323 via telnet with send_first
+On connection open send "NetGet 1.0\r\n$ "
+help  -> list the commands: help, date, echo <text>, exit
+date  -> the current date and time
+echo  -> the text after the command
+exit  -> "bye" then close_connection
+Send "$ " after every response
 ```
 
-### Command Server
+### Line collector
 
 ```
-listen on port 23 via telnet
-Respond to commands:
-  - status: return "System OK"
-  - info: return system information
-  - quit: disconnect
-Show "netget> " prompt after each command
+listen on port 2323 via telnet
+Buffer lines with wait_for_more until the client sends END
+Then reply with the number of lines collected
 ```
-
-### Multi-Line Input
-
-```
-listen on port 23 via telnet
-Collect multi-line input until user sends "END"
-Then process all lines and respond
-Show "... " prompt for continuation lines
-```
-
-## Performance Characteristics
-
-### Latency
-
-- **Per Message (with scripting)**: Sub-millisecond
-- **Per Message (without scripting)**: 2-5 seconds (LLM call)
-- Line parsing: <1 microsecond
-- Message formatting: <1 microsecond
-
-### Throughput
-
-- **With Scripting**: Thousands of messages per second
-- **Without Scripting**: ~0.2-0.5 messages per second (LLM-limited)
-- Concurrent connections: Unlimited (bounded by system resources)
-- Each connection processes independently
-
-### Scripting Compatibility
-
-Good scripting candidate:
-
-- Text-based protocol (easy to parse and generate)
-- Repetitive command/response patterns
-- State can be maintained in script
-- Interactive prompts are deterministic
-
-## Telnet vs SSH Comparison
-
-| Feature        | Telnet (NetGet) | SSH                  |
-|----------------|-----------------|----------------------|
-| Encryption     | None            | Yes (strong)         |
-| Authentication | None            | Yes (keys/passwords) |
-| Port           | 23              | 22                   |
-| Security       | Insecure        | Secure               |
-| Complexity     | Low             | High                 |
-| Use Case       | Testing, LAN    | Production           |
-
-**Recommendation**: Use Telnet for testing only. For production, use SSH protocol (see `src/server/ssh/CLAUDE.md`).
-
-## Terminal Emulation Notes
-
-### What Works
-
-- Basic text I/O
-- Line-based input
-- Echo back responses
-- Simple prompts
-
-### What Doesn't Work
-
-- ANSI color codes (sent as raw text)
-- Cursor positioning
-- Terminal size detection
-- Character-by-character input
-- Backspace/delete handling on server side
-- Special key handling (arrow keys, function keys)
-
-### Client Compatibility
-
-Tested with:
-
-- `telnet` command-line client (works)
-- PuTTY (works in basic mode)
-- Raw TCP with netcat (works, essentially same as Telnet-lite)
-
-## Security Considerations
-
-### Telnet Security Issues
-
-- **No encryption**: All data sent in clear text
-- **No authentication**: No password protection by default
-- **Network sniffing**: Credentials easily captured
-- **MITM attacks**: No integrity protection
-
-### When to Use Telnet
-
-- **Development/testing only**: Local network testing
-- **Legacy systems**: Compatibility with old systems
-- **Behind VPN**: When already on encrypted connection
-- **Non-sensitive data**: Public information only
-
-### When NOT to Use Telnet
-
-- **Production systems**: Use SSH instead
-- **Over internet**: Use SSH or HTTPS
-- **With credentials**: Use SSH with key authentication
-- **Sensitive data**: Use encrypted protocols
-
-## References
-
-- [RFC 854: Telnet Protocol Specification](https://datatracker.ietf.org/doc/html/rfc854)
-- [RFC 855: Telnet Option Specifications](https://datatracker.ietf.org/doc/html/rfc855)
-- [RFC 1123: Requirements for Internet Hosts (Telnet)](https://datatracker.ietf.org/doc/html/rfc1123#section-3)
-- [Wikipedia: Telnet](https://en.wikipedia.org/wiki/Telnet)
-- [Why Telnet is Insecure](https://www.ssh.com/academy/ssh/telnet)

@@ -36,11 +36,11 @@ impl TelnetProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'line' parameter")?;
 
-        // Add newline if not present
+        // Ensure the line ends with exactly one CRLF.
         let formatted = if line.ends_with("\r\n") {
             line.to_string()
-        } else if line.ends_with('\n') {
-            format!("{}\r", line.trim_end_matches('\n'))
+        } else if let Some(stripped) = line.strip_suffix('\n') {
+            format!("{}\r\n", stripped)
         } else {
             format!("{}\r\n", line)
         };
@@ -67,9 +67,9 @@ impl Protocol for TelnetProtocol {
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
-                    description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                    description: "Set true to raise the telnet_connection_opened event as soon as a client connects, so you can send a login banner or prompt before the client types anything. Left false (the default) the server stays silent until the first line arrives".to_string(),
                     required: false,
-                    example: serde_json::json!(false),
+                    example: serde_json::json!(true),
                 },
             ]
     }
@@ -106,10 +106,14 @@ impl Protocol for TelnetProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(23))
-            .implementation("Simplified line-based (no IAC negotiation)")
-            .llm_control("Terminal responses")
-            .e2e_testing("telnet CLI / raw TCP")
-            .notes("Telnet-lite, no option negotiation")
+            .implementation("Line-based text over TCP; no IAC option negotiation")
+            .llm_control("Every byte sent to the terminal")
+            .e2e_testing("nc / raw TCP (a real telnet client's IAC bytes are not stripped)")
+            .notes(
+                "Telnet-lite: IAC/WILL/WONT/DO/DONT are passed through as data rather than \
+                 negotiated, so a real telnet client's negotiation bytes appear in the first \
+                 message. No E2E test.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -132,7 +136,8 @@ impl Protocol for TelnetProtocol {
                 "type": "open_server",
                 "port": 23,
                 "base_stack": "telnet",
-                "instruction": "Telnet terminal server handling user commands"
+                "send_first": true,
+                "instruction": "Telnet terminal server: greet with a login banner on connect, then handle user commands"
             }),
             // Script mode: Code-based deterministic responses
             json!({
@@ -178,18 +183,22 @@ impl Server for TelnetProtocol {
     > {
         Box::pin(async move {
             use crate::server::telnet::TelnetServer;
-            let _send_first = ctx
+            let send_first = ctx
                 .startup_params
                 .as_ref()
                 .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
 
+            #[allow(deprecated)]
+            let listen_addr = ctx.socket_addr().unwrap_or(ctx.legacy_listen_addr());
+
             TelnetServer::spawn_with_llm_actions(
-                ctx.legacy_listen_addr(),
+                listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                send_first,
             )
             .await
         })
@@ -282,7 +291,11 @@ fn send_telnet_prompt_action() -> ActionDefinition {
 fn wait_for_more_action() -> ActionDefinition {
     ActionDefinition {
         name: "wait_for_more".to_string(),
-        description: "Wait for more data before responding".to_string(),
+        description: "Send nothing and wait for the client's next line. Use it when the line you \
+            just received is only part of a command (e.g. you asked for a username and want the \
+            password before replying). The server reads lines strictly in order, so this simply \
+            means 'no response for this line'."
+            .to_string(),
         parameters: vec![],
         example: json!({
             "type": "wait_for_more"
@@ -315,10 +328,38 @@ fn close_connection_action() -> ActionDefinition {
 // Telnet Event Type Constants
 // ============================================================================
 
+/// Raised on connect, but only when the server was started with `send_first: true`.
+pub static TELNET_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "telnet_connection_opened",
+        "A client opened a Telnet connection and nothing has been sent yet. Raised only when the \
+         server was started with send_first: true - use it to send a login banner or the first \
+         prompt. The client has typed nothing, so there is no message to react to.",
+        json!({
+            "type": "send_telnet_message",
+            "message": "Welcome to NetGet\r\nlogin: "
+        }),
+    )
+    // No parameters: nothing has been received yet.
+    .with_actions(vec![
+        send_telnet_message_action(),
+        send_telnet_line_action(),
+        send_telnet_prompt_action(),
+        close_connection_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Telnet connection opened from {client_ip}")
+            .with_debug("Telnet connection opened from {client_ip}:{client_port}")
+            .with_trace("Telnet connection opened: {json_pretty(.)}"),
+    )
+});
+
 pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "telnet_message_received",
-        "Telnet message received from a client",
+        "A complete line of text arrived from a Telnet client. Lines are split on \\n and the \
+         trailing whitespace/CR is trimmed before you see them.",
         json!({
             "type": "send_telnet_line",
             "line": "Command received. Processing..."
@@ -327,7 +368,11 @@ pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     .with_parameters(vec![Parameter {
         name: "message".to_string(),
         type_hint: "string".to_string(),
-        description: "The Telnet message line received".to_string(),
+        description: "The line the client sent, trimmed of its trailing CR/LF and surrounding \
+            whitespace. Note that Telnet option negotiation is not handled: if a real telnet \
+            client is used, its IAC (0xFF) negotiation bytes arrive as part of the first \
+            message rather than being stripped"
+            .to_string(),
         required: true,
     }])
     .with_actions(vec![
@@ -346,5 +391,8 @@ pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
 });
 
 pub fn get_telnet_event_types() -> Vec<EventType> {
-    vec![TELNET_MESSAGE_RECEIVED_EVENT.clone()]
+    vec![
+        TELNET_CONNECTION_OPENED_EVENT.clone(),
+        TELNET_MESSAGE_RECEIVED_EVENT.clone(),
+    ]
 }
