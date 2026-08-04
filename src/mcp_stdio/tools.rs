@@ -550,52 +550,36 @@ impl NetGetMcpService {
         ))]))
     }
 
-    #[tool(description = "Get documentation for a specific protocol including actions, events, startup parameters, and examples")]
+    #[tool(description = "Get MCP-shaped documentation for a protocol: the exact start_server/start_client arguments that apply, the protocol's event ids with their field names and types (needed to write an event_handlers script), its action names with parameter schemas and examples, its startup parameters, its privilege requirement, and its maturity.")]
     async fn get_protocol_docs(
         &self,
         Parameters(params): Parameters<GetProtocolDocsParams>,
     ) -> Result<CallToolResult, McpError> {
-        // Try to find protocol in registries first (case-insensitive)
-        let server_registry = crate::protocol::server_registry::registry();
-        let client_registry = &crate::protocol::CLIENT_REGISTRY;
-
-        // Try exact, uppercase, and lowercase
-        let server_found = server_registry.get(&params.protocol).is_some()
-            || server_registry.get(&params.protocol.to_uppercase()).is_some()
-            || server_registry.get(&params.protocol.to_lowercase()).is_some();
-        let client_found = client_registry.get(&params.protocol).is_some()
-            || client_registry.get(&params.protocol.to_lowercase()).is_some();
-
-        if !server_found && !client_found {
-            // Protocol not compiled in - list what's available
-            let available = server_registry.available_protocols();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Protocol '{}' not found. It may not be compiled into this build.\n\n\
-                 Available protocols ({}):\n{}\n\n\
-                 Build with the protocol feature enabled: cargo build --features mcp-stdio,{}",
-                params.protocol,
-                available.len(),
-                available.iter().map(|p| format!("  - {}", p)).collect::<Vec<_>>().join("\n"),
-                params.protocol.to_lowercase(),
-            ))]));
-        }
-
-        // Use the existing read_documentation tool logic
-        let result = crate::llm::actions::execute_tool(
-            &crate::llm::actions::ToolAction::ReadDocumentation {
-                protocols: vec![params.protocol.clone()],
-                protocol: None,
-            },
-            None,
-            crate::state::app_state::WebSearchMode::Off,
-            None,
+        match crate::mcp_stdio::docs::render_protocol_docs(
+            &params.protocol,
+            &self.state.app_state,
         )
-        .await;
-
-        if result.success {
-            Ok(CallToolResult::success(vec![Content::text(result.result)]))
-        } else {
-            Ok(CallToolResult::error(vec![Content::text(result.result)]))
+        .await
+        {
+            Some(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
+            None => {
+                // Protocol not compiled in - list what's available
+                let server_registry = crate::protocol::server_registry::registry();
+                let available = server_registry.available_protocols();
+                Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Protocol '{}' not found. It may not be compiled into this build.\n\n\
+                     Available server protocols ({}):\n{}\n\n\
+                     Build with the protocol feature enabled: cargo build --features mcp-stdio,{}",
+                    params.protocol,
+                    available.len(),
+                    available
+                        .iter()
+                        .map(|p| format!("  - {}", p))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    params.protocol.to_lowercase(),
+                ))]))
+            }
         }
     }
 

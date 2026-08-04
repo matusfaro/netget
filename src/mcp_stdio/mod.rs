@@ -4,6 +4,7 @@
 //! tools. Protocol servers are driven by NetGet's own configured LLM backend
 //! (Ollama or an OpenAI-compatible endpoint).
 
+pub mod docs;
 pub mod tools;
 
 use anyhow::Result;
