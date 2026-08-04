@@ -36,6 +36,38 @@ pub struct LlmSftpHandler {
     version: Option<u32>,
 }
 
+/// The action names that count as an answer to an `sftp_operation` event.
+fn is_sftp_reply_action(name: &str) -> bool {
+    matches!(
+        name,
+        "sftp_handle"
+            | "sftp_directory_listing"
+            | "sftp_file_content"
+            | "sftp_file_attributes"
+            | "sftp_error"
+    )
+}
+
+/// If the handler answered with `sftp_error`, map its `code` to an SFTP status code.
+///
+/// Returns `None` when the response is not an error, so callers can carry on.
+fn sftp_error_status(response: &serde_json::Value) -> Option<StatusCode> {
+    if response.get("type").and_then(|v| v.as_str()) != Some("sftp_error") {
+        return None;
+    }
+    let code = response
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("no_such_file");
+    Some(match code {
+        "no_such_file" => StatusCode::NoSuchFile,
+        "permission_denied" => StatusCode::PermissionDenied,
+        "op_unsupported" => StatusCode::OpUnsupported,
+        "eof" => StatusCode::Eof,
+        _ => StatusCode::Failure,
+    })
+}
+
 /// Information about an open handle
 #[derive(Debug, Clone)]
 struct HandleInfo {
@@ -68,8 +100,17 @@ impl LlmSftpHandler {
         }
     }
 
-    /// Ask LLM to handle an SFTP operation
-    async fn llm_sftp_operation(&self, operation: &str, params: &str) -> Result<serde_json::Value> {
+    /// Ask the handler/LLM to answer an SFTP operation.
+    ///
+    /// `params` carries structured fields (`path`, `handle`, `offset`, `length`) that are
+    /// merged into the event alongside `operation`. They used to be flattened into a single
+    /// `params` string like `"path='/x', id=3"`, which a script handler had to re-parse and
+    /// which violated the structured-data rule for event payloads.
+    async fn llm_sftp_operation(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         // DEBUG: LLM request summary
         debug!(
             "SFTP LLM request: operation={}, params={}",
@@ -81,13 +122,13 @@ impl LlmSftpHandler {
         ));
 
         // Create SFTP operation event
-        let event = Event::new(
-            &SFTP_OPERATION_EVENT,
-            serde_json::json!({
-                "operation": operation,
-                "params": params
-            }),
-        );
+        let mut event_data = serde_json::json!({ "operation": operation });
+        if let Some(fields) = params.as_object() {
+            for (key, value) in fields {
+                event_data[key] = value.clone();
+            }
+        }
+        let event = Event::new(&SFTP_OPERATION_EVENT, event_data);
 
         // TRACE: Event details
         trace!("SFTP calling LLM for operation: {}", operation);
@@ -138,13 +179,23 @@ impl LlmSftpHandler {
                     ));
                 }
 
-                // Return first action as the response (SFTP expects a single JSON response)
-                if let Some(first_action) = execution_result.raw_actions.first() {
-                    Ok(first_action.clone())
-                } else {
-                    // No actions returned, return empty object
-                    Ok(serde_json::json!({}))
-                }
+                // SFTP expects exactly one reply per request. Prefer the first action that is
+                // actually an SFTP reply, so a leading show_message/set_memory does not get
+                // mistaken for the answer. Fall back to the first action for handlers that
+                // return a bare object with no "type".
+                let reply = execution_result
+                    .raw_actions
+                    .iter()
+                    .find(|a| {
+                        a.get("type")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(is_sftp_reply_action)
+                    })
+                    .or_else(|| execution_result.raw_actions.first())
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+
+                Ok(reply)
             }
             Err(e) => {
                 error!("LLM error for SFTP {}: {}", operation, e);
@@ -195,9 +246,17 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             id, path
         ));
 
-        let params = format!("path='{}', id={}", path, id);
-        match self.llm_sftp_operation("opendir", &params).await {
+        let params = serde_json::json!({ "path": path });
+        match self.llm_sftp_operation("opendir", params).await {
             Ok(response) => {
+                if let Some(status) = sftp_error_status(&response) {
+                    debug!("SFTP opendir refused by handler for {}: {:?}", path, status);
+                    let _ = self
+                        .status_tx
+                        .send(format!("[DEBUG] SFTP opendir refused for {path}"));
+                    return Err(status);
+                }
+
                 // LLM should return a handle for this directory
                 let handle_str = response
                     .get("handle")
@@ -309,9 +368,14 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             let path = handle_info.path.clone();
             drop(handles); // Release lock before async operation
 
-            let params = format!("handle='{}', path='{}', id={}", handle, path, id);
-            match self.llm_sftp_operation("readdir", &params).await {
+            let params = serde_json::json!({ "path": path, "handle": handle });
+            match self.llm_sftp_operation("readdir", params).await {
                 Ok(response) => {
+                    if let Some(status) = sftp_error_status(&response) {
+                        debug!("SFTP readdir refused by handler for {}: {:?}", path, status);
+                        return Err(status);
+                    }
+
                     // Parse file list from LLM
                     let files = response
                         .get("entries")
@@ -319,9 +383,16 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|entry| {
+                                    // Only 'name' is load-bearing. is_dir/size used to be
+                                    // fetched with `?`, so an entry that omitted either was
+                                    // silently dropped from the listing.
                                     let name = entry.get("name")?.as_str()?.to_string();
-                                    let is_dir = entry.get("is_dir")?.as_bool().unwrap_or(false);
-                                    let size = entry.get("size")?.as_u64().unwrap_or(0);
+                                    let is_dir = entry
+                                        .get("is_dir")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    let size =
+                                        entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
                                     // Set permissions: 0755 for dirs, 0644 for files
                                     let attrs = FileAttributes {
@@ -439,17 +510,15 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             id, path, pflags
         ));
 
-        let params = format!("path='{}', id={}", path, id);
-        match self.llm_sftp_operation("open", &params).await {
+        let params = serde_json::json!({ "path": path });
+        match self.llm_sftp_operation("open", params).await {
             Ok(response) => {
-                // Check if LLM says file exists
-                let exists = response
-                    .get("exists")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-
-                if !exists {
-                    return Err(StatusCode::NoSuchFile);
+                if let Some(status) = sftp_error_status(&response) {
+                    debug!("SFTP open refused by handler for {}: {:?}", path, status);
+                    let _ = self
+                        .status_tx
+                        .send(format!("[DEBUG] SFTP open refused for {path}"));
+                    return Err(status);
                 }
 
                 let handle_str = response
@@ -554,19 +623,41 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             let path = handle_info.path.clone();
             drop(handles);
 
-            let params = format!(
-                "handle='{}', path='{}', offset={}, len={}, id={}",
-                handle, path, offset, len, id
-            );
-            match self.llm_sftp_operation("read", &params).await {
+            let params = serde_json::json!({
+                "path": path,
+                "handle": handle,
+                "offset": offset,
+                "length": len,
+            });
+            match self.llm_sftp_operation("read", params).await {
                 Ok(response) => {
+                    if let Some(status) = sftp_error_status(&response) {
+                        debug!("SFTP read refused by handler for {}: {:?}", path, status);
+                        return Err(status);
+                    }
+
                     // Get file content from LLM
                     let content = response
                         .get("content")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
-                    let data = content.as_bytes().to_vec();
+                    // The handler returns the WHOLE file; apply the requested window here.
+                    // Returning the full content for every request made a client that reads
+                    // in chunks receive the file repeatedly and never see EOF.
+                    let full = content.as_bytes();
+                    let start = usize::try_from(offset).unwrap_or(usize::MAX);
+                    if start >= full.len() {
+                        debug!(
+                            "SFTP response: SSH_FXP_STATUS id={}, status=EOF (offset {} >= size {})",
+                            id,
+                            offset,
+                            full.len()
+                        );
+                        return Err(StatusCode::Eof);
+                    }
+                    let end = start.saturating_add(len as usize).min(full.len());
+                    let data = full[start..end].to_vec();
                     let actual_len = data.len();
 
                     let _ = self
@@ -724,9 +815,17 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             id, path
         ));
 
-        let params = format!("path='{}', id={}", path, id);
-        match self.llm_sftp_operation("lstat", &params).await {
+        let params = serde_json::json!({ "path": path });
+        match self.llm_sftp_operation("lstat", params).await {
             Ok(response) => {
+                if let Some(status) = sftp_error_status(&response) {
+                    debug!("SFTP lstat refused by handler for {}: {:?}", path, status);
+                    let _ = self
+                        .status_tx
+                        .send(format!("[DEBUG] SFTP lstat refused for {path}"));
+                    return Err(status);
+                }
+
                 let mut attrs = FileAttributes::default();
 
                 // Parse attributes from LLM response
@@ -855,8 +954,15 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
             id, path
         ));
 
-        // For simplicity, return the path as-is
-        // LLM could canonicalize if needed
+        // Answered locally - the handler is not consulted. OpenSSH opens every session with
+        // realpath("."), and echoing "." straight back leaves the client with a relative
+        // working directory that every later path is resolved against; map it to "/".
+        let path = if path.is_empty() || path == "." {
+            "/".to_string()
+        } else {
+            path
+        };
+
         let attrs = FileAttributes::default();
         let file = File::new(path.clone(), attrs);
 

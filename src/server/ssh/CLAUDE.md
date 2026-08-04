@@ -1,442 +1,198 @@
-# SSH Protocol Implementation
+# SSH Server Implementation
 
 ## Overview
 
-SSH server implementing RFC 4253 (SSH Transport Layer Protocol) using the russh library. Provides secure remote access
-via shell sessions and secure file transfer via SFTP subsystem. The LLM controls authentication decisions, shell command
-responses, and SFTP filesystem operations.
+SSH server built on russh, offering an interactive shell and a read-only SFTP subsystem. The
+handler — script, static or LLM — decides who may log in, what the shell prints, and what the
+SFTP tree contains. Nothing is read from or written to the real filesystem.
 
-**Status**: Beta (Application Protocol)
-**RFC**: RFC 4253, RFC 4254, RFC 4256 (SSH Protocol Suite)
-**Port**: 22 (default)
+**Status**: Experimental
+**Port**: 22 (privileged — `privilege_requirement` is `PrivilegedPort(22)`)
+**Feature**: `ssh` (`russh`, `russh-keys`, `russh-sftp`, `ssh2` for testing)
+**Files**: `mod.rs` (accept loop, russh handler, shell), `sftp_handler.rs` (SFTP), `actions.rs`
 
-## Library Choices
+### Why Experimental, not Beta
 
-### Core SSH Implementation
+`Beta` means "human reviewed, works with real clients". Two things block that:
 
-- **russh v0.40** - Pure Rust SSH server implementation
-    - Handles SSH protocol state machine (version exchange, key exchange, encryption)
-    - Provides async/await API for connection handling
-    - Supports multiple authentication methods (password, publickey)
-    - Channel management for shell and subsystem requests
+1. **There is no E2E test.** `tests/server/ssh/` does not exist. This is the single largest gap
+   in the protocol — 2,700 lines handling attacker-controlled crypto and channel data, with no
+   automated coverage.
+2. **SFTP could not work at all until recently.** `sftp_operation` declared *zero* actions and
+   its example response was `{"type": "placeholder"}`, so no handler was ever told what to
+   return. The handler code read fields (`entries`, `content`, `handle`) that nothing in the
+   prompt described. That vocabulary now exists (below), but it is untested.
 
-- **russh-keys** - SSH key generation and management
-    - Ed25519 host key generation (used for server identity)
-    - Automatic key pair creation on server startup
+Raise the state to `Beta` once `tests/server/ssh/` exists and passes against a real client.
 
-- **russh-sftp v2.0** - SFTP subsystem implementation
-    - Parses SFTP protocol packets (SSH_FXP_* messages)
-    - Provides trait-based API for filesystem operations
-    - Integrates with russh channel API
+## Architecture
 
-**Rationale**: russh is the most mature pure-Rust SSH library with full async support. It handles all SSH protocol
-complexity (encryption, key exchange, packet framing) while exposing high-level APIs for authentication and shell/SFTP
-handling. This allows the LLM to focus on business logic (auth decisions, shell responses, file contents) rather than
-protocol details.
+### Manual accept loop
 
-## Architecture Decisions
+`russh::server::Server::run_on_address()` was observed to hang without accepting, so the server
+binds its own listener (`create_reusable_tcp_listener`, so a restart does not hit `EADDRINUSE`)
+and calls `russh::server::run_stream()` per connection, each with its own `SshHandler`. Bind
+failure propagates with `?` so `server_startup` reports `Error` rather than a phantom `Running`,
+and the accept-loop `JoinHandle` is registered with `AppState::register_server_task()` so
+`stop_server` aborts it and releases port 22.
 
-### 0. Manual TCP Accept Loop Pattern
+### Host key
 
-**Design**: Instead of using `russh::server::Server::run_on_address()`, we use manual TCP connection acceptance with `russh::server::run_stream()` for per-connection handling.
+An Ed25519 host key is generated at startup and never persisted. Every restart produces a new
+identity, so clients print `REMOTE HOST IDENTIFICATION HAS CHANGED`. Acceptable for honeypot and
+testing use; there is no option to load a key from disk.
 
-**Pattern**:
-```rust
-let listener = TcpListener::bind(listen_addr).await?;
-loop {
-    let (tcp_stream, peer_addr) = listener.accept().await?;
-    let handler = SshHandler::new(...);
-    tokio::spawn(async move {
-        russh::server::run_stream(config, tcp_stream, handler).await
-    });
-}
-```
+### Shell input handling
 
-**Rationale**:
-- `run_on_address()` was observed to hang and never accept connections (see investigation report)
-- Manual accept loop matches proven patterns from DoT and SSH Agent protocols (100% working)
-- Provides explicit control over connection lifecycle and debugging visibility
-- Allows proper connection state tracking before SSH protocol handshake
-- Each connection gets its own spawned task with dedicated `SshHandler`
+Input is echoed and buffered per channel until Enter or a control character:
 
-### 1. LLM Control Points
+- printable bytes (0x20–0x7E) are echoed and buffered
+- backspace/delete (0x7F, 0x08) echo `\x08 \x08` and pop the buffer
+- control bytes echo as `^C`, `^D`, … and are buffered so the handler can see them
+- Tab is echoed but not buffered (no completion logic exists)
 
-The LLM has three integration points:
+Output passes through `normalize_line_endings()`, which collapses `\r\n` to `\n` and then
+expands every `\n` to `\r\n`, so a handler can emit plain Unix output. After each command the
+server writes its own `"$ "` prompt, which is why the action descriptions tell handlers not to
+include one.
 
-**Authentication**:
+### Startup parameters
 
-- LLM receives `ssh_auth` event with username and auth type (password/publickey)
-- Returns `ssh_auth_decision` action with `allowed: true/false`
-- Supports both password and public key authentication
-
-**Shell Sessions**:
-
-- LLM receives `ssh_banner` event when shell is opened
-- LLM receives `ssh_shell_command` event for each command line
-- Returns `ssh_shell_response` action with output text and optional `close_connection`
-
-**SFTP Subsystem**:
-
-- LLM receives SFTP operation events (read, write, readdir, stat, etc.)
-- Returns filesystem responses (file contents, directory listings, errors)
-- Uses custom `LlmSftpHandler` that translates SFTP packets to LLM events
-
-### 2. Shell Input Handling
-
-Complex terminal emulation for proper SSH client experience:
-
-**Character Echo**:
-
-- Every printable character is echoed back to client (0x20-0x7E)
-- Backspace/delete (0x7F, 0x08): Echo `\x08 \x08` to erase character visually
-- Control characters: Echo as `^C\r\n` format for visibility
-
-**Line Buffering**:
-
-- Input accumulated in per-channel buffer until Enter or control character
-- Prevents partial command processing
-- Buffer cleared after LLM processes command
-
-**Line Ending Normalization**:
-
-- SSH requires `\r\n` (CRLF) line endings for proper terminal display
-- Helper function `normalize_line_endings()` converts `\n` to `\r\n`
-- Applied to all LLM output before sending to client
-
-**Prompt Management**:
-
-- After command output, server sends "$ " prompt automatically
-- Keeps shell interactive without LLM needing to include prompt in every response
-- User knows where to type next command
-
-### 3. Connection and Channel Tracking
-
-**Connection Lifecycle**:
-
-1. TCP Accept Loop - Manual `TcpListener::accept()` accepts incoming connections
-2. `russh::server::run_stream()` - Processes SSH protocol for each connection with `SshHandler`
-3. Authentication - LLM decides to accept/reject user via `auth_password()` or `auth_publickey()`
-4. Channel open - Client requests session (shell) or subsystem (SFTP)
-5. Shell/SFTP operations - LLM handles commands/file operations
-6. Channel close - Remove from tracking maps
-
-**Multiple Channels Per Connection**:
-
-- SSH supports multiple channels (e.g., shell + port forwarding)
-- Each channel tracked separately in `channel_types` HashMap
-- Shell channels have input buffers and initialization state
-- SFTP channels hand off to `russh_sftp::server::run()`
-
-### 4. SFTP Integration
-
-SFTP runs as a subsystem over SSH:
-
-- Client sends "subsystem" request with name="sftp"
-- Server creates `LlmSftpHandler` and passes channel to `russh_sftp::server::run()`
-- russh_sftp parses all SFTP packets and calls trait methods
-- `LlmSftpHandler` converts SFTP operations to LLM events and back
-
-**Supported SFTP Operations**:
-
-- `SSH_FXP_REALPATH` - Canonicalize path
-- `SSH_FXP_STAT` / `SSH_FXP_LSTAT` - Get file attributes
-- `SSH_FXP_OPENDIR` - Open directory for reading
-- `SSH_FXP_READDIR` - Read directory entries
-- `SSH_FXP_OPEN` - Open file for reading/writing
-- `SSH_FXP_READ` - Read file contents
-- `SSH_FXP_WRITE` - Write file contents
-- `SSH_FXP_CLOSE` - Close file/directory handle
-- `SSH_FXP_REMOVE` - Delete file
-- `SSH_FXP_MKDIR` - Create directory
-- `SSH_FXP_RMDIR` - Remove directory
-- `SSH_FXP_RENAME` - Rename file/directory
-
-### 5. Dual Logging
-
-All operations use **dual logging**:
-
-- **DEBUG**: Request/response summaries (e.g., "SSH shell command: ls -la")
-- **TRACE**: Full payloads (command text, file contents, packet hex)
-- **INFO**: Lifecycle events (connection opened, SFTP subsystem started)
-- **ERROR**: Failures (authentication denied, SFTP errors)
-- All logs go to both `netget.log` (via tracing) and TUI Status panel (via status_tx)
+None. `send_first` used to be declared, parsed and discarded — the `ssh_banner` event fires
+whenever a shell opens regardless, so the flag never meant anything.
 
 ## LLM Integration
 
-### Action-Based Response Model
+Every integration point goes through `call_llm` → `try_execute_event_handler`, so script and
+static handlers run in-process at **zero** LLM calls. Only unhandled events reach the model.
 
-The LLM responds to SSH events with actions:
+### Events
 
-**Events**:
+| Event               | When                                        | Parameters |
+|---------------------|---------------------------------------------|------------|
+| `ssh_auth`          | a login is attempted (may repeat)           | `username`, `auth_type`, `password` |
+| `ssh_banner`        | a shell channel opens                       | – |
+| `ssh_shell_command` | Enter pressed, or `ssh host <cmd>`          | `command`, `first_input`, `empty_input`, `control` |
+| `sftp_operation`    | an SFTP request arrives                     | `operation`, `path`, `handle`, `offset`, `length` |
 
-- `ssh_auth` - Authentication request (username, auth_type)
-- `ssh_banner` - Shell opened, send welcome banner
-- `ssh_shell_command` - Shell command received
-- `sftp_*` - SFTP operations (read, write, readdir, etc.)
+`auth_type` is exactly `"password"` or `"publickey"`. It previously carried a formatted string
+(`"password (user='x', password='y')"`), which broke every handler comparing it against
+`"password"` and contradicted its own documented description; the password now travels in its
+own `password` field, present only for password logins.
 
-**Available Actions**:
+`ssh_shell_command`'s `control` array (`"ctrl_c"`, `"ctrl_d"`, `"ctrl_z"`), `first_input` and
+`empty_input` are how a handler branches on special keys. These flags were previously computed
+and then used only in a log line, while the protocol prompt claimed the model would "see CTRL_C
+in the context flags" — it never did.
 
-- `ssh_auth_decision` - Allow/deny authentication
-- `ssh_send_banner` - Send shell banner
-- `ssh_shell_response` - Send shell output
-- `close_connection` - Close SSH connection
-- `sftp_response` - Return SFTP data (file contents, directory listings)
-- Common actions: `show_message`, `update_instruction`, etc.
+### Actions
 
-### Example LLM Responses
+| Action                | Answers              | Parameters |
+|-----------------------|----------------------|------------|
+| `ssh_auth_decision`   | `ssh_auth`           | `allowed` (JSON boolean, required) |
+| `ssh_send_banner`     | `ssh_banner`         | `banner` |
+| `ssh_shell_response`  | `ssh_shell_command`  | `response` |
+| `send_ssh_data`       | shell channel        | `data` (lower-level alias of the above) |
+| `close_this_connection` | shell channel      | – |
+| `wait_for_more`       | shell channel        | – |
 
-**Authentication**:
+Note the parameter names: `ssh_shell_response` takes **`response`**, not `output`, and
+`ssh_auth_decision` takes only **`allowed`** — there is no `message` field and no
+`close_connection` field. Earlier revisions of this document showed all three; a handler
+following them failed with "Missing 'response' parameter". `allowed` must be a real JSON
+boolean; `"true"` as a string is now an explicit error rather than a silent denial.
 
-```json
-{
-  "actions": [
-    {
-      "type": "ssh_auth_decision",
-      "allowed": true,
-      "message": "User alice authenticated successfully"
-    }
-  ]
-}
+There are no async (user-triggered) actions. `close_ssh_connection` and `list_ssh_connections`
+were advertised but each only produced an `ActionResult::Custom` that nothing consumed, reading
+a connection map that was never populated — both have been removed.
+
+### SFTP actions
+
+One reply action per request:
+
+| `operation`        | Reply action              | Key fields |
+|--------------------|---------------------------|------------|
+| `opendir`, `open`  | `sftp_handle`             | `handle` (optional; defaults to the path) |
+| `readdir`          | `sftp_directory_listing`  | `entries[]` of `{name, is_dir, size}` |
+| `read`             | `sftp_file_content`       | `content` (the **whole** file) |
+| `lstat`            | `sftp_file_attributes`    | `size`, `is_dir`, optional `permissions` |
+| any                | `sftp_error`              | `code`: `no_such_file` (default), `permission_denied`, `failure`, `op_unsupported`, `eof` |
+
+A client's `fstat` is resolved to the handle's path and arrives as `lstat`. `close` and
+`realpath` are answered by the server without consulting a handler; `realpath(".")`, which
+OpenSSH sends when a session opens, is mapped to `/`.
+
+`sftp_file_content` returns the entire file and the server applies the request's `offset` and
+`length`. It previously returned the full content for every read regardless of offset, so a
+client reading in chunks received the file over and over and never reached EOF. Keep the `size`
+in `sftp_file_attributes` equal to the byte length of `content` for the same path, or downloads
+truncate.
+
+Event data is structured. The old `params` field flattened everything into a string
+(`"path='/x', id=3"`) that a script handler had to re-parse.
+
+## Known limitations
+
+- **SFTP is read-only.** Only `init`, `opendir`, `readdir`, `open`, `read`, `close`, `lstat`,
+  `fstat` and `realpath` are implemented. `write`, `remove`, `mkdir`, `rmdir`, `rename` and
+  `setstat` fall through to `unimplemented()` → `SSH_FX_OP_UNSUPPORTED`. Earlier revisions of
+  this document listed all of them as supported; they never were.
+- **Binary files cannot be served.** `sftp_file_content` is a JSON string, so file contents are
+  its UTF-8 bytes.
+- No port forwarding (local/remote/dynamic), no X11 forwarding, no session multiplexing.
+- Only `password` and `publickey` authentication; no keyboard-interactive, no certificates.
+  For `publickey` the key is validated by russh but is not exposed to the handler, so the
+  decision is made on the username alone.
+- No readline emulation: no command history, no arrow keys, no tab completion.
+- The host key is ephemeral (see above).
+
+## Storage
+
+None. There is no filesystem behind either the shell or SFTP — no file is opened, created or
+deleted on the host. Directory trees, file contents and the current working directory are
+invented by the handler and kept in its own memory (`set_memory` / `append_memory`).
+
+## Testing
+
+**There is no E2E test.** Verify by hand:
+
+```
+ssh -p 2222 -o StrictHostKeyChecking=no admin@localhost
+sftp -P 2222 -o StrictHostKeyChecking=no admin@localhost
 ```
 
-**Shell Banner**:
+An automated test would need `tests/server/ssh/e2e_test.rs` with mocks covering `ssh_auth`,
+`ssh_banner`, `ssh_shell_command` and at least one `sftp_operation` round trip. That directory
+is outside this module's ownership.
 
-```json
-{
-  "actions": [
-    {
-      "type": "ssh_shell_response",
-      "output": "Welcome to NetGet SSH Server\r\nLast login: Mon Jan 1 12:00:00 2024\r\n$ "
-    }
-  ]
-}
-```
+## Example prompts
 
-**Shell Command**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "ssh_shell_response",
-      "output": "file1.txt\r\nfile2.txt\r\n",
-      "close_connection": false
-    }
-  ]
-}
-```
-
-**SFTP Directory Listing**:
-
-```json
-{
-  "entries": [
-    {"name": "readme.txt", "size": 100, "is_dir": false},
-    {"name": "data", "size": 4096, "is_dir": true}
-  ]
-}
-```
-
-## Connection Management
-
-### Host Key Generation
-
-- Ed25519 key pair generated on server startup (`generate_host_key()`)
-- Key is ephemeral (not persisted to disk)
-- Each server instance has unique host key
-- Clients will see "host key changed" warning if server restarts
-
-### Authentication Flow
-
-1. Client sends authentication request (password or publickey)
-2. Handler calls `llm_auth_decision()` with username and auth type
-3. LLM returns `ssh_auth_decision` action with `allowed: true/false`
-4. Handler returns `Auth::Accept` or `Auth::Reject` to russh
-5. If accepted, connection marked as authenticated in `ServerInstance`
-
-### Shell Session Flow
-
-1. Client opens session channel
-2. Handler accepts channel, stores in `channels` HashMap
-3. Client sends `shell_request` or `exec_request`
-4. Handler calls `llm_shell_banner()` to get initial banner (for shell_request)
-5. Client sends input data
-6. Handler buffers input until newline or control character
-7. Handler calls `llm_shell_command()` with buffered line
-8. LLM returns output, handler sends to client
-9. Handler automatically sends "$ " prompt
-10. Loop continues until client closes channel or LLM sends `close_connection`
-
-### SFTP Session Flow
-
-1. Client sends `subsystem_request` with name="sftp"
-2. Handler creates `LlmSftpHandler` and channels
-3. Handler passes channel to `russh_sftp::server::run()`
-4. russh_sftp parses SFTP packets and calls trait methods on `LlmSftpHandler`
-5. `LlmSftpHandler` translates to LLM events and actions
-6. SFTP responses sent back through russh_sftp to client
-7. Session ends when client sends `SSH_FXP_CLOSE` or closes channel
-
-## Known Limitations
-
-### 1. Ephemeral Host Keys
-
-- Host key not persisted across restarts
-- Clients will see "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED" on restart
-- No option to load host key from file
-
-**Workaround**: Not critical for testing/honeypot scenarios where server identity isn't important.
-
-### 2. No SFTP Persistence
-
-- SFTP filesystem is purely virtual (defined by LLM responses)
-- No actual files stored on disk
-- File writes are processed but not persisted
-- Each SFTP session starts with clean slate (unless LLM uses memory)
-
-**Workaround**: For testing and honeypot scenarios, virtual filesystem is sufficient.
-
-### 3. Limited Authentication Methods
-
-- Only password and publickey supported
-- No keyboard-interactive authentication
-- No certificate-based authentication
-- No multi-factor authentication
-
-**Rationale**: Password and publickey cover 95% of SSH use cases.
-
-### 4. No Port Forwarding
-
-- SSH port forwarding (local/remote/dynamic) not implemented
-- No X11 forwarding
-- Only shell and SFTP channels supported
-
-**Rationale**: Port forwarding requires complex network plumbing beyond protocol handling.
-
-### 5. No Session Multiplexing
-
-- Each SSH connection requires separate TCP connection
-- No support for SSH connection sharing/multiplexing
-- No ControlMaster equivalent
-
-**Rationale**: Not critical for server-side implementation.
-
-### 6. Input Echo Limitations
-
-- Tab completion not implemented (tab echoed but no completion logic)
-- No command history (up/down arrows not handled)
-- No line editing shortcuts (Ctrl-A, Ctrl-E work but Ctrl-K doesn't delete to end)
-
-**Rationale**: Full readline emulation would be extremely complex. Basic echo is sufficient for testing.
-
-## Example Prompts
-
-### Basic SSH Server
+### Shell honeypot
 
 ```
 listen on port 2222 via ssh
-Allow user 'admin' with any password
-When authenticated, send banner "Welcome to NetGet SSH!"
-For 'ls' command, list: file1.txt, file2.txt, directory1/
-For 'pwd' command, return "/home/admin"
-For 'exit' command, send "Goodbye!" and close connection
+Accept user root with password toor; deny everyone else
+Banner: "Ubuntu 22.04.3 LTS\nLast login: Mon Jan  1 12:00:00 2024"
+uname -a -> "Linux web01 5.15.0-89-generic x86_64 GNU/Linux"
+whoami   -> "root"
+ls       -> "backup.sql  deploy.sh  notes.txt"
+exit     -> close_this_connection
 ```
 
-### SFTP Server with Files
+### SFTP virtual filesystem
 
 ```
-listen on port 22 via ssh
-Accept all users with password 'test'
-Enable SFTP subsystem
-Virtual filesystem:
-- /readme.txt: "Hello from NetGet SFTP!\nThis is a virtual file.\n"
-- /data.json: {"status": "ok", "files": 42}
-- /logs/ (directory with access.log and error.log)
-When client lists /, show: readme.txt (100 bytes), data.json (50 bytes), logs (dir)
+listen on port 2222 via ssh
+Accept any user with password test
+Virtual tree:
+  /readme.txt  -> "Hello from NetGet SFTP!\n"  (24 bytes)
+  /logs/       -> directory containing access.log and error.log
+Answer lstat with sftp_file_attributes, readdir with sftp_directory_listing,
+read with sftp_file_content, and anything outside the tree with sftp_error no_such_file
 ```
-
-### SSH Honeypot
-
-```
-listen on port 22 via ssh
-Log all authentication attempts
-Deny all users except 'root'
-For 'root', accept password 'toor'
-After login, simulate Linux shell:
-- uname -a: "Linux honeypot 5.10.0 x86_64 GNU/Linux"
-- whoami: "root"
-- ls: "flag.txt database.db"
-- cat flag.txt: "You found the honeypot!"
-```
-
-### Multi-User SSH
-
-```
-listen on port 22 via ssh
-Allow users: alice, bob, charlie
-Alice gets admin prompt: "alice@server# "
-Bob and charlie get user prompt: "user@server$ "
-Each user sees different files in 'ls':
-- alice: system.conf, users.db
-- bob: documents.txt
-- charlie: projects/
-```
-
-## Performance Characteristics
-
-### Latency
-
-- Authentication: 1 LLM call (~2-5s)
-- Shell banner: 1 LLM call (~2-5s)
-- Each shell command: 1 LLM call (~2-5s)
-- SFTP operations: 1 LLM call per operation (~2-5s)
-
-**Scripting Mode Improvement**:
-
-- Authentication: 0 LLM calls after setup (script handles)
-- Shell commands: 0 LLM calls (script handles)
-- SFTP operations: Can be scripted for common paths
-
-### Throughput
-
-- Limited by LLM response time
-- Concurrent connections handled in parallel
-- russh handles encryption/decryption efficiently (minimal overhead)
-
-### Concurrency
-
-- Unlimited concurrent connections (bounded by system resources)
-- Each connection has independent `SshHandler` instance
-- Ollama lock serializes LLM API calls but not SSH protocol handling
-
-## Security Considerations
-
-### Cryptography
-
-- russh handles all encryption (AES, ChaCha20, etc.)
-- Key exchange uses modern algorithms (Curve25519)
-- Host key uses Ed25519 (modern, secure elliptic curve)
-
-### Authentication
-
-- LLM controls all authentication decisions
-- No passwords stored (LLM decides based on prompt/instructions)
-- Public key authentication supported (key validated by russh, LLM approves user)
-
-### Honeypot Usage
-
-SSH is commonly used for honeypots:
-
-- Log authentication attempts (usernames, passwords)
-- Simulate vulnerable systems
-- Capture attacker commands
-- LLM can adapt responses based on attacker behavior
 
 ## References
 
 - [RFC 4253: SSH Transport Layer Protocol](https://datatracker.ietf.org/doc/html/rfc4253)
 - [RFC 4254: SSH Connection Protocol](https://datatracker.ietf.org/doc/html/rfc4254)
-- [RFC 4256: SSH Keyboard-Interactive Authentication](https://datatracker.ietf.org/doc/html/rfc4256)
-- [russh Documentation](https://docs.rs/russh/latest/russh/)
-- [russh-sftp Documentation](https://docs.rs/russh-sftp/latest/russh_sftp/)
-- [SSH Protocol Overview](https://www.ssh.com/academy/ssh/protocol)
+- [russh](https://docs.rs/russh/latest/russh/) · [russh-sftp](https://docs.rs/russh-sftp/latest/russh_sftp/)

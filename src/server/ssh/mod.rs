@@ -99,8 +99,10 @@ impl SshServer {
 
         let russh_config = Arc::new(russh_config);
 
-        // Bind TCP listener
-        let listener = tokio::net::TcpListener::bind(listen_addr).await?;
+        // Bind TCP listener. SO_REUSEADDR matches the other TCP protocols, so restarting a
+        // server on the same port does not fail with EADDRINUSE while the old socket lingers.
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
         info!(
@@ -222,7 +224,6 @@ impl SshServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         let config = SshServerConfig::default();
@@ -321,8 +322,18 @@ impl SshHandler {
         self.channels.lock().await.remove(&channel_id)
     }
 
-    /// Ask LLM about authentication using action-based framework
-    async fn llm_auth_decision(&self, username: &str, auth_type: &str) -> Result<bool> {
+    /// Ask the handler/LLM whether to accept a login.
+    ///
+    /// `auth_type` is exactly "password" or "publickey" so that script and static handlers can
+    /// match on it. The password, when there is one, travels in its own field: it used to be
+    /// formatted into `auth_type` ("password (user='x', password='y')"), which both broke every
+    /// handler comparing `auth_type == "password"` and contradicted the documented parameter.
+    async fn llm_auth_decision(
+        &self,
+        username: &str,
+        auth_type: &str,
+        password: Option<&str>,
+    ) -> Result<bool> {
         let server_id = self
             .server_id
             .unwrap_or_else(|| crate::state::ServerId::new(1));
@@ -331,19 +342,20 @@ impl SshHandler {
         let _ = self.status_tx.send(format!("[DEBUG] SSH: llm_auth_decision('{}', '{}')", username, auth_type));
 
         // Create event with auth data
-        let event = Event::new(
-            &SSH_AUTH_EVENT,
-            serde_json::json!({
-                "username": username,
-                "auth_type": auth_type,
-            }),
-        );
+        let mut event_data = serde_json::json!({
+            "username": username,
+            "auth_type": auth_type,
+        });
+        if let Some(password) = password {
+            event_data["password"] = serde_json::Value::String(password.to_string());
+        }
+        let event = Event::new(&SSH_AUTH_EVENT, event_data);
 
         match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
-            None, // SSH auth doesn't have connection_id yet at this stage
+            Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
         )
@@ -398,7 +410,7 @@ impl SshHandler {
             &self.llm_client,
             &self.app_state,
             server_id,
-            None, // Banner sent before connection established
+            Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
         )
@@ -429,7 +441,16 @@ impl SshHandler {
 
     /// Ask LLM to handle shell command using action-based framework
     /// Returns (output, close_connection)
-    async fn llm_shell_command(&self, command: &[u8]) -> Result<(Option<String>, bool)> {
+    ///
+    /// `first_input` says whether this is the opening Enter of the session. The control-key
+    /// flags are derived here so a handler can branch on Ctrl-C/Ctrl-D without scanning the
+    /// raw bytes; previously they were computed only for a log line, while the prompt claimed
+    /// the model would "see CTRL_C in the context flags".
+    async fn llm_shell_command(
+        &self,
+        command: &[u8],
+        first_input: bool,
+    ) -> Result<(Option<String>, bool)> {
         let server_id = self
             .server_id
             .unwrap_or_else(|| crate::state::ServerId::new(1));
@@ -438,11 +459,26 @@ impl SshHandler {
         debug!("SSH shell command: {:?}", command_str);
         trace!("SSH shell command (full): {}", command_str);
 
+        let mut control: Vec<&str> = Vec::new();
+        if command.contains(&0x03) {
+            control.push("ctrl_c");
+        }
+        if command.contains(&0x04) {
+            control.push("ctrl_d");
+        }
+        if command.contains(&0x1A) {
+            control.push("ctrl_z");
+        }
+        let empty_input = command.iter().all(|&b| b == b'\n' || b == b'\r');
+
         // Create shell command event with command data
         let event = Event::new(
             &SSH_SHELL_COMMAND_EVENT,
             serde_json::json!({
                 "command": command_str.to_string(),
+                "first_input": first_input,
+                "empty_input": empty_input,
+                "control": control,
             }),
         );
 
@@ -508,7 +544,7 @@ impl russh::server::Handler for SshHandler {
         let _ = self.status_tx.send(format!("[DEBUG] SSH: auth_publickey('{}') called", user));
 
         // Ask LLM if this user should be allowed
-        let allowed = self.llm_auth_decision(user, "publickey").await?;
+        let allowed = self.llm_auth_decision(user, "publickey", None).await?;
 
         info!("SSH: auth_publickey result for '{}': {}", user, allowed);
         if allowed {
@@ -526,8 +562,9 @@ impl russh::server::Handler for SshHandler {
         let _ = self.status_tx.send(format!("[DEBUG] SSH: auth_password('{}') called", user));
 
         // Ask LLM if this user/password should be allowed
-        let event_desc = format!("password (user='{}', password='{}')", user, password);
-        let allowed = self.llm_auth_decision(user, &event_desc).await?;
+        let allowed = self
+            .llm_auth_decision(user, "password", Some(password))
+            .await?;
 
         info!("SSH: auth_password result for '{}': {}", user, allowed);
         if allowed {
@@ -770,8 +807,9 @@ impl russh::server::Handler for SshHandler {
 
         session.channel_success(channel_id);
 
-        // Execute command via LLM
-        if let Ok((Some(output_text), _close)) = self.llm_shell_command(data).await {
+        // Execute command via LLM. A one-shot `ssh host <cmd>` is always the first (and only)
+        // input on this channel.
+        if let Ok((Some(output_text), _close)) = self.llm_shell_command(data, true).await {
             let data = CryptoVec::from_slice(output_text.as_bytes());
             session.data(channel_id, data);
             debug!("Sent exec output ({} bytes)", output_text.len());
@@ -925,31 +963,15 @@ impl russh::server::Handler for SshHandler {
                             String::from_utf8_lossy(&line)
                         ));
 
-                        // Build context string for LLM
-                        let mut context_parts = Vec::new();
-                        if is_first_input {
-                            context_parts.push("FIRST_INPUT - send banner/greeting if appropriate");
-                        }
-                        if has_ctrl_c {
-                            context_parts.push("CTRL_C - user interrupted");
-                        }
-                        // Check for other common control characters
-                        if line.contains(&0x04) {
-                            context_parts.push("CTRL_D - EOF signal");
-                        }
-                        if line.contains(&0x1A) {
-                            context_parts.push("CTRL_Z - suspend signal");
-                        }
-                        if is_empty_cmd && !is_first_input {
-                            context_parts.push("EMPTY_ENTER - just show prompt");
-                        }
-                        let context = if context_parts.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [{}]", context_parts.join(", "))
-                        };
+                        // Log-only summary. The flags the handler actually branches on are
+                        // built inside llm_shell_command() and travel in the event itself.
+                        let context = format!(
+                            " [first_input={}, empty_input={}, ctrl_c={}]",
+                            is_first_input, is_empty_cmd, has_ctrl_c
+                        );
 
-                        if let Ok((output, close_connection)) = self.llm_shell_command(&line).await
+                        if let Ok((output, close_connection)) =
+                            self.llm_shell_command(&line, is_first_input).await
                         {
                             // Send output if present
                             if let Some(output_text) = output {
@@ -1047,111 +1069,4 @@ impl russh::server::Handler for SshHandler {
         self.channel_initialized.lock().await.remove(&channel_id);
         Ok(())
     }
-}
-
-/// Get LLM context and output format instructions for SSH stack
-pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
-    let context = r#"You are handling the SSH (Secure Shell) protocol, which provides secure remote access and file transfer.
-
-IMPORTANT: SSH protocol includes TWO main capabilities:
-1. Shell sessions - Interactive command-line access (like terminal/console)
-2. SFTP subsystem - Secure File Transfer Protocol for file operations
-
-=== SSH PROTOCOL OPERATIONS ===
-
-1. AUTHENTICATION (decides who can connect):
-   - Password authentication: user provides password
-   - Public key authentication: user provides SSH key
-   - Decide whether to allow/deny each user
-   - Respond with JSON: {"allowed": true} or {"allowed": false, "message": "reason"}
-
-2. SHELL SESSIONS (interactive terminal access):
-   - Provide welcome banner when user first connects
-   - Show command prompt (e.g., "$ " or "username@host:~$ ")
-   - Execute user commands and return output
-   - Simulate a Linux/Unix-like shell environment
-   - Handle commands like: ls, pwd, cat, echo, cd, etc.
-
-   CRITICAL: ALWAYS use \r\n (CRLF) for line endings, NOT just \n (LF)
-   SSH terminals require carriage return (\r) to move cursor to beginning of line
-
-   Special Input Handling:
-   - Ctrl-C (control character \u{3} or 0x03) - Interrupt signal
-     * The system will echo "^C" visually to the user
-     * You will see "CTRL_C" in the context flags
-     * You decide how to respond (typically show a new prompt, or exit if appropriate)
-   - Other control characters are handled and echoed appropriately
-
-   Example interaction:
-   User connects → Show banner "Welcome to SSH Server\r\nLast login: Mon Jan 1 12:00:00 2024\r\n$ "
-   User types "ls" → Return "file1.txt\r\nfile2.txt\r\n"
-   User types "pwd" → Return "/home/user\r\n"
-   User presses Enter (empty) → Return "$ " (just show prompt again)
-   User presses Ctrl-C → System echoes "^C\r\n", you can respond with new prompt "$ " or handle as needed
-   User presses Ctrl-D → You can close connection or show message, your choice
-
-3. SFTP SUBSYSTEM (file transfer operations):
-   - SFTP runs as a subsystem within SSH
-   - Users can upload, download, list, delete files
-   - Define a virtual filesystem structure
-   - Handle operations: read file, write file, list directory, create/delete
-
-   Example SFTP operations:
-   List directory "/" → Return: {"entries": ["home", "etc", "var"]}
-   Read file "readme.txt" → Return: {"content": "Hello from SFTP!\n"}
-   File not found → Return: {"error": "No such file"}
-
-NOTE: SSH and SFTP are the SAME protocol - SFTP is a subsystem that runs over SSH.
-When handling SSH, you may receive both shell commands AND file transfer requests."#;
-
-    let output_format = r#"IMPORTANT: Response format depends on the operation type:
-
-=== AUTHENTICATION RESPONSES ===
-{
-  "allowed": true,
-  "message": "User admin authenticated successfully"
-}
-
-OR
-
-{
-  "allowed": false,
-  "message": "Invalid credentials"
-}
-
-=== SHELL SESSION RESPONSES ===
-Plain text output or JSON:
-
-{
-  "output": "Welcome to SSH Server\r\nLast login: Mon Jan 1 12:00:00 2024\r\n$ ",
-  "close_connection": false
-}
-
-OR just plain text (ALWAYS use \r\n for line endings):
-"total 4\r\ndrwxr-xr-x 2 user user 4096 Jan 1 12:00 Desktop\r\n"
-
-=== SFTP RESPONSES ===
-For file reads:
-{
-  "content": "This is the file contents.\nLine 2 of the file."
-}
-
-For directory listings:
-{
-  "entries": ["file1.txt", "file2.pdf", "subfolder/"]
-}
-
-For errors:
-{
-  "error": "Permission denied"
-}
-
-For success operations (delete, create, write):
-{
-  "success": true
-}
-
-REMEMBER: SSH protocol = Shell access + SFTP file transfer in one protocol"#;
-
-    (context, output_format)
 }
