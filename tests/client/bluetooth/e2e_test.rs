@@ -138,8 +138,8 @@ fn test_hex_encoding() {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use crate::client::bluetooth::BluetoothClientProtocol;
-    use crate::llm::actions::client_trait::Client;
+    use netget::client::bluetooth::BluetoothClientProtocol;
+    use netget::llm::actions::client_trait::Client;
     use serde_json::json;
 
     #[test]
@@ -152,7 +152,7 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+        if let Ok(netget::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
             result
         {
             assert_eq!(name, "scan_devices");
@@ -173,7 +173,7 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+        if let Ok(netget::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
             result
         {
             assert_eq!(name, "scan_devices");
@@ -209,7 +209,7 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+        if let Ok(netget::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
             result
         {
             assert_eq!(name, "connect_device");
@@ -230,7 +230,7 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+        if let Ok(netget::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
             result
         {
             assert_eq!(name, "connect_device");
@@ -254,7 +254,7 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+        if let Ok(netget::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
             result
         {
             assert_eq!(name, "write_characteristic");
@@ -292,7 +292,7 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) = result {
+        if let Ok(netget::llm::actions::client_trait::ClientActionResult::Disconnect) = result {
             // Success
         } else {
             panic!("Expected Disconnect action result");

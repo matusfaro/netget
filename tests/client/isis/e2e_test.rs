@@ -13,7 +13,8 @@
 
 #![cfg(all(test, feature = "isis"))]
 
-use crate::helpers::{start_netget, NetGetConfig, E2EResult};
+use crate::helpers::netget::start_netget;
+use crate::helpers::{NetGetConfig, E2EResult};
 use std::time::Duration;
 
 /// Test IS-IS client startup and interface capture
@@ -94,7 +95,6 @@ async fn test_isis_client_capture_hello() -> E2EResult<()> {
                         "type": "wait_for_more"
                     }
                 ]))
-                .respond_with_memory("Captured L2 LAN Hello PDU from neighbor router")
                 .expect_calls(1)
                 .and()
         });
@@ -188,7 +188,6 @@ async fn test_isis_client_server_interaction() -> E2EResult<()> {
                         "type": "wait_for_more"
                     }
                 ]))
-                .respond_with_memory("Discovered router 0000.0000.0001 in area 49.0001")
                 .expect_calls(1)
                 .and()
         });
@@ -247,28 +246,24 @@ async fn test_isis_client_multiple_pdu_types() -> E2EResult<()> {
                 .on_event("isis_pdu_received")
                 .and_event_data_contains("pdu_type", "L2 LAN Hello")
                 .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .respond_with_memory("Captured L2 LAN Hello")
                 .expect_calls(1)
                 .and()
                 // Mock 3: L2 LSP
                 .on_event("isis_pdu_received")
                 .and_event_data_contains("pdu_type", "L2 LSP")
                 .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .respond_with_memory("Captured L2 LSP with topology information")
                 .expect_calls(1)
                 .and()
                 // Mock 4: L2 CSNP
                 .on_event("isis_pdu_received")
                 .and_event_data_contains("pdu_type", "L2 CSNP")
                 .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .respond_with_memory("Captured L2 CSNP for database sync")
                 .expect_calls(1)
                 .and()
                 // Mock 5: L2 PSNP
                 .on_event("isis_pdu_received")
                 .and_event_data_contains("pdu_type", "L2 PSNP")
                 .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .respond_with_memory("Captured L2 PSNP acknowledging LSP")
                 .expect_calls(1)
                 .and()
         });
@@ -330,14 +325,14 @@ fn test_device_listing_documentation() {
     println!();
     println!("  use netget::client::isis::IsisClient;");
     println!("  let devices = IsisClient::list_devices()?;");
-    println!("  for device in devices {");
-    println!("      println!(\"Interface: {} - {:?}\", device.name, device.desc);");
-    println!("  }");
+    println!("  for device in devices {{");
+    println!("      println!(\"Interface: {{}} - {{:?}}\", device.name, device.desc);");
+    println!("  }}");
     println!();
     println!("Common interfaces:");
     println!("  - Linux: eth0, wlan0, ens33, enp0s3");
     println!("  - macOS: en0, en1, lo0");
-    println!("  - Windows: \\Device\\NPF_{GUID}");
+    println!("  - Windows: \\Device\\NPF_{{GUID}}");
     println!();
 }
 

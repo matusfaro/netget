@@ -81,6 +81,7 @@ mod kubernetes_client_tests {
     /// Unit test: Verify Kubernetes client protocol is registered
     #[test]
     fn test_kubernetes_protocol_registered() {
+        use netget::llm::actions::Protocol;
         use netget::protocol::CLIENT_REGISTRY;
 
         // Verify Kubernetes protocol is in the registry
@@ -102,12 +103,11 @@ mod kubernetes_client_tests {
     /// Unit test: Verify Kubernetes client actions are defined
     #[test]
     fn test_kubernetes_client_actions() {
+        use netget::llm::actions::Protocol;
         use netget::protocol::CLIENT_REGISTRY;
         use netget::state::app_state::AppState;
-        use tokio::runtime::Runtime;
 
-        let rt = Runtime::new().unwrap();
-        let state = rt.block_on(async { AppState::new(None, None, None, None, None) });
+        let state = AppState::new();
 
         let protocol = CLIENT_REGISTRY
             .get("Kubernetes")

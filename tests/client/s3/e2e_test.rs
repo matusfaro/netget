@@ -117,6 +117,9 @@ mod s3_client_tests {
     /// Test S3 client with AWS credentials validation
     /// LLM calls: 1 (client initialization with invalid credentials)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: requires --use-ollama. Under default
+              // strict-mock CI mode the LLM call 500s immediately and the client
+              // never connects.
     async fn test_s3_client_invalid_credentials() -> E2EResult<()> {
         // Try to connect with invalid credentials (should fail gracefully)
         let client_config = NetGetConfig::new(

@@ -24,7 +24,7 @@ mod vnc_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -80,7 +80,7 @@ mod vnc_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -130,7 +130,7 @@ mod vnc_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -184,7 +184,7 @@ mod vnc_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 

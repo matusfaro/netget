@@ -5,9 +5,9 @@
 
 #![cfg(all(test, feature = "mqtt"))]
 
-use netget::cli::args::Args;
 use netget::llm::ollama_client::OllamaClient;
 use netget::state::app_state::AppState;
+use netget::state::{ClientId, ClientInstance};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -72,30 +72,27 @@ async fn stop_mosquitto_broker() {
 
 /// Test basic MQTT client connection and LLM-controlled subscription
 #[tokio::test]
+#[ignore] // Requires Docker (Mosquitto broker) and real Ollama (no .with_mock() configured)
 async fn test_mqtt_client_basic() -> Result<(), Box<dyn std::error::Error>> {
     start_mosquitto_broker().await?;
 
     // Initialize app state
-    let args = Args {
-        ollama_lock: true,
-        ..Default::default()
-    };
-    let app_state = Arc::new(AppState::new(args).await?);
+    let app_state = Arc::new(AppState::new());
     let llm_client = OllamaClient::new("http://localhost:11434".to_string());
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
     // Open MQTT client with instruction to subscribe to test topic
-    let client_id = app_state
-        .open_client(
-            "MQTT",
-            "localhost:1883",
-            "Connect to broker and subscribe to 'test/topic'. When you receive a message, publish 'response' to 'test/response'.",
-            serde_json::json!({
-                "client_id": "netget-test-client",
-                "clean_session": true,
-            }),
-        )
-        .await?;
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "localhost:1883".to_string(),
+        "MQTT".to_string(),
+        "Connect to broker and subscribe to 'test/topic'. When you receive a message, publish 'response' to 'test/response'.".to_string(),
+    );
+    client.startup_params = Some(serde_json::json!({
+        "client_id": "netget-test-client",
+        "clean_session": true,
+    }));
+    let client_id = app_state.add_client(client).await;
 
     // Start the client
     netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
@@ -159,28 +156,25 @@ async fn test_mqtt_client_basic() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Test MQTT client with QoS levels
 #[tokio::test]
+#[ignore] // Requires Docker (Mosquitto broker) and real Ollama (no .with_mock() configured)
 async fn test_mqtt_client_qos() -> Result<(), Box<dyn std::error::Error>> {
     start_mosquitto_broker().await?;
 
-    let args = Args {
-        ollama_lock: true,
-        ..Default::default()
-    };
-    let app_state = Arc::new(AppState::new(args).await?);
+    let app_state = Arc::new(AppState::new());
     let llm_client = OllamaClient::new("http://localhost:11434".to_string());
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
     // Open MQTT client
-    let client_id = app_state
-        .open_client(
-            "MQTT",
-            "localhost:1883",
-            "Subscribe to 'qos/#' with QoS 2 (ExactlyOnce). For each message, publish it back to 'echo/+' with QoS 1.",
-            serde_json::json!({
-                "client_id": "netget-qos-test",
-            }),
-        )
-        .await?;
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "localhost:1883".to_string(),
+        "MQTT".to_string(),
+        "Subscribe to 'qos/#' with QoS 2 (ExactlyOnce). For each message, publish it back to 'echo/+' with QoS 1.".to_string(),
+    );
+    client.startup_params = Some(serde_json::json!({
+        "client_id": "netget-qos-test",
+    }));
+    let client_id = app_state.add_client(client).await;
 
     netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
         .await?;
@@ -220,28 +214,25 @@ async fn test_mqtt_client_qos() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Test MQTT client with wildcards
 #[tokio::test]
+#[ignore] // Requires Docker (Mosquitto broker) and real Ollama (no .with_mock() configured)
 async fn test_mqtt_client_wildcards() -> Result<(), Box<dyn std::error::Error>> {
     start_mosquitto_broker().await?;
 
-    let args = Args {
-        ollama_lock: true,
-        ..Default::default()
-    };
-    let app_state = Arc::new(AppState::new(args).await?);
+    let app_state = Arc::new(AppState::new());
     let llm_client = OllamaClient::new("http://localhost:11434".to_string());
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
     // Test multi-level wildcard (#)
-    let client_id = app_state
-        .open_client(
-            "MQTT",
-            "localhost:1883",
-            "Subscribe to 'sensors/#' to receive all sensor data. Count the messages received.",
-            serde_json::json!({
-                "client_id": "netget-wildcard-test",
-            }),
-        )
-        .await?;
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "localhost:1883".to_string(),
+        "MQTT".to_string(),
+        "Subscribe to 'sensors/#' to receive all sensor data. Count the messages received.".to_string(),
+    );
+    client.startup_params = Some(serde_json::json!({
+        "client_id": "netget-wildcard-test",
+    }));
+    let client_id = app_state.add_client(client).await;
 
     netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
         .await?;
@@ -285,14 +276,11 @@ async fn test_mqtt_client_wildcards() -> Result<(), Box<dyn std::error::Error>> 
 
 /// Test retained messages
 #[tokio::test]
+#[ignore] // Requires Docker (Mosquitto broker) and real Ollama (no .with_mock() configured)
 async fn test_mqtt_client_retained() -> Result<(), Box<dyn std::error::Error>> {
     start_mosquitto_broker().await?;
 
-    let args = Args {
-        ollama_lock: true,
-        ..Default::default()
-    };
-    let app_state = Arc::new(AppState::new(args).await?);
+    let app_state = Arc::new(AppState::new());
     let llm_client = OllamaClient::new("http://localhost:11434".to_string());
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
@@ -318,16 +306,16 @@ async fn test_mqtt_client_retained() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(1)).await;
 
     // Now connect a client that subscribes to the retained topic
-    let client_id = app_state
-        .open_client(
-            "MQTT",
-            "localhost:1883",
-            "Subscribe to 'retained/status'. You should immediately receive the retained message.",
-            serde_json::json!({
-                "client_id": "netget-retained-test",
-            }),
-        )
-        .await?;
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "localhost:1883".to_string(),
+        "MQTT".to_string(),
+        "Subscribe to 'retained/status'. You should immediately receive the retained message.".to_string(),
+    );
+    client.startup_params = Some(serde_json::json!({
+        "client_id": "netget-retained-test",
+    }));
+    let client_id = app_state.add_client(client).await;
 
     netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
         .await?;

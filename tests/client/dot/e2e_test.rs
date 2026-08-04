@@ -55,7 +55,7 @@ async fn test_dot_client_basic_query() -> E2EResult<()> {
                 .and()
         });
 
-    let mut client = crate::helpers::start_netget(client_config).await?;
+    let mut client = crate::helpers::netget::start_netget(client_config).await?;
 
     // Give client time to connect and query
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -152,7 +152,7 @@ async fn test_dot_client_multiple_queries() -> E2EResult<()> {
                 .and()
         });
 
-    let mut client = crate::helpers::start_netget(client_config).await?;
+    let mut client = crate::helpers::netget::start_netget(client_config).await?;
 
     // Give client time for multiple queries
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;

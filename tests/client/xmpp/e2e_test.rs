@@ -10,7 +10,7 @@ use tokio::time::timeout;
 
 use netget::llm::ollama_client::OllamaClient;
 use netget::state::app_state::AppState;
-use netget::state::{ClientId, ClientStatus};
+use netget::state::{ClientId, ClientInstance, ClientStatus};
 
 /// Test basic XMPP client connection
 ///
@@ -25,23 +25,16 @@ async fn test_xmpp_client_connect() -> Result<()> {
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-        None,
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Create client instance
-    let client_id = ClientId::from(1);
-    app_state
-        .add_client(
-            client_id,
-            "XMPP".to_string(),
-            "alice@localhost@password".to_string(),
-            "Send presence and log any messages".to_string(),
-            None,
-        )
-        .await;
+    let client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "alice@localhost@password".to_string(),
+        "XMPP".to_string(),
+        "Send presence and log any messages".to_string(),
+    );
+    let client_id = app_state.add_client(client).await;
 
     // Connect client
     use netget::client::xmpp::XmppClientConnection;
@@ -101,23 +94,16 @@ async fn test_xmpp_client_send_message() -> Result<()> {
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-        None,
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Create client instance
-    let client_id = ClientId::from(1);
-    app_state
-        .add_client(
-            client_id,
-            "XMPP".to_string(),
-            "alice@localhost@password".to_string(),
-            "Send a test message to bob@localhost".to_string(),
-            None,
-        )
-        .await;
+    let client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "alice@localhost@password".to_string(),
+        "XMPP".to_string(),
+        "Send a test message to bob@localhost".to_string(),
+    );
+    let client_id = app_state.add_client(client).await;
 
     // Connect client
     use netget::client::xmpp::XmppClientConnection;
@@ -157,23 +143,16 @@ async fn test_xmpp_client_presence() -> Result<()> {
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-        None,
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Create client instance with presence instruction
-    let client_id = ClientId::from(1);
-    app_state
-        .add_client(
-            client_id,
-            "XMPP".to_string(),
-            "alice@localhost@password".to_string(),
-            "Send presence as 'away' with status 'Testing NetGet XMPP'".to_string(),
-            None,
-        )
-        .await;
+    let client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "alice@localhost@password".to_string(),
+        "XMPP".to_string(),
+        "Send presence as 'away' with status 'Testing NetGet XMPP'".to_string(),
+    );
+    let client_id = app_state.add_client(client).await;
 
     // Connect client
     use netget::client::xmpp::XmppClientConnection;

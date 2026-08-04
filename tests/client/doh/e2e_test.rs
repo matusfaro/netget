@@ -461,7 +461,9 @@ mod doh_client_tests {
         // Verify output shows MX query or mail-related content
         let output = client.get_output().await;
         assert!(
-            output.contains("MX") || output.contains("mail") || output.contains("example.com"),
+            output.iter().any(|l| l.contains("MX"))
+                || output.iter().any(|l| l.contains("mail"))
+                || output.iter().any(|l| l.contains("example.com")),
             "Client should show MX query or mail server info. Output: {:?}",
             output
         );

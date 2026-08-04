@@ -29,16 +29,15 @@ fn create_oauth2_client_instance(
     }
     protocol_data.insert("token_url".to_string(), serde_json::json!(token_url));
 
-    ClientInstance {
-        id: ClientId::new(1),
-        protocol_name: "OAuth2".to_string(),
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
         remote_addr,
+        "OAuth2".to_string(),
         instruction,
-        memory: None,
-        status: ClientStatus::Connecting,
-        startup_params: Some(serde_json::json!(protocol_data)),
-        protocol_data: Some(protocol_data),
-    }
+    );
+    client.startup_params = Some(serde_json::Value::Object(protocol_data.clone()));
+    client.protocol_data = serde_json::Value::Object(protocol_data);
+    client
 }
 
 #[tokio::test]
@@ -55,8 +54,7 @@ async fn test_oauth2_client_initialization() {
         "Test OAuth2 client initialization".to_string(),
     );
 
-    let client_id = client.id;
-    app_state.add_client(client).await;
+    let client_id = app_state.add_client(client).await;
 
     // Verify client was created
     assert!(app_state.get_client(client_id).await.is_some());
@@ -90,11 +88,10 @@ async fn test_oauth2_password_flow() {
             "Exchange username 'testuser' and password 'testpass' for access token using password flow".to_string(),
         );
 
-        let client_id = client.id;
-        app_state.add_client(client).await;
+        let client_id = app_state.add_client(client).await;
 
         // Initialize Ollama client
-        let ollama_client = OllamaClient::new("http://localhost:11434".to_string(), None, None);
+        let ollama_client = OllamaClient::new("http://localhost:11434".to_string());
 
         // Start the client (triggers LLM + authentication)
         match start_client_by_id(&app_state, client_id, &ollama_client, &status_tx).await {
@@ -142,10 +139,9 @@ async fn test_oauth2_client_credentials_flow() {
             "Get access token using client credentials flow".to_string(),
         );
 
-        let client_id = client.id;
-        app_state.add_client(client).await;
+        let client_id = app_state.add_client(client).await;
 
-        let ollama_client = OllamaClient::new("http://localhost:11434".to_string(), None, None);
+        let ollama_client = OllamaClient::new("http://localhost:11434".to_string());
 
         match start_client_by_id(&app_state, client_id, &ollama_client, &status_tx).await {
             Ok(_) => {
@@ -199,10 +195,9 @@ async fn test_oauth2_token_refresh() {
             "First get token with password flow for user 'testuser' and password 'testpass', then refresh it".to_string(),
         );
 
-        let client_id = client.id;
-        app_state.add_client(client).await;
+        let client_id = app_state.add_client(client).await;
 
-        let ollama_client = OllamaClient::new("http://localhost:11434".to_string(), None, None);
+        let ollama_client = OllamaClient::new("http://localhost:11434".to_string());
 
         match start_client_by_id(&app_state, client_id, &ollama_client, &status_tx).await {
             Ok(_) => {
@@ -255,10 +250,9 @@ async fn test_oauth2_error_handling() {
             "Try to authenticate with password flow using username 'baduser' and password 'badpass'".to_string(),
         );
 
-        let client_id = client.id;
-        app_state.add_client(client).await;
+        let client_id = app_state.add_client(client).await;
 
-        let ollama_client = OllamaClient::new("http://localhost:11434".to_string(), None, None);
+        let ollama_client = OllamaClient::new("http://localhost:11434".to_string());
 
         match start_client_by_id(&app_state, client_id, &ollama_client, &status_tx).await {
             Ok(_) => {
@@ -423,4 +417,5 @@ async fn extract_access_token(app_state: &AppState, client_id: ClientId) -> Opti
                 .map(|s| s.to_string())
         })
         .await
+        .flatten()
 }

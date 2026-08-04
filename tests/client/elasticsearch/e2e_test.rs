@@ -129,7 +129,7 @@ async fn test_elasticsearch_client_index_and_search() -> E2EResult<()> {
                 .and()
                 // Mock 3: Index response - search
                 .on_event("elasticsearch_response_received")
-                .and_event_data_contains("status_code", 200)
+                .and_event_data_contains("status_code", "200")
                 .respond_with_actions(json!([
                     {
                         "type": "elasticsearch_request",
@@ -142,7 +142,7 @@ async fn test_elasticsearch_client_index_and_search() -> E2EResult<()> {
                 .and()
                 // Mock 4: Search response - wait
                 .on_event("elasticsearch_response_received")
-                .and_event_data_contains("hits")
+                .and_event_data_contains("hits", "")
                 .respond_with_actions(json!([
                     {
                         "type": "wait_for_more"
@@ -271,7 +271,7 @@ async fn test_elasticsearch_client_bulk_operations() -> E2EResult<()> {
                 .and()
                 // Mock 3: Bulk response
                 .on_event("elasticsearch_response_received")
-                .and_event_data_contains("items")
+                .and_event_data_contains("items", "")
                 .respond_with_actions(json!([
                     {
                         "type": "wait_for_more"
@@ -415,7 +415,7 @@ async fn test_elasticsearch_client_document_lifecycle() -> E2EResult<()> {
                 .and()
                 // Mock 4: Get response - delete
                 .on_event("elasticsearch_response_received")
-                .and_event_data_contains("found", true)
+                .and_event_data_contains("found", "true")
                 .respond_with_actions(json!([
                     {
                         "type": "elasticsearch_request",

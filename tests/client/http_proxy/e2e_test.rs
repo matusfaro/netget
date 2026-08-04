@@ -12,6 +12,9 @@ mod http_proxy_client_tests {
     /// Test HTTP proxy client connection and tunnel establishment
     /// LLM calls: 3 (proxy server startup, target server startup, client connection)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: requires --use-ollama. Under default
+              // strict-mock CI mode the LLM call 500s immediately and the client
+              // never connects.
     async fn test_http_proxy_client_connect_and_tunnel() -> E2EResult<()> {
         // Start a simple HTTP proxy server
         // Note: We use NetGet's HTTP proxy server for this test
@@ -42,7 +45,7 @@ mod http_proxy_client_tests {
         // Verify client output shows connection and tunnel establishment
         let output = client.get_output().await;
         assert!(
-            output.contains("connected") || output.contains("proxy"),
+            output.iter().any(|l| l.contains("connected")) || output.iter().any(|l| l.contains("proxy")),
             "Client should show proxy connection. Output: {:?}",
             output
         );
@@ -60,6 +63,9 @@ mod http_proxy_client_tests {
     /// Test HTTP proxy client without actual proxy (simplified test)
     /// LLM calls: 2 (client startup with instruction to connect)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: requires --use-ollama. Under default
+              // strict-mock CI mode the LLM call 500s immediately and the client
+              // never connects.
     async fn test_http_proxy_client_basic_connection() -> E2EResult<()> {
         // Start a simple TCP server that will act as a minimal proxy
         // It just needs to respond to CONNECT with 200 Connection established
@@ -97,6 +103,9 @@ mod http_proxy_client_tests {
     /// Test HTTP proxy client with raw data transmission
     /// LLM calls: 2 (proxy server, client with instruction)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: requires --use-ollama. Under default
+              // strict-mock CI mode the LLM call 500s immediately and the client
+              // never connects.
     async fn test_http_proxy_client_raw_data() -> E2EResult<()> {
         // Start a TCP server that responds to CONNECT
         let server_config = NetGetConfig::new(
@@ -118,7 +127,7 @@ mod http_proxy_client_tests {
         // Verify client connected
         let output = client.get_output().await;
         assert!(
-            output.contains("connected") || output.contains("tunnel"),
+            output.iter().any(|l| l.contains("connected")) || output.iter().any(|l| l.contains("tunnel")),
             "Client should show connection/tunnel status. Output: {:?}",
             output
         );

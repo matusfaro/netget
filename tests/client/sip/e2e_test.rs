@@ -83,7 +83,7 @@ mod sip_client_tests {
                 .and()
                 // Mock: Response received (200 OK) - wait for more
                 .on_event("sip_client_response_received")
-                .and_event_data_contains("status_code", 200)
+                .and_event_data_contains("status_code", "200")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -188,7 +188,7 @@ mod sip_client_tests {
                 .and()
                 // Mock: Response received (200 OK) - wait for more
                 .on_event("sip_client_response_received")
-                .and_event_data_contains("status_code", 200)
+                .and_event_data_contains("status_code", "200")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -290,7 +290,7 @@ mod sip_client_tests {
                 .and()
                 // Mock: Response received (200 OK) - wait for more
                 .on_event("sip_client_response_received")
-                .and_event_data_contains("status_code", 200)
+                .and_event_data_contains("status_code", "200")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -307,7 +307,9 @@ mod sip_client_tests {
         // Verify client shows INVITE interaction
         let output = client.get_output().await;
         assert!(
-            output.contains("SIP") || output.contains("INVITE") || output.contains("200"),
+            output.iter().any(|l| l.contains("SIP"))
+                || output.iter().any(|l| l.contains("INVITE"))
+                || output.iter().any(|l| l.contains("200")),
             "Client should show SIP INVITE interaction. Output: {:?}",
             output
         );

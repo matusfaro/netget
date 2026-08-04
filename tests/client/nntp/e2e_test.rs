@@ -214,7 +214,7 @@ mod nntp_client_tests {
 
         // Verify client shows connection
         assert!(
-            client.output_contains("connected").await || client.output_contains("NNTP"),
+            client.output_contains("connected").await || client.output_contains("NNTP").await,
             "Client should show NNTP connection. Output: {:?}",
             client.get_output().await
         );

@@ -165,7 +165,9 @@ mod turn_client_tests {
         // Verify TURN operations occurred
         let output = client.get_output().await;
         assert!(
-            output.contains("TURN") || output.contains("refresh") || output.contains("allocated"),
+            output.iter().any(|l| l.contains("TURN"))
+                || output.iter().any(|l| l.contains("refresh"))
+                || output.iter().any(|l| l.contains("allocated")),
             "Client should show TURN allocation/refresh activity. Output: {:?}",
             output
         );

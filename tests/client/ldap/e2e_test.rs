@@ -16,17 +16,13 @@ use tokio::sync::mpsc;
 async fn create_test_app_state() -> (Arc<AppState>, ClientId) {
     let state = Arc::new(AppState::new());
 
-    let client_id = state
-        .add_client(ClientInstance {
-            id: ClientId::from(1),
-            protocol_name: "LDAP".to_string(),
-            remote_addr: "localhost:1389".to_string(),
-            status: ClientStatus::Connecting,
-            instruction: "Connect to LDAP server and search for users".to_string(),
-            memory: vec![],
-            startup_params: None,
-        })
-        .await;
+    let client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "localhost:1389".to_string(),
+        "LDAP".to_string(),
+        "Connect to LDAP server and search for users".to_string(),
+    );
+    let client_id = state.add_client(client).await;
 
     (state, client_id)
 }
@@ -48,11 +44,7 @@ async fn test_ldap_client_connect() -> Result<()> {
         .expect("LDAP protocol not found");
 
     // Create LLM client (mocked for testing)
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-        false, // no Ollama lock
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Create connect context
     let connect_ctx = ConnectContext {
@@ -89,7 +81,7 @@ async fn test_ldap_client_bind_and_search() -> Result<()> {
 
     // Update instruction to bind and search
     state
-        .update_client_instruction(
+        .set_instruction_for_client(
             client_id,
             "Connect to LDAP, bind as cn=admin,dc=example,dc=com with password 'admin', \
          then search for all entries under dc=example,dc=com"
@@ -103,11 +95,7 @@ async fn test_ldap_client_bind_and_search() -> Result<()> {
         .expect("LDAP protocol not found");
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-        true, // use Ollama lock for test isolation
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Create connect context
     let connect_ctx = ConnectContext {
@@ -154,7 +142,7 @@ async fn test_ldap_client_add_modify_delete() -> Result<()> {
 
     // Update instruction to perform CRUD operations
     state
-        .update_client_instruction(
+        .set_instruction_for_client(
             client_id,
             "Connect to LDAP, bind as cn=admin,dc=example,dc=com with password 'admin', \
          add a new user cn=testuser,dc=example,dc=com with mail testuser@example.com, \
@@ -169,11 +157,7 @@ async fn test_ldap_client_add_modify_delete() -> Result<()> {
         .expect("LDAP protocol not found");
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-        true, // use Ollama lock for test isolation
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Create connect context
     let connect_ctx = ConnectContext {
@@ -204,7 +188,7 @@ async fn test_ldap_client_add_modify_delete() -> Result<()> {
 #[test]
 fn test_ldap_client_protocol_metadata() {
     use netget::client::ldap::LdapClientProtocol;
-    use netget::llm::actions::Client;
+    use netget::llm::actions::{Client, Protocol};
 
     let protocol = LdapClientProtocol::new();
 
@@ -229,7 +213,7 @@ fn test_ldap_client_protocol_metadata() {
 #[test]
 fn test_ldap_client_actions() {
     use netget::client::ldap::LdapClientProtocol;
-    use netget::llm::actions::Client;
+    use netget::llm::actions::{Client, Protocol};
     use netget::state::app_state::AppState;
 
     let protocol = LdapClientProtocol::new();

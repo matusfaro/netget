@@ -125,7 +125,8 @@ mod smb_client_tests {
         // Verify directory operations
         let output = client.get_output().await;
         assert!(
-            output.contains("created directory") || output.contains("deleted directory"),
+            output.iter().any(|l| l.contains("created directory"))
+                || output.iter().any(|l| l.contains("deleted directory")),
             "Client should show directory operations. Output: {:?}",
             output
         );

@@ -71,11 +71,6 @@ mod bgp_client_tests {
             "Connect to 127.0.0.1:{} via BGP with AS 65001 and router ID 192.168.1.100. Establish BGP session.",
             server.port
         ))
-        .with_startup_params(serde_json::json!({
-            "local_as": 65001,
-            "router_id": "192.168.1.100",
-            "hold_time": 180
-        }))
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup (user command)
@@ -86,7 +81,12 @@ mod bgp_client_tests {
                         "type": "open_client",
                         "remote_addr": format!("127.0.0.1:{}", server.port),
                         "protocol": "BGP",
-                        "instruction": "Establish BGP session with AS 65001"
+                        "instruction": "Establish BGP session with AS 65001",
+                        "startup_params": {
+                            "local_as": 65001,
+                            "router_id": "192.168.1.100",
+                            "hold_time": 180
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -201,10 +201,6 @@ mod bgp_client_tests {
             "Connect to 127.0.0.1:{} via BGP. Establish session with AS 65001 and router ID 192.168.1.100. Wait for session to be established.",
             server.port
         ))
-        .with_startup_params(serde_json::json!({
-            "local_as": 65001,
-            "router_id": "192.168.1.100"
-        }))
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup
@@ -215,7 +211,11 @@ mod bgp_client_tests {
                         "type": "open_client",
                         "remote_addr": format!("127.0.0.1:{}", server.port),
                         "protocol": "BGP",
-                        "instruction": "Establish BGP session with AS 65001"
+                        "instruction": "Establish BGP session with AS 65001",
+                        "startup_params": {
+                            "local_as": 65001,
+                            "router_id": "192.168.1.100"
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -333,11 +333,6 @@ mod bgp_client_tests {
             "Connect to 127.0.0.1:{} via BGP. Use AS 64513 and router ID 10.0.0.1.",
             server.port
         ))
-        .with_startup_params(serde_json::json!({
-            "local_as": 64513,
-            "router_id": "10.0.0.1",
-            "hold_time": 120
-        }))
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup
@@ -348,7 +343,12 @@ mod bgp_client_tests {
                         "type": "open_client",
                         "remote_addr": format!("127.0.0.1:{}", server.port),
                         "protocol": "BGP",
-                        "instruction": "Connect with AS 64513"
+                        "instruction": "Connect with AS 64513",
+                        "startup_params": {
+                            "local_as": 64513,
+                            "router_id": "10.0.0.1",
+                            "hold_time": 120
+                        }
                     }
                 ]))
                 .expect_calls(1)

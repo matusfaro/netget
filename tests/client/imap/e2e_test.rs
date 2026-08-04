@@ -60,17 +60,10 @@ mod imap_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Now start an IMAP client that connects and authenticates with mocks
-        let client_config = NetGetConfig::new_with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via IMAP. Select INBOX and check for messages.",
-                server.port
-            ),
-            serde_json::json!({
-                "username": "testuser",
-                "password": "testpass",
-                "use_tls": false,
-            }),
-        )
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via IMAP. Select INBOX and check for messages.",
+            server.port
+        ))
             .with_mock(|mock| {
                 mock
                     // Mock 1: Client startup (user command)
@@ -81,7 +74,12 @@ mod imap_client_tests {
                             "type": "open_client",
                             "remote_addr": format!("127.0.0.1:{}", server.port),
                             "protocol": "IMAP",
-                            "instruction": "Authenticate and select INBOX"
+                            "instruction": "Authenticate and select INBOX",
+                            "startup_params": {
+                                "username": "testuser",
+                                "password": "testpass",
+                                "use_tls": false
+                            }
                         }
                     ]))
                     .expect_calls(1)
@@ -197,17 +195,10 @@ mod imap_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client that selects a specific mailbox with mocks
-        let client_config = NetGetConfig::new_with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via IMAP. Select the INBOX mailbox and report the number of messages.",
-                server.port
-            ),
-            serde_json::json!({
-                "username": "testuser",
-                "password": "testpass",
-                "use_tls": false,
-            }),
-        )
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via IMAP. Select the INBOX mailbox and report the number of messages.",
+            server.port
+        ))
             .with_mock(|mock| {
                 mock
                     // Mock 1: Client startup
@@ -218,7 +209,12 @@ mod imap_client_tests {
                             "type": "open_client",
                             "remote_addr": format!("127.0.0.1:{}", server.port),
                             "protocol": "IMAP",
-                            "instruction": "Authenticate and select INBOX"
+                            "instruction": "Authenticate and select INBOX",
+                            "startup_params": {
+                                "username": "testuser",
+                                "password": "testpass",
+                                "use_tls": false
+                            }
                         }
                     ]))
                     .expect_calls(1)
@@ -339,17 +335,10 @@ mod imap_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client that searches for unread messages with mocks
-        let client_config = NetGetConfig::new_with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via IMAP. Select INBOX and search for UNSEEN messages.",
-                server.port
-            ),
-            serde_json::json!({
-                "username": "testuser",
-                "password": "testpass",
-                "use_tls": false,
-            }),
-        )
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via IMAP. Select INBOX and search for UNSEEN messages.",
+            server.port
+        ))
             .with_mock(|mock| {
                 mock
                     // Mock 1: Client startup
@@ -360,7 +349,12 @@ mod imap_client_tests {
                             "type": "open_client",
                             "remote_addr": format!("127.0.0.1:{}", server.port),
                             "protocol": "IMAP",
-                            "instruction": "Authenticate, select INBOX, search UNSEEN"
+                            "instruction": "Authenticate, select INBOX, search UNSEEN",
+                            "startup_params": {
+                                "username": "testuser",
+                                "password": "testpass",
+                                "use_tls": false
+                            }
                         }
                     ]))
                     .expect_calls(1)
@@ -399,7 +393,7 @@ mod imap_client_tests {
         // Verify client performed search
         let output = client.get_output().await;
         assert!(
-            output.contains("search") || output.contains("UNSEEN"),
+            output.iter().any(|l| l.contains("search")) || output.iter().any(|l| l.contains("UNSEEN")),
             "Client should show search operation. Output: {:?}",
             output
         );
@@ -501,17 +495,10 @@ mod imap_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client that fetches a specific message with mocks
-        let client_config = NetGetConfig::new_with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via IMAP. Select INBOX, search for all messages, and fetch the first one.",
-                server.port
-            ),
-            serde_json::json!({
-                "username": "testuser",
-                "password": "testpass",
-                "use_tls": false,
-            }),
-        )
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via IMAP. Select INBOX, search for all messages, and fetch the first one.",
+            server.port
+        ))
             .with_mock(|mock| {
                 mock
                     // Mock 1: Client startup
@@ -522,7 +509,12 @@ mod imap_client_tests {
                             "type": "open_client",
                             "remote_addr": format!("127.0.0.1:{}", server.port),
                             "protocol": "IMAP",
-                            "instruction": "Authenticate, select INBOX, search and fetch messages"
+                            "instruction": "Authenticate, select INBOX, search and fetch messages",
+                            "startup_params": {
+                                "username": "testuser",
+                                "password": "testpass",
+                                "use_tls": false
+                            }
                         }
                     ]))
                     .expect_calls(1)
@@ -566,7 +558,7 @@ mod imap_client_tests {
         // Verify client fetched message
         let output = client.get_output().await;
         assert!(
-            output.contains("fetch") || output.contains("message"),
+            output.iter().any(|l| l.contains("fetch")) || output.iter().any(|l| l.contains("message")),
             "Client should show message fetch operation. Output: {:?}",
             output
         );
