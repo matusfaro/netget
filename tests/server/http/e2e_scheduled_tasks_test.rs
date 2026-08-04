@@ -26,10 +26,9 @@ The task should use the schedule_task action with:
 Initialize the heartbeat counter to 0 when the server starts."#;
 
     // Start the server
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_log_level("debug")
-            .with_mock(|mock| {
+    let server =
+        helpers::start_netget_server(NetGetConfig::new(prompt).with_log_level("debug").with_mock(
+            |mock| {
                 mock
                     // Mock 1: Server startup (match on user input prompt, not event)
                     .on_instruction_containing("listen on port")
@@ -53,7 +52,7 @@ Initialize the heartbeat counter to 0 when the server starts."#;
                     .and()
                     // Mock 2: GET /heartbeat request
                     .on_event("http_request")
-                    .and_event_data_contains("uri", "/heartbeat")
+                    .and_event_data_contains("path", "/heartbeat")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -70,10 +69,11 @@ Initialize the heartbeat counter to 0 when the server starts."#;
                     .respond_with_actions(serde_json::json!({
                         "actions": []
                     }))
-                    .expect_at_least(2)  // At least 2 executions (lenient for timing variance)
+                    .expect_at_least(2) // At least 2 executions (lenient for timing variance)
                     .and()
-            })
-    ).await?;
+            },
+        ))
+        .await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
@@ -83,17 +83,29 @@ Initialize the heartbeat counter to 0 when the server starts."#;
         server.stack
     );
 
-    // Wait for task to be created
-    println!("Waiting for task creation...");
-    server.wait_for_log("[TASK] Created recurring task 'heartbeat_counter'", 10).await?;
+    // NOTE: there is no log line to wait on for "task created" here. Tasks passed
+    // via `open_server`'s `scheduled_tasks` parameter are registered by
+    // `start_server_from_action` (src/cli/server_startup.rs), which calls
+    // `state.add_task(task).await` without ever sending a `[TASK] ...` status
+    // line — unlike the standalone `schedule_task` action
+    // (src/events/handler.rs:1237,1242), which does log creation. So creation is
+    // verified indirectly, by waiting for the task to actually fire below.
 
     // Wait for task to execute at least 2 times (interval is 2s)
     println!("Waiting for task executions...");
-    server.wait_for_log_count("[TASK] Executing task 'heartbeat_counter'", 2, 10).await?;
+    server
+        .wait_for_log_count("[TASK] Executing task 'heartbeat_counter'", 2, 10)
+        .await?;
 
     // Wait for completions to ensure LLM calls finish
     println!("Waiting for task completions...");
-    server.wait_for_log_count("[TASK] Task 'heartbeat_counter' completed successfully", 2, 5).await?;
+    server
+        .wait_for_log_count(
+            "[TASK] Task 'heartbeat_counter' completed successfully",
+            2,
+            5,
+        )
+        .await?;
 
     // VALIDATION: Check that heartbeat count has increased
     let client = reqwest::Client::new();
@@ -152,10 +164,9 @@ The task should use the schedule_task action with:
 Initialize the ready flag to false when the server starts."#;
 
     // Start the server
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_log_level("debug")
-            .with_mock(|mock| {
+    let server =
+        helpers::start_netget_server(NetGetConfig::new(prompt).with_log_level("debug").with_mock(
+            |mock| {
                 mock
                     // Mock 1: Server startup (match on user input prompt, not event)
                     .on_instruction_containing("listen on port")
@@ -181,7 +192,7 @@ Initialize the ready flag to false when the server starts."#;
                     // Note: Mock returns "ready" for both calls since mocks are stateless
                     // Real LLM would track state and return "initializing" first, then "ready"
                     .on_event("http_request")
-                    .and_event_data_contains("uri", "/status")
+                    .and_event_data_contains("path", "/status")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -189,7 +200,7 @@ Initialize the ready flag to false when the server starts."#;
                             "body": "ready"  // Return "ready" to satisfy test assertion
                         }
                     ]))
-                    .expect_at_least(1)  // Called 1-2 times
+                    .expect_at_least(1) // Called 1-2 times
                     .and()
                     // Mock 3: One-shot task execution
                     // Task runs once after 3s delay, we wait 5s total
@@ -197,10 +208,11 @@ Initialize the ready flag to false when the server starts."#;
                     .respond_with_actions(serde_json::json!({
                         "actions": []
                     }))
-                    .expect_calls(1)  // Exactly 1 execution for one-shot task
+                    .expect_calls(1) // Exactly 1 execution for one-shot task
                     .and()
-            })
-    ).await?;
+            },
+        ))
+        .await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
@@ -210,17 +222,21 @@ Initialize the ready flag to false when the server starts."#;
         server.stack
     );
 
-    // Wait for task to be created
-    println!("Waiting for task creation...");
-    server.wait_for_log("[TASK] Created one-shot task 'set_ready_flag'", 10).await?;
+    // NOTE: no log line to wait on for "task created" here — see the identical
+    // note in test_http_with_recurring_task above. Creation is verified
+    // indirectly, by waiting for the task to actually fire below.
 
     // Wait for task to execute (delay is 3s)
     println!("Waiting for task execution...");
-    server.wait_for_log("[TASK] Executing task 'set_ready_flag'", 10).await?;
+    server
+        .wait_for_log("[TASK] Executing task 'set_ready_flag'", 10)
+        .await?;
 
     // Wait for completion to ensure LLM call finishes
     println!("Waiting for task completion...");
-    server.wait_for_log("[TASK] Task 'set_ready_flag' completed successfully", 5).await?;
+    server
+        .wait_for_log("[TASK] Task 'set_ready_flag' completed successfully", 5)
+        .await?;
 
     // VALIDATION: Check status endpoint responds correctly
     let client = reqwest::Client::new();
@@ -266,10 +282,9 @@ Use the open_server action with the scheduled_tasks parameter to define these ta
 Initialize metrics counter to 0 and initialized flag to false."#;
 
     // Start the server
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_log_level("debug")
-            .with_mock(|mock| {
+    let server =
+        helpers::start_netget_server(NetGetConfig::new(prompt).with_log_level("debug").with_mock(
+            |mock| {
                 mock
                     // Mock 1: Server startup with scheduled tasks (match on user input prompt, not event)
                     .on_instruction_containing("listen on port")
@@ -299,7 +314,7 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     .and()
                     // Mock 2: GET /initialized requests (before and after delay)
                     .on_event("http_request")
-                    .and_event_data_contains("uri", "/initialized")
+                    .and_event_data_contains("path", "/initialized")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -311,7 +326,7 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     .and()
                     // Mock 3: GET /metrics requests
                     .on_event("http_request")
-                    .and_event_data_contains("uri", "/metrics")
+                    .and_event_data_contains("path", "/metrics")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -329,10 +344,11 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     .respond_with_actions(serde_json::json!({
                         "actions": []
                     }))
-                    .expect_at_least(2)  // At least 2 executions (both tasks combined)
+                    .expect_at_least(2) // At least 2 executions (both tasks combined)
                     .and()
-            })
-    ).await?;
+            },
+        ))
+        .await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
@@ -342,21 +358,28 @@ Initialize metrics counter to 0 and initialized flag to false."#;
         server.stack
     );
 
-    // Wait for both tasks to be created
-    println!("Waiting for recurring task creation...");
-    server.wait_for_log("[TASK] Created recurring task 'update_metrics'", 10).await?;
-    println!("Waiting for one-shot task creation...");
-    server.wait_for_log("[TASK] Created one-shot task 'delayed_init'", 10).await?;
+    // NOTE: no log line to wait on for "task created" here — see the identical
+    // note in test_http_with_recurring_task above. Both tasks are attached via
+    // `open_server`'s `scheduled_tasks` parameter, so creation is verified
+    // indirectly, by waiting for each task to actually fire below.
 
     // Wait for at least one execution of the recurring task
     println!("Waiting for recurring task execution...");
-    server.wait_for_log("[TASK] Executing task 'update_metrics'", 10).await?;
-    server.wait_for_log("[TASK] Task 'update_metrics' completed successfully", 5).await?;
+    server
+        .wait_for_log("[TASK] Executing task 'update_metrics'", 10)
+        .await?;
+    server
+        .wait_for_log("[TASK] Task 'update_metrics' completed successfully", 5)
+        .await?;
 
     // Wait for one-shot task to execute (delay is 3s)
     println!("Waiting for one-shot task execution...");
-    server.wait_for_log("[TASK] Executing task 'delayed_init'", 10).await?;
-    server.wait_for_log("[TASK] Task 'delayed_init' completed successfully", 5).await?;
+    server
+        .wait_for_log("[TASK] Executing task 'delayed_init'", 10)
+        .await?;
+    server
+        .wait_for_log("[TASK] Task 'delayed_init' completed successfully", 5)
+        .await?;
 
     // VALIDATION: Check endpoints respond correctly
     let client = reqwest::Client::new();
