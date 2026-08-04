@@ -76,6 +76,18 @@ pub static MONGODB_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    // Without this the model is offered no protocol actions at all for the only event this
+    // protocol fires: `call_llm` builds the available-action list from
+    // `event.event_type.actions` (src/llm/action_helper.rs:454), not from `get_sync_actions()`.
+    // Every `find_response` the model produced was rejected as an unknown action.
+    .with_actions(vec![
+        find_response_action(),
+        insert_response_action(),
+        update_response_action(),
+        delete_response_action(),
+        error_response_action(),
+        close_this_connection_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} MongoDB {command} {database}.{collection} ({duration_ms}ms)")
@@ -539,4 +551,3 @@ fn close_this_connection_action() -> ActionDefinition {
         log_template: Some(LogTemplate::new().with_info("-> connection closed")),
     }
 }
-

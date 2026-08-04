@@ -15,10 +15,20 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 #[cfg(feature = "mongodb-server")]
 use bson::{doc, Bson, Document};
+
+/// Largest MongoDB wire message we will accept.
+///
+/// Matches the server-advertised `maxMessageSizeBytes` (48 MB). The header's `messageLength`
+/// is attacker-controlled, so it has to be range-checked before it is used as an allocation
+/// size - see `read_message_body`.
+const MAX_MESSAGE_SIZE: i32 = 48 * 1024 * 1024;
+
+/// MongoDB wire protocol opcode for OP_MSG (MongoDB 3.6+).
+const OP_MSG: i32 = 2013;
 
 /// MongoDB server implementation
 pub struct MongodbServer {
@@ -57,7 +67,10 @@ impl MongodbServer {
         let actual_addr = listener.local_addr()?;
 
         info!("MongoDB server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] MongoDB server listening on {}", actual_addr));
+        let _ = status_tx.send(format!(
+            "[INFO] MongoDB server listening on {}",
+            actual_addr
+        ));
 
         let server = Arc::new(MongodbServer::new(
             llm_client,
@@ -179,120 +192,244 @@ impl MongodbHandler {
         }
     }
 
-    /// Handle a MongoDB connection
-    async fn handle_connection(self, mut stream: TcpStream) -> Result<()> {
+    /// Run the connection, then always mark it closed in `AppState`.
+    async fn handle_connection(self, stream: TcpStream) -> Result<()> {
+        let server_id = self.server_id;
+        let connection_id = self.connection_id;
+        let app_state = self.app_state.clone();
+
+        let result = self.run(stream).await;
+
+        if let Some(server_id) = server_id {
+            app_state
+                .close_connection_on_server(server_id, connection_id)
+                .await;
+        }
+
+        result
+    }
+
+    async fn run(self, mut stream: TcpStream) -> Result<()> {
         debug!(
             "MongoDB handler starting for connection {}",
             self.connection_id
         );
 
         // MongoDB doesn't require handshake - client sends first
-        let (mut reader, mut writer) = stream.split();
+        // The disconnect reason reported to the LLM once the socket is done.
+        let mut disconnect_reason = "client_disconnect";
 
-        loop {
-            // Read MongoDB wire protocol message header (16 bytes)
-            // Format: messageLength (4) + requestID (4) + responseTo (4) + opCode (4)
-            let mut header = [0u8; 16];
-            match reader.read_exact(&mut header).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("MongoDB client disconnected");
+        // `stream` is dropped at the end of this block so the socket is released before the
+        // disconnected event goes to the LLM, rather than being held open for the round-trip.
+        {
+            let (mut reader, mut writer) = stream.split();
+
+            loop {
+                // Read MongoDB wire protocol message header (16 bytes)
+                // Format: messageLength (4) + requestID (4) + responseTo (4) + opCode (4)
+                let mut header = [0u8; 16];
+                match reader.read_exact(&mut header).await {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        debug!("MongoDB client disconnected");
+                        break;
+                    }
+                    Err(e) => {
+                        return Err(e.into());
+                    }
+                }
+
+                let message_length =
+                    i32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+                let request_id = i32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+                let _response_to =
+                    i32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+                let op_code = i32::from_le_bytes([header[12], header[13], header[14], header[15]]);
+
+                trace!(
+                    "MongoDB message: length={}, requestID={}, opCode={}",
+                    message_length,
+                    request_id,
+                    op_code
+                );
+
+                // `messageLength` comes off the wire. A value below 16 used to underflow the
+                // `message_length - 16` subtraction into a ~18 exabyte `vec![0u8; n]`, aborting
+                // the process; a value near i32::MAX allocated gigabytes per connection. Both are
+                // reachable with 16 bytes from an unauthenticated peer.
+                if !(16..=MAX_MESSAGE_SIZE).contains(&message_length) {
+                    error!(
+                        "MongoDB: rejecting message with out-of-range length {} from {}",
+                        message_length, self.remote_addr
+                    );
+                    let _ = self.status_tx.send(format!(
+                        "[ERROR] MongoDB: invalid message length {} from {}, closing connection",
+                        message_length, self.remote_addr
+                    ));
+                    disconnect_reason = "invalid_message_length";
                     break;
                 }
-                Err(e) => {
-                    return Err(e.into());
+
+                // Read the rest of the message body
+                let body_length = (message_length - 16) as usize;
+                let mut body = vec![0u8; body_length];
+                reader.read_exact(&mut body).await?;
+
+                // Parse command based on opCode. Only OP_MSG is implemented; anything else would
+                // leave the client waiting forever for a reply it can parse, so close instead.
+                if op_code != OP_MSG {
+                    error!(
+                        "MongoDB: unsupported opCode {} from {}, closing connection",
+                        op_code, self.remote_addr
+                    );
+                    let _ = self.status_tx.send(format!(
+                        "[ERROR] MongoDB: unsupported opCode {} (only OP_MSG {} is implemented)",
+                        op_code, OP_MSG
+                    ));
+                    disconnect_reason = "unsupported_opcode";
+                    break;
                 }
-            }
 
-            let message_length = i32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-            let request_id = i32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-            let _response_to = i32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-            let op_code = i32::from_le_bytes([header[12], header[13], header[14], header[15]]);
+                let command_doc = match self.parse_op_msg(&body) {
+                    Ok(doc) => doc,
+                    Err(e) => {
+                        error!("MongoDB: malformed OP_MSG from {}: {}", self.remote_addr, e);
+                        let _ = self
+                            .status_tx
+                            .send(format!("[ERROR] MongoDB: malformed OP_MSG: {}", e));
+                        disconnect_reason = "malformed_op_msg";
+                        break;
+                    }
+                };
 
-            trace!(
-                "MongoDB message: length={}, requestID={}, opCode={}",
-                message_length,
-                request_id,
-                op_code
-            );
+                trace!("MongoDB command document: {:?}", command_doc);
 
-            // Read the rest of the message body
-            let body_length = (message_length - 16) as usize;
-            let mut body = vec![0u8; body_length];
-            reader.read_exact(&mut body).await?;
+                // In the MongoDB command format the *first* key is the command name and its value
+                // is the collection, e.g. `{find: "users", filter: {...}, $db: "testdb"}`. The old
+                // code looked for a literal "collection" field, which no command ever sends, so
+                // the documented `collection` event parameter was always null.
+                let command_name = command_doc
+                    .keys()
+                    .next()
+                    .map(|k| k.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let collection = command_doc
+                    .get(&command_name)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let database = command_doc.get_str("$db").unwrap_or("admin").to_string();
 
-            // Parse command based on opCode
-            // OP_MSG = 2013 (modern MongoDB uses this for all commands)
-            let command_doc = if op_code == 2013 {
-                self.parse_op_msg(&body)?
-            } else {
-                debug!("Unsupported MongoDB opCode: {}", op_code);
-                continue;
-            };
+                // The driver handshake is protocol business, not a question for the model: it must
+                // carry the wire-version range and size limits, and a driver that does not get them
+                // aborts before it ever sends a real command. This mirrors how the sibling database
+                // protocols handle their handshakes (opensrv-mysql, pgwire's startup handler, and
+                // MSSQL's hand-written PRELOGIN/LOGIN).
+                if command_name.eq_ignore_ascii_case("hello")
+                    || command_name.eq_ignore_ascii_case("ismaster")
+                {
+                    debug!(
+                        "MongoDB handshake ({}) from {}",
+                        command_name, self.remote_addr
+                    );
+                    let response_bytes = self.encode_op_msg_response(
+                        request_id,
+                        hello_response(self.connection_id.as_u32()),
+                    )?;
+                    writer.write_all(&response_bytes).await?;
+                    continue;
+                }
 
-            trace!("MongoDB command document: {:?}", command_doc);
+                // Call LLM with command event
+                let event_data = serde_json::json!({
+                    "command": command_name,
+                    "database": database,
+                    "collection": collection,
+                    "filter": self.bson_to_json(command_doc.get("filter")),
+                    "document": self.bson_to_json(command_doc.get("documents").or_else(|| command_doc.get("document"))),
+                });
 
-            // Extract command information
-            let command_name = command_doc
-                .keys()
-                .next()
-                .unwrap_or(&"unknown".to_string())
-                .clone();
-            let database = command_doc
-                .get_str("$db")
-                .unwrap_or("admin")
-                .to_string();
+                let event = Event::new(&MONGODB_COMMAND_EVENT, event_data);
 
-            // Call LLM with command event
-            let event_data = serde_json::json!({
-                "command": command_name,
-                "database": database,
-                "collection": command_doc.get_str("collection").ok(),
-                "filter": self.bson_to_json(command_doc.get("filter")),
-                "document": self.bson_to_json(command_doc.get("documents").or_else(|| command_doc.get("document"))),
-            });
+                let server_id = self
+                    .server_id
+                    .unwrap_or_else(|| crate::state::ServerId::new(0));
+                let execution_result = call_llm(
+                    &self.llm_client,
+                    &self.app_state,
+                    server_id,
+                    Some(self.connection_id),
+                    &event,
+                    self.protocol.as_ref(),
+                )
+                .await?;
 
-            let event = Event::new(&MONGODB_COMMAND_EVENT, event_data);
+                // Execute actions from LLM
+                let namespace = format!("{}.{}", database, collection.as_deref().unwrap_or("$cmd"));
+                let mut responded = false;
+                let mut close_requested = false;
 
-            let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
-            let execution_result = call_llm(
-                &self.llm_client,
-                &self.app_state,
-                server_id,
-                Some(self.connection_id),
-                &event,
-                self.protocol.as_ref(),
-            )
-            .await?;
-
-            // Execute actions from LLM
-            for protocol_result in execution_result.protocol_results {
-                match protocol_result {
-                    ActionResult::Custom { name, data } => {
-                        if name == "mongodb_response" {
-                            let response_doc = self.json_to_bson_doc(&data)?;
-                            let response_bytes = self.encode_op_msg_response(request_id, response_doc)?;
-                            writer.write_all(&response_bytes).await?;
+                for protocol_result in execution_result.protocol_results {
+                    match protocol_result {
+                        ActionResult::Custom { name, data } => {
+                            if name == "mongodb_response" {
+                                let response_doc = self.json_to_bson_doc(&data, &namespace)?;
+                                let response_bytes =
+                                    self.encode_op_msg_response(request_id, response_doc)?;
+                                writer.write_all(&response_bytes).await?;
+                                responded = true;
+                            } else {
+                                warn!(
+                                    "MongoDB: no wire encoding for action result '{}', ignoring",
+                                    name
+                                );
+                            }
+                        }
+                        ActionResult::CloseConnection => {
+                            debug!("Closing MongoDB connection");
+                            close_requested = true;
+                        }
+                        ActionResult::NoAction => {}
+                        _ => {
+                            debug!("Unhandled action result");
                         }
                     }
-                    ActionResult::CloseConnection => {
-                        debug!("Closing MongoDB connection");
-                        return Ok(());
-                    }
-                    ActionResult::NoAction => {}
-                    _ => {
-                        debug!("Unhandled action result");
-                    }
+                }
+
+                if !responded && !close_requested {
+                    // MongoDB is strictly request/response: a command with no reply hangs the
+                    // driver until its own timeout. Answer with an error instead.
+                    warn!(
+                        "MongoDB: no response action for command '{}', replying with an error",
+                        command_name
+                    );
+                    let doc = mongodb_error_doc(
+                        59,
+                        &format!(
+                            "netget: no response produced for command '{}'",
+                            command_name
+                        ),
+                    );
+                    let response_bytes = self.encode_op_msg_response(request_id, doc)?;
+                    writer.write_all(&response_bytes).await?;
+                }
+
+                if close_requested {
+                    disconnect_reason = "close_this_connection";
+                    break;
                 }
             }
         }
+        drop(stream);
 
         // Send disconnected event
         let event = Event::new(
             &MONGODB_DISCONNECTED_EVENT,
-            serde_json::json!({"reason": "client_disconnect"}),
+            serde_json::json!({"reason": disconnect_reason}),
         );
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(0));
         let _ = call_llm(
             &self.llm_client,
             &self.app_state,
@@ -319,7 +456,10 @@ impl MongodbHandler {
         let section_kind = body[4];
 
         if section_kind != 0 {
-            return Err(anyhow::anyhow!("Unsupported OP_MSG section kind: {}", section_kind));
+            return Err(anyhow::anyhow!(
+                "Unsupported OP_MSG section kind: {}",
+                section_kind
+            ));
         }
 
         // Parse BSON document starting at byte 5
@@ -379,7 +519,7 @@ impl MongodbHandler {
 
     /// Convert JSON action to BSON document for response
     #[cfg(feature = "mongodb-server")]
-    fn json_to_bson_doc(&self, json: &serde_json::Value) -> Result<Document> {
+    fn json_to_bson_doc(&self, json: &serde_json::Value, namespace: &str) -> Result<Document> {
         let action_type = json
             .get("type")
             .and_then(|v| v.as_str())
@@ -401,7 +541,9 @@ impl MongodbHandler {
                     "ok": 1,
                     "cursor": {
                         "id": 0i64,
-                        "ns": "test.collection",
+                        // The namespace must name the collection the client actually queried;
+                        // this used to be hardcoded to "test.collection".
+                        "ns": namespace,
                         "firstBatch": cursor_docs
                     }
                 })
@@ -432,22 +574,51 @@ impl MongodbHandler {
                 Ok(doc! { "ok": 1, "n": n })
             }
             "error_response" => {
-                let code = json
-                    .get("code")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i32;
+                let code = json.get("code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                 let message = json
                     .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Unknown error");
-                Ok(doc! { "ok": 0, "code": code, "errmsg": message })
+                Ok(mongodb_error_doc(code, message))
             }
-            _ => Ok(doc! { "ok": 1 }),
+            other => Err(anyhow::anyhow!(
+                "MongoDB: unknown response action type '{}'",
+                other
+            )),
         }
     }
 
     #[cfg(not(feature = "mongodb-server"))]
-    fn json_to_bson_doc(&self, _json: &serde_json::Value) -> Result<Document> {
+    fn json_to_bson_doc(&self, _json: &serde_json::Value, _namespace: &str) -> Result<Document> {
         Err(anyhow::anyhow!("MongoDB server feature not enabled"))
+    }
+}
+
+/// Build a MongoDB command-failure document.
+#[cfg(feature = "mongodb-server")]
+fn mongodb_error_doc(code: i32, message: &str) -> Document {
+    doc! { "ok": 0, "code": code, "errmsg": message }
+}
+
+/// The reply to `hello` / `isMaster`.
+///
+/// A MongoDB driver refuses to use a server that does not advertise a wire-version range it
+/// supports, so these fields cannot be left to the model. Wire version 17 is MongoDB 6.0.
+#[cfg(feature = "mongodb-server")]
+fn hello_response(connection_id: u32) -> Document {
+    doc! {
+        "ok": 1,
+        "isWritablePrimary": true,
+        "ismaster": true,
+        "helloOk": true,
+        "readOnly": false,
+        "minWireVersion": 0i32,
+        "maxWireVersion": 17i32,
+        "maxBsonObjectSize": 16 * 1024 * 1024i32,
+        "maxMessageSizeBytes": MAX_MESSAGE_SIZE,
+        "maxWriteBatchSize": 100_000i32,
+        "logicalSessionTimeoutMinutes": 30i32,
+        "connectionId": connection_id as i32,
+        "localTime": bson::DateTime::now(),
     }
 }
