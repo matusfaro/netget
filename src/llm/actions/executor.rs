@@ -9,8 +9,30 @@ use super::{
 };
 use crate::protocol::log_action_result;
 use crate::state::app_state::AppState;
-use anyhow::{Context as AnyhowContext, Result};
-use tracing::{debug, warn};
+use anyhow::Result;
+use tracing::{debug, error, warn};
+
+/// Prefix used for the synthetic `type` of a failed action in the access log.
+///
+/// The access-log viewer (`list_access_logs`) summarises an entry by the `type` of each
+/// recorded action, so the failure has to live in that field to be visible at a glance.
+/// A successful `send_tcp_data` is recorded as `send_tcp_data`; a failed one as
+/// `FAILED: send_tcp_data`.
+pub const FAILED_ACTION_TYPE_PREFIX: &str = "FAILED: ";
+
+/// One action from a batch that could not be executed.
+///
+/// Recorded rather than discarded so the failure reaches the access log and the caller
+/// instead of being visible only as "the peer got the protocol default".
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ActionFailure {
+    /// Position of the action in the submitted batch (indexes `ExecutionResult::raw_actions`)
+    pub index: usize,
+    /// The action's `type` field, or `unknown` when it had none
+    pub action: String,
+    /// Why it failed, as reported by the protocol executor
+    pub error: String,
+}
 
 /// Result of executing all actions
 pub struct ExecutionResult {
@@ -23,6 +45,12 @@ pub struct ExecutionResult {
     /// Raw action JSON (for protocols that need to manually process actions)
     /// This is used by protocols like mDNS and NFS that have special manual processing
     pub raw_actions: Vec<serde_json::Value>,
+
+    /// Actions in this batch that failed to execute, in submission order.
+    ///
+    /// Empty on a fully successful batch. A non-empty list does **not** mean the batch
+    /// was aborted: execution continues past a failed action (see `execute_actions`).
+    pub failures: Vec<ActionFailure>,
 }
 
 impl Default for ExecutionResult {
@@ -37,6 +65,7 @@ impl ExecutionResult {
             messages: Vec::new(),
             protocol_results: Vec::new(),
             raw_actions: Vec::new(),
+            failures: Vec::new(),
         }
     }
 
@@ -46,6 +75,68 @@ impl ExecutionResult {
 
     pub fn add_protocol_result(&mut self, result: ActionResult) {
         self.protocol_results.push(result);
+    }
+
+    /// Record an action that could not be executed.
+    pub fn add_failure(
+        &mut self,
+        index: usize,
+        action: impl Into<String>,
+        error: impl Into<String>,
+    ) {
+        self.failures.push(ActionFailure {
+            index,
+            action: action.into(),
+            error: error.into(),
+        });
+    }
+
+    /// Whether any action in the batch failed.
+    pub fn has_failures(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
+    /// One-line summary of the failures, or `None` if the batch was clean.
+    pub fn failure_summary(&self) -> Option<String> {
+        if self.failures.is_empty() {
+            return None;
+        }
+        let parts: Vec<String> = self
+            .failures
+            .iter()
+            .map(|f| format!("{} ({})", f.action, f.error))
+            .collect();
+        Some(parts.join("; "))
+    }
+
+    /// The action array to record in the access log.
+    ///
+    /// Successful actions are recorded verbatim. A failed action keeps its original JSON
+    /// under `action` but is wrapped in an envelope whose `type` is
+    /// `FAILED: <action name>` and which carries the executor's error, so
+    /// `list_access_logs` cannot show a failed action as though it had run.
+    pub fn access_log_actions(&self) -> Vec<serde_json::Value> {
+        if self.failures.is_empty() {
+            return self.raw_actions.clone();
+        }
+        let mut out = self.raw_actions.clone();
+        for failure in &self.failures {
+            let original = out
+                .get(failure.index)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let envelope = serde_json::json!({
+                "type": format!("{}{}", FAILED_ACTION_TYPE_PREFIX, failure.action),
+                "error": failure.error,
+                "action": original,
+            });
+            if let Some(slot) = out.get_mut(failure.index) {
+                *slot = envelope;
+            } else {
+                out.push(envelope);
+            }
+        }
+        out
     }
 }
 
@@ -58,8 +149,19 @@ impl ExecutionResult {
 /// * `server_id` - Optional server ID for context (used for feedback, memory, etc.)
 /// * `client_id` - Optional client ID for context (used for client feedback)
 ///
+/// # Failure handling
+///
+/// A failing action does **not** abort the batch. Each failure is logged at `error!`
+/// and recorded in `ExecutionResult::failures`, and execution continues with the next
+/// action. Aborting would suppress the *valid* actions that follow a bad one — dropping
+/// the `close_this_connection` that was meant to terminate a request whose body already
+/// went out, for example — and would convert a single malformed action into a lost
+/// connection in protocols that today recover by falling back to their default response.
+/// The defect this addresses is that failures were invisible, not that they were
+/// tolerated, so they are now surfaced (access log, `error!`) rather than made fatal.
+///
 /// # Returns
-/// * `Ok(ExecutionResult)` - Results of execution
+/// * `Ok(ExecutionResult)` - Results of execution; check `failures` for per-action errors
 /// * `Err(_)` - If execution failed critically
 pub async fn execute_actions(
     actions: Vec<serde_json::Value>,
@@ -76,11 +178,23 @@ pub async fn execute_actions(
     for (i, action) in actions.iter().enumerate() {
         debug!("Executing action {}: {:?}", i, action);
 
+        let action_name = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
         // Try to parse as common action first
         if let Ok(common_action) = CommonAction::from_json(action) {
-            execute_common_action(common_action, state, &mut result, server_id, client_id)
-                .await
-                .with_context(|| format!("Failed to execute common action: {:?}", action))?;
+            if let Err(e) =
+                execute_common_action(common_action, state, &mut result, server_id, client_id).await
+            {
+                error!(
+                    "Action {} '{}' failed: {} (action: {})",
+                    i, action_name, e, action
+                );
+                result.add_failure(i, action_name, e.to_string());
+            }
             continue;
         }
 
@@ -88,11 +202,6 @@ pub async fn execute_actions(
         if let Some(proto) = protocol {
             match proto.execute_action(action.clone()) {
                 Ok(action_result) => {
-                    let action_name = action
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-
                     // Find action definition to get log template
                     let action_def = proto
                         .get_sync_actions()
@@ -102,10 +211,12 @@ pub async fn execute_actions(
 
                     // Log action result with template if available
                     log_action_result(
-                        action_name,
+                        &action_name,
                         action,
                         &action_result,
-                        action_def.as_ref().and_then(|def| def.log_template.as_ref()),
+                        action_def
+                            .as_ref()
+                            .and_then(|def| def.log_template.as_ref()),
                         None, // No TUI output from executor (event-level logging handles TUI)
                     );
 
@@ -113,19 +224,41 @@ pub async fn execute_actions(
                     continue;
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to execute protocol action for {}: {}",
+                    // The peer will now receive the protocol's default (an empty 200 for
+                    // HTTP, nothing at all for TCP). Say so loudly and record it, rather
+                    // than letting the batch look successful.
+                    error!(
+                        "Action {} '{}' failed on protocol {}: {} — the peer receives the \
+                         protocol default instead (action: {})",
+                        i,
+                        action_name,
                         proto.protocol_name(),
-                        e
+                        e,
+                        action
                     );
-                    // Don't fail completely, just log and continue
+                    result.add_failure(i, action_name, e.to_string());
+                    // Continue with the rest of the batch; see the fn-level docs.
                     continue;
                 }
             }
         }
 
-        // Unknown action type
-        warn!("Unknown action type, skipping: {:?}", action);
+        // Not a common action, and there is no protocol in context to try it against.
+        let detail = "unknown action type and no protocol in context".to_string();
+        error!(
+            "Action {} '{}' skipped: {} ({})",
+            i, action_name, detail, action
+        );
+        result.add_failure(i, action_name, detail);
+    }
+
+    if let Some(summary) = result.failure_summary() {
+        error!(
+            "{} of {} action(s) failed: {}",
+            result.failures.len(),
+            actions.len(),
+            summary
+        );
     }
 
     Ok(result)

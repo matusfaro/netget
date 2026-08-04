@@ -22,7 +22,7 @@ use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Call LLM with action-based framework
 ///
@@ -305,6 +305,10 @@ pub async fn call_llm_with_custom_actions(
 /// The request is the structured event data; the response is the action JSON
 /// (e.g. `send_http_response`) the LLM or handler produced. Surfaced via the
 /// `list_access_logs` / `get_access_log` MCP tools.
+///
+/// An action that failed to execute is recorded as `FAILED: <action>` carrying the
+/// executor's error rather than as though it had run — see
+/// [`ExecutionResult::access_log_actions`].
 async fn record_event_access_log(
     state: &AppState,
     server_id: ServerId,
@@ -313,6 +317,17 @@ async fn record_event_access_log(
     event: &Event,
     result: &ExecutionResult,
 ) {
+    if let Some(summary) = result.failure_summary() {
+        error!(
+            "{} action(s) failed while handling '{}' on server #{} ({}): {}",
+            result.failures.len(),
+            event.id(),
+            server_id.as_u32(),
+            protocol.protocol_name(),
+            summary
+        );
+    }
+
     state
         .record_access_log(
             server_id.as_u32(),
@@ -320,7 +335,7 @@ async fn record_event_access_log(
             connection_id.map(|c| c.as_u32()),
             event.id(),
             event.data.clone(),
-            result.raw_actions.clone(),
+            result.access_log_actions(),
         )
         .await;
 }
@@ -495,7 +510,7 @@ pub async fn call_llm(
     // Generate response with retry (no tool calling for network events)
     let actions = conversation
         .generate_with_tools_and_retry(
-            None, // No web approval for network events
+            None,                                        // No web approval for network events
             crate::state::app_state::WebSearchMode::Off, // No web search for network events
             all_actions,
         )
@@ -766,14 +781,12 @@ pub async fn call_llm_for_feedback(
     .with_tracking(
         state.clone(),
         conversation_source,
-        format!(
-            "Feedback processing ({} entries)",
-            feedback_entries.len()
-        ),
+        format!("Feedback processing ({} entries)", feedback_entries.len()),
     );
 
     // Add user message to trigger feedback processing
-    conversation.add_user_message("Analyze the accumulated feedback and suggest adjustments.".to_string());
+    conversation
+        .add_user_message("Analyze the accumulated feedback and suggest adjustments.".to_string());
 
     // Generate actions with retry (no tools for feedback processing)
     let web_search_mode = state.get_web_search_mode().await;
