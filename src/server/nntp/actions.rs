@@ -329,7 +329,12 @@ impl Server for NntpProtocol {
 pub static NNTP_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nntp_command_received",
-        "NNTP command received from a client",
+        "A client sent an NNTP command line, or the connection just opened (command \
+         \"GREETING\"). Answer with exactly one action, chosen by the command: a plain status \
+         line with send_nntp_response, GROUP with send_nntp_group, LIST/NEWGROUPS with \
+         send_nntp_list, ARTICLE/HEAD/BODY with send_nntp_article, XOVER/OVER with \
+         send_nntp_overview, or any raw line with send_nntp_message. QUIT should be answered \
+         with a 205 and then close_connection.",
         json!({
             "type": "send_nntp_response",
             "code": 200,
@@ -339,9 +344,25 @@ pub static NNTP_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_parameters(vec![Parameter {
         name: "command".to_string(),
         type_hint: "string".to_string(),
-        description: "The NNTP command received from client".to_string(),
+        description: "The NNTP command line the client sent, without its trailing CRLF. The \
+                      literal string \"GREETING\" instead of a command means the connection has \
+                      just opened and is waiting for the initial banner"
+            .to_string(),
         required: true,
     }])
+    // All eight sync actions can answer this event - it is the protocol's only event and covers
+    // every NNTP command. Without this list `call_llm` would offer the model none of them, since
+    // it builds the model's tool list from the event type rather than from get_sync_actions().
+    .with_actions(vec![
+        send_nntp_response_action(),
+        send_nntp_group_action(),
+        send_nntp_list_action(),
+        send_nntp_article_action(),
+        send_nntp_overview_action(),
+        send_nntp_message_action(),
+        wait_for_more_action(),
+        close_connection_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("NNTP command: {command}")

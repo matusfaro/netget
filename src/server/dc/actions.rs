@@ -411,28 +411,53 @@ impl Server for DcProtocol {
 
 /// Event type ID for DC command received
 pub static DC_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_command_received", "DC command received from a client", json!({"type": "placeholder", "event_id": "dc_command_received"})).with_parameters(
-        vec![
-            Parameter {
-                name: "command".to_string(),
-                type_hint: "string".to_string(),
-                description: "The DC command received (without pipe terminator)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "command_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "Parsed command type (e.g., ValidateNick, MyINFO, Search)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "client_nickname".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client's nickname if set".to_string(),
-                required: false,
-            },
-        ],
+    EventType::new(
+        "dc_command_received",
+        "A Direct Connect client sent a hub command. Answer with the action matching the stage \
+         of the handshake: reply to $Key/$ValidateNick with send_dc_hello and send_dc_hubname, \
+         to $GetNickList with send_dc_userlist, to $Search with send_dc_search_result, to chat \
+         and $To: with send_dc_message or send_dc_broadcast. send_dc_raw sends any other NMDC \
+         command verbatim.",
+        json!({
+            "type": "send_dc_hello",
+            "nickname": "alice"
+        }),
     )
+    // All ten sync actions can answer this event - it is the protocol's only event and covers
+    // every stage of the NMDC handshake. `call_llm` builds the model's tool list from the event
+    // type, not from get_sync_actions(), so without this the model was offered none of them.
+    .with_actions(vec![
+        send_dc_lock_action(),
+        send_dc_hello_action(),
+        send_dc_hubname_action(),
+        send_dc_message_action(),
+        send_dc_broadcast_action(),
+        send_dc_userlist_action(),
+        send_dc_search_result_action(),
+        send_dc_kick_action(),
+        send_dc_redirect_action(),
+        send_dc_raw_action(),
+    ])
+    .with_parameters(vec![
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "The DC command received (without pipe terminator)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "command_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Parsed command type (e.g., ValidateNick, MyINFO, Search)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_nickname".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client's nickname if set".to_string(),
+            required: false,
+        },
+    ])
 });
 
 // Action definitions
@@ -649,7 +674,9 @@ fn send_dc_search_result_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> DC $SR {filename} ({size}B)")
-                .with_debug("DC send_dc_search_result: source={source} file={filename} size={size}"),
+                .with_debug(
+                    "DC send_dc_search_result: source={source} file={filename} size={size}",
+                ),
         ),
     }
 }

@@ -21,93 +21,132 @@ impl TftpProtocol {
 
 // Event type constants
 pub static TFTP_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_read_request", "Client requests to read a file", json!({"type": "placeholder", "event_id": "tftp_read_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "filename".to_string(),
-                type_hint: "string".to_string(),
-                description: "Name of file being requested".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Transfer mode (netascii, octet, mail)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "client_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client socket address".to_string(),
-                required: true,
-            },
-        ])
+    EventType::new(
+        "tftp_read_request",
+        "A client asked to download a file (RRQ). You are the filesystem: nothing is read from \
+         disk. Answer with send_tftp_data carrying block 1 of the file you invent, or refuse \
+         with send_tftp_error (code 1 = file not found).",
+        json!({
+            "type": "send_tftp_data",
+            "block_number": 1,
+            "data_hex": "48656c6c6f20544654502100",
+            "is_final": true
+        }),
+    )
+    // Per-event narrowing: an RRQ is answered with data or an error, never with an ACK (the
+    // client acknowledges, the server does not). `call_llm` builds the model's tool list from
+    // the event type rather than from get_sync_actions(), so without these lists TFTP offered
+    // the model nothing it could reply with.
+    .with_actions(vec![send_tftp_data_action(), send_tftp_error_action()])
+    .with_parameters(vec![
+        Parameter {
+            name: "filename".to_string(),
+            type_hint: "string".to_string(),
+            description: "Name of file being requested".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "mode".to_string(),
+            type_hint: "string".to_string(),
+            description: "Transfer mode (netascii, octet, mail)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client socket address".to_string(),
+            required: true,
+        },
+    ])
 });
 
 pub static TFTP_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_write_request", "Client requests to write a file", json!({"type": "placeholder", "event_id": "tftp_write_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "filename".to_string(),
-                type_hint: "string".to_string(),
-                description: "Name of file to write".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Transfer mode (netascii, octet, mail)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "client_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client socket address".to_string(),
-                required: true,
-            },
-        ])
+    EventType::new(
+        "tftp_write_request",
+        "A client asked to upload a file (WRQ). Accept it with send_tftp_ack for block 0, which \
+         is what tells the client to start sending, or refuse it with send_tftp_error (code 2 = \
+         access violation).",
+        json!({"type": "send_tftp_ack", "block_number": 0}),
+    )
+    .with_actions(vec![send_tftp_ack_action(), send_tftp_error_action()])
+    .with_parameters(vec![
+        Parameter {
+            name: "filename".to_string(),
+            type_hint: "string".to_string(),
+            description: "Name of file to write".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "mode".to_string(),
+            type_hint: "string".to_string(),
+            description: "Transfer mode (netascii, octet, mail)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client socket address".to_string(),
+            required: true,
+        },
+    ])
 });
 
 pub static TFTP_DATA_BLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_data_block", "Received data block from client (write operation)", json!({"type": "placeholder", "event_id": "tftp_data_block"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "block_number".to_string(),
-                type_hint: "number".to_string(),
-                description: "Block number (1-65535)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data_hex".to_string(),
-                type_hint: "string".to_string(),
-                description: "Block data as hex string".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data_length".to_string(),
-                type_hint: "number".to_string(),
-                description: "Number of bytes in this block".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "is_final".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "True if this is the final block (< 512 bytes)".to_string(),
-                required: true,
-            },
-        ])
+    EventType::new(
+        "tftp_data_block",
+        "A block of an upload arrived. Acknowledge it with send_tftp_ack for the same \
+         block_number, or abort the transfer with send_tftp_error.",
+        json!({"type": "send_tftp_ack", "block_number": 1}),
+    )
+    .with_actions(vec![send_tftp_ack_action(), send_tftp_error_action()])
+    .with_parameters(vec![
+        Parameter {
+            name: "block_number".to_string(),
+            type_hint: "number".to_string(),
+            description: "Block number (1-65535)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Block data as hex string".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_length".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of bytes in this block".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "is_final".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "True if this is the final block (< 512 bytes)".to_string(),
+            required: true,
+        },
+    ])
 });
 
 pub static TFTP_ACK_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_ack_received", "Client acknowledged data block (read operation)", json!({"type": "placeholder", "event_id": "tftp_ack_received"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "block_number".to_string(),
-                type_hint: "number".to_string(),
-                description: "Block number acknowledged".to_string(),
-                required: true,
-            },
-        ])
+    EventType::new(
+        "tftp_ack_received",
+        "The client acknowledged a block of a download. Send the next block with send_tftp_data \
+         (set is_final on the last one), or abort with send_tftp_error. Returning no action ends \
+         the transfer.",
+        json!({
+            "type": "send_tftp_data",
+            "block_number": 2,
+            "data_hex": "",
+            "is_final": true
+        }),
+    )
+    .with_actions(vec![send_tftp_data_action(), send_tftp_error_action()])
+    .with_parameters(vec![Parameter {
+        name: "block_number".to_string(),
+        type_hint: "number".to_string(),
+        description: "Block number acknowledged".to_string(),
+        required: true,
+    }])
 });
 
 fn get_tftp_event_types() -> Vec<EventType> {
@@ -264,15 +303,16 @@ impl TftpProtocol {
         let block_number = action
             .get("block_number")
             .and_then(|v| v.as_u64())
-            .context("Missing 'block_number' in send_tftp_data action")? as u16;
+            .context("Missing 'block_number' in send_tftp_data action")?
+            as u16;
 
         let data_hex = action
             .get("data_hex")
             .and_then(|v| v.as_str())
             .context("Missing 'data_hex' in send_tftp_data action")?;
 
-        let data = hex::decode(data_hex)
-            .context("Failed to decode hex data in send_tftp_data action")?;
+        let data =
+            hex::decode(data_hex).context("Failed to decode hex data in send_tftp_data action")?;
 
         if data.len() > 512 {
             return Err(anyhow::anyhow!(
@@ -297,7 +337,8 @@ impl TftpProtocol {
         let block_number = action
             .get("block_number")
             .and_then(|v| v.as_u64())
-            .context("Missing 'block_number' in send_tftp_ack action")? as u16;
+            .context("Missing 'block_number' in send_tftp_ack action")?
+            as u16;
 
         // Build TFTP ACK packet
         // Opcode (2 bytes) = 4 (ACK)
@@ -379,14 +420,12 @@ fn send_tftp_ack_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_tftp_ack".to_string(),
         description: "Acknowledge received data block".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "block_number".to_string(),
-                type_hint: "number".to_string(),
-                description: "Block number to acknowledge".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "block_number".to_string(),
+            type_hint: "number".to_string(),
+            description: "Block number to acknowledge".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_tftp_ack",
             "block_number": 5

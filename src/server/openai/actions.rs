@@ -15,7 +15,36 @@ use crate::protocol::log_template::LogTemplate;
 
 /// OpenAI request event (for /v1/models, /v1/chat/completions, etc.)
 pub static OPENAI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("openai_request", "OpenAI API request received", json!({"type": "placeholder", "event_id": "openai_request"})).with_parameters(vec![
+    EventType::new(
+        "openai_request",
+        "An OpenAI-compatible API request arrived. Answer with exactly one action chosen by \
+         'path': /v1/chat/completions -> openai_chat_response, /v1/models -> \
+         openai_models_response. Any request may instead be refused with openai_error_response.",
+        json!({
+            "type": "openai_chat_response",
+            "content": "Hello! How can I help you today?",
+            "model": "gpt-4"
+        }),
+    )
+    .with_alternative_example(json!({
+        "type": "openai_models_response",
+        "models": ["gpt-4", "gpt-3.5-turbo"]
+    }))
+    .with_alternative_example(json!({
+        "type": "openai_error_response",
+        "message": "Unsupported endpoint",
+        "error_type": "invalid_request_error",
+        "status": 404
+    }))
+    // This is the protocol's only event, so without an action list `call_llm` would offer the
+    // model nothing but set_memory/show_message and reject every response it produced. All three
+    // sync actions apply here: the event covers every path, and any of them may be refused.
+    .with_actions(vec![
+        openai_chat_response_action(),
+        openai_models_response_action(),
+        openai_error_response_action(),
+    ])
+    .with_parameters(vec![
         Parameter {
             name: "method".to_string(),
             type_hint: "string".to_string(),

@@ -13,26 +13,50 @@ use tracing::debug;
 
 use crate::protocol::log_template::LogTemplate;
 
-// NPM event type constants (matching IDs used in get_npm_event_types)
+// NPM event type constants. `get_npm_event_types()` returns clones of these, so the docs, the
+// event-handler action catalog and the list `call_llm` advertises to the model can never drift.
+//
+// Every event carries the reply action(s) that endpoint can actually produce, plus `npm_error`:
+// `call_llm` prompts the model with the *event's* action list, so an event that declares none
+// leaves the model with only set_memory/show_message and every npm action it returns is rejected.
 pub static NPM_PACKAGE_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "NPM_PACKAGE_REQUEST",
-        "NPM client requests package metadata",
+        "Triggered when a client requests package metadata (GET /{package})",
         json!({
             "type": "npm_package_metadata",
             "metadata": {"name": "express", "version": "4.18.2", "description": "Fast web framework"}
         }),
     )
+    .with_actions(vec![package_metadata_action(), npm_error_action()])
 });
 
-pub static NPM_TARBALL_REQUEST: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("NPM_TARBALL_REQUEST", "NPM client requests package tarball", json!({"type": "placeholder", "event_id": "NPM_TARBALL_REQUEST"})));
+pub static NPM_TARBALL_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "NPM_TARBALL_REQUEST",
+        "Triggered when a client requests a package tarball (GET /{package}/-/{tarball})",
+        json!({"type": "npm_package_tarball", "tarball_data": "H4sIAAAAAAAAA..."}),
+    )
+    .with_actions(vec![package_tarball_action(), npm_error_action()])
+});
 
-pub static NPM_LIST_REQUEST: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("NPM_LIST_REQUEST", "NPM client requests all packages list", json!({"type": "placeholder", "event_id": "NPM_LIST_REQUEST"})));
+pub static NPM_LIST_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "NPM_LIST_REQUEST",
+        "Triggered when a client requests the package listing (GET /-/all)",
+        json!({"type": "npm_package_list", "packages": {"express": {"version": "4.18.2"}}}),
+    )
+    .with_actions(vec![package_list_action(), npm_error_action()])
+});
 
-pub static NPM_SEARCH_REQUEST: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("NPM_SEARCH_REQUEST", "NPM client searches for packages", json!({"type": "placeholder", "event_id": "NPM_SEARCH_REQUEST"})));
+pub static NPM_SEARCH_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "NPM_SEARCH_REQUEST",
+        "Triggered when a client searches for packages (GET /-/v1/search?text=...)",
+        json!({"type": "npm_package_search", "results": {"objects": [], "total": 0}}),
+    )
+    .with_actions(vec![package_search_action(), npm_error_action()])
+});
 
 /// NPM protocol action handler
 pub struct NpmProtocol {}
@@ -398,27 +422,14 @@ fn npm_error_action() -> ActionDefinition {
 }
 
 /// Get NPM-specific event types
+///
+/// These are clones of the constants `mod.rs` passes to `call_llm`, so the documented event
+/// catalog and the action list the model is actually offered cannot diverge.
 fn get_npm_event_types() -> Vec<EventType> {
     vec![
-        EventType::new(
-            "NPM_PACKAGE_REQUEST",
-            "Triggered when a client requests package metadata (GET /{package})",
-            json!({"type": "npm_package_metadata", "metadata": {"name": "example", "version": "1.0.0"}}),
-        ),
-        EventType::new(
-            "NPM_TARBALL_REQUEST",
-            "Triggered when a client requests package tarball (GET /{package}/-/{tarball})",
-            json!({"type": "npm_package_tarball", "tarball_data": "base64data"}),
-        ),
-        EventType::new(
-            "NPM_LIST_REQUEST",
-            "Triggered when a client requests package listing (GET /-/all)",
-            json!({"type": "npm_package_list", "packages": {}}),
-        ),
-        EventType::new(
-            "NPM_SEARCH_REQUEST",
-            "Triggered when a client requests package search (GET /-/v1/search)",
-            json!({"type": "npm_package_search", "results": {"objects": [], "total": 0}}),
-        ),
+        NPM_PACKAGE_REQUEST.clone(),
+        NPM_TARBALL_REQUEST.clone(),
+        NPM_LIST_REQUEST.clone(),
+        NPM_SEARCH_REQUEST.clone(),
     ]
 }

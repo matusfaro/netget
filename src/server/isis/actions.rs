@@ -443,7 +443,9 @@ impl IsisProtocol {
 pub static ISIS_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "isis_hello",
-        "IS-IS Hello PDU received (neighbor discovery)",
+        "An IS-IS Hello PDU arrived from a neighbour. Answer with send_isis_hello to adjacency \
+         with it, send_isis_lsp to advertise link state, send_isis_pdu for any other PDU type, \
+         or ignore_pdu to stay silent.",
         json!({
             "type": "send_isis_hello",
             "pdu_type": "lan_hello_l2",
@@ -451,6 +453,15 @@ pub static ISIS_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "area_id": "49.0001"
         }),
     )
+    // All four sync actions answer this event, which is the protocol's only one. `call_llm`
+    // advertises the event's action list rather than get_sync_actions(), so leaving it empty
+    // left the model unable to reply to a neighbour at all.
+    .with_actions(vec![
+        send_isis_hello_action(),
+        send_isis_lsp_action(),
+        send_isis_pdu_action(),
+        ignore_pdu_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("IS-IS {pdu_type} from {peer_addr}")
@@ -503,7 +514,9 @@ fn send_isis_hello_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> IS-IS {pdu_type} Hello sys={system_id}")
-                .with_debug("IS-IS send_isis_hello: type={pdu_type} sys_id={system_id} area={area_id}"),
+                .with_debug(
+                    "IS-IS send_isis_hello: type={pdu_type} sys_id={system_id} area={area_id}",
+                ),
         ),
     }
 }

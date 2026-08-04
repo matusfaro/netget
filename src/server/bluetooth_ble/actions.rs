@@ -30,6 +30,11 @@ pub static BLUETOOTH_BLE_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             }]
         }),
     )
+    // The GATT server is empty at startup, so this event is answered by building it out:
+    // add_service for each service, then start_advertising to become discoverable.
+    // `call_llm` builds the model's tool list from the event type rather than from
+    // get_sync_actions(), so before this the model was offered none of the BLE actions.
+    .with_actions(vec![add_service_action(), start_advertising_action()])
     .with_parameters(vec![
         Parameter {
             name: "device_name".to_string(),
@@ -61,6 +66,8 @@ pub static BLUETOOTH_STATE_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(||
             "type": "start_advertising"
         }),
     )
+    // Powering on is answered by advertising, powering off by standing down.
+    .with_actions(vec![start_advertising_action(), stop_advertising_action()])
     .with_parameters(vec![Parameter {
         name: "state".to_string(),
         type_hint: "string".to_string(),
@@ -84,6 +91,9 @@ pub static BLUETOOTH_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             "value": "0048"
         }),
     )
+    // A read is answered with the characteristic's value and nothing else - the server sends
+    // whatever respond_to_read carries straight back to the client on this request's responder.
+    .with_actions(vec![respond_to_read_action()])
     .with_parameters(vec![
         Parameter {
             name: "characteristic_uuid".to_string(),
@@ -115,6 +125,9 @@ pub static BLUETOOTH_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
             "type": "respond_to_write"
         }),
     )
+    // Acknowledge the write; send_notification lets a write also push the new value out to
+    // anyone subscribed to the characteristic.
+    .with_actions(vec![respond_to_write_action(), send_notification_action()])
     .with_parameters(vec![
         Parameter {
             name: "characteristic_uuid".to_string(),
@@ -160,6 +173,9 @@ pub static BLUETOOTH_SUBSCRIBE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "value": "0048"
         }),
     )
+    // A fresh subscriber is answered with an initial send_notification; an unsubscribe is
+    // answered with no action at all.
+    .with_actions(vec![send_notification_action()])
     .with_parameters(vec![
         Parameter {
             name: "characteristic_uuid".to_string(),

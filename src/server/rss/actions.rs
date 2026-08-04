@@ -14,7 +14,27 @@ use std::sync::LazyLock;
 
 /// RSS feed requested event - fired when a client requests a feed
 pub static RSS_FEED_REQUESTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rss_feed_requested", "RSS feed requested by client", json!({"type": "placeholder", "event_id": "rss_feed_requested"})).with_parameters(vec![
+    EventType::new(
+        "rss_feed_requested",
+        "A client requested an RSS feed. Answer with generate_rss_feed; the server renders the \
+         XML from the fields you supply.",
+        json!({
+            "type": "generate_rss_feed",
+            "title": "NetGet News",
+            "link": "http://localhost/news.xml",
+            "description": "Latest headlines",
+            "items": [{
+                "title": "First post",
+                "link": "http://localhost/1",
+                "description": "Hello world"
+            }]
+        }),
+    )
+    // The protocol's only sync action, and its only event. `call_llm` advertises the event's
+    // action list rather than get_sync_actions(), so leaving this empty meant every
+    // generate_rss_feed the model produced was rejected as an unknown action.
+    .with_actions(vec![generate_rss_feed_action()])
+    .with_parameters(vec![
         Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),

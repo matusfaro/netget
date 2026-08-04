@@ -29,6 +29,17 @@ pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
          record how this attempt should be classified.",
         json!({"type": "log_handshake", "details": "IKE handshake observed"}),
     )
+    // The three actions the description above tells the model to use. They transmit nothing -
+    // each returns NoAction - but they are recorded against the event in the access log, which
+    // is the whole point of a honeypot classification. Before this list existed `call_llm`
+    // offered the model none of them (it builds the tool list from the event type, not from
+    // get_sync_actions()), so the very responses the description asked for were rejected as
+    // unknown actions and the call failed after two retries.
+    .with_actions(vec![
+        log_handshake_action(),
+        accept_connection_action(),
+        reject_connection_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} IKE {exchange_type} ({duration_ms}ms)")

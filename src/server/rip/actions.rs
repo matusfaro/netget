@@ -271,7 +271,9 @@ impl RipProtocol {
 pub static RIP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "rip_request",
-        "Triggered when a RIP message (request or response) is received",
+        "A RIP message arrived. Answer a 'request' with send_rip_response carrying the routes \
+         you want to advertise; a peer's unsolicited 'response' is usually best answered with \
+         ignore_request, or with send_rip_request to ask for its table.",
         json!({
             "type": "send_rip_response",
             "routes": [
@@ -317,6 +319,14 @@ pub static RIP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Size of the received packet".to_string(),
             required: true,
         },
+    ])
+    // All three sync actions answer this event, which is the protocol's only one. `call_llm`
+    // builds the model's tool list from the event type rather than from get_sync_actions(), so
+    // without this list the model had no way to reply to a RIP message at all.
+    .with_actions(vec![
+        send_rip_response_action(),
+        send_rip_request_action(),
+        ignore_request_action(),
     ])
     .with_log_template(
         LogTemplate::new()

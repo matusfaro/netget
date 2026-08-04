@@ -236,13 +236,19 @@ fn get_sip_event_types() -> Vec<EventType> {
 pub static SIP_REGISTER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "sip_register",
-        "Client sends REGISTER to register user location",
+        "A client is registering its location with REGISTER. Answer with sip_register: 200 to \
+         accept the binding, 401/403 to challenge or refuse it.",
         json!({
             "type": "sip_register",
             "status_code": 200,
             "expires": 3600
-        })
+        }),
     )
+    // Each SIP event is answered by exactly one action - the reply to a REGISTER is a REGISTER
+    // response and nothing else - so every event lists only its own. `call_llm` builds the
+    // model's tool list from the event type rather than from get_sync_actions(), so before this
+    // the model was offered none of the six and every reply it produced was rejected.
+    .with_actions(vec![sip_register_action()])
     .with_log_template(
         LogTemplate::new()
             .with_info("SIP REGISTER")
@@ -252,54 +258,97 @@ pub static SIP_REGISTER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// SIP INVITE event
-pub static SIP_INVITE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_invite", "Client initiates session with INVITE request", json!({"type": "placeholder", "event_id": "sip_invite"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("SIP INVITE")
-                .with_debug("SIP INVITE request")
-                .with_trace("SIP: {json_pretty(.)}"),
-        ));
+pub static SIP_INVITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sip_invite",
+        "A client is initiating a session with INVITE. Answer with sip_invite carrying the status \
+         code and, for a 200, the answering SDP.",
+        json!({
+            "type": "sip_invite",
+            "status_code": 200,
+            "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\ns=Call\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio 8000 RTP/AVP 0\n"
+        }),
+    )
+    .with_actions(vec![sip_invite_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SIP INVITE")
+            .with_debug("SIP INVITE request")
+            .with_trace("SIP: {json_pretty(.)}"),
+    )
+});
 
 /// SIP BYE event
-pub static SIP_BYE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_bye", "Client or server terminates session with BYE", json!({"type": "placeholder", "event_id": "sip_bye"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("SIP BYE")
-                .with_debug("SIP BYE request")
-                .with_trace("SIP: {json_pretty(.)}"),
-        ));
+pub static SIP_BYE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sip_bye",
+        "The far end is terminating the session with BYE. Answer with sip_bye; 200 acknowledges \
+         the teardown.",
+        json!({"type": "sip_bye", "status_code": 200}),
+    )
+    .with_actions(vec![sip_bye_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SIP BYE")
+            .with_debug("SIP BYE request")
+            .with_trace("SIP: {json_pretty(.)}"),
+    )
+});
 
 /// SIP ACK event
-pub static SIP_ACK_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_ack", "Client acknowledges INVITE response", json!({"type": "placeholder", "event_id": "sip_ack"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("SIP ACK")
-                .with_debug("SIP ACK request")
-                .with_trace("SIP: {json_pretty(.)}"),
-        ));
+pub static SIP_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sip_ack",
+        "The client acknowledged an INVITE response. ACK is never answered on the wire, so \
+         sip_ack simply records that the dialog is established.",
+        json!({"type": "sip_ack"}),
+    )
+    .with_actions(vec![sip_ack_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SIP ACK")
+            .with_debug("SIP ACK request")
+            .with_trace("SIP: {json_pretty(.)}"),
+    )
+});
 
 /// SIP OPTIONS event
-pub static SIP_OPTIONS_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_options", "Client queries server capabilities", json!({"type": "placeholder", "event_id": "sip_options"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("SIP OPTIONS")
-                .with_debug("SIP OPTIONS request")
-                .with_trace("SIP: {json_pretty(.)}"),
-        ));
+pub static SIP_OPTIONS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sip_options",
+        "A client is querying this server's capabilities with OPTIONS. Answer with sip_options \
+         listing the methods you support.",
+        json!({
+            "type": "sip_options",
+            "status_code": 200,
+            "allow_methods": ["INVITE", "ACK", "BYE", "REGISTER", "OPTIONS"]
+        }),
+    )
+    .with_actions(vec![sip_options_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SIP OPTIONS")
+            .with_debug("SIP OPTIONS request")
+            .with_trace("SIP: {json_pretty(.)}"),
+    )
+});
 
 /// SIP CANCEL event
-pub static SIP_CANCEL_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_cancel", "Client cancels pending INVITE request", json!({"type": "placeholder", "event_id": "sip_cancel"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("SIP CANCEL")
-                .with_debug("SIP CANCEL request")
-                .with_trace("SIP: {json_pretty(.)}"),
-        ));
+pub static SIP_CANCEL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "sip_cancel",
+        "The client is cancelling a pending INVITE. Answer with sip_cancel; 200 confirms the \
+         cancellation.",
+        json!({"type": "sip_cancel", "status_code": 200}),
+    )
+    .with_actions(vec![sip_cancel_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("SIP CANCEL")
+            .with_debug("SIP CANCEL request")
+            .with_trace("SIP: {json_pretty(.)}"),
+    )
+});
 
 // Action definitions
 fn sip_register_action() -> ActionDefinition {

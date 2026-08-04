@@ -158,18 +158,43 @@ impl Server for SmbProtocol {
 pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smb_operation",
-        "SMB client requested a filesystem operation",
+        "An SMB2 client asked for a filesystem operation. You are the filesystem: nothing is \
+         read from or written to disk, so invent a consistent virtual tree and keep it in memory \
+         across operations. Answer with the action matching 'operation': session_setup -> \
+         smb_auth_success or smb_auth_deny, read -> smb_read_file, query_info -> \
+         smb_get_file_info, query_directory -> smb_list_directory. The create and write \
+         operations are reported for context only - the server answers them itself and ignores \
+         whatever you return.",
         json!({
             "type": "smb_read_file",
             "path": "/documents/file.txt",
             "content": "Sample file content"
-        })
+        }),
     )
+    // Only the actions the server actually reads back out of the LLM response (see
+    // src/server/smb/mod.rs: the session_setup, read, query_info and query_directory arms).
+    // smb_write_file, smb_create_file, smb_delete_file, smb_create_directory and
+    // smb_delete_directory are declared in get_sync_actions() but no SMB2 command arm ever looks
+    // for them - create and write discard the LLM's actions, and no arm routes delete at all -
+    // so advertising them here would offer the model responses that do nothing.
+    //
+    // Without this list `call_llm` offered none of them: it builds the model's tool list from
+    // the event type, not from get_sync_actions().
+    .with_actions(vec![
+        smb_auth_success_action(),
+        smb_auth_deny_action(),
+        smb_read_file_action(),
+        smb_get_file_info_action(),
+        smb_list_directory_action(),
+    ])
     .with_parameters(vec![
         Parameter {
             name: "operation".to_string(),
             type_hint: "string".to_string(),
-            description: "The SMB operation type".to_string(),
+            description: "Which request this is: \"session_setup\" (authentication), \"create\" \
+                          (open), \"read\", \"write\", \"query_info\" (stat) or \
+                          \"query_directory\" (list)"
+                .to_string(),
             required: true,
         },
         Parameter {

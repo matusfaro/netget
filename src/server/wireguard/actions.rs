@@ -24,12 +24,30 @@ pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "wireguard_peer_connected",
         "WireGuard peer completed its handshake and appeared on the interface. \
-         Respond with authorize_peer to (re)configure its allowed IPs, \
-         disconnect_peer/reject_peer to remove it, or no_action to leave it as-is.",
+         Respond with authorize_peer to (re)configure its allowed IPs, or with \
+         disconnect_peer/reject_peer to remove it. Return no actions at all to leave the peer \
+         as-is.",
         json!({
-            "type": "no_action"
+            "type": "authorize_peer",
+            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "allowed_ips": ["10.0.0.2/32"]
         }),
     )
+    .with_alternative_example(json!({
+        "type": "disconnect_peer",
+        "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+        "reason": "not on the allow list"
+    }))
+    // The three actions that actually change the interface. `set_peer_traffic_limit` is
+    // deliberately left out: it is a documented no-op (see mod.rs and CLAUDE.md - no tc/iptables
+    // configuration is performed), so advertising it would promise enforcement that never
+    // happens. Without this list `call_llm` offered the model none of them, because it builds
+    // the model's tool list from the event type rather than from get_sync_actions().
+    .with_actions(vec![
+        authorize_peer_action(),
+        reject_peer_action(),
+        disconnect_peer_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("WireGuard {client_ip} connected")

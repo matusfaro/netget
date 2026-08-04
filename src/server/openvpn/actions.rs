@@ -29,13 +29,26 @@ pub static OPENVPN_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "openvpn_peer_connected",
         "An OpenVPN peer was accepted and assigned a VPN IP. The peer is NOT \
-         authenticated (no TLS handshake is performed). Respond with inspect_traffic \
-         or show_message to record it; the connection cannot be refused from here.",
+         authenticated (no TLS handshake is performed). Record it with show_message or \
+         set_memory; the connection cannot be refused or shaped from here, and this \
+         protocol has no action that changes what the server does.",
         json!({
-            "type": "inspect_traffic",
-            "inspect": true
+            "type": "show_message",
+            "message": "OpenVPN peer connected"
         }),
     )
+    // Deliberately no protocol actions, hence with_no_actions() rather than an empty list.
+    //
+    // All four of this protocol's sync actions - authorize_peer, reject_peer, set_peer_limit,
+    // inspect_traffic - return NoAction, and `handle_peer_connected` in mod.rs discards the
+    // execution result entirely: it prints the messages and drops `raw_actions` on the floor.
+    // Nothing they could say would reach the tunnel, and the peer has already been accepted and
+    // addressed by the time this event fires. Advertising them would promise the model control
+    // it does not have, so the event offers only the common actions. This is consistent with the
+    // protocol's Incomplete state - it is hidden from the LLM's protocol list for the same
+    // reason. If the handshake ever gains real TLS authentication, wire authorize_peer and
+    // reject_peer into a new pre-accept event rather than this one.
+    .with_no_actions()
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} OpenVPN connected -> {vpn_ip}")
