@@ -720,6 +720,53 @@ async fn execute_due_tasks(
     }
 }
 
+/// Build the list of actions a scheduled task may invoke.
+///
+/// This mirrors, scope for scope, the action list that
+/// `PromptBuilder::build_task_execution_prompt` advertises to the model, and then applies
+/// the same scripting-mode filter `PromptBuilder::build_action_prompt` applies. The result
+/// is that the set the model is told about and the set `ConversationHandler` validates
+/// against are identical rather than merely overlapping.
+///
+/// Previously an empty `Vec` was handed to the validator, so every action a scheduled task
+/// returned was flagged unknown, retried twice, then `bail!`d — no scheduled task could
+/// ever execute an action.
+async fn build_task_actions(
+    state: &AppState,
+    scope: &crate::state::task::TaskScope,
+    protocol_actions: Vec<crate::llm::actions::ActionDefinition>,
+) -> Vec<crate::llm::actions::ActionDefinition> {
+    use crate::llm::actions::{
+        get_all_tool_actions, get_network_event_common_actions, get_network_event_tool_actions,
+        get_user_input_common_actions,
+    };
+    use crate::llm::prompt::PromptBuilder;
+    use crate::state::task::TaskScope;
+
+    let selected_mode = state.get_selected_scripting_mode().await;
+    let web_search_mode = state.get_web_search_mode().await;
+
+    let actions = match scope {
+        TaskScope::Global => {
+            // Global tasks run in the user-input context, with open_server/open_client enabled.
+            let scripting_env = state.get_scripting_env().await;
+            let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, true, true);
+            actions.extend(get_all_tool_actions(web_search_mode));
+            actions
+        }
+        TaskScope::Server(_) | TaskScope::Connection(_, _) | TaskScope::Client(_) => {
+            // Server-, connection- and client-scoped tasks run in the network-event context.
+            let mut actions = get_network_event_common_actions();
+            actions.extend(protocol_actions);
+            actions.extend(get_network_event_tool_actions(web_search_mode));
+            actions
+        }
+    };
+
+    let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Off;
+    PromptBuilder::filter_actions_by_scripting_mode(actions, has_scripting)
+}
+
 /// Execute a single task
 async fn execute_single_task(
     state: AppState,
@@ -762,6 +809,11 @@ async fn execute_single_task(
         }
         TaskScope::Global => Vec::new(),
     };
+
+    // Actions genuinely available to this task. This MUST match the set advertised by
+    // `PromptBuilder::build_task_execution_prompt` below, because `ConversationHandler`
+    // derives `valid_action_names` from it and rejects anything else as an unknown action.
+    let task_actions = build_task_actions(&state, &task.scope, protocol_actions.clone()).await;
 
     // Build prompt
     let prompt = PromptBuilder::build_task_execution_prompt(&state, &task, protocol_actions).await;
@@ -814,9 +866,6 @@ async fn execute_single_task(
 
     // Get rate limiter for scheduled tasks (discards if rate limited)
     let rate_limiter = state.get_rate_limiter().await;
-
-    // Scheduled tasks have limited actions
-    let task_actions: Vec<crate::llm::actions::ActionDefinition> = Vec::new();
 
     // Create conversation handler with tracking
     let mut conversation = crate::llm::ConversationHandler::new(
