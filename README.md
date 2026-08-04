@@ -28,10 +28,11 @@ match command {
 
 **NetGet's Approach**: Instruct the LLM in natural language
 ```bash
-> act as FTP server, allow anonymous login, serve file data.txt with content 'hello'
+> act as an HTTP server, serve /data.txt with content 'hello', 404 everything else
 ```
 
-The LLM handles all protocol details (welcome messages, authentication, file transfer) without any code changes.
+The LLM handles the protocol details — status lines, headers, authentication exchanges —
+without any code changes.
 
 ## Key Features
 
@@ -45,7 +46,14 @@ Both server and client modes for:
 **Application Protocols**
 - SSH, FTP, DNS, DHCP, SMTP, IMAP, MySQL, PostgreSQL, Redis
 - MQTT, Kafka, gRPC, WebSocket, WebDAV, NFS, SMB
-- OpenVPN, WireGuard, Tor, IPSec (honeypot)
+- WireGuard, Tor; IPSec and OpenVPN are honeypots, not working VPNs
+
+> **Maturity varies a lot.** Most protocols are `Experimental` — LLM-authored and not
+> human-reviewed. Run `netget --mcp` and call `list_protocols` for each protocol's current
+> state, or read its `metadata()`. A few specifics worth knowing: FTP has no data connection,
+> so `LIST`/`RETR`/`STOR` cannot complete against a real client; OpenVPN does real packet
+> encryption but has no TLS handshake and derives the same key for every peer, so it is
+> `Incomplete` and hidden from the LLM.
 
 **IoT & Hardware**
 - Bluetooth Low Energy (15+ GATT services: keyboard, mouse, heart rate, etc.)
