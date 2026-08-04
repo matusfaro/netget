@@ -40,7 +40,10 @@ pub fn create_llm_client(args: &Args, lock_enabled: bool) -> Result<OllamaClient
         }
         Ok(OllamaClient::new_openai(openai_url, api_key))
     } else {
-        let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+        let ollama_url = args
+            .ollama_url
+            .as_deref()
+            .unwrap_or("http://localhost:11434");
         Ok(OllamaClient::new_with_options(ollama_url, lock_enabled))
     }
 }
@@ -76,6 +79,13 @@ pub async fn run() -> Result<()> {
     // Handle --mcp-stdio flag (run as MCP STDIO server)
     #[cfg(feature = "mcp-stdio")]
     if args.mcp_stdio {
+        // Both MCP branches return before the init_logging() call further down,
+        // so without this no tracing subscriber is ever installed and every
+        // debug!/info!/error! in the process is silently discarded — half of the
+        // dual logging this codebase is built around, gone in the mode most
+        // often run. `false` selects the stderr writer, which is what MCP needs:
+        // stdout carries JSON-RPC and must not be written to.
+        setup::init_logging(&args, false)?;
         let settings = Settings::load();
         return crate::mcp_stdio::run_mcp_stdio(&args, settings).await;
     }
@@ -90,6 +100,9 @@ pub async fn run() -> Result<()> {
     // Handle --mcp-http flag (run as MCP HTTP/SSE server)
     #[cfg(feature = "mcp-http")]
     if let Some(port) = args.mcp_http {
+        // See the mcp-stdio branch above: this path also returns before the
+        // init_logging() call further down.
+        setup::init_logging(&args, false)?;
         let settings = Settings::load();
         return crate::mcp_stdio::run_mcp_http(&args, settings, port).await;
     }
@@ -127,10 +140,13 @@ pub async fn run() -> Result<()> {
         // Interactive TUI mode - no prompt and terminal is available
         debug!("Entering interactive TUI mode");
         debug!("Creating AppState...");
-        let base_url = args.openai_url.clone()
+        let base_url = args
+            .openai_url
+            .clone()
             .or_else(|| args.ollama_url.clone())
             .unwrap_or_else(|| "http://localhost:11434".to_string());
-        let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+        let state =
+            AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
         debug!("AppState created");
 
         // Configure rate limiter from CLI args
@@ -214,8 +230,12 @@ pub async fn run() -> Result<()> {
 
                 if use_hybrid {
                     debug!("Creating HybridLLMManager...");
-                    let embedded_path = args.embedded_model.as_ref().map(|p| p.display().to_string());
-                    let hybrid = crate::llm::HybridLLMManager::new(args.use_embedded, embedded_path).await?;
+                    let embedded_path = args
+                        .embedded_model
+                        .as_ref()
+                        .map(|p| p.display().to_string());
+                    let hybrid =
+                        crate::llm::HybridLLMManager::new(args.use_embedded, embedded_path).await?;
 
                     if let Some(client) = hybrid.ollama_client().await {
                         debug!("Using Ollama backend from HybridLLMManager");
@@ -224,7 +244,10 @@ pub async fn run() -> Result<()> {
                             .with_app_state(state.clone())
                     } else {
                         debug!("Using embedded backend - creating fallback OllamaClient");
-                        let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+                        let ollama_url = args
+                            .ollama_url
+                            .as_deref()
+                            .unwrap_or("http://localhost:11434");
                         OllamaClient::new_with_options(ollama_url, lock_enabled)
                             .with_mock_config_file(args.mock_config_file.clone())
                             .with_app_state(state.clone())
@@ -296,10 +319,13 @@ async fn run_simple_protocol(protocol: &str, args: &Args) -> Result<()> {
     let settings = Settings::load();
 
     // Create application state
-    let base_url = args.openai_url.clone()
+    let base_url = args
+        .openai_url
+        .clone()
         .or_else(|| args.ollama_url.clone())
         .unwrap_or_else(|| "http://localhost:11434".to_string());
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+    let state =
+        AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
 
     // Configure rate limiter from CLI args
     let rate_limiter_config = args.build_rate_limiter_config();
@@ -310,11 +336,13 @@ async fn run_simple_protocol(protocol: &str, args: &Args) -> Result<()> {
 
     // Select or validate model
     let selected_model = if args.openai_url.is_some() {
-        configured_model.ok_or_else(|| anyhow::anyhow!(
-            "--model is required when using --openai-url"
-        ))?
+        configured_model
+            .ok_or_else(|| anyhow::anyhow!("--model is required when using --openai-url"))?
     } else {
-        let ollama_url_for_model = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+        let ollama_url_for_model = args
+            .ollama_url
+            .as_deref()
+            .unwrap_or("http://localhost:11434");
         crate::llm::select_or_validate_model(configured_model, false, ollama_url_for_model)
             .await?
             .ok_or_else(|| anyhow::anyhow!("No model available"))?
@@ -353,7 +381,10 @@ async fn run_simple_protocol(protocol: &str, args: &Args) -> Result<()> {
         if let Some(server) = state.get_server(server_id).await {
             println!("[SIMPLE] Listening on port {}", server.port);
         }
-        println!("[SIMPLE] Server #{} is running. Press Ctrl+C to stop.", server_id.as_u32());
+        println!(
+            "[SIMPLE] Server #{} is running. Press Ctrl+C to stop.",
+            server_id.as_u32()
+        );
     }
 
     // Set up Ctrl+C handler
