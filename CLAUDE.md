@@ -1,660 +1,365 @@
-# NetGet - LLM-Controlled Network Protocol Server & Client
+# NetGet — LLM-Controlled Network Protocol Server & Client
 
-Rust CLI where an LLM (via Ollama) controls 40+ network protocols as both servers and clients. The LLM constructs raw protocol datagrams or high-level responses.
+Rust CLI where an LLM (Ollama or any OpenAI-compatible endpoint) drives ~116 network
+protocols as servers and ~90 as clients. NetGet owns the network stack; the LLM decides
+what to say on the wire, either by reasoning per-request or via deterministic handlers.
 
-## Protocols (50+)
+Three ways to run it: interactive TUI (default), headless (`--mcp` / `--mcp-http`, see
+`src/mcp_stdio/CLAUDE.md`), and non-interactive one-shot (`src/cli/non_interactive.rs`).
 
-**Beta**: TCP, HTTP, UDP, DataLink, DNS, DoT, DoH, DHCP, NTP, SNMP, SSH, OpenAI
-**Experimental**: IRC, Telnet, SMTP, IMAP, mDNS, LDAP, MySQL, PostgreSQL, Redis, Cassandra, DynamoDB, Elasticsearch, IPP, WebDAV, NFS, SMB, HTTP Proxy, SOCKS5, STUN, TURN, Tor Directory, gRPC, MCP, JSON-RPC, XML-RPC, VNC, etcd, Kafka, MQTT, Git, S3, SQS, BOOTP
-**Stable**: WireGuard (full VPN), Tor Relay
-**Incomplete**: OpenVPN (honeypot), IPSec (honeypot), BGP
+## Protocol inventory — always query, never trust a list
 
-See `/docs` command for protocol details and metadata. Use `METADATA_EXAMPLES.md` for classification reference.
-
-See protocol-specific docs: `src/server/<protocol>/CLAUDE.md`, `tests/server/<protocol>/CLAUDE.md`
-
-## Architecture Principles
-
-**Decentralization (CRITICAL)**: Never create centralized protocol registries. Use trait-based patterns where each protocol implements traits independently. Exceptions: Protocol registry (`protocol/registry.rs`), `Cargo.toml` features, `server_startup.rs` match statements.
-
-**Modules**: `cli/` (TUI), `server/<protocol>/` (server implementations), `client/<protocol>/` (client implementations), `protocol/` (registry, metadata), `state/` (app state), `llm/` (Ollama), `events/` (coordination), `llm/actions/` (action system)
-
-**Connection**: TcpStream split with `tokio::io::split()`. Never hold Mutex during I/O (deadlock risk).
-
-**Data Queueing**: Per-connection state machine (Idle → Processing → Accumulating) prevents concurrent LLM calls.
-
-**Actions**: Protocols implement `ProtocolActions` trait with async (user-triggered) and sync (network event) actions. Files: `src/server/<protocol>/actions.rs`
-
-**Actions/Events Design (CRITICAL)**: NEVER use bytes (`Vec<u8>`) or base64-encoded strings in action parameters or event data. LLMs cannot effectively parse or construct binary data. Instead, use structured data (JSON objects, fields, enums) that you construct into bytes. Example: Instead of `{"data": "SGVsbG8="}`, use `{"method": "GET", "path": "/", "headers": {...}}`.
-
-**Protocol Memory (CRITICAL)**: Protocols should NOT use any storage layer. The LLM returns all needed items via actions, scripts, or static responses. Example: MySQL protocol does not have actual data stored - the LLM answers all SQL queries via `answer` action, script mode, or static response. Do not implement databases, file systems, or persistent storage within protocols. Let the LLM's memory and instruction handle all state and data.
-
-## Protocol Documentation (CRITICAL)
-
-Each protocol has TWO CLAUDE.md files:
-- `src/server/<protocol>/CLAUDE.md` - Implementation (library choices, architecture, LLM integration, limitations)
-- `tests/server/<protocol>/CLAUDE.md` - Testing (strategy, LLM call budget, runtime, known issues)
-
-**Always read both before modifying a protocol.**
-
-## Testing Philosophy
-
-Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients. **Status**: Unit 12/12 passing, E2E infrastructure fixed. See `TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`.
-
-### Test Purpose (CRITICAL - NO EXCEPTIONS)
-
-**⚠️  Tests define expected behavior. When tests fail, FIX THE IMPLEMENTATION, not the test.**
-
-The purpose of tests is to validate that implementations work correctly:
-- ❌ **WRONG**: "The test passes, but the implementation doesn't work" - This means you are NOT done
-- ✅ **CORRECT**: "The implementation passes all tests" - This is the completion criteria
-- When a test fails, investigate whether the implementation is correct
-- Do NOT claim completion just because the test code is correct
-- The implementation must be fixed to make the test pass
-- Only modify tests if they have incorrect expectations or are testing the wrong behavior
-
-**Completion criteria**: Implementation passes all tests, not just tests being written correctly.
-
-### Test Location Policy (CRITICAL - NO EXCEPTIONS)
-
-**⚠️  NEVER add tests to `src/` files. ALL tests MUST be in the `tests/` directory.**
-
-This is a strict project policy. Unlike standard Rust convention:
-- ❌ **FORBIDDEN**: `#[cfg(test)] mod tests { ... }` in `src/` files
-- ✅ **REQUIRED**: All test files in `tests/` directory (e.g., `tests/module_name_test.rs`)
-- Tests in `tests/` access public APIs only via `use netget::`
-- If you need to test internal implementation, make those items public or refactor
-
-**Rationale**: Consistent test organization, clear separation of code and tests, easier to find all tests in one location.
-
-### Organization & Feature Gating (CRITICAL)
-
-- All tests in `tests/` directory, never in `src/`
-- Protocol E2E tests: `tests/server/<protocol>/e2e_test.rs`
-- **ALL tests MUST be feature-gated**: `#[cfg(all(test, feature = "<protocol>"))]` in mod.rs
-- Unit tests (no Ollama): `tests/base_stack_test.rs` (registry parsing), etc.
-- E2E tests (Ollama required): Real clients, use `{AVAILABLE_PORT}` placeholder
-
-### Running Tests
+Protocol lists in docs go stale within weeks. Get ground truth from the registry:
 
 ```bash
-# Unit tests
-./cargo-isolated.sh test --lib
+# Every registered server protocol + maturity + implementation note
+grep -n "register(Arc::new" src/protocol/server_registry.rs
+grep -rn "DevelopmentState::" src/server/<protocol>/actions.rs   # that protocol's own claim
 
-# Protocol-specific E2E (ALWAYS use --features, never run all tests)
-./cargo-isolated.sh test --no-default-features --features <protocol> --test server::<protocol>::e2e_test
+# At runtime (authoritative — reflects compiled-in features)
+netget --mcp   # then call list_protocols / get_protocol_docs
 ```
 
-**CRITICAL - Parallel Execution (NO EXCEPTIONS):**
-- **ALWAYS** use `--test-threads=100` for ALL test runs
-- **NEVER** run tests with `--test-threads=1` (single-threaded)
-- **NEVER** omit `--test-threads` (defaults to single-threaded in some environments)
-- Single-threaded execution is 10-20x slower and wastes developer time
-- If tests hang or freeze, fix the hanging tests, DO NOT run single-threaded
+Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/protocol/metadata.rs`):
+
+- **Stable** — real spec compliance, good LLM prompting, scripting support. Currently: `tor_relay`, `wireguard`, `openvpn`.
+- **Beta** — human-reviewed, works against real clients (13 protocols).
+- **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (~97).
+- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Currently: `bgp`, `usb_smartcard`, `nfc`.
+
+Treat `Experimental` as "compiles and has a test", not "works". Several are explicit
+placeholders with zero actions and zero events (`amqp`, `mqtt`, and five
+`bluetooth_ble_*` profile wrappers) — check `get_sync_actions()` before assuming behavior.
+
+Per-protocol docs: `src/server/<protocol>/CLAUDE.md` and `tests/server/<protocol>/CLAUDE.md`.
+**Read both before modifying a protocol.** Note that these files are frequently more
+aspirational than the code — verify claims against the source.
+
+## Architecture
+
+**Modules**: `cli/` (TUI, startup, args) · `server/<protocol>/` · `client/<protocol>/` ·
+`protocol/` (registries, metadata, spawn context) · `state/` (app state) · `llm/` (backends,
+prompting, actions) · `events/` (coordination) · `scripting/` (deterministic handlers) ·
+`mcp_stdio/` (MCP server) · `easy/` (simplified layer for small models).
+
+**Decentralization (CRITICAL)**: no centralized per-protocol logic. Each protocol implements
+traits independently. The only legitimate central touchpoints are:
+
+- `protocol/server_registry.rs` / `protocol/client_registry.rs` — one feature-gated `register()` line
+- `Cargo.toml` — feature flag
+- `src/server/mod.rs` / `src/client/mod.rs` — feature-gated `pub mod`
+- `tests/server/mod.rs` / `tests/client/mod.rs` — feature-gated `pub mod` (see the footgun below)
+
+`cli/server_startup.rs` and `cli/client_startup.rs` are **fully generic** — they look the
+protocol up in the registry and call `spawn(ctx)` / `connect(ctx)`. There is no
+per-protocol match statement. Do not add one.
+
+**`ProtocolConnectionInfo`** (`state/server.rs`) is a generic `serde_json::Value` wrapper,
+not an enum. Adding a protocol does not require touching it.
+
+**Connection I/O**: split `TcpStream` with `tokio::io::split()` (never clone). Never hold a
+`Mutex`/`RwLock` guard across an `.await` that performs I/O or an LLM call — acquire, copy
+out what you need, drop the guard in an inner scope, then await.
+
+**Per-connection state machine** (Idle → Processing → Accumulating) prevents concurrent LLM
+calls on one connection and queues data arriving mid-call. Note: `state/machine.rs` defines a
+generic `StateMachine<S>` that **nothing uses** — every protocol hand-rolls its own copy.
+Copy the TCP implementation (`src/server/tcp/mod.rs`) as the reference.
+
+**Actions**: protocols implement `ProtocolActions` (`src/llm/actions/protocol_trait.rs`) with
+async actions (user-triggered) and sync actions (network-event-triggered), in
+`src/server/<protocol>/actions.rs`. Clients implement `Client` (`llm/actions/client_trait.rs`).
+
+**Handling modes**, in priority order — a request takes the first that matches:
+1. **Script handler** — inline Python/JS, runs in-process, no LLM call
+2. **Static handler** — fixed actions, no LLM call
+3. **LLM** — one model round-trip per event
+
+Scripts and static handlers are the right default for deterministic behavior (echo, canned
+responses, routing). Reserve the LLM for responses that genuinely require reasoning.
+
+### Action & event design rules (CRITICAL)
+
+**Never put raw bytes or base64 in action parameters or event data.** Models cannot reliably
+produce or parse them. Use structured fields: `{"method": "GET", "path": "/", "headers": {…}}`,
+not `{"data": "SGVsbG8="}`.
+
+**If an action does document a hex or encoded field, the executor must actually decode it.**
+There is a live bug of exactly this shape: `send_tcp_data` is documented as accepting
+"text or hex-encoded binary" in three places (`src/server/tcp/actions.rs:355,359`, the
+protocol docs served to the LLM, and `src/server/tcp/CLAUDE.md`), but
+`execute_send_tcp_data` does `data.as_bytes()` (`src/server/tcp/actions.rs:242,276`) — hex is
+never decoded, so a model following the documentation puts literal ASCII on the wire.
+Inbound data *is* hex-encoded when non-printable, so the round-trip is asymmetric. When you
+touch a protocol, verify its documented encoding matches its executor.
+
+**Protocols must not implement storage** — no databases, filesystems, or persistence inside a
+protocol. The LLM supplies all data via actions, scripts, static responses, or server memory.
+MySQL has no tables; the model answers every query.
+
+### Privilege model
+
+`ProtocolMetadataV2::privilege_requirement` declares `None` / `PrivilegedPort(u16)` /
+`RawSockets` / `Root`, checked against `SystemCapabilities` (`src/privilege.rs`) in
+`server_startup.rs` before spawn. Two known defects to avoid propagating:
+
+- The gate is `requires_privileges && !system_caps.can_bind_privileged_ports`
+  (`src/cli/server_startup.rs:348`) — it ANDs in the *port-binding* capability even for
+  `RawSockets`/`Root` requirements, so a process holding `CAP_NET_BIND_SERVICE` but not
+  `CAP_NET_RAW` skips the raw-socket check and fails later with an opaque `EPERM`.
+- Only ~23 of 116 protocols declare a requirement at all. Protocols defaulting to privileged
+  ports (`smtp` 25, `ldap` 389, `imap` 143, `pop3` 110, `ipp` 631, `syslog` 514) and `igmp`
+  declare nothing and get no preflight check.
+
+Declare `privilege_requirement` on any new protocol that needs raw sockets, a TUN device, or
+a port below 1024. Raw-socket/pcap protocols (`arp`, `datalink`, `icmp`, `isis`) start via
+fire-and-forget `spawn_blocking` and report `Running` even when the capture handle fails to
+open — if you touch them, propagate that failure into `ServerStatus::Error`.
+
+`get_dependencies()` / `ProtocolDependency` (`src/protocol/dependencies.rs`) is fully built
+but **no protocol implements it and nothing calls it**. Either adopt it or delete it; don't
+assume it's providing preflight checks.
+
+## Adding a server protocol
+
+1. `src/server/<protocol>/mod.rs` — server loop, dual logging, connection tracking, register
+   the accept-loop `JoinHandle` via `AppState::register_server_task()` (required for
+   `stop_server` to actually release the socket)
+2. `src/server/<protocol>/actions.rs` — implement `ProtocolActions`: `metadata()` (state +
+   privilege), `get_startup_parameters()`, async/sync actions, `get_event_types()`,
+   `execute_action()`
+3. `src/server/<protocol>/CLAUDE.md` — implementation notes, library choice, limitations
+4. `src/server/mod.rs` — feature-gated `pub mod`
+5. `src/protocol/server_registry.rs` — feature-gated `register()`
+6. `Cargo.toml` — feature flag, optional deps, add to `all-protocols`; add to `dist` /
+   `dist-darwin` / `dist-windows` only if it links no system library unavailable on that target
+7. `tests/server/<protocol>/e2e_test.rs` — mocked E2E (see Testing)
+8. `tests/server/<protocol>/CLAUDE.md` — strategy, mock expectations, LLM call budget
+9. **`tests/server/mod.rs` — add `pub mod <protocol>;`** (see footgun below)
+
+Client protocols follow the same shape against `client_registry.rs`, `src/client/mod.rs`,
+`tests/client/mod.rs`, and the `Client` trait. Consult `CLIENT_PROTOCOL_FEASIBILITY.md` first.
+Note clients are less finished than servers: their `JoinHandle` is never stored, so
+`remove_client()` does not stop the network loop.
+
+**Startup parameters**: every key a caller may pass must be declared in
+`get_startup_parameters()`. `StartupParams` **panics** on an undeclared key or a wrong-typed
+value (`src/protocol/spawn_context.rs:42` and all `get_*` accessors). Because the JSON comes
+from the LLM or an MCP client, this is remotely triggerable: over MCP the panic kills the
+per-request task before it can reply, so the caller hangs forever with no error and the
+server is left stuck in `Starting`. Until those accessors return `Result`, be exhaustive in
+`get_startup_parameters()`.
+
+## Testing
+
+Black-box and prompt-driven: the LLM (or a mock of it) interprets an instruction, and tests
+validate the result with real protocol clients.
+
+**Tests define expected behavior. When a test fails, fix the implementation, not the test.**
+"The test passes but the implementation doesn't work" means you are not done. Only change a
+test when its expectation is genuinely wrong.
+
+### Test location policy (CRITICAL)
+
+**All tests live in `tests/`. Never add `#[cfg(test)] mod tests` to `src/`.** Tests reach
+internals via `use netget::` public APIs; make items public or refactor if needed.
+
+This policy is currently violated by 8 files in `src/` containing ~23 unit tests
+(`llm/config`, `llm/reference_parser`, `llm/hybrid_manager`, `protocol/event_logger`,
+`protocol/log_template`, `system_stats`, `server/proxy/cert_cache`). Migrate them if you are
+working nearby; do not add more.
+
+### The mod.rs footgun (CRITICAL)
+
+`tests/server.rs` and `tests/client.rs` only compile submodules explicitly declared in
+`tests/server/mod.rs` / `tests/client/mod.rs`. **A test directory that exists on disk but is
+not declared is silently never compiled and never run — no error, no warning.**
+
+This is currently the single largest hole in the suite: **15 of 116 server test dirs and 61 of
+83 client test dirs are orphaned**, including complete, correctly-gated E2E suites for `arp`,
+`whois`, `bitcoin`, `igmp`, `tls`, `sip`, and every USB protocol. Verify with:
 
 ```bash
-# CORRECT: Parallel execution with cargo-isolated.sh
+comm -23 <(ls -d tests/server/*/ | sed 's|tests/server/||;s|/||' | sort) \
+         <(grep -oE "pub mod [a-z0-9_]+" tests/server/mod.rs | awk '{print $2}' | sort)
+```
+
+### Mocks
+
+Default mode needs no Ollama. `tests/helpers/mock_ollama.rs` runs a real in-process axum
+server implementing `/api/chat`, `/api/generate`, `/api/tags`. Configure with `.with_mock()`
+and **always finish with `server.verify_mocks().await?`** — without it the test asserts
+nothing about LLM interaction. An unmatched request returns HTTP 500 with a clear error, and
+`verify_calls()` dumps full call history on mismatch.
+
+UDP-style protocols (DNS, STUN, NTP, DHCP, BOOTP, TFTP…) **must** use
+`.respond_with_actions_from_event()` to echo the client's random transaction/query ID back.
+Static mocks with hardcoded IDs cause client timeouts. See `tests/server/dns/CLAUDE.md`.
+
+```rust
+.on_event("dns_query")
+.and_event_data_contains("domain", "example.com")
+.respond_with_actions_from_event(|e| serde_json::json!([{
+    "type": "send_dns_a_response",
+    "query_id": e["query_id"].as_u64().unwrap_or(0),   // ← must be dynamic
+    "domain": "example.com", "ip": "93.184.216.34"
+}]))
+.expect_calls(1)
+```
+
+Keep each suite under ~10 LLM calls: reuse servers, bundle scenarios, prefer script mode.
+Bind to localhost only (127.0.0.1 / ::1); never contact external endpoints.
+
+### Running tests
+
+```bash
+# Single protocol (fast: 10-30s)
+./cargo-isolated.sh test --no-default-features --features tcp \
+    --test server::tcp::e2e_test -- --test-threads=100
+
+# Full sweep (slow, 3GB+ RAM)
 ./cargo-isolated.sh test --all-features --no-fail-fast -- --test-threads=100
-
-# WRONG: Single-threaded (NEVER DO THIS)
-./cargo-isolated.sh test --all-features --no-fail-fast -- --test-threads=1
-
-# WRONG: No thread specification (NEVER DO THIS)
-./cargo-isolated.sh test --all-features --no-fail-fast
 ```
 
-### E2E Test Efficiency (CRITICAL)
+**Always pass `--test-threads=100`.** Single-threaded runs are 10-20x slower; if a test hangs,
+fix the hang rather than serializing the suite.
 
-**Minimize LLM calls** (< 10 per suite): Reuse servers, use scripting mode, bundle scenarios. **Setup**: `./cargo-isolated.sh build --release --all-features`. **Privacy**: Localhost only (127.0.0.1/::1), no external endpoints.
+`./test-e2e.sh <protocol>` runs mocked; `./test-e2e.sh --use-ollama <protocol>` uses a real model.
 
-### Dynamic Mock Pattern for UDP Protocols (CRITICAL)
+### CI reality
 
-**All UDP protocol tests MUST use dynamic mocks** for transaction ID matching. Static mocks fail because clients generate random transaction IDs.
+`.github/workflows/release.yml` is the only workflow. It triggers on `v*` tags and manual
+dispatch, and runs `cargo build` for the `dist*` feature sets across 6 targets.
+**No CI job ever runs `cargo test`.** There is no PR gate and no lint job — the entire
+1,038-test suite is developer-run only. Run the relevant tests yourself before claiming done.
 
-**Pattern**: Use `.respond_with_actions_from_event()` to extract event data at runtime:
+## Building
 
-```rust
-let config = NetGetConfig::new("...")
-    .with_mock(|mock| {
-        mock
-            .on_event("dns_query")  // or stun_binding_request, ntp_request, etc.
-            .and_event_data_contains("domain", "example.com")
-            .respond_with_actions_from_event(|event_data| {
-                // Extract dynamic values from event
-                let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+`./cargo-isolated.sh` wraps cargo with sccache, disabled incremental, stable path remapping,
+and automatic logging. Despite the name it now uses the **shared `target/` directory** —
+concurrent runs from different sessions contend on the same lock, so serialize your builds.
 
-                serde_json::json!([{
-                    "type": "send_dns_a_response",
-                    "query_id": query_id,  // ← DYNAMIC! Matches request
-                    "domain": "example.com",
-                    "ip": "93.184.216.34"
-                }])
-            })
-            .expect_calls(1)
-            .and()
-    });
-
-server.verify_mocks().await?;  // ← CRITICAL: Always verify!
-```
-
-**Why required**: UDP protocols (DNS, STUN, NTP, DHCP, etc.) require correlation IDs to match request→response. Static mocks with hardcoded IDs cause client timeouts.
-
-**See**: `tests/server/dns/CLAUDE.md` for comprehensive examples and transaction ID matching evidence.
-
-## Multi-Instance Concurrency
-
-**Ollama Lock**: `--ollama-lock` serializes LLM API (default in tests). **Safe**: Multiple E2E tests/instances with lock. **Unsafe**: Same `target/` (use `cargo-isolated.sh`), concurrent git (use worktrees).
-
-### Build Isolation (CRITICAL)
-
-**Use `./cargo-isolated.sh`** (session-specific `target-claude/claude-{PPID}`). **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`). **Speed**: Fast with `--no-default-features --features <protocol>` (10-30s), slow with `--all-features` (1-2min). **Cleanup**: `rm -rf target-claude/`.
-
-### Build Performance & Feature Flags (CRITICAL)
-
-**ALWAYS use minimal features unless you explicitly need all protocols.** Default to feature-specific builds:
+Logs land in `./tmp/netget-<command>-<PPID>.log`; the path is printed on each run.
 
 ```bash
-# FAST: Single protocol testing (10-30s)
-./cargo-isolated.sh test --no-default-features --features tcp --test server::tcp::e2e_test
+./cargo-isolated.sh --print-last                     # whole log
+./cargo-isolated.sh --print-last | grep "error\[E"   # all compile errors at once
+./cargo-isolated.sh --print-last | grep -B2 -A5 "^error:"
+./cargo-isolated.sh --print-last | grep -A5 "FAILED"
+```
 
-# FAST: Multiple related protocols (20-40s)
+**Fix every error in one pass.** Builds cost 10s-2min; rebuilding after each individual fix
+wastes hours. Build once, extract the full error list from the log, fix all of it, rebuild once.
+
+Use minimal features. `--all-features` compiles 50+ protocols and their dependency trees
+(1-2 min, 3GB+ RAM); `--no-default-features --features <protocol>` takes 10-30s. Reach for
+`--all-features` only for release validation.
+
+Kill stuck builds with `./cargo-isolated-kill.sh`, never `pkill cargo`.
+
+### Features unavailable in Claude Code for Web
+
+Detect with `./am_i_claude_code_for_web.sh` or `[ "$CLAUDE_CODE_REMOTE" = "true" ]`.
+These need system libraries absent there — derive the current list from `Cargo.toml`
+rather than a hardcoded copy:
+
+| Group | Needs | Features |
+|---|---|---|
+| Bluetooth LE | `libdbus-1-dev` | all `bluetooth-ble*` (18) |
+| USB | `libusb-1.0-dev` | `usb`, `usb-keyboard`, `usb-mouse`, `usb-serial`, `usb-msc`, `usb-fido2`, `usb-smartcard` |
+| NFC | `pcsclite` | `nfc`, `nfc-client` |
+| Protobuf | `protoc` | `etcd`, `grpc`, `kubernetes`, `zookeeper` |
+| Packet capture | `libpcap` | `datalink`, `arp`, `isis` |
+| Other | — | `kafka` (untested), `smb-client` (`libsmbclient`) |
+
+```bash
+# Safe pattern
 ./cargo-isolated.sh build --no-default-features --features tcp,http,dns
-
-# SLOW: Only use when absolutely needed (1-2min+, uses 3GB+ RAM)
-./cargo-isolated.sh build --all-features
 ```
 
-**Why this matters**:
-- `--all-features` compiles 50+ protocols with all their dependencies (2GB+ code)
-- sccache helps but cannot eliminate compilation of all crates
-- Multiple concurrent cargo processes without feature limiting = resource thrashing
-- Default: Use protocol-specific features for development, `--all-features` only for CI/release builds
-
-**Before building**, ask: "Do I need ALL protocols for this task?" If not, use `--no-default-features --features <protocol>`.
-
-**Common workflows**:
-- Testing a protocol: `--no-default-features --features <protocol>`
-- Modifying shared code: `--no-default-features --features tcp,http,dns` (representative subset)
-- Full validation: `--all-features` (use sparingly)
-
-### Claude Code for Web Environment (CRITICAL)
-
-**Detection**: Claude Code for Web can be detected via environment variables:
-- Primary: `CLAUDE_CODE_REMOTE=true` (most reliable)
-- Secondary: `CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE=cloud_default`
-- Tertiary: `CLAUDE_CODE_ENTRYPOINT=remote` or `IS_SANDBOX=yes`
-
-**System Dependency Restrictions**: The following features require system libraries NOT available in Claude Code for Web:
-
-**Bluetooth Features (18 features)** - Require `libdbus-1-dev`:
-- ALL `bluetooth-ble*` features are unavailable: `bluetooth-ble`, `bluetooth-ble-client`, `bluetooth-ble-keyboard`, `bluetooth-ble-mouse`, `bluetooth-ble-beacon`, `bluetooth-ble-remote`, `bluetooth-ble-battery`, `bluetooth-ble-heart-rate`, `bluetooth-ble-thermometer`, `bluetooth-ble-environmental`, `bluetooth-ble-proximity`, `bluetooth-ble-gamepad`, `bluetooth-ble-presenter`, `bluetooth-ble-file-transfer`, `bluetooth-ble-data-stream`, `bluetooth-ble-cycling`, `bluetooth-ble-running`, `bluetooth-ble-weight-scale`
-- Error: `libdbus-sys` fails with "system library 'dbus-1' required"
-
-**USB Features (7 features)** - Require `libusb-1.0-dev`:
-- `usb`, `usb-keyboard`, `usb-mouse`, `usb-serial`, `usb-msc`, `usb-fido2`, `usb-smartcard`
-- Error: `libusb1-sys` fails with "failed to create vendored source directory"
-
-**NFC Features (2 features)** - Require `pcsclite`:
-- `nfc`, `nfc-client`
-- Error: `pcsc` crate requires PC/SC system library
-
-**Protocol Buffer Features (4 features)** - Require `protoc` compiler:
-- `etcd`, `grpc`, `kubernetes`, `zookeeper`
-- Error: build scripts fail with "Could not find `protoc`"
-
-**Kafka Feature** - May require system dependencies (untested)
-
-**Total Unavailable**: ~32 features out of ~100 features
-
-**Available Features in Claude Code for Web** (~75 features):
-```bash
-# SAFE: Maximum features for web environment
-./cargo-isolated.sh build --no-default-features --features \
-tcp,socket_file,http,http2,http3,pypi,maven,udp,datalink,arp,dc,dns,dot,doh,dhcp,bootp,ntp,whois,snmp,igmp,syslog,ssh,ssh-agent,svn,irc,xmpp,telnet,smtp,mdns,mysql,ipp,postgresql,redis,rss,proxy,webdav,nfs,cassandra,smb,stun,turn,webrtc,sip,ldap,imap,pop3,nntp,mqtt,amqp,socks5,elasticsearch,dynamo,s3,sqs,npm,openai,ollama,oauth2,jsonrpc,wireguard,openvpn,ipsec,bgp,ospf,isis,rip,bitcoin,mcp,xmlrpc,tor,vnc,openapi,openid,git,mercurial,torrent-tracker,torrent-dht,torrent-peer,tls,saml-idp,saml-sp,embedded-llm
-```
-
-**Example safe builds for Claude Code for Web**:
-```bash
-# SAFE: Single protocol
-./cargo-isolated.sh build --no-default-features --features tcp
-
-# SAFE: Multiple protocols
-./cargo-isolated.sh build --no-default-features --features tcp,http,dns
-
-# UNSAFE: Will try to build bluetooth, USB, NFC, etcd, etc.
-./cargo-isolated.sh build --all-features  # DON'T USE IN WEB
-```
-
-**Detection**: Use the provided script to check your environment:
-```bash
-./am_i_claude_code_for_web.sh
-```
-
-This script checks all detection methods and provides build guidance. You can also check manually in code:
-```bash
-if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
-    echo "Running in Claude Code for Web - excluding system-dependent features"
-    ./cargo-isolated.sh build --no-default-features --features tcp,http,dns
-else
-    ./cargo-isolated.sh build --all-features
-fi
-```
-
-**For detailed analysis of system dependencies**, see `COMPILATION_ERROR_REPORT.md`.
-
-### Efficient Build & Test Iteration (CRITICAL)
-
-**Building and testing takes a long time** (10s-2min depending on features). **NEVER rebuild/retest after each individual fix.** Instead:
-
-**Automatic Logging**: `./cargo-isolated.sh` automatically logs all output to `./tmp/netget-<command>-{PPID}.log` and displays the log path. Use `./cargo-isolated.sh --print-last` to view the last log.
-
-1. **Build/test and view output**:
-```bash
-# Build and pipe to see last 50 lines (automatically logged to ./tmp/netget-build-{PPID}.log)
-./cargo-isolated.sh build --no-default-features --features tcp | tail -50
-
-# Test and pipe to see last 50 lines (automatically logged to ./tmp/netget-test-{PPID}.log)
-./cargo-isolated.sh test --no-default-features --features tcp | tail -50
-```
-
-2. **Analyze saved log for ALL errors**:
-```bash
-# View more of the log (last 100 lines)
-./cargo-isolated.sh --print-last | tail -100
-
-# Find all compilation errors
-./cargo-isolated.sh --print-last | grep "error\[E"
-
-# Get error summary (count by type)
-./cargo-isolated.sh --print-last | grep "^error\[E" | sed 's/:.*$//' | sort | uniq -c | sort -rn
-
-# Find specific error types
-./cargo-isolated.sh --print-last | grep "error\[E0425\]"  # Unresolved names
-./cargo-isolated.sh --print-last | grep "error\[E0599\]"  # Method not found
-./cargo-isolated.sh --print-last | grep "error\[E0308\]"  # Type mismatches
-./cargo-isolated.sh --print-last | grep "error\[E0277\]"  # Trait not implemented
-
-# Find warnings (can accumulate and become errors)
-./cargo-isolated.sh --print-last | grep "^warning:"
-
-# Find test failures with context
-./cargo-isolated.sh --print-last | grep -A 5 "FAILED"
-./cargo-isolated.sh --print-last | grep -B 2 -A 5 "assertion"
-
-# Find specific file errors
-./cargo-isolated.sh --print-last | grep "src/server/nfc/"
-
-# Find all unique error codes
-./cargo-isolated.sh --print-last | grep -oE "error\[E[0-9]+\]" | sort -u
-
-# Count total errors and warnings
-echo "Errors: $(./cargo-isolated.sh --print-last | grep -c '^error:')"
-echo "Warnings: $(./cargo-isolated.sh --print-last | grep -c '^warning:')"
-
-# Search for specific symbols or types
-./cargo-isolated.sh --print-last | grep "EventParams"
-./cargo-isolated.sh --print-last | grep "ndef_record"
-
-# View compilation progress (features being compiled)
-./cargo-isolated.sh --print-last | grep "Compiling"
-
-# Check if build succeeded
-./cargo-isolated.sh --print-last | tail -5 | grep -q "Finished" && echo "Build succeeded" || echo "Build failed"
-```
-
-3. **Fix ALL issues before rebuilding**:
-   - Analyze the complete log using `./cargo-isolated.sh --print-last`
-   - Identify ALL problems (compilation errors, test failures, warnings)
-   - Fix everything in a single batch
-   - Only rebuild/retest once after all fixes are applied
-
-**Anti-pattern** (wasteful):
-```bash
-# DON'T do this - rebuilds after every single fix
-./cargo-isolated.sh build | tail -50  # Error 1 found
-# Fix error 1
-./cargo-isolated.sh build | tail -50  # Error 2 found (wasted 30s)
-# Fix error 2
-./cargo-isolated.sh build | tail -50  # Error 3 found (wasted another 30s)
-# ... (wastes hours)
-```
-
-**Correct approach**:
-```bash
-# Build once and view last 50 lines (full log saved automatically)
-./cargo-isolated.sh build --no-default-features --features tcp | tail -50
-
-# Analyze ALL errors in the saved log
-./cargo-isolated.sh --print-last | grep "error\[E"  # Shows all 15 errors
-
-# Fix all 15 errors in code
-
-# Rebuild once
-./cargo-isolated.sh build --no-default-features --features tcp | tail -50
-```
-
-**Time savings**: Fixing 10 errors one-by-one = 10-20 minutes. Fixing all at once = 30 seconds + one build.
-
-**Log files**: Located in `./tmp/netget-<command>-{PPID}.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log. Old logs (>1 day) are automatically cleaned up on each run.
-
-**Multiple instances**: Each Claude instance has its own PPID, so logs are automatically isolated:
-```bash
-# Instance 1 (PPID=12345) creates: ./tmp/netget-build-12345.log
-# Instance 2 (PPID=67890) creates: ./tmp/netget-build-67890.log
-
-# Each instance reads its own log with --print-last
-./cargo-isolated.sh --print-last  # Reads the most recent log file
-
-# Or directly read specific log files
-cat ./tmp/netget-build-12345.log | grep "error\[E"
-tail -100 ./tmp/netget-test-67890.log
-```
-
-**Advanced log analysis patterns**:
-```bash
-# Combine multiple grep patterns
-./cargo-isolated.sh --print-last | grep -E "error\[E|warning:"
-
-# Extract just the error messages (without file paths)
-./cargo-isolated.sh --print-last | grep "^error:" | sed 's/^error: //'
-
-# Find errors in specific modules
-./cargo-isolated.sh --print-last | grep "error" | grep -E "server/(nfc|tcp|http)"
-
-# Show context around errors (2 lines before, 5 after)
-./cargo-isolated.sh --print-last | grep -B 2 -A 5 "^error:"
-
-# Find dependency compilation issues
-./cargo-isolated.sh --print-last | grep "error" | grep -v "src/"
-
-# View only the summary (last 20 lines usually show totals)
-./cargo-isolated.sh --print-last | tail -20
-```
-
-## Logging (CRITICAL)
-
-**Dual logging**: ALL logs to tracing macros (`debug!`, `trace!`, etc.) → `netget.log` AND `status_tx.send()` → TUI. **Levels**: ERROR (critical), WARN (non-fatal), INFO (lifecycle), DEBUG (summaries), TRACE (payloads).
-
-## UI & Technical Details
-
-**TUI**: Rolling terminal, sticky footer, Ctrl+L (log levels), Ctrl+W (web search), multi-line (Shift+Enter). **Tech**: TcpStream via `tokio::io::split()` (never clone), never hold Mutex during I/O, default model `qwen3-coder:30b`, flow: UserCommand → Parse → EventHandler → LLM → Protocol action.
-
-## Scheduled Tasks
-
-Tasks execute at intervals/delays. Three scopes: **Global** (any server, all actions), **Server** (specific server, auto-cleaned on close), **Connection** (specific connection, auto-cleaned on close).
-
-**Connection tasks** for long-lived connections (SSH, WebSocket): idle timeouts, session cleanup, rate limiting, monitoring. Short-lived (HTTP GET) use server-level instead.
-
-**Creation**: Via `open_server` action (`scheduled_tasks` array) or `schedule_task` action. Add `connection_id` for connection-scoped tasks. Parameters: `task_id`, `recurring`, `interval_secs`/`delay_secs`, `instruction`.
-
-## Protocol Planning (Before Implementation)
-
-Research: **Server library** (crate eval: compliance, maturity, LLM control), **Client library** (E2E testing), **LLM control points** (async vs sync actions), **Logging strategy**, **Example prompts** (comprehensive, basis for E2E).
-
-## Protocol Implementation Checklist (CRITICAL: ALL protocols MUST be feature gated)
-
-**IMPORTANT**: Protocols should NOT implement storage. The LLM returns all data via actions/scripts/static responses (e.g., MySQL protocol has no actual database - LLM answers all queries).
-
-**12-Step Implementation**:
-1. **protocol/registry.rs**: Register protocol implementation (feature-gated)
-2. **rolling_tui.rs**: Add welcome message (state will be Experimental by default)
-3. **src/server/<protocol>/mod.rs**: Implement server with dual logging, track connections
-4. **src/server/<protocol>/actions.rs**: Implement `ProtocolActions` trait (async/sync actions)
-5. **src/server/<protocol>/CLAUDE.md** (MANDATORY): Document implementation, libraries, LLM integration, limitations
-6. **src/server/mod.rs**: Add feature-gated module declaration
-7. **cli/server_startup.rs**: Add feature-gated match arm
-8. **state/server.rs**: Add `ProtocolConnectionInfo` variant
-9. **Cargo.toml** (MANDATORY): Add feature flag, optional deps, include in all-protocols
-10. **tests/server/<protocol>/e2e_test.rs**: Create feature-gated E2E test with MOCKS (MANDATORY)
-    - **CRITICAL**: Use `.with_mock()` builder pattern to configure mock LLM responses
-    - **CRITICAL**: Call `.verify_mocks().await?` before test ends
-    - **CRITICAL**: Define expected invocation counts with `.expect_calls(N)`
-    - Tests should pass in mock mode (no Ollama required)
-    - Real Ollama testing is optional (for validation only)
-    - Example: see `tests/server/amqp/e2e_test.rs::test_amqp_broker_with_mocks`
-11. **tests/server/<protocol>/CLAUDE.md** (MANDATORY): Document test strategy, mock expectations
-12. **tests/server/helpers.rs**: Update if needed
-
-**Validation**:
-- Compiles with feature
-- Tests pass in mock mode (default): `./test-e2e.sh <protocol>`
-- Tests pass with real Ollama: `./test-e2e.sh --use-ollama <protocol>`
-- Tests pass with cargo: `cargo test --features <protocol> --test server::<protocol>::e2e_test`
-- Tests pass with cargo + Ollama: `cargo test --features <protocol> --test server::<protocol>::e2e_test -- --use-ollama`
-- Mock expectations verified (`server.verify_mocks().await?` called)
-- Both CLAUDE.md files exist
-
-**Common Pitfalls**: Missing feature flags/gates, missing CLAUDE.md files, not using mocks, forgetting `.verify_mocks()`, forgetting dual logging, using `--all-features` for single protocol
-
-## Client Capability (NEW)
-
-NetGet now supports LLM-controlled network **clients** in addition to servers. Clients connect to remote servers and allow the LLM to control sending data, interpreting responses, and making decisions based on server behavior.
-
-### Client Architecture
-
-**Client Trait System**: Mirrors server patterns with `Client` trait in `llm/actions/client_trait.rs`
-- `connect()`: Establish connection and spawn LLM integration loop
-- `get_async_actions()`: User-triggered actions (modify instruction, reconnect)
-- `get_sync_actions()`: Response actions (send_data, disconnect, wait_for_more)
-- `execute_action()`: Execute actions returning `ClientActionResult`
-
-**Client State Management** (`state/client.rs`):
-- `ClientInstance`: Client metadata (id, remote_addr, protocol, instruction, memory, status)
-- `ClientId`: Unique identifier (u32)
-- `ClientStatus`: Connecting, Connected, Disconnected, Error
-- `ClientConnectionState`: Per-client LLM state (Idle/Processing/Accumulating)
-
-**Client Registry** (`protocol/client_registry.rs`):
-- `CLIENT_REGISTRY`: LazyLock registry of all client protocols
-- Feature-gated registration (same as servers)
-- Protocol lookup by name for `open_client` action
-
-**EventType Constants**: Each client defines static `LazyLock<EventType>` constants:
-- Example: `TCP_CLIENT_CONNECTED_EVENT`, `TCP_CLIENT_DATA_RECEIVED_EVENT`
-- Used with `Event::new(&CONSTANT, json!(...))`
-- Avoids string-based event type IDs
-
-**LLM Integration**: Clients use `call_llm_for_client()` helper:
-- Builds simple prompt with client instruction and available actions
-- Uses `ConversationHandler` for action generation
-- Returns `ClientLlmResult` with actions and optional memory updates
-- No web search or complex tool calling (simplified for clients)
-
-**State Machine**: Same as servers (Idle → Processing → Accumulating)
-- Prevents concurrent LLM calls on same client
-- Queues data during Processing state
-
-### Client vs Server Differences
-
-| Aspect | Server | Client |
-|--------|--------|--------|
-| **Initiates Connection** | No (listens) | Yes (connects) |
-| **LLM Integration** | `call_llm()` with scripting support | `call_llm_for_client()` simplified |
-| **Actions Result** | `ActionResult` enum | `ClientActionResult` enum |
-| **State Location** | `state/server.rs` | `state/client.rs` |
-| **Registry** | `PROTOCOL_REGISTRY` | `CLIENT_REGISTRY` |
-| **Startup** | `cli/server_startup.rs` | `cli/client_startup.rs` |
-| **TUI Display** | Left column | Middle column (3-column layout) |
-
-### Implemented Client Protocols
-
-**TCP Client** (`client/tcp/`):
-- Direct socket I/O with hex-encoded data
-- Actions: send_tcp_data (hex), disconnect, wait_for_more
-- Events: tcp_connected, tcp_data_received
-
-**HTTP Client** (`client/http/`):
-- Uses reqwest library with TLS support
-- Actions: send_http_request (method, path, headers, body)
-- Events: http_connected, http_response_received
-- Startup params: default_headers
-
-**Redis Client** (`client/redis/`):
-- Line-based RESP protocol parsing
-- Actions: execute_redis_command (command string)
-- Events: redis_connected, redis_response_received
-- Simple synchronous request-response model
-
-## Client Protocol Implementation Checklist (CRITICAL)
-
-**IMPORTANT**: Client protocols should NOT implement storage. The LLM returns all data via actions/scripts/static responses (e.g., Redis client has no cache - LLM decides when to send commands).
-
-**Before implementing a new client protocol:**
-1. **Consult `CLIENT_PROTOCOL_FEASIBILITY.md`** - Review the feasibility assessment for your protocol
-2. Check for existing Rust client libraries and complexity rating
-3. Understand LLM control points and implementation strategy
-4. Review similar protocol implementations for patterns
-
-**12-Step Client Implementation**:
-1. **protocol/client_registry.rs**: Register client protocol (feature-gated)
-2. **src/client/<protocol>/mod.rs**: Implement connection with LLM integration
-   - Define connection state machine (Idle/Processing/Accumulating)
-   - Spawn read loop that calls `call_llm_for_client()`
-   - Handle `ClientActionResult` enum (SendData, Disconnect, WaitForMore, Custom)
-   - Use dual logging (tracing macros + status_tx)
-3. **src/client/<protocol>/actions.rs**: Implement `Client` trait
-   - Define static `LazyLock<EventType>` constants for events
-   - Implement `connect()` spawning connection task
-   - Implement `get_async_actions()` (user actions)
-   - Implement `get_sync_actions()` (response actions)
-   - Implement `execute_action()` parsing action JSON
-   - Implement `get_event_types()` returning event type list
-   - Implement `protocol_name()`, `stack_name()`, `get_startup_params()`
-4. **src/client/<protocol>/CLAUDE.md** (MANDATORY): Document implementation
-   - Library choices (crates used)
-   - Architecture (connection model, state management)
-   - LLM integration (action flow, event triggers)
-   - Limitations and known issues
-5. **src/client/mod.rs**: Add feature-gated module declaration
-   - `#[cfg(feature = "<protocol>")] pub mod <protocol>;`
-6. **cli/client_startup.rs**: Add feature-gated match arm
-   - Match on protocol name, call protocol's connect method
-7. **Cargo.toml** (MANDATORY): Add feature flag
-   - `<protocol> = ["<dependencies>"]`
-   - Mark dependencies as `optional = true`
-   - Include in `all-protocols` feature
-8. **tests/client/<protocol>/e2e_test.rs**: Create feature-gated test (< 10 LLM calls)
-   - Test basic connectivity
-   - Test LLM-controlled actions
-   - Use `#[cfg(all(test, feature = "<protocol>"))]`
-9. **tests/client/<protocol>/CLAUDE.md** (MANDATORY): Document test strategy
-   - Test approach (unit vs E2E)
-   - LLM call budget and rationale
-   - Expected runtime
-   - Known issues or flaky tests
-10. **Export protocol**: Re-export from `client/<protocol>/mod.rs`
-    - `pub use actions::XyzClientProtocol;`
-    - Export only protocol struct, NOT event constants (to avoid duplicate imports)
-
-**Validation**:
-- Compiles with `--no-default-features --features <protocol>`
-- Tests pass with `--features <protocol>`
-- Both CLAUDE.md files exist
-- < 10 LLM calls in test suite
-
-**Common Pitfalls**:
-- Exporting EventType constants from mod.rs (causes E0252 duplicate name errors)
-- Missing Client trait import when calling execute_action()
-- Using string event type IDs instead of static EventType constants
-- Forgetting to call `protocol.as_ref()` when passing Arc<ClientProtocol> to trait methods
-- Missing `parameters` field in EventType construction
-- Not using dual logging (tracing + status_tx)
-
-### Example: Adding a New Client Protocol (SSH)
-
-```rust
-// 1. src/client/ssh/actions.rs
-use std::sync::LazyLock;
-
-pub static SSH_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ssh_connected", "SSH client authenticated")
-        .with_parameters(vec![...])
-});
-
-pub struct SshClientProtocol;
-
-impl Client for SshClientProtocol {
-    fn connect(&self, ctx: ConnectContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
-        Box::pin(async move {
-            crate::client::ssh::SshClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.app_state,
-                ctx.status_tx,
-                ctx.client_id,
-            ).await
-        })
-    }
-
-    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-        let action_type = action["type"].as_str()?;
-        match action_type {
-            "execute_command" => {
-                let command = action["command"].as_str()?;
-                Ok(ClientActionResult::Custom {
-                    name: "ssh_command".to_string(),
-                    data: json!({ "command": command }),
-                })
-            }
-            // ... other actions
-        }
-    }
-    // ... other trait methods
-}
-
-// 2. src/client/ssh/mod.rs
-pub mod actions;
-pub use actions::SshClientProtocol;
-
-use crate::client::ssh::actions::{SSH_CLIENT_CONNECTED_EVENT, SSH_CLIENT_DATA_RECEIVED_EVENT};
-
-impl SshClient {
-    pub async fn connect_with_llm_actions(...) -> Result<SocketAddr> {
-        // 1. Connect to SSH server
-        // 2. Authenticate
-        // 3. Call LLM with connected event
-        let event = Event::new(&SSH_CLIENT_CONNECTED_EVENT, json!({...}));
-        call_llm_for_client(..., Some(&event), ...).await?;
-        // 4. Spawn read loop with state machine
-        // 5. On data received, call LLM again
-        // 6. Execute actions from LLM response
-    }
-}
-
-// 3. protocol/client_registry.rs (add to register_protocols)
-#[cfg(feature = "ssh")]
-self.register(Arc::new(crate::client::ssh::SshClientProtocol::new()));
-
-// 4. Cargo.toml
-ssh = ["russh", "russh-keys"]
-all-protocols = [..., "ssh"]
-
-[dependencies]
-russh = { version = "0.40", optional = true }
-russh-keys = { version = "0.40", optional = true }
-```
-
-## Multi-Instance Collaboration (CRITICAL)
-
-**Errors**: PAUSE if error in unmodified code. **Shared files** (`Cargo.toml`, `protocol/registry.rs`, `server/mod.rs`, `server_startup.rs`, `state/server.rs`): NEVER overwrite, use Edit tool, add incrementally. **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`).
-
-# Git Commit (CRITICAL)
-
-Always Commit using my identity only.
-Configure git before any commit with:
-
-- git config user.name 'Matus Faro'
-- git config user.email 'matus@matus.io'
-- git config commit.gpgsign true
-- git config user.signingkey matus@matus.io
-
-All commits must be GPG‑signed by this
-key and verifiable; if not, amend and
-re‑sign before proceeding. Do not add
-co-authors or bot attributions in any
-commit message or trailers; specifically,
-never include ‘Co-Authored-By: Claude’
-or ‘🤖 Generated with Claude Code’.
-Keep messages concise, Conventional
-Commits style, and scoped to one logical
-change.
+## MCP surface
+
+`--mcp` (stdio) and `--mcp-http PORT` expose 12 tools sharing the TUI's code paths. See
+`src/mcp_stdio/CLAUDE.md`. Current gaps to keep in mind when testing a protocol through MCP:
+
+- **No client tools.** `list_protocols` lists client protocols and `get_protocol_docs`
+  instructs the caller to use `open_client`, but no MCP tool starts a client.
+- `start_server` cannot pass `interface` or `mac_address` (hardcoded `None`), so
+  interface-bound protocols (`arp`, `datalink`, `icmp`, `isis`) can't be targeted at a real
+  NIC; nor `scheduled_tasks`, `initial_memory`, or `feedback_instructions`.
+- `send_first` is accepted by `start_server_from_action` as `_send_first` and **ignored
+  entirely** — on every path, not just MCP.
+- Unknown action names in `event_handlers` are accepted at startup and silently do nothing at
+  runtime; the client gets no response and the access log records the action as if it ran.
+- `get_protocol_docs` returns the TUI LLM's documentation (`open_server`, `base_stack`), which
+  describes an API MCP callers cannot invoke.
+- No state persists across process restarts, and `stop_server`/`stop_all` skip
+  `cleanup_server_tasks()`, orphaning scheduled tasks.
+
+A long-running `netget --mcp` process keeps executing its original binary image after a
+rebuild. When behavior contradicts the source, confirm which build is actually running before
+concluding there's a bug.
+
+## Logging
+
+**Dual logging everywhere**: tracing macros (`error!`/`warn!`/`info!`/`debug!`/`trace!`) →
+`netget.log`, and `status_tx.send()` → TUI/MCP status stream. Levels: ERROR critical, WARN
+non-fatal, INFO lifecycle, DEBUG summaries, TRACE full payloads.
+
+Every status/event channel is an **unbounded** `mpsc` — there is no backpressure anywhere.
+Don't add high-frequency per-byte messages to these channels.
+
+## Scheduled tasks
+
+Three scopes: **Global** (any server), **Server** (auto-cleaned on close), **Connection**
+(auto-cleaned on close). Create via the `open_server` action's `scheduled_tasks` array or the
+`schedule_task` action; add `connection_id` for connection scope. Parameters: `task_id`,
+`recurring`, `interval_secs`/`delay_secs`, `instruction`. Use connection scope only for
+long-lived connections (SSH, WebSocket); short-lived request/response protocols should use
+server scope.
+
+## Multi-instance collaboration
+
+Assume other agents work in this repo concurrently.
+
+- **Shared files** (`Cargo.toml`, both registries, `server/mod.rs`, `client/mod.rs`, both test
+  `mod.rs` files, `state/server.rs`): use `Edit`, add incrementally, never overwrite wholesale.
+- **Pause and report** if you hit an error in code you did not modify.
+- `--ollama-lock` serializes LLM API access (default in tests). Concurrent `git` work should
+  use worktrees.
+- Never `pkill cargo`; use `./cargo-isolated-kill.sh`.
+- The user runs `netget --mcp` interactively. **Never kill netget processes.**
+
+## Known systemic issues
+
+Read before assuming a subsystem is sound:
+
+- `StartupParams` panics on malformed input, remotely reachable (above).
+- Byte-index string truncation (`&s[..N]` guarded only by `s.len() > N`) across `src/llm/`
+  panics on multi-byte UTF-8 at the cut point; the strings involved are LLM output and
+  event descriptions.
+- `call_llm_for_feedback` passes an empty action list to the validator while telling the model
+  actions are available, so `feedback_instructions` can only no-op or hard-fail
+  (`src/llm/action_helper.rs:752`).
+- `git` and `mercurial` call `generate_with_retry` directly, bypassing the rate limiter, the
+  retry/repair loop, and event-handler dispatch — script/static handlers are ignored for them.
+- On LLM failure most protocols reset to Idle and write nothing, leaving the peer to hang
+  until its own timeout.
+- Per-connection tasks are untracked, so `stop_server` does not cancel in-flight connections.
+- `AppState` is one global `RwLock` over everything — a throughput ceiling, not a deadlock.
+- ~50 of the 63 root markdown files are one-off session/status reports last touched in 2025.
+  `ARCHITECTURE.md`, `METADATA_EXAMPLES.md`, `CLIENT_PROTOCOL_FEASIBILITY.md`,
+  `LICENSE_ANALYSIS.md`, `SYSTEM_DEPENDENCIES_macOS.md`, `TERMUX_INSTALL.md`, and
+  `PROTOCOL_MIGRATION_GUIDE.md` are the durable ones. Do not add new status-report files.
+
+## Git
+
+- Never `git stash`. Always merge with `--no-ff`. Never amend, rebase, or squash shared history.
+- Combine `git add` and `git commit` in one command chain.
+- Commit as Matus Faro <matus@matus.io>, GPG-signed:
+  ```bash
+  git config user.name 'Matus Faro' && git config user.email 'matus@matus.io' && \
+  git config commit.gpgsign true && git config user.signingkey matus@matus.io
+  ```
+- Conventional Commits, one logical change per commit. No co-author or bot attribution
+  trailers of any kind.

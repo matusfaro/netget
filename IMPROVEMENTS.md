@@ -1,0 +1,280 @@
+# NetGet Improvement Backlog
+
+Living backlog of known defects and hardening work, ordered by impact. Not a session
+report — delete entries as they are fixed, add as they are found. Every entry cites a
+file:line so it can be verified independently.
+
+Findings marked **[verified]** were reproduced against a binary built from HEAD.
+Findings marked **[static]** come from code reading only.
+
+---
+
+## P0 — Correctness bugs reachable from untrusted input
+
+### 1. `StartupParams` panics on malformed input; MCP callers hang forever **[verified]**
+
+`src/protocol/spawn_context.rs:42` and every `get_*` accessor (`:63-311`) call `panic!` on an
+undeclared key, a missing required key, or a wrong-typed value. The JSON originates from the
+LLM (`open_server`) or an MCP client (`start_server`), so this is remotely triggerable.
+
+Reproduced: an MCP `tools/call` with `startup_params: {"undeclared_xyz": 1}` panics the
+per-request task, so **no JSON-RPC response is ever sent** — the caller blocks until its own
+timeout. The `ServerInstance` was already registered (`src/cli/server_startup.rs:383`) before
+params are built (`:457`), so it is left permanently in `ServerStatus::Starting`.
+
+Fix: convert `StartupParams::new` and all accessors to return `Result`; surface the error
+through `start_server_from_action`'s existing `Err` path so status becomes `Error` and MCP
+returns a tool error. Validate before `add_server`.
+
+### 2. `send_tcp_data` never decodes hex, contradicting its own documentation **[verified]**
+
+`src/server/tcp/actions.rs:242,276` do `data.as_bytes()`. The field is documented as
+"text string or hex-encoded for binary data" at `:355,359`, the docs served to the LLM show
+`{"data": "48656c6c6f"}` as a `tcp_data_received` response example, and
+`src/server/tcp/CLAUDE.md` states `"48656c6c6f"` sends `"Hello"`.
+
+Reproduced: a static handler returning `data: "48656c6c6f"` put `34 38 36 35 36 63 36 63 36 66`
+on the wire — the literal ASCII, not `48 65 6c 6c 6f`. Inbound data *is* hex-encoded when
+non-printable (`src/server/tcp/mod.rs:154,301,430,487`), so the round-trip is asymmetric: the
+model is shown hex, told to answer in hex, and its hex is sent verbatim. Any binary protocol
+built on raw TCP is silently corrupt.
+
+Fix: pick one contract and make code and docs agree. Recommended: an explicit
+`encoding: "utf8" | "hex"` field defaulting to `utf8`, since heuristic sniffing cannot
+distinguish the string `"48656c6c6f"` from the bytes it encodes. Audit the other protocols
+that hex-encode inbound but never decode outbound: `socket_file`, `tls`, `cassandra`,
+`http3`, `kafka`, `snmp`, `tor_relay`.
+
+### 3. UTF-8 boundary panics on LLM-controlled strings **[static]**
+
+The pattern `if s.len() > N { &s[..N] }` checks *byte* length and panics when the cut lands
+inside a multi-byte character. Occurrences include `src/llm/conversation.rs:604,1213,1220,1361,1409,1419,1446,1504`,
+`src/llm/action_helper.rs:153,464`, `src/llm/event_handler_executor.rs:204`,
+`src/llm/actions/summary.rs` (9 sites), `src/llm/ollama_client.rs:764,1084`,
+`src/mcp_stdio/tools.rs:783`, `src/cli/rolling_tui.rs:814`.
+
+These run on the action-summary/logging path for essentially every LLM response, and the
+strings are model output and event descriptions — any emoji, curly quote, or non-English text
+near the offset crashes the handling task. `action_helper.rs:153` uses a 27-byte window.
+
+Fix: one shared `truncate_chars(s, n)` helper using `char_indices()`, applied everywhere.
+
+### 4. Feedback loop cannot succeed **[static]**
+
+`src/llm/action_helper.rs:684-701` builds a prompt telling the model which actions are
+available, then `:752` defines `let feedback_actions: Vec<ActionDefinition> = Vec::new();`
+and passes that empty vector to both `with_native_tools` (`:761`) and
+`generate_with_tools_and_retry` (`:781`). `valid_action_names` is derived from it
+(`src/llm/conversation.rs:504-511`), so every action the model returns is rejected as unknown,
+retried twice, then `bail!`s. The whole `feedback_instructions` feature can only no-op or fail.
+
+Fix: pass the same action list used to build the prompt.
+
+---
+
+## P1 — Silent failures and lost coverage
+
+### 5. 76 test directories are never compiled **[verified]**
+
+`tests/server.rs` / `tests/client.rs` only compile modules declared in the respective
+`mod.rs`. Directories present on disk but undeclared are silently skipped — no error.
+
+Measured: **15 of 116** server dirs orphaned (`arp bitcoin igmp nfc openid sip svn tls
+usb_fido2 usb_keyboard usb_mouse usb_msc usb_serial usb_smartcard whois`) and **61 of 83**
+client dirs. These are real, feature-gated suites, not stubs.
+
+Fix: add the missing `pub mod` lines (31 client dirs are ready as-is; 30 need a `mod.rs`
+first), then add a CI check that the two sets match.
+
+### 6. No CI runs tests **[verified]**
+
+`.github/workflows/release.yml` is the only workflow; it triggers on `v*` tags and manual
+dispatch and runs `cargo build` for the `dist*` sets. `cargo test` appears nowhere. The
+1,038-test suite is developer-run only, with no PR gate and no lint job.
+
+Fix: a PR workflow running `cargo clippy` plus a representative feature subset
+(`tcp,http,dns,udp,redis`) with `--test-threads=100`, and the orphan check from item 5.
+
+### 7. Unknown action names fail silently at runtime **[verified]**
+
+A static `event_handler` naming a nonexistent action is accepted at startup and does nothing
+when the event fires: the peer gets no response, no error reaches the MCP caller, and
+`list_access_logs` records the action name as though it executed.
+
+Fix: validate handler action names against the protocol's action catalog at parse time in
+`EventHandler::parse_event_handlers` (`src/events/handler.rs:1682`), and record execution
+failures in the access log.
+
+### 8. Raw-socket protocols report `Running` when capture fails **[static]**
+
+`arp`, `datalink`, `icmp`, `isis` start their capture loop in a fire-and-forget
+`spawn_blocking`; a failure to open the pcap/raw handle never propagates, so the server shows
+`Running` while doing nothing. Same class of problem as an accept-loop panic, which also
+leaves status at `Running` with no supervision or restart.
+
+Fix: have `spawn()` await a readiness signal before returning `Ok`, and set
+`ServerStatus::Error` when the capture handle fails.
+
+### 9. Scheduled tasks leak when servers stop via MCP **[static]**
+
+`src/mcp_stdio/tools.rs:415,718` call `remove_server()` without `cleanup_server_tasks()`,
+unlike the TUI paths (`src/cli/rolling_tui.rs:2421,2466`). Orphaned server- and
+connection-scoped tasks keep firing every tick, each producing a failed LLM prompt. There is
+also no reaper under `--mcp` (`cleanup_old_servers` is only wired into the TUI loop), so
+LLM-initiated `CloseServer` leaves entries in `AppState` forever.
+
+### 10. Client lifecycle is unfinished **[static]**
+
+`ClientInstance.handle` (`src/state/client.rs:120`) is never populated — no
+`register_client_task()` exists, and every client protocol discards its read-loop
+`JoinHandle`. `remove_client()` therefore cannot stop a client's network activity. Per-connection
+server tasks are likewise untracked, so `stop_server` does not cancel in-flight connections
+(the listening socket *is* released correctly via `register_server_task`).
+
+---
+
+## P2 — LLM tooling quality
+
+### 11. `get_protocol_docs` documents the wrong API to MCP callers **[verified]**
+
+The MCP tool reuses the TUI LLM's `read_documentation` output
+(`src/llm/actions/tools.rs:2260-2272`), which opens with guidance on choosing between
+`open_server` and `open_client` and describes `base_stack` — none of which an MCP caller can
+use. It explicitly recommends `open_client`, for which no MCP tool exists.
+
+Fix: render MCP-shaped docs — `start_server` arguments, the protocol's event ids with field
+names, its action names with parameter schemas, its startup parameters, and its privilege
+requirement. This is the single highest-leverage change for making the MCP surface usable by
+a calling model without trial and error.
+
+### 12. No client control surface over MCP **[verified]**
+
+`list_protocols` advertises ~75 client protocols and the docs tell the caller to use them,
+but no MCP tool starts, lists, queries, or stops a client. The client list also carries no
+maturity or description, unlike the server list.
+
+### 13. `send_first` is silently ignored everywhere **[verified]**
+
+`start_server_from_action` takes it as `_send_first` (`src/cli/server_startup.rs:217`) and
+never uses it. TCP's banner feature is unreachable through the action API, and MCP hardcodes
+`false` anyway (`src/mcp_stdio/tools.rs:368`). Either wire it through to
+`ProtocolConnectionInfo`/spawn or delete the parameter and the documentation for it.
+
+### 14. Prompt tells the model something false about re-invocation **[static]**
+
+`ActionDefinition::is_tool()` (`src/llm/actions/mod.rs:252-262`) omits `read_documentation`,
+`list_tasks`, `execute_sql`, `list_databases`. `build_actions_section_public`
+(`src/llm/prompt.rs:139`) partitions on it, so `read_documentation` — the primary discovery
+tool — is rendered under a heading stating "you will not be invoked again", while
+`ToolAction::is_tool_action()` (`src/llm/actions/tools.rs:184-204`) does re-invoke it.
+
+Fix: single source of truth for tool classification.
+
+### 15. Unbounded prompt growth **[static]**
+
+`ConversationHandler.messages` (`src/llm/conversation.rs:53`) is never trimmed across up to
+5 tool iterations × 5 retries, and failed attempts plus their correction messages persist for
+the rest of the conversation. `ConversationState`'s 8000-char window is a separate structure
+applied only to cross-call history, never to what is actually sent. Server `memory` is an
+unbounded `String` injected into every prompt (`src/llm/actions/executor.rs:174-194`). The
+full base-stack catalog is re-sent on every call once any server is running
+(`src/llm/prompt.rs:706-712`).
+
+### 16. No circuit breaker on the LLM backend **[static]**
+
+`is_available()` exists (`src/llm/ollama_client.rs:1315`) but nothing calls it. With Ollama
+down, every request independently waits the full 120s timeout, and with `max_concurrent: 1`
+(`src/llm/rate_limiter.rs:48`) N queued connections serialize into N×120s. On failure most
+protocols reset to Idle and write nothing (`src/server/tcp/mod.rs:580-589`), so peers hang
+until their own timeout rather than getting a protocol-appropriate error.
+
+### 17. `git` and `mercurial` bypass the LLM infrastructure **[static]**
+
+Both call `llm_client.generate_with_retry` directly (`src/server/git/mod.rs:335-362`) instead
+of `call_llm`. They therefore skip the rate limiter, the unknown/malformed-action repair
+loops, native tool schemas, and `try_execute_event_handler` — meaning script and static
+handlers are silently ignored for these two protocols and every request hits the LLM.
+
+---
+
+## P3 — Consistency and hygiene
+
+### 18. Privilege gate ANDs in the wrong capability **[verified]**
+
+`src/cli/server_startup.rs:348` gates on `!system_caps.can_bind_privileged_ports` even when
+the requirement is `RawSockets` or `Root`. A process with `CAP_NET_BIND_SERVICE` but not
+`CAP_NET_RAW` skips the check and fails later with an opaque `EPERM`. Use
+`PrivilegeRequirement::is_met_by()` alone — it already handles each variant.
+
+Also: only ~23 of 116 protocols declare a requirement. `smtp`, `ldap`, `imap`, `pop3`, `ipp`,
+`syslog` (privileged default ports) and `igmp` declare none. And the actionable remediation
+text ("run as root", "use a port ≥1024") lives only in `start_server_by_id:82-100`, which MCP
+never calls — the MCP path returns the bare description (`:348-355`).
+
+### 19. ARP and ICMP are absent from every shipped binary **[verified]**
+
+`dist` excludes `datalink`, `arp`, `isis` (libpcap) and `icmp`. `dist-darwin` adds back
+`datalink` and `isis` — because macOS ships libpcap — but **not `arp`**, which needs the same
+library, nor `icmp`, which needs no system library at all (`pnet` + `socket2` only). Both
+look like oversights. Users of the released binary get `Unknown protocol: arp`, with no
+indication the protocol exists but was compiled out.
+
+Fix: add `arp` to `dist-darwin` and `icmp` to `dist`; make the registry distinguish "no such
+protocol" from "compiled out of this build" in its error.
+
+### 20. `ProtocolDependency` is fully dead code **[static]**
+
+`src/protocol/dependencies.rs` plus `get_dependencies()`/`is_protocol_available()`/
+`get_excluded_protocols()` (`src/protocol/server_registry.rs:754-806`) are well-designed and
+produce good install hints, but no protocol overrides `get_dependencies()` and nothing calls
+the checks before `spawn()`. Adopt or delete.
+
+### 21. Nine protocols expose zero actions **[static]**
+
+`amqp`, `mqtt`, `doh`, `dot`, and five `bluetooth_ble_*` profiles return empty vectors from
+`get_sync_actions()`/`get_event_types()` — `amqp` and `mqtt` say `// Placeholder` in source.
+`bluetooth_ble_proximity` ships `get_startup_examples()` referencing an event and action it
+does not define. They are registered and offered to the LLM as if functional.
+
+Fix: mark them `Incomplete` so `is_available_to_llm()` hides them, or implement them.
+
+### 22. Documentation drift **[verified]**
+
+- 27 of 116 server protocols have no E2E test at all, including Beta-rated `tcp`, `http`,
+  `dns`, `dhcp`, `ssh`, `snmp`, `udp`, `ntp`.
+- `openvpn` declares `DevelopmentState::Stable` and describes itself as "production-ready",
+  but its key material is HKDF-derived from hardcoded constants
+  (`src/server/openvpn/mod.rs:441-461`) — every peer gets identical keys — and its control
+  channel handlers are no-op stubs. Data-plane encryption is real; the handshake is not.
+  It should not be `Stable`.
+- `ipsec` documents LLM-driven accept/reject decisions but never calls `call_llm`.
+- `isis` fabricates a MAC on non-Linux (`src/server/isis/mod.rs:638-663`); the OSPF and IGMP
+  E2E tests run over plain UDP and never exercise the raw-socket path they claim to test.
+- 8 files in `src/` contain ~23 unit tests, violating the project's own "no tests in `src/`"
+  policy.
+- ~50 of 63 root markdown files are one-off session reports last touched in 2025; two files
+  the old CLAUDE.md referenced (`TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`)
+  do not exist.
+
+### 23. Architectural ceilings **[static]**
+
+- `AppState` is a single `RwLock` over servers, clients, connections, tasks, LLM config, and
+  access logs (`src/state/app_state.rs:261`). No deadlock (no `.await` under the guard), but
+  every per-connection stat update from every server serializes through one writer.
+- All 27 `mpsc` channels are unbounded; there is no backpressure anywhere. A stalled consumer
+  grows memory without bound.
+- `state/machine.rs` defines a generic `StateMachine<S>` that nothing instantiates; every
+  protocol hand-rolls Idle/Processing/Accumulating, so a fix in one does not propagate.
+- `all-protocols` pulls in `rdkafka` to gate the Kafka *client*, though the Kafka server
+  feature comment says it was removed for causing malloc crashes (`Cargo.toml:239,514`).
+
+---
+
+## Suggested order
+
+1. Items 1-4 — remotely-reachable panics and the broken feedback loop.
+2. Items 5-6 — turn the dormant test suite on and gate it in CI; everything else is easier
+   to land safely afterwards.
+3. Items 11-12 — make the MCP surface self-describing and give it client parity.
+4. Items 7-10, 18-19 — silent failures and the privilege/packaging gaps.
+5. Items 13-17, 20-23 — LLM tooling quality and consistency.
