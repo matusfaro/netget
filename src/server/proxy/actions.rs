@@ -1,16 +1,14 @@
 //! HTTP Proxy protocol actions implementation
 //!
 //! This module provides actions for:
-//! - Configuring request/response filters
-//! - Setting certificate mode (MITM vs pass-through)
 //! - Handling intercepted requests (pass/block/modify)
 //! - Handling intercepted responses (pass/block/modify)
 //! - Handling HTTPS connections in pass-through mode (allow/block)
+//!
+//! Certificate mode and filter modes are configured through startup parameters,
+//! not actions: the configuration is read once when the server spawns.
 
-use super::filter::{
-    CertificateMode, FilterMode, HttpsConnectionAction, HttpsConnectionFilter, RequestAction,
-    RequestFilter, ResponseAction, ResponseFilter,
-};
+use super::filter::{HttpsConnectionAction, RequestAction, ResponseAction};
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
@@ -38,23 +36,16 @@ impl Protocol for ProxyProtocol {
                 ParameterDefinition {
                     name: "certificate_mode".to_string(),
                     type_hint: "string".to_string(),
-                    description: "Certificate mode: 'generate' (MITM with generated cert), 'none' (pass-through, no MITM)".to_string(),
+                    description: "Certificate mode: 'generate' (MITM - decrypt HTTPS using a CA generated fresh at startup, requires clients to trust it) or 'none' (pass-through, no decryption, allow/block only). Default: 'none'. 'load_from_file' is not implemented and is rejected at startup.".to_string(),
                     required: false,
                     example: json!("generate"),
                 },
                 ParameterDefinition {
-                    name: "cert_path".to_string(),
+                    name: "ca_export_path".to_string(),
                     type_hint: "string".to_string(),
-                    description: "Path to certificate file (only if certificate_mode is 'load_from_file')".to_string(),
+                    description: "Write the generated MITM CA certificate (public certificate only, never the private key) to this path. Clients must be configured to trust this certificate or HTTPS interception will fail with an unknown-issuer error. The CA is regenerated on every server start, so a previously exported file stops working once the server restarts.".to_string(),
                     required: false,
-                    example: json!("/path/to/cert.pem"),
-                },
-                ParameterDefinition {
-                    name: "key_path".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Path to private key file (only if certificate_mode is 'load_from_file')".to_string(),
-                    required: false,
-                    example: json!("/path/to/key.pem"),
+                    example: json!("./netget-ca.crt"),
                 },
                 ParameterDefinition {
                     name: "request_filter_mode".to_string(),
@@ -80,15 +71,21 @@ impl Protocol for ProxyProtocol {
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            // Configuration actions (async - can be called anytime)
-            configure_certificate_action(),
-            configure_request_filters_action(),
-            configure_response_filters_action(),
-            configure_https_connection_filters_action(),
-            set_filter_mode_action(),
-            export_ca_certificate_action(),
-        ]
+        // Deliberately empty. Six configuration actions used to be advertised here
+        // (configure_certificate, configure_request_filters,
+        // configure_response_filters, configure_https_connection_filters,
+        // set_filter_mode, export_ca_certificate). Every one of them only
+        // serialised its arguments into ActionResult::Output, which nothing ever
+        // read back: the filter config is snapshotted at spawn time and cloned per
+        // connection, and no code path called set_proxy_filter_config afterwards.
+        // So they reported success while changing nothing, and worse, an Output
+        // emitted during a request event was mis-parsed as a RequestAction and
+        // aborted the decision for that request.
+        //
+        // Certificate mode, the three filter modes and the CA export path are all
+        // configured through startup parameters instead (see
+        // get_startup_parameters), which do take effect.
+        Vec::new()
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -122,10 +119,10 @@ impl Protocol for ProxyProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual HTTP/1.1 with rcgen v0.13")
-            .llm_control("Request/response filtering, HTTPS allow/block")
-            .e2e_testing("curl / HTTP clients")
-            .notes("MITM cert gen works, TLS interception pending")
+            .implementation("Manual HTTP/1.1 with rcgen v0.14 + rustls")
+            .llm_control("Request pass/block/modify, response pass/block/modify (MITM only), HTTPS allow/block")
+            .e2e_testing("curl --proxy / HTTP clients")
+            .notes("HTTP/1.1 only; MITM CA is generated per run and clients must trust it; certificate_mode 'load_from_file' unimplemented; responses on plain HTTP are forwarded without LLM consultation")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -159,14 +156,14 @@ impl Protocol for ProxyProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "return {type='handle_request_pass'}"
+                        "code": "return [{\"type\": \"handle_request_pass\"}]"
                     }
                 }, {
                     "event_pattern": "proxy_https_connect",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "return {type='handle_https_connection_allow'}"
+                        "code": "return [{\"type\": \"handle_https_connection_allow\"}]"
                     }
                 }]
             }),
@@ -225,16 +222,6 @@ impl Server for ProxyProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            // Configuration actions
-            "configure_certificate" => self.execute_configure_certificate(action),
-            "configure_request_filters" => self.execute_configure_request_filters(action),
-            "configure_response_filters" => self.execute_configure_response_filters(action),
-            "configure_https_connection_filters" => {
-                self.execute_configure_https_connection_filters(action)
-            }
-            "set_filter_mode" => self.execute_set_filter_mode(action),
-            "export_ca_certificate" => self.execute_export_ca_certificate(action),
-
             // Request handling
             "handle_request_pass" => self.execute_handle_request_pass(action),
             "handle_request_block" => self.execute_handle_request_block(action),
@@ -255,155 +242,6 @@ impl Server for ProxyProtocol {
 }
 
 impl ProxyProtocol {
-    // ========================================================================
-    // Configuration Actions
-    // ========================================================================
-
-    /// Configure certificate mode
-    fn execute_configure_certificate(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let mode = action
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .context("Missing 'mode' field")?;
-
-        let cert_mode = match mode {
-            "generate" => CertificateMode::Generate,
-            "none" => CertificateMode::None,
-            "load_from_file" => {
-                let cert_path = action
-                    .get("cert_path")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'cert_path' for load_from_file mode")?;
-                let key_path = action
-                    .get("key_path")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'key_path' for load_from_file mode")?;
-
-                CertificateMode::LoadFromFile {
-                    cert_path: cert_path.into(),
-                    key_path: key_path.into(),
-                }
-            }
-            _ => return Err(anyhow::anyhow!("Invalid certificate mode: {}", mode)),
-        };
-
-        // Return configuration as JSON
-        let config = json!({
-            "certificate_mode": cert_mode
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&config).context("Failed to serialize certificate config")?,
-        ))
-    }
-
-    /// Configure request filters
-    fn execute_configure_request_filters(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let filters: Vec<RequestFilter> = action
-            .get("filters")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-
-        let config = json!({
-            "request_filters": filters
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&config).context("Failed to serialize request filters")?,
-        ))
-    }
-
-    /// Configure response filters
-    fn execute_configure_response_filters(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let filters: Vec<ResponseFilter> = action
-            .get("filters")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-
-        let config = json!({
-            "response_filters": filters
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&config).context("Failed to serialize response filters")?,
-        ))
-    }
-
-    /// Configure HTTPS connection filters (pass-through mode)
-    fn execute_configure_https_connection_filters(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let filters: Vec<HttpsConnectionFilter> = action
-            .get("filters")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-
-        let config = json!({
-            "https_connection_filters": filters
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&config).context("Failed to serialize HTTPS connection filters")?,
-        ))
-    }
-
-    /// Set filter mode
-    fn execute_set_filter_mode(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let request_mode = action
-            .get("request_filter_mode")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or(FilterMode::All);
-
-        let response_mode = action
-            .get("response_filter_mode")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or(FilterMode::All);
-
-        let https_connection_mode = action
-            .get("https_connection_filter_mode")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or(FilterMode::All);
-
-        let config = json!({
-            "request_filter_mode": request_mode,
-            "response_filter_mode": response_mode,
-            "https_connection_filter_mode": https_connection_mode
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&config).context("Failed to serialize filter modes")?,
-        ))
-    }
-
-    /// Export CA certificate to file
-    fn execute_export_ca_certificate(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let output_path = action
-            .get("output_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("netget-ca.crt");
-
-        let format = action
-            .get("format")
-            .and_then(|v| v.as_str())
-            .unwrap_or("pem");
-
-        // Note: The actual export functionality will be handled in the server mod
-        // This action just returns the parameters for the server to process
-        let config = json!({
-            "export_ca": true,
-            "output_path": output_path,
-            "format": format
-        });
-
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&config).context("Failed to serialize export config")?,
-        ))
-    }
-
     // ========================================================================
     // Request Handling Actions
     // ========================================================================
@@ -574,202 +412,6 @@ impl ProxyProtocol {
 // ============================================================================
 // Action Definitions
 // ============================================================================
-
-// Configuration Actions
-
-fn configure_certificate_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "configure_certificate".to_string(),
-        description: "Configure certificate mode for proxy (generate, load from file, or none for pass-through)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Certificate mode: 'generate', 'load_from_file', or 'none'".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "cert_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to certificate file (required if mode is 'load_from_file')".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "key_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to private key file (required if mode is 'load_from_file')".to_string(),
-                required: false,
-            },
-        ],
-        example: json!({
-            "type": "configure_certificate",
-            "mode": "generate"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Proxy cert mode={mode}")
-                .with_debug("Proxy configure_certificate: mode={mode}"),
-        ),
-    }
-}
-
-fn configure_request_filters_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "configure_request_filters".to_string(),
-        description: "Set up filters to determine which requests to intercept and send to LLM".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "filters".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of request filter objects with optional regex patterns for host, path, method, headers, body".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "configure_request_filters",
-            "filters": [
-                {
-                    "host_regex": "^api\\.example\\.com$",
-                    "path_regex": "^/api/.*",
-                    "method_regex": "^(POST|PUT)$"
-                }
-            ]
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Proxy request filters configured")
-                .with_debug("Proxy configure_request_filters: {filters_len} filters"),
-        ),
-    }
-}
-
-fn configure_response_filters_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "configure_response_filters".to_string(),
-        description: "Set up filters to determine which responses to intercept and send to LLM".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "filters".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of response filter objects with optional regex patterns for status, headers, body, request_host, request_path".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "configure_response_filters",
-            "filters": [
-                {
-                    "status_regex": "^(4|5)\\d{2}$",
-                    "request_host_regex": "^api\\.example\\.com$"
-                }
-            ]
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Proxy response filters configured")
-                .with_debug("Proxy configure_response_filters: {filters_len} filters"),
-        ),
-    }
-}
-
-fn configure_https_connection_filters_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "configure_https_connection_filters".to_string(),
-        description: "Set up filters to determine which HTTPS connections (pass-through mode) to intercept and send to LLM. Filters can match on destination host, port, SNI, and client address.".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "filters".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of HTTPS connection filter objects with optional regex patterns for host, port, sni, client_addr".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "configure_https_connection_filters",
-            "filters": [
-                {
-                    "host_regex": "^.*\\.example\\.com$",
-                    "port_regex": "^443$",
-                    "sni_regex": "^secure\\.example\\.com$"
-                }
-            ]
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Proxy HTTPS filters configured")
-                .with_debug("Proxy configure_https_connection_filters: {filters_len} filters"),
-        ),
-    }
-}
-
-fn set_filter_mode_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "set_filter_mode".to_string(),
-        description: "Set filter mode: 'all' (intercept everything), 'match_only' (only if filters match), 'none' (pass everything through)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "request_filter_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Mode for request filtering: 'all', 'match_only', or 'none'".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "response_filter_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Mode for response filtering: 'all', 'match_only', or 'none'".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "https_connection_filter_mode".to_string(),
-                type_hint: "string".to_string(),
-                description: "Mode for HTTPS connection filtering (pass-through mode): 'all', 'match_only', or 'none'".to_string(),
-                required: false,
-            },
-        ],
-        example: json!({
-            "type": "set_filter_mode",
-            "request_filter_mode": "match_only",
-            "response_filter_mode": "all",
-            "https_connection_filter_mode": "match_only"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Proxy filter modes set")
-                .with_debug("Proxy set_filter_mode: req={request_filter_mode}, resp={response_filter_mode}, https={https_connection_filter_mode}"),
-        ),
-    }
-}
-
-fn export_ca_certificate_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "export_ca_certificate".to_string(),
-        description: "Export the CA certificate to a file for user installation (MITM mode only). Users must install this certificate in their system/browser trust store to avoid security warnings.".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "output_path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path where the CA certificate should be saved (default: netget-ca.crt)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "format".to_string(),
-                type_hint: "string".to_string(),
-                description: "Certificate format: 'pem' or 'der' (default: pem)".to_string(),
-                required: false,
-            },
-        ],
-        example: json!({
-            "type": "export_ca_certificate",
-            "output_path": "./netget-ca.crt",
-            "format": "pem"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Proxy CA cert exported to {output_path}")
-                .with_debug("Proxy export_ca_certificate: path={output_path}, format={format}"),
-        ),
-    }
-}
 
 // Request Handling Actions
 
@@ -1043,63 +685,48 @@ fn handle_https_connection_block_action() -> ActionDefinition {
 
 /// HTTP request event - triggered when proxy receives HTTP request
 pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("proxy_http_request", "HTTP request intercepted by proxy", json!({"type": "placeholder", "event_id": "proxy_http_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTP method (GET, POST, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "url".to_string(),
-                type_hint: "string".to_string(),
-                description: "Full request URL".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "host".to_string(),
-                type_hint: "string".to_string(),
-                description: "Host header value".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request path".to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![
-            ActionDefinition {
-                name: "handle_request_pass".to_string(),
-                description: "Pass HTTP request through to destination".to_string(),
-                parameters: vec![],
-                example: json!({"type": "handle_request_pass"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Proxy pass request")
-                        .with_debug("Proxy handle_request_pass"),
-                ),
-            },
-            ActionDefinition {
-                name: "handle_request_block".to_string(),
-                description: "Block HTTP request and return error to client".to_string(),
-                parameters: vec![],
-                example: json!({"type": "handle_request_block"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Proxy block request")
-                        .with_debug("Proxy handle_request_block"),
-                ),
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("Proxy {client_ip} {method} {host}")
-                .with_debug("HTTP proxy {method} to {host} from {client_ip}:{client_port}")
-                .with_trace("Proxy: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "proxy_http_request",
+        "HTTP request intercepted by proxy",
+        json!({"type": "placeholder", "event_id": "proxy_http_request"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (GET, POST, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Full request URL".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "host".to_string(),
+            type_hint: "string".to_string(),
+            description: "Host header value".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request path".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        handle_request_pass_action(),
+        handle_request_block_action(),
+        handle_request_modify_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Proxy {client_ip} {method} {host}")
+            .with_debug("HTTP proxy {method} to {host} from {client_ip}:{client_port}")
+            .with_trace("Proxy: {json_pretty(.)}"),
+    )
 });
 
 /// HTTP response event - triggered when proxy receives HTTP response from upstream server
@@ -1132,77 +759,9 @@ pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![
-            ActionDefinition {
-                name: "handle_response_pass".to_string(),
-                description: "Pass HTTP response through to client unchanged".to_string(),
-                parameters: vec![],
-                example: json!({"type": "handle_response_pass"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Proxy pass response")
-                        .with_debug("Proxy handle_response_pass"),
-                ),
-            },
-            ActionDefinition {
-                name: "handle_response_block".to_string(),
-                description: "Block HTTP response and return error to client".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "status".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "HTTP status code for blocked response".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "body".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Body text for blocked response".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({"type": "handle_response_block", "status": 403, "body": "Blocked"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Proxy block response (HTTP {status})")
-                        .with_debug("Proxy handle_response_block: status={status}"),
-                ),
-            },
-            ActionDefinition {
-                name: "handle_response_modify".to_string(),
-                description: "Modify HTTP response before sending to client".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "status".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "New HTTP status code (optional)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "headers".to_string(),
-                        type_hint: "object".to_string(),
-                        description: "Headers to add or modify".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "remove_headers".to_string(),
-                        type_hint: "array".to_string(),
-                        description: "Header names to remove".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "new_body".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Replacement body content".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({"type": "handle_response_modify", "status": 200, "headers": {"X-Modified": "true"}}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Proxy modify response")
-                        .with_debug("Proxy handle_response_modify: status={status}"),
-                ),
-            },
+            handle_response_pass_action(),
+            handle_response_block_action(),
+            handle_response_modify_action(),
         ])
         .with_log_template(
             LogTemplate::new()
@@ -1240,28 +799,8 @@ pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![
-        ActionDefinition {
-            name: "handle_https_connection_allow".to_string(),
-            description: "Allow HTTPS connection to proceed".to_string(),
-            parameters: vec![],
-            example: json!({"type": "handle_https_connection_allow"}),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> Proxy allow HTTPS")
-                    .with_debug("Proxy handle_https_connection_allow"),
-            ),
-        },
-        ActionDefinition {
-            name: "handle_https_connection_block".to_string(),
-            description: "Block HTTPS connection".to_string(),
-            parameters: vec![],
-            example: json!({"type": "handle_https_connection_block"}),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> Proxy block HTTPS")
-                    .with_debug("Proxy handle_https_connection_block"),
-            ),
-        },
+        handle_https_connection_allow_action(),
+        handle_https_connection_block_action(),
     ])
     .with_log_template(
         LogTemplate::new()

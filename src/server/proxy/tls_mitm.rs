@@ -69,16 +69,13 @@ pub async fn perform_mitm(
 
     trace!("Sent 200 Connection Established to client");
 
-    // Step 2: Generate or retrieve leaf certificate for this domain
-    let (leaf_cert, leaf_key) = cert_cache
+    // Step 2: Generate or retrieve leaf certificate (and its matching key) for this domain
+    let (cert_chain, private_key) = cert_cache
         .get_or_generate(dest_host)
         .await
         .context("Failed to generate leaf certificate")?;
 
     debug!("Generated/retrieved certificate for domain '{}'", dest_host);
-
-    // Step 3: Create TLS server config with the leaf certificate
-    let (cert_chain, private_key) = CertificateCache::to_rustls_cert(&leaf_cert, &leaf_key)?;
 
     // Install crypto provider (ring) if not already installed
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -111,11 +108,8 @@ pub async fn perform_mitm(
     debug!("Connected to upstream server {}", dest_addr);
 
     // Step 6: Create TLS client config for upstream connection
-    let root_store = rustls::RootCertStore::from_iter(
-        webpki_roots::TLS_SERVER_ROOTS
-            .iter()
-            .cloned()
-    );
+    let root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
     let client_config = ClientConfig::builder()
         .with_root_certificates(root_store)
@@ -124,15 +118,18 @@ pub async fn perform_mitm(
     let tls_connector = TlsConnector::from(Arc::new(client_config));
 
     // Step 7: Perform TLS handshake with upstream server
-    let server_name = ServerName::try_from(dest_host.to_string())
-        .context("Invalid server name for TLS")?;
+    let server_name =
+        ServerName::try_from(dest_host.to_string()).context("Invalid server name for TLS")?;
 
     let mut upstream_tls_stream = tls_connector
         .connect(server_name, upstream_tcp)
         .await
         .context("TLS handshake with upstream server failed")?;
 
-    info!("TLS handshake with upstream server completed for {}", dest_host);
+    info!(
+        "TLS handshake with upstream server completed for {}",
+        dest_host
+    );
     let _ = status_tx.send(format!(
         "[INFO] Upstream TLS handshake complete for {}",
         dest_host
@@ -166,9 +163,11 @@ pub async fn perform_mitm(
     let request_data = &request_buffer[..request_len];
     let request_str = String::from_utf8_lossy(request_data);
 
-    trace!("Received HTTP request over TLS ({} bytes):\n{}", request_len,
+    trace!(
+        "Received HTTP request over TLS ({} bytes):\n{}",
+        request_len,
         if request_str.len() > 500 {
-            format!("{}...", &request_str[..500])
+            format!("{}...", super::truncate_str(&request_str, 500))
         } else {
             request_str.to_string()
         }
@@ -198,7 +197,9 @@ pub async fn perform_mitm(
             }
             if line.is_empty() {
                 // End of headers
-                body_start = request_str[..request_str.find("\r\n\r\n").unwrap_or(request_str.len())].len() + 4;
+                body_start =
+                    request_str[..request_str.find("\r\n\r\n").unwrap_or(request_str.len())].len()
+                        + 4;
                 break;
             }
             if let Some(colon_pos) = line.find(':') {
@@ -267,13 +268,25 @@ pub async fn perform_mitm(
                 info!("Blocked MITM request with status {}", status);
                 return Ok(());
             }
-            RequestAction::Modify { .. } => {
-                // TODO: Implement request modification
-                warn!("Request modification not yet implemented for MITM, passing through");
+            ref modify_action @ RequestAction::Modify { .. } => {
+                // Reuse the same modification routine as the plaintext HTTP path so
+                // headers/path/query_params/body behave identically over TLS.
+                let modified = crate::server::proxy::ProxyServer::apply_request_modifications(
+                    request_data,
+                    modify_action,
+                )
+                .unwrap_or_else(|e| {
+                    error!("Failed to apply MITM request modifications: {}", e);
+                    let _ = status_tx.send(format!("✗ MITM modification error: {}", e));
+                    request_data.to_vec()
+                });
+
                 upstream_tls_stream
-                    .write_all(request_data)
+                    .write_all(&modified)
                     .await
-                    .context("Failed to forward request to upstream")?;
+                    .context("Failed to forward modified request to upstream")?;
+
+                trace!("Forwarded modified request to upstream server");
             }
         }
 
@@ -307,7 +320,10 @@ pub async fn perform_mitm(
                     continue; // Skip status line
                 }
                 if line.is_empty() {
-                    response_body_start = response_str[..response_str.find("\r\n\r\n").unwrap_or(response_str.len())].len() + 4;
+                    response_body_start = response_str
+                        [..response_str.find("\r\n\r\n").unwrap_or(response_str.len())]
+                        .len()
+                        + 4;
                     break;
                 }
                 if let Some(colon_pos) = line.find(':') {
@@ -362,7 +378,7 @@ pub async fn perform_mitm(
                     headers: add_headers,
                     remove_headers,
                     new_body,
-                    body_replacements: _,
+                    body_replacements,
                 }) => {
                     info!("LLM decision: Modify response");
                     // Apply modifications
@@ -392,13 +408,38 @@ pub async fn perform_mitm(
                         }
                     }
 
-                    // Body
-                    let final_body = new_body.unwrap_or_else(|| {
-                        String::from_utf8_lossy(response_body).to_string()
-                    });
+                    // Body: full replacement first, then regex replacements over
+                    // whatever body results. body_replacements was previously
+                    // parsed and then dropped, so a documented redaction silently
+                    // did nothing.
+                    let mut final_body = new_body
+                        .unwrap_or_else(|| String::from_utf8_lossy(response_body).to_string());
+
+                    if let Some(replacements) = body_replacements {
+                        for replacement in replacements {
+                            match regex::Regex::new(&replacement.pattern) {
+                                Ok(re) => {
+                                    final_body = re
+                                        .replace_all(&final_body, replacement.replacement.as_str())
+                                        .to_string();
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Invalid body_replacements pattern {:?}: {}",
+                                        replacement.pattern, e
+                                    );
+                                    let _ = status_tx.send(format!(
+                                        "✗ Invalid response body_replacements pattern {:?}: {}",
+                                        replacement.pattern, e
+                                    ));
+                                }
+                            }
+                        }
+                    }
 
                     // Update Content-Length
-                    modified_response.push_str(&format!("Content-Length: {}\r\n\r\n", final_body.len()));
+                    modified_response
+                        .push_str(&format!("Content-Length: {}\r\n\r\n", final_body.len()));
                     modified_response.push_str(&final_body);
 
                     Some(modified_response.into_bytes())
@@ -413,7 +454,10 @@ pub async fn perform_mitm(
         };
 
         // Send response to client (modified or original)
-        let final_response = response_modified.as_ref().map(|v| v.as_slice()).unwrap_or(response_data);
+        let final_response = response_modified
+            .as_ref()
+            .map(|v| v.as_slice())
+            .unwrap_or(response_data);
 
         client_tls_stream
             .write_all(final_response)
@@ -438,16 +482,22 @@ pub async fn perform_mitm(
 
         debug!(
             "[ACCESS] {} MITM {}:{} -> {} bytes ({} up, {} down) in {:?}",
-            peer_addr, dest_host, dest_port,
-            up_bytes + down_bytes, up_bytes, down_bytes, duration
+            peer_addr,
+            dest_host,
+            dest_port,
+            up_bytes + down_bytes,
+            up_bytes,
+            down_bytes,
+            duration
         );
 
         let _ = status_tx.send(format!(
             "[DEBUG] [ACCESS] {} MITM {}:{} -> {} bytes total",
-            peer_addr, dest_host, dest_port,
+            peer_addr,
+            dest_host,
+            dest_port,
             up_bytes + down_bytes
         ));
-
     } else {
         warn!("Invalid HTTP request in MITM mode: {}", first_line);
         return Err(anyhow::anyhow!("Invalid HTTP request"));
@@ -496,8 +546,8 @@ async fn consult_llm_for_request(
     for result in execution_result.protocol_results {
         if let ActionResult::Output(bytes) = result {
             // Deserialize the RequestAction
-            let action: RequestAction = serde_json::from_slice(&bytes)
-                .context("Failed to deserialize RequestAction")?;
+            let action: RequestAction =
+                serde_json::from_slice(&bytes).context("Failed to deserialize RequestAction")?;
             return Ok(action);
         }
     }
@@ -525,7 +575,11 @@ async fn consult_llm_for_response(
 
     // Create HTTP response event
     let body_preview = if response_body.len() > 200 {
-        format!("{}... ({} bytes total)", String::from_utf8_lossy(&response_body[..200]), response_body.len())
+        format!(
+            "{}... ({} bytes total)",
+            String::from_utf8_lossy(&response_body[..200]),
+            response_body.len()
+        )
     } else {
         String::from_utf8_lossy(response_body).to_string()
     };
@@ -556,8 +610,8 @@ async fn consult_llm_for_response(
     for result in execution_result.protocol_results {
         if let ActionResult::Output(bytes) = result {
             // Deserialize the ResponseAction
-            let action: ResponseAction = serde_json::from_slice(&bytes)
-                .context("Failed to deserialize ResponseAction")?;
+            let action: ResponseAction =
+                serde_json::from_slice(&bytes).context("Failed to deserialize ResponseAction")?;
             return Ok(action);
         }
     }

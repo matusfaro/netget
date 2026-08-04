@@ -950,6 +950,16 @@ impl ProxyServer {
 
         info!("Forwarding to {}:{}", dest_host, dest_port);
 
+        // Rewrite the request-target from proxy absolute-form to origin-form.
+        //
+        // A client talking to a proxy sends "GET http://host/path HTTP/1.1"
+        // (RFC 9112 3.2.2 absolute-form). Origin servers expect origin-form
+        // ("GET /path HTTP/1.1") -- RFC 9112 3.2.1 requires a proxy to convert
+        // before forwarding. Forwarding verbatim made every plain-HTTP request
+        // through this proxy fail: python's http.server answers 404 because it
+        // treats the whole absolute URI as a filename.
+        let forwarded = Self::to_origin_form(request_data);
+
         // Connect to destination
         let dest_addr = format!("{}:{}", dest_host, dest_port);
         let mut dest_stream = tokio::net::TcpStream::connect(&dest_addr)
@@ -957,12 +967,8 @@ impl ProxyServer {
             .context(format!("Failed to connect to {}", dest_addr))?;
 
         // Send request to destination
-        dest_stream.write_all(request_data).await?;
-        trace!(
-            "Sent {} bytes to upstream {}",
-            request_data.len(),
-            dest_addr
-        );
+        dest_stream.write_all(&forwarded).await?;
+        trace!("Sent {} bytes to upstream {}", forwarded.len(), dest_addr);
 
         // Read response from destination
         let mut response_buffer = Vec::new();
@@ -1173,6 +1179,60 @@ impl ProxyServer {
         Ok(HttpsConnectionAction::Allow)
     }
 
+    /// Convert a proxy-style request (absolute-form request-target, plus
+    /// proxy-only hop-by-hop headers) into what an origin server expects.
+    ///
+    /// Only the request line and the `Proxy-Connection` header are touched; the
+    /// rest of the message, including the body, is passed through byte-for-byte.
+    fn to_origin_form(request_data: &[u8]) -> Vec<u8> {
+        // Split headers from body without decoding the body.
+        let sep = b"\r\n\r\n";
+        let headers_end = request_data
+            .windows(sep.len())
+            .position(|w| w == sep)
+            .map(|p| p + sep.len())
+            .unwrap_or(request_data.len());
+
+        let (head, body) = request_data.split_at(headers_end);
+        let Ok(head_str) = std::str::from_utf8(head) else {
+            return request_data.to_vec(); // Not text: leave untouched
+        };
+
+        let mut out = String::with_capacity(head_str.len());
+        for (i, line) in head_str.split("\r\n").enumerate() {
+            if i == 0 {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    let target = parts[1];
+                    let origin_form = strip_absolute_form(target);
+                    out.push_str(&format!("{} {} {}", parts[0], origin_form, parts[2]));
+                } else {
+                    out.push_str(line);
+                }
+            } else if line
+                .split_once(':')
+                .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("proxy-connection"))
+            {
+                // Hop-by-hop header that must not be forwarded upstream.
+                continue;
+            } else {
+                out.push_str(line);
+            }
+            out.push_str("\r\n");
+        }
+
+        // The split above turns the trailing "\r\n\r\n" into two empty
+        // segments, so the reassembled head already ends with a blank line.
+        // Drop the one extra CRLF that the final empty segment added.
+        if out.ends_with("\r\n\r\n\r\n") {
+            out.truncate(out.len() - 2);
+        }
+
+        let mut result = out.into_bytes();
+        result.extend_from_slice(body);
+        result
+    }
+
     /// Apply modifications to HTTP request
     pub(crate) fn apply_request_modifications(
         request_data: &[u8],
@@ -1321,6 +1381,20 @@ impl ProxyServer {
         let cert = params.self_signed(&key_pair)?;
 
         Ok((cert, key_pair, params))
+    }
+}
+
+/// Reduce an absolute-form request-target ("http://host/path?q") to origin-form
+/// ("/path?q"). Targets that are already origin-form, or the asterisk-form "*",
+/// are returned unchanged.
+pub(crate) fn strip_absolute_form(target: &str) -> &str {
+    let rest = match target.split_once("://") {
+        Some((scheme, rest)) if !scheme.is_empty() && !scheme.contains('/') => rest,
+        _ => return target,
+    };
+    match rest.find('/') {
+        Some(pos) => &rest[pos..],
+        None => "/", // "http://host" with no path
     }
 }
 

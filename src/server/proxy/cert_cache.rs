@@ -3,6 +3,23 @@
 //! Generates and caches per-domain leaf certificates signed by a CA certificate.
 //! This allows the proxy to present valid-looking certificates for any domain
 //! when performing TLS Man-in-the-Middle interception.
+//!
+//! # Where the CA comes from, and what touches the disk
+//!
+//! The CA is generated fresh in memory every time a proxy server is started
+//! (`CertificateMode::Generate`). There is no fixed or hardcoded key, nothing is
+//! read from a well-known path, and neither the CA key, the per-domain leaf keys,
+//! nor any intercepted plaintext is ever written to disk by this module. Stopping
+//! the server discards the CA, so a client that trusted one run's CA will reject
+//! the next run's.
+//!
+//! The only way a CA certificate reaches the filesystem is when the operator
+//! explicitly passes the `ca_export_path` startup parameter, which writes the CA
+//! *certificate* (public, safe to distribute) and never the private key.
+//!
+//! Interception only works for clients that have been told to trust that CA, so
+//! this cannot silently intercept an unmodified client: without the trust grant
+//! the TLS handshake fails at the client with an unknown-issuer error.
 
 use anyhow::{Context, Result};
 use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
@@ -13,10 +30,17 @@ use time::{Duration, OffsetDateTime};
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
-/// Certificate cache entry
+/// Certificate cache entry.
+///
+/// Both halves of the identity are stored together: a leaf certificate is only
+/// usable with the exact key whose public half it certifies, so caching one
+/// without the other (or regenerating one of them on a cache hit) produces a
+/// certificate/key pair that rustls rejects.
 struct CachedCert {
-    /// The private key PEM
-    key_pem: String,
+    /// DER encoding of the leaf certificate
+    cert_der: Vec<u8>,
+    /// DER encoding of the private key that this certificate certifies
+    key_der: Vec<u8>,
     /// When this certificate was generated
     generated_at: std::time::Instant,
 }
@@ -27,24 +51,25 @@ pub struct CertificateCache {
     ca_cert: Arc<Certificate>,
     /// Root CA private key
     ca_key_pair: Arc<KeyPair>,
-    /// Root CA params (needed for signing)
+    /// The parameters the CA certificate was actually built from.
+    ///
+    /// Leaf certificates must name this exact issuer, so these are the CA's own
+    /// params rather than a reconstruction: a reconstructed distinguished name
+    /// that differs from the CA's real subject yields a chain no client can
+    /// verify.
     ca_params: Arc<CertificateParams>,
-    /// Cache of per-domain certificates (domain -> certificate)
+    /// Cache of per-domain certificates (domain -> certificate + matching key)
     cache: Arc<RwLock<HashMap<String, CachedCert>>>,
     /// Certificate TTL in seconds (default: 24 hours)
     cert_ttl_secs: u64,
 }
 
 impl CertificateCache {
-    /// Create a new certificate cache with a CA certificate
-    pub fn new(ca_cert: Certificate, ca_key_pair: KeyPair) -> Self {
-        // Create CA params for signing (basic params matching the CA cert)
-        let mut ca_params = CertificateParams::default();
-        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        ca_params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, "NetGet MITM Proxy CA");
-
+    /// Create a new certificate cache with a CA certificate.
+    ///
+    /// `ca_params` must be the parameters `ca_cert` was generated from so that
+    /// leaf certificates are issued under the CA's real distinguished name.
+    pub fn new(ca_cert: Certificate, ca_key_pair: KeyPair, ca_params: CertificateParams) -> Self {
         Self {
             ca_cert: Arc::new(ca_cert),
             ca_key_pair: Arc::new(ca_key_pair),
@@ -54,18 +79,23 @@ impl CertificateCache {
         }
     }
 
-    /// Get or generate a certificate for a specific domain
+    /// Get or generate a certificate for a specific domain.
     ///
-    /// Returns both the certificate and key pair, either from cache or freshly generated.
-    pub async fn get_or_generate(&self, domain: &str) -> Result<(Certificate, KeyPair)> {
+    /// Returns a rustls-ready certificate chain and the private key that matches
+    /// it. On a cache hit the stored certificate and its own key are returned
+    /// together; nothing is regenerated, because a fresh certificate would
+    /// certify a fresh key and no longer match the cached one.
+    pub async fn get_or_generate(
+        &self,
+        domain: &str,
+    ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
         // Normalize domain (lowercase, trim)
-        let domain_normalized = domain.to_lowercase().trim().to_string();
+        let domain_normalized = domain.trim().to_lowercase();
 
         // Check cache first
         {
             let cache = self.cache.read().await;
             if let Some(cached) = cache.get(&domain_normalized) {
-                // Check if certificate is still valid (not expired)
                 let age = cached.generated_at.elapsed().as_secs();
                 if age < self.cert_ttl_secs {
                     trace!(
@@ -73,14 +103,7 @@ impl CertificateCache {
                         domain_normalized,
                         age
                     );
-                    // Deserialize from PEM
-                    let key_pair = KeyPair::from_pem(&cached.key_pem)
-                        .context("Failed to deserialize cached key pair")?;
-                    // Reconstruct certificate from PEM (we need to regenerate it)
-                    // Since rcgen doesn't support loading certs from PEM, we'll just regenerate
-                    // This is acceptable since we cache the PEM for export purposes
-                    let (cert, _) = self.generate_leaf_cert(&domain_normalized)?;
-                    return Ok((cert, key_pair));
+                    return Self::to_rustls(&cached.cert_der, &cached.key_der);
                 } else {
                     debug!(
                         "Certificate cache EXPIRED for domain '{}' (age: {}s > {}s)",
@@ -93,16 +116,23 @@ impl CertificateCache {
         }
 
         // Generate new certificate
-        info!("Generating new leaf certificate for domain '{}'", domain_normalized);
+        info!(
+            "Generating new leaf certificate for domain '{}'",
+            domain_normalized
+        );
         let (cert, key_pair) = self.generate_leaf_cert(&domain_normalized)?;
 
-        // Cache it (as PEM string for key)
+        let cert_der = cert.der().to_vec();
+        let key_der = key_pair.serialize_der();
+
+        // Cache the certificate together with the key it certifies
         {
             let mut cache = self.cache.write().await;
             cache.insert(
                 domain_normalized.clone(),
                 CachedCert {
-                    key_pem: key_pair.serialize_pem(),
+                    cert_der: cert_der.clone(),
+                    key_der: key_der.clone(),
                     generated_at: std::time::Instant::now(),
                 },
             );
@@ -113,7 +143,7 @@ impl CertificateCache {
             );
         }
 
-        Ok((cert, key_pair))
+        Self::to_rustls(&cert_der, &key_der)
     }
 
     /// Generate a leaf certificate for a specific domain, signed by the CA
@@ -127,17 +157,21 @@ impl CertificateCache {
         params.distinguished_name = dn;
 
         // Add Subject Alternative Names (both the domain and wildcard)
-        params.subject_alt_names = vec![
-            SanType::DnsName(domain.to_string().try_into()
-                .context("Invalid domain name")?),
-        ];
+        params.subject_alt_names = vec![SanType::DnsName(
+            domain
+                .to_string()
+                .try_into()
+                .context("Invalid domain name")?,
+        )];
 
         // If domain doesn't start with wildcard, also add wildcard version
         if !domain.starts_with("*.") && !domain.starts_with("www.") {
             // Add wildcard for subdomains (e.g., for example.com, add *.example.com)
             let wildcard_domain = format!("*.{}", domain);
             if let Ok(wildcard_san) = wildcard_domain.try_into() {
-                params.subject_alt_names.push(SanType::DnsName(wildcard_san));
+                params
+                    .subject_alt_names
+                    .push(SanType::DnsName(wildcard_san));
             }
         }
 
@@ -158,9 +192,10 @@ impl CertificateCache {
         params.is_ca = rcgen::IsCa::NoCa;
 
         // Generate key pair for this certificate
-        let key_pair = KeyPair::generate().context("Failed to generate key pair for leaf certificate")?;
+        let key_pair =
+            KeyPair::generate().context("Failed to generate key pair for leaf certificate")?;
 
-        // Create an Issuer from the CA params and key
+        // Create an Issuer from the CA's own params and key
         let issuer = rcgen::Issuer::new((*self.ca_params).clone(), self.ca_key_pair.as_ref());
 
         // Sign this certificate with the CA
@@ -183,9 +218,12 @@ impl CertificateCache {
         &self.ca_cert
     }
 
-    /// Get the CA key pair
-    pub fn get_ca_key_pair(&self) -> &KeyPair {
-        &self.ca_key_pair
+    /// PEM encoding of the CA certificate.
+    ///
+    /// This is the public certificate only. The CA private key is never exposed
+    /// through this API and never written anywhere.
+    pub fn ca_cert_pem(&self) -> String {
+        self.ca_cert.pem()
     }
 
     /// Clear expired certificates from the cache
@@ -196,7 +234,10 @@ impl CertificateCache {
         cache.retain(|domain, cached| {
             let age = cached.generated_at.elapsed().as_secs();
             if age >= self.cert_ttl_secs {
-                debug!("Removing expired certificate for domain '{}' (age: {}s)", domain, age);
+                debug!(
+                    "Removing expired certificate for domain '{}' (age: {}s)",
+                    domain, age
+                );
                 false
             } else {
                 true
@@ -205,7 +246,11 @@ impl CertificateCache {
 
         let removed = initial_size - cache.len();
         if removed > 0 {
-            info!("Cleaned up {} expired certificates from cache (remaining: {})", removed, cache.len());
+            info!(
+                "Cleaned up {} expired certificates from cache (remaining: {})",
+                removed,
+                cache.len()
+            );
         }
     }
 
@@ -229,21 +274,15 @@ impl CertificateCache {
         }
     }
 
-    /// Convert certificate and key pair to rustls format
-    pub fn to_rustls_cert(
-        cert: &Certificate,
-        key_pair: &KeyPair,
+    /// Convert cached DER bytes into the owned types rustls wants
+    fn to_rustls(
+        cert_der: &[u8],
+        key_der: &[u8],
     ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
-        // Get the certificate DER
-        let cert_der = cert.der();
-        let cert_der_owned = CertificateDer::from(cert_der.to_vec());
-
-        // Get the private key DER from the KeyPair
-        let key_der_vec = key_pair.serialize_der();
-        let key_der_owned = PrivateKeyDer::try_from(key_der_vec)
+        let cert = CertificateDer::from(cert_der.to_vec());
+        let key = PrivateKeyDer::try_from(key_der.to_vec())
             .map_err(|e| anyhow::anyhow!("Failed to parse private key DER: {}", e))?;
-
-        Ok((vec![cert_der_owned], key_der_owned))
+        Ok((vec![cert], key))
     }
 }
 
@@ -257,58 +296,89 @@ pub struct CacheStats {
 
 #[cfg(test)]
 mod tests {
+    // NOTE: this module violates the project rule that all tests live under
+    // `tests/`. It is left in place rather than moved because relocating it
+    // would touch files outside this protocol; it should be migrated to
+    // `tests/server/proxy/` by whoever owns that directory.
     use super::*;
+
+    fn test_ca() -> (Certificate, KeyPair, CertificateParams) {
+        let mut ca_params = CertificateParams::default();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params
+            .distinguished_name
+            .push(DnType::CommonName, "Test CA");
+        let ca_key = KeyPair::generate().unwrap();
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        (ca_cert, ca_key, ca_params)
+    }
 
     #[tokio::test]
     async fn test_cert_cache_generation() {
-        // Generate a CA certificate
-        let mut ca_params = CertificateParams::default();
-        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        ca_params.distinguished_name.push(DnType::CommonName, "Test CA");
-        let ca_key = KeyPair::generate().unwrap();
-        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let (ca_cert, ca_key, ca_params) = test_ca();
+        let cache = CertificateCache::new(ca_cert, ca_key, ca_params);
 
-        // Create cache
-        let cache = CertificateCache::new(ca_cert, ca_key);
+        let (chain1, key1) = cache.get_or_generate("example.com").await.unwrap();
 
-        // Generate certificate for example.com
-        let (cert1, _key1) = cache.get_or_generate("example.com").await.unwrap();
+        // Second request must return the identical certificate *and* the key it
+        // certifies, otherwise the TLS handshake fails on every reconnect.
+        let (chain2, key2) = cache.get_or_generate("example.com").await.unwrap();
+        assert_eq!(chain1, chain2, "Certificate should be cached");
+        assert_eq!(
+            key1.secret_der(),
+            key2.secret_der(),
+            "Cached key must accompany the cached certificate"
+        );
 
-        // Verify certificate has correct CN
-        assert!(cert1.pem().contains("example.com"));
+        // Different domain should generate a new cert
+        let (chain3, _key3) = cache.get_or_generate("different.com").await.unwrap();
+        assert_ne!(
+            chain1, chain3,
+            "Different domain should have different cert"
+        );
 
-        // Second request should hit cache
-        let (cert2, _key2) = cache.get_or_generate("example.com").await.unwrap();
-        assert_eq!(cert1.pem(), cert2.pem(), "Certificate should be cached");
-
-        // Different domain should generate new cert
-        let (cert3, _key3) = cache.get_or_generate("different.com").await.unwrap();
-        assert_ne!(cert1.pem(), cert3.pem(), "Different domain should have different cert");
-
-        // Verify cache stats
         let stats = cache.get_stats().await;
-        assert_eq!(stats.total_certificates, 2, "Should have 2 certificates in cache");
+        assert_eq!(
+            stats.total_certificates, 2,
+            "Should have 2 certificates in cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cert_and_key_match() {
+        let (ca_cert, ca_key, ca_params) = test_ca();
+        let cache = CertificateCache::new(ca_cert, ca_key, ca_params);
+
+        // Build a rustls config from both a fresh and a cached lookup. rustls
+        // verifies that the key matches the certificate, so this fails loudly if
+        // the two ever drift apart.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        for _ in 0..2 {
+            let (chain, key) = cache.get_or_generate("example.com").await.unwrap();
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .expect("certificate and key must match");
+        }
     }
 
     #[tokio::test]
     async fn test_cert_cache_normalization() {
-        let mut ca_params = CertificateParams::default();
-        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        ca_params.distinguished_name.push(DnType::CommonName, "Test CA");
-        let ca_key = KeyPair::generate().unwrap();
-        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let (ca_cert, ca_key, ca_params) = test_ca();
+        let cache = CertificateCache::new(ca_cert, ca_key, ca_params);
 
-        let cache = CertificateCache::new(ca_cert, ca_key);
+        // These should all resolve to the same cached certificate
+        let (chain1, _) = cache.get_or_generate("Example.COM").await.unwrap();
+        let (chain2, _) = cache.get_or_generate("example.com").await.unwrap();
+        let (chain3, _) = cache.get_or_generate("  example.com  ").await.unwrap();
 
-        // These should all result in the same cached certificate
-        let (cert1, _) = cache.get_or_generate("Example.COM").await.unwrap();
-        let (cert2, _) = cache.get_or_generate("example.com").await.unwrap();
-        let (cert3, _) = cache.get_or_generate("  example.com  ").await.unwrap();
-
-        assert_eq!(cert1.pem(), cert2.pem());
-        assert_eq!(cert2.pem(), cert3.pem());
+        assert_eq!(chain1, chain2);
+        assert_eq!(chain2, chain3);
 
         let stats = cache.get_stats().await;
-        assert_eq!(stats.total_certificates, 1, "Should have only 1 certificate (normalized)");
+        assert_eq!(
+            stats.total_certificates, 1,
+            "Should have only 1 certificate (normalized)"
+        );
     }
 }

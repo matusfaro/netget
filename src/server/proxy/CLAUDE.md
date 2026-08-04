@@ -8,10 +8,41 @@ LLM-controlled filtering.
 
 **Compliance**: HTTP/1.1 (RFC 7230-7235), CONNECT method (RFC 7231 Section 4.3.6)
 
+## Security: the MITM CA (read this first)
+
+**Where the CA key comes from.** In `certificate_mode: "generate"` a fresh CA key
+pair is generated in memory at server start (`ProxyServer::generate_ca_certificate`,
+`rcgen::KeyPair::generate`). There is no fixed, hardcoded, or shipped key, and
+nothing is read from a well-known path. Every server start produces a different CA.
+
+**Is it persisted?** No. The CA private key exists only in the process's memory and
+is dropped when the server stops. Per-domain leaf keys are likewise memory-only.
+No intercepted plaintext is written to disk; request/response bodies reach the
+`netget.log` tracing sink only at TRACE level, like every other protocol.
+
+**The only disk write** is the optional `ca_export_path` startup parameter, which
+writes the CA *certificate* (the public half, safe to distribute). The private key
+is never written by any code path and is not reachable through any action.
+
+**What trust the user must grant.** Interception only works against clients that
+have been configured to trust that CA — system trust store, `curl --cacert`,
+`NODE_EXTRA_CA_CERTS`, browser trust store, etc. Without that grant the client
+aborts the handshake with an unknown-issuer error; this proxy cannot silently
+intercept an unmodified client. Because the CA is regenerated per run, an exported
+and installed certificate stops working after a restart, and stale copies should
+be removed from trust stores.
+
+**`certificate_mode: "load_from_file"` is not implemented** and is rejected at
+startup. It previously read the key file, *ignored the certificate file entirely*,
+and minted a different self-signed CA from the operator's private key — so clients
+trusting the real CA rejected the connection while the configuration looked
+correct. Supporting a real operator CA requires reading its subject, which needs
+rcgen's `x509-parser` feature (not enabled in `Cargo.toml`).
+
 ## Library Choices
 
 - **`http-mitm-proxy`** (conceptual) - Protocol framework for MITM operations
-- **`rcgen`** v0.13 - On-the-fly certificate generation for MITM TLS interception
+- **`rcgen`** v0.14 - On-the-fly certificate generation for MITM TLS interception
 - **`rustls`** v0.23 + **`tokio-rustls`** v0.26 - TLS stack for MITM (both server and client)
 - **`webpki-roots`** v0.26 - Root certificates for validating upstream TLS connections
 - **`regex`** - Pattern matching for selective request/response filtering
@@ -201,16 +232,21 @@ let cert = params.self_signed(&key_pair)?;
 
 - Implemented in `cert_cache.rs` using `CertificateCache`
 - Generates leaf certificates signed by CA for specific domains
-- Caches certificates per domain (24-hour TTL) to avoid regeneration overhead
+- Caches the leaf certificate **and the key it certifies** per domain (24-hour TTL).
+  Caching only the key and regenerating the certificate produces a mismatched pair
+  that rustls rejects with `InconsistentKeys(KeyMismatch)`, which broke every
+  repeat connection to the same host.
 - Supports domain normalization (case-insensitive, trimmed)
 - Automatic addition of wildcard and www variants in SAN
 
 **Certificate Installation**:
 
 - Users must install CA certificate in system trust store for MITM mode
-- Without installation: browsers show security warnings
+- Without installation: the TLS handshake fails with an unknown-issuer error
 - Enterprise deployments: Distribute CA via group policy
-- Use `export_ca_certificate` action to save CA cert to file
+- Use the `ca_export_path` **startup parameter** to write the CA certificate to a
+  file. (There is no `export_ca_certificate` action; the one that used to be
+  advertised serialised its arguments and wrote nothing.)
 - Installation locations:
   - **macOS**: System Keychain (`/Library/Keychains/System.keychain`)
   - **Windows**: Trusted Root Certification Authorities
@@ -253,21 +289,38 @@ let cert = params.self_signed(&key_pair)?;
 
 ## Current Status
 
-1. **HTTPS MITM Fully Implemented** ✅
-    - Certificate generation works (self-signed CA)
-    - Per-domain leaf certificate caching implemented (`cert_cache.rs`)
-    - Automatic cache cleanup task (runs hourly)
-    - TLS interception implemented (`tls_mitm.rs`):
-      - Client-side TLS accept with dynamically generated certificates
-      - Upstream-side TLS connect with certificate validation
-      - HTTP request/response proxying through LLM filtering
-      - **Response modification**: Full HTTP response parsing and modification
-        - Parse status code, headers, and body from upstream responses
-        - LLM consultation via `PROXY_HTTP_RESPONSE_EVENT`
-        - Support for status changes, header modifications, body replacement
-        - Configurable via `response_filter_mode` (All/Selective/None)
-    - Certificate export action for user installation
-    - Comprehensive E2E tests for MITM mode (7 test cases)
+**HTTPS MITM implemented** (`tls_mitm.rs`), with these caveats:
+
+- Self-signed CA generated per run; clients must trust it (see the security
+  section above)
+- Per-domain leaf certificates cached together with their keys (`cert_cache.rs`)
+- Cache cleanup task runs hourly and stops when the server stops
+- Client-side TLS accept with the generated certificate; upstream-side TLS
+  connect with normal webpki root validation
+- Request `pass` / `block` / `modify` and response `pass` / `block` / `modify`
+  are all applied on the MITM path
+- After the first request/response the connection degrades to an opaque
+  bidirectional copy, so only the **first** exchange on a keep-alive connection is
+  inspected
+
+**Plain HTTP**: requests are fully inspected and modifiable. **Responses are
+not** — `forward_http_request` returns the upstream response to the client
+without consulting the LLM, so `proxy_http_response` and the
+`handle_response_*` actions only fire on the MITM (HTTPS) path.
+`response_filter_mode` likewise only affects MITM.
+
+**Configuration is startup-only.** Certificate mode and the three filter modes are
+read once when the server spawns and cloned into each connection; there is no way
+to change them on a running server. Six configuration actions used to be
+advertised (`configure_certificate`, `configure_request_filters`,
+`configure_response_filters`, `configure_https_connection_filters`,
+`set_filter_mode`, `export_ca_certificate`) — none of them had any effect, and an
+`ActionResult::Output` emitted during a request event was mis-parsed as a
+`RequestAction`. They have been removed.
+
+**Testing note**: `cert_cache.rs` still contains a `#[cfg(test)] mod tests`, which
+violates the project rule that all tests live under `tests/`. It should be
+migrated to `tests/server/proxy/`.
 
 ## Limitations
 
@@ -287,8 +340,18 @@ let cert = params.self_signed(&key_pair)?;
     - Proxy doesn't require authentication (anyone can use it)
     - Should add Basic/Digest auth for production
 
+6. **Only the first exchange of an HTTPS keep-alive connection is inspected**
+    - After the first request/response the MITM path switches to `tokio::io::copy`
+
+7. **Plain-HTTP responses are not inspected**
+    - See Current Status above
+
 ### Protocol Compliance Gaps
 
+- Requests are rewritten from absolute-form (`GET http://host/path`) to
+  origin-form (`GET /path`) before being forwarded, as RFC 9112 3.2.1 requires,
+  and the hop-by-hop `Proxy-Connection` header is dropped. Forwarding the
+  absolute-form target verbatim made ordinary origin servers answer 404.
 - Missing: Range requests (partial content)
 - Missing: 100-Continue handling
 - Missing: Upgrade header (WebSocket, HTTP/2)
@@ -348,12 +411,15 @@ Listen on port 8080 using proxy stack. For POST requests to /api/login, replace
 any occurrence of "password" in the body with "hashed_password" before forwarding.
 ```
 
-### MITM Mode (When Fully Implemented)
+### MITM Mode
 
 ```
-Listen on port 8080 using proxy stack with certificate generation (MITM mode).
-Inspect all HTTPS traffic and log any requests containing credit card patterns.
+Listen on port 8080 using proxy stack with certificate_mode "generate" and
+ca_export_path "./netget-ca.crt". Inspect HTTPS traffic and log any requests
+containing credit card patterns.
 ```
+
+The client must then trust `./netget-ca.crt` (e.g. `curl --cacert ./netget-ca.crt`).
 
 ## References
 
