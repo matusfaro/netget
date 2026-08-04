@@ -32,6 +32,11 @@ Delete an entry once its context is no longer useful.
 | — clients unreachable by lowercase name | `f1f25528` | `CLIENT_REGISTRY` is keyed by each protocol's own casing and lookup was exact-match, so `protocol: "tcp"` failed. Also, `client_startup.rs` dropped its status receiver, silently discarding every client status message |
 | — VPN family misrepresented | `10f1e2b4`, `2bce6e64`, `f013c510` | OpenVPN demoted to `Incomplete` (identical keys for all peers, no TLS handshake) plus a TUN deadlock fix; WireGuard's advertised LLM control did not exist and now does; IPSec now actually calls the LLM |
 | — DNS answers rejected by real resolvers | `6a384617` | Responses carried no question section, so glibc/systemd-resolved/`dig` discarded them. Verified after the fix: `dig @127.0.0.1 example.com A` returns NOERROR with the question echoed and the transaction id matched |
+| — remote unauthenticated panic in DHCP/BOOTP | udpinfra pass, `b06165fc` | dhcproto never validates `hlen` and `Message::chaddr()` slices a `[u8; 16]` with it, so **one datagram declaring `hlen > 16` panicked the socket task** — server dead, status still `Running`. Guarded on the server, and on the client's receive path where the same unguarded call let a malicious DHCP server kill the client |
+| — NTP never echoed origin timestamps | udpinfra pass | Beta was false: real clients rejected every reply. The code mutated `execution_result.raw_actions` *after* `call_llm` had already executed the actions and built the packet, so the injection never touched a byte. Fixed with a per-datagram protocol instance; verified with a raw client |
+| — DHCP correlation race across clients | udpinfra pass | `xid`/`chaddr` lived in one `Arc<Mutex<Option<_>>>` shared by the whole server, written just before a multi-second LLM call, so two overlapping clients echoed each other's transaction id |
+| — SNMP BER lengths wrapped at 256 | udpinfra pass | Every length used `0x81 + len as u8`, so any response ≥256 bytes (a long sysDescr, a multi-binding reply) produced a corrupt packet |
+| — Syslog filters could never match | udpinfra pass | `facility`/`severity` were emitted with `{:?}` as `log_kern`/`sev_err` while every doc and example prompt says `kern`/`err`. Numeric codes added alongside, which is how the docs describe filtering |
 | — HTTP family defects | `3c414406`, `f2d4cf3e`, `e9eec1cb`, `e32cf485` | 204 responses were served as empty 200; a model status of 999 or a CRLF header panicked the connection task; HTTP/2's `request_filter` was accepted and silently ignored because the hyper path is dead code; HTTP/3 documented as the QUIC transport it actually is |
 
 Verified together end to end after landing: a Python script handler returning
@@ -540,6 +545,27 @@ catching an under-declared feature, and it is the only build CI runs. A sweep of
 protocol features found no further cases, so this is not endemic — but nothing prevents the
 next one. Add a CI job that builds a rotating sample of individual protocol features, or all of
 them on a schedule; it is the only thing that can catch this.
+
+### 47. Several tests pass while the protocol is broken **[verified]**
+
+`tests/server/ntp/test.rs:63-96` catches the rsntp client's failure, prints a note and asserts
+nothing — so it passed for the entire life of the origin-timestamp bug, while every real NTP
+client rejected the server's replies. `tests/server/dot/e2e_test.rs` has the same shape for
+transaction ids (item 40).
+
+This is the same lesson as item 38 stated twice: a mocked test that only checks our own
+plumbing cannot substantiate a **Beta** rating, which this project defines as "works with real
+clients". Suggested rule: no protocol may be rated Beta without at least one test that fails
+when a real off-the-shelf client would reject the output — and that test must assert, not log.
+
+### 48. Library panics reachable from the wire need auditing per dependency **[static]**
+
+The dhcproto `chaddr()` panic was found in the DHCP server and then existed unfixed in the
+DHCP client. The general shape — a parsing crate that trusts a length field the wire controls
+— will recur. Worth a pass over the other binary-format decoders (`rasn-snmp`, `hickory-proto`,
+`kafka-protocol`, `cassandra-protocol`, `bson`, `pgwire`, `opensrv-mysql`) asking specifically
+which of their accessors panic on malformed input, since all of them run inside a socket task
+where a panic silently kills the server while its status still reads `Running`.
 
 ---
 
