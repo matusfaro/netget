@@ -109,9 +109,9 @@ favicon bypass.
 
 Full schema, matching semantics and the **fail-open** caveat (a malformed rule is
 dropped, not fatal, so a typo sends *more* traffic to the LLM) are in
-`src/server/http_common/CLAUDE.md`. Parse problems are logged at `error!` and
-pushed to the status stream as `[ERROR] HTTP request_filter: …` at connection
-setup. Pure unit tests: `tests/http_request_filter_test.rs`.
+`src/server/http_common/CLAUDE.md`. The filter is built once at spawn time; parse
+problems are logged at `error!` and pushed to the status stream as
+`[ERROR] HTTP request_filter: …`, so they show up in the `start_server` result. Pure unit tests: `tests/http_request_filter_test.rs`.
 
 ## Testing
 

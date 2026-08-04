@@ -6,7 +6,6 @@ use http::{Request, Response, StatusCode};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
@@ -37,9 +36,8 @@ impl H2Server {
     ) -> anyhow::Result<SocketAddr> {
         // Same reuse semantics as the HTTP/1.1 listener, so a restart on the
         // same port does not fail with EADDRINUSE while the old socket lingers.
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr)
-            .await
-            .unwrap_or(TcpListener::bind(listen_addr).await?);
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
         let protocol_name = if tls_config.is_some() {

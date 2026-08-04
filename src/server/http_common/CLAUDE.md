@@ -71,8 +71,9 @@ response out.
 ## Request filter
 
 `RequestFilter` is a per-server allowlist deciding which requests are worth an
-LLM call. It is built from `startup_params` once per connection (HTTP/1.1) or
-once per server (HTTP/2), so path regexes compile once rather than per request.
+LLM call. Both HTTP/1.1 and HTTP/2 build it from `startup_params` **once, at
+spawn time**, so path regexes compile once for the life of the server and parse
+problems are reported while the caller is still watching the start result.
 
 ```json
 "startup_params": {

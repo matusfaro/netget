@@ -56,6 +56,26 @@ impl HttpServer {
 
         let protocol = Arc::new(HttpProtocol::new());
 
+        // Build the per-server request filter once, at startup: path regexes
+        // compile once for the life of the server, and a bad rule is reported
+        // while the caller is still watching the start_server result rather than
+        // on the first connection.
+        let filter = Arc::new(
+            crate::server::http_common::handler::RequestFilter::from_startup_params(
+                app_state
+                    .get_server(server_id)
+                    .await
+                    .and_then(|s| s.startup_params)
+                    .as_ref(),
+            ),
+        );
+        // Filter parsing is fail-open: a bad rule is dropped, not fatal, so every
+        // request would silently reach the LLM. Make that visible in the TUI/MCP
+        // status stream, not just in netget.log.
+        for warning in filter.warnings() {
+            let _ = status_tx.send(format!("[ERROR] HTTP request_filter: {}", warning));
+        }
+
         // Create TLS acceptor if TLS is enabled
         let tls_acceptor = tls_config.map(|config| tokio_rustls::TlsAcceptor::from(config));
 
@@ -104,6 +124,7 @@ impl HttpServer {
                         let status_tx_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
                         let tls_acceptor_clone = tls_acceptor.clone();
+                        let filter_clone = filter.clone();
 
                         // Spawn a task to handle this connection
                         tokio::spawn(async move {
@@ -128,6 +149,7 @@ impl HttpServer {
                                             app_state_clone.clone(),
                                             status_tx_clone.clone(),
                                             protocol_clone,
+                                            filter_clone,
                                         )
                                         .await;
                                     }
@@ -150,6 +172,7 @@ impl HttpServer {
                                     app_state_clone.clone(),
                                     status_tx_clone.clone(),
                                     protocol_clone,
+                                    filter_clone,
                                 )
                                 .await;
                             }
@@ -181,6 +204,7 @@ impl HttpServer {
     }
 
     /// Serve an HTTP connection (helper function to avoid code duplication)
+    #[allow(clippy::too_many_arguments)]
     async fn serve_connection<T>(
         io: TokioIo<T>,
         connection_id: ConnectionId,
@@ -189,6 +213,7 @@ impl HttpServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<HttpProtocol>,
+        filter: Arc<crate::server::http_common::handler::RequestFilter>,
     ) where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
@@ -196,25 +221,7 @@ impl HttpServer {
         let status_for_service = status_tx.clone();
         let app_state_for_service = app_state.clone();
 
-        // Build the per-server request filter once per connection (compiles path
-        // regexes once, not per request). A request only reaches the LLM if it
-        // matches; non-matching requests get a cheap auto-response.
-        let startup_params = app_state
-            .get_server(server_id)
-            .await
-            .and_then(|s| s.startup_params);
-        let filter = std::sync::Arc::new(
-            crate::server::http_common::handler::RequestFilter::from_startup_params(
-                startup_params.as_ref(),
-            ),
-        );
-        // Filter parsing is fail-open: a bad rule is dropped, not fatal, so every
-        // request would silently reach the LLM. Make that visible in the TUI/MCP
-        // status stream, not just in netget.log.
-        for warning in filter.warnings() {
-            let _ = status_tx.send(format!("[ERROR] HTTP request_filter: {}", warning));
-        }
-
+        // The request filter is built once per server in spawn_with_llm_actions.
         // Create a service that handles requests with LLM
         let service = service_fn(move |req: Request<Incoming>| {
             let llm_clone = llm_client.clone();
