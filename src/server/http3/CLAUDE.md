@@ -1,306 +1,147 @@
-# HTTP/3 Protocol Implementation
+# HTTP/3 ("http3") Protocol Implementation
 
-## Overview
+## What this actually is
 
-HTTP/3 server implementing multiplexed stream handling where the LLM has full control over individual streams. HTTP/3 is
-a UDP-based, encrypted transport protocol with built-in TLS 1.3, providing stream multiplexing without head-of-line
-blocking.
+**A raw QUIC stream server, not an HTTP/3 server.** It accepts QUIC connections
+with `quinn`, advertises ALPN `h3`, accepts bidirectional streams, and hands the
+raw stream bytes to the LLM. There is **no HTTP/3 framing layer**: no
+HEADERS/DATA frames, no QPACK, no control or QPACK streams, no settings exchange
+(RFC 9114 / RFC 9204 are not implemented).
 
-**Status**: Experimental
-**RFC**: RFC 9000 (HTTP/3: A UDP-Based Multiplexed and Secure Transport)
+Consequences, in plain terms:
 
-## Library Choices
+- `curl --http3`, browsers, and other real HTTP/3 clients **cannot talk to this
+  server**. They complete the QUIC handshake and then fail on the missing control
+  stream / framing.
+- NetGet's own HTTP/3 *client* (`src/client/http3/`) uses the `h3` crate and does
+  real HTTP/3, so **the NetGet http3 client cannot talk to the NetGet http3
+  server**. They are not counterparts.
+- The `h3` and `h3-quinn` crates are pulled in by the `http3` feature but are not
+  used by this server at all.
+- The protocol name and stack string (`ETH>IP>UDP>HTTP3`) overstate what runs.
+  Treat this as "QUIC streams" when reasoning about it.
 
-- **quinn v0.11** - Pure Rust async HTTP/3 implementation
-- **rustls** - TLS 1.3 implementation (required by HTTP/3)
-- **rcgen** - Self-signed certificate generation for TLS
-- **tokio** - Async runtime for HTTP/3 endpoint and stream handling
+**State**: Experimental. **Privilege**: declares `PrivilegedPort(443)`; the check
+fires only when the requested port is actually below 1024.
+**Transport RFC**: 9000/9001 (QUIC), via quinn v0.11.
 
-**Rationale**: Quinn is the most mature pure-Rust HTTP/3 implementation with full async support and excellent tokio
-integration. It provides built-in TLS 1.3 encryption (mandatory in HTTP/3), automatic stream multiplexing, and flow
-control.
+Making this a real HTTP/3 server means driving `h3::server` over the quinn
+connection and mapping request/response to the same event/action shape as HTTP/2,
+which is a rewrite of `handle_stream_with_actions`, not a patch.
 
-## Architecture Decisions
+## What the model sees and controls
 
-### 1. Stream-Based Control
+**Events**
 
-The LLM controls individual bidirectional streams within a HTTP/3 connection:
+| Event | When | Fields |
+|---|---|---|
+| `http3_connection_opened` | QUIC connection established (post-TLS) | none |
+| `http3_stream_opened` | client opened a bidirectional stream | `stream_id` |
+| `http3_data_received` | bytes arrived on a stream | `stream_id`, `data`, `encoding` |
 
-- Each stream is a separate communication channel
-- Streams are multiplexed over a single HTTP/3 connection
-- No head-of-line blocking between streams
-- Independent flow control per stream
+**Sync actions** (available on stream/data events)
 
-### 2. Connection vs Stream Lifecycle
+- `send_http3_data` — `data` (required)
+- `wait_for_more` — accumulate rather than reply
+- `close_this_stream`
 
-**HTTP/3 Connection**:
+**No async actions.** `send_to_stream`, `close_stream` and `list_streams` used to
+be advertised and were removed: nothing consumed their results. The async path
+has no stream context, so the executor serialized bytes into an `ActionResult`
+that was dropped, while the model was told the action had succeeded. Do not
+re-add them without an executor that owns the quinn `SendStream`.
 
-- Established with TLS 1.3 handshake
-- Notifies LLM via `HTTP/3_CONNECTION_OPENED_EVENT`
-- Persists across multiple streams
+### Encoding asymmetry (read before writing prompts)
 
-**HTTP/3 Stream**:
+- **Inbound**: a payload of only printable ASCII/whitespace is delivered as text
+  with `encoding: "text"`; anything else is hex-encoded with `encoding: "hex"`.
+- **Outbound**: `send_http3_data.data` is written to the stream **verbatim as
+  UTF-8**. Hex is *not* decoded. `"48656c6c6f"` puts those ten ASCII characters
+  on the wire, not the five bytes they spell.
 
-- Created by client opening bidirectional stream
-- Notifies LLM via `HTTP/3_STREAM_OPENED_EVENT`
-- Independent lifetime from connection
-- Closed by client or LLM `close_this_stream` action
+So binary payloads cannot be sent, and a hex-encoded inbound payload cannot be
+echoed back unchanged. This asymmetry is stated in the action and event parameter
+descriptions the model receives. (It is the same defect shape as `send_tcp_data`,
+except here the documentation now matches the executor instead of promising hex
+decoding that never happens.)
 
-### 3. Stream State Machine
+## Architecture
 
-Each stream has three states:
+- `Http3Server::spawn_with_llm_actions` builds a quinn `Endpoint`, forces
+  `alpn_protocols = ["h3"]`, allows 100 concurrent bidi/uni streams, propagates
+  bind failure with `?`, and registers the accept-loop `JoinHandle` via
+  `AppState::register_server_task()`.
+- TLS 1.3 is mandatory. `startup_params` may supply a cert; otherwise a
+  self-signed one is generated (`tls_cert_manager::generate_default_tls_config`),
+  so clients must disable certificate validation.
+- One task per connection, one per stream. Per-stream state machine
+  (Idle → Processing → Accumulating) with a queue, mirroring the TCP
+  implementation; data arriving during an LLM call is queued and merged.
+- `call_llm` is used for every event, so script and static handlers run without
+  an LLM call.
+- Stream lookups after re-acquiring the lock are fallible by nature (the peer can
+  reset a stream mid-call) and are handled with `let … else`, not `unwrap`.
 
-- **Idle**: Ready to process new data
-- **Processing**: LLM is generating a response
-- **Accumulating**: LLM requested `wait_for_more` to accumulate additional data
+### Connection state
 
-This prevents concurrent LLM calls for the same stream and ensures ordered processing.
+One `ConnectionId` per QUIC connection plus a separate id per stream (both drawn
+from the same unified id counter, so stream ids appear as connection ids in the
+UI). `ProtocolConnectionInfo` starts as `{"stream_count": 0}` and, as with the
+other HTTP protocols, is never updated afterwards; byte/packet counters stay at
+zero.
 
-### 4. Data Queueing
+## Not supported
 
-When data arrives while the LLM is processing a stream:
+- HTTP/3 framing, QPACK, real HTTP/3 clients (see above)
+- `request_filter` / `filtered_response` — that mechanism is HTTP/1.1 + HTTP/2
+  only, and `http3` does not declare those startup parameters. Passing them will
+  hit `StartupParams`' undeclared-key panic. Filter traffic with a script handler
+  instead.
+- Unidirectional streams, DATAGRAMs, 0-RTT, connection migration, stream
+  priorities
+- Binary payloads in either direction (see the encoding asymmetry)
+- Unbounded `wait_for_more` accumulation: no size cap, so a hostile peer can grow
+  the buffer indefinitely
+- Per-connection statistics
 
-1. Data is queued in `StreamData.queued_data`
-2. After LLM response, queued data is merged and processed
-3. Loop continues until all queued data is processed
+## Testing
 
-This ensures no data loss even under high traffic.
+`tests/server/http3/e2e_test.rs` — 3 mocked scenarios (echo, custom response,
+multiple streams), declared in `tests/server/http3/mod.rs`. They use a raw
+`quinn::Endpoint` client, which is why they pass despite the absence of HTTP/3
+framing; nothing in the suite exercises a real HTTP/3 client.
 
-### 5. TLS Certificate Management
-
-HTTP/3 mandates TLS 1.3 encryption:
-
-- Self-signed certificates generated at server startup using `rcgen`
-- Certificate valid for "localhost"
-- ALPN protocol: `h3`
-- No client authentication required
-
-### 6. Transport Configuration
-
-- **Max concurrent bidirectional streams**: 100
-- **Max concurrent unidirectional streams**: 100 (not used currently)
-- Standard HTTP/3 flow control and congestion control
-
-### 7. Dual Logging
-
-All data operations use **dual logging**:
-
-- **DEBUG**: Data summary with 100-char preview (for both text and binary)
-- **TRACE**: Full payload (text as string, binary as hex)
-- Both go to `netget.log` (via tracing) and TUI Status panel (via status_tx)
-
-## LLM Integration
-
-### Action-Based Response Model
-
-The LLM responds to HTTP/3 events with actions:
-
-**Events**:
-
-- `http3_connection_opened` - New HTTP/3 connection established (with TLS handshake)
-- `http3_stream_opened` - Client opened a new bidirectional stream
-- `http3_data_received` - Data received from client on a stream
-
-**Available Actions**:
-
-- `send_http3_data` - Send raw bytes to client on current stream (text or hex)
-- `close_this_stream` - Close the current stream
-- `wait_for_more` - Enter Accumulating state to buffer more data
-- Common actions: `show_message`, `update_instruction`, etc.
-
-### Example LLM Response
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_http3_data",
-      "data": "Hello from HTTP/3 stream\n"
-    },
-    {
-      "type": "show_message",
-      "message": "Sent HTTP/3 greeting"
-    }
-  ]
-}
+```bash
+./cargo-isolated.sh test --no-default-features --features http3 \
+    --test server::http3::e2e_test -- --test-threads=100
 ```
 
-### Data Format
-
-- **Text data**: Sent as-is in the `data` field
-- **Binary data**: Sent as hex string (e.g., `"48656c6c6f"` for "Hello")
-- **Received data**: Formatted as text if all bytes are ASCII printable, otherwise hex
-
-## Connection Management
-
-### Connection Lifecycle
-
-1. **Accept**: `Endpoint::accept()` receives incoming HTTP/3 connection attempt
-2. **TLS Handshake**: Quinn automatically performs TLS 1.3 handshake
-3. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Http3`
-4. **Notify**: LLM receives `http3_connection_opened` event
-5. **Stream Loop**: Accept bidirectional streams from client
-6. **Close**: Connection removed when client closes or error occurs
-
-### Stream Lifecycle
-
-1. **Accept**: `Connection::accept_bi()` receives new bidirectional stream
-2. **Track**: Stream added to `streams` HashMap with `StreamData`
-3. **Notify**: LLM receives `http3_stream_opened` event
-4. **Read Loop**: Process data received on `RecvStream`
-5. **Write**: Send responses via `SendStream`
-6. **Close**: Stream removed when finished or LLM closes
-
-### Stream Data Structure
-
-```rust
-struct StreamData {
-    state: StreamState,               // Idle/Processing/Accumulating
-    queued_data: Vec<u8>,             // Data queued while processing
-    memory: String,                   // Per-stream memory (unused currently)
-    send_stream: Arc<Mutex<SendStream>>, // For sending responses
-}
-```
-
-### State Updates
-
-- Connection state tracked in `ServerInstance.connections`
-- `ProtocolConnectionInfo::Http3 { stream_count }` tracks active streams
-- UI automatically refreshes on state changes via `__UPDATE_UI__` message
-
-## Known Limitations
-
-### 1. Unidirectional Streams Not Supported
-
-- Only bidirectional streams are implemented
-- Unidirectional streams would require additional event types and actions
-
-### 2. No 0-RTT Support
-
-- No early data (0-RTT) implementation
-- All connections require full handshake
-
-### 3. No Connection Migration
-
-- Connections are bound to initial endpoint
-- No support for HTTP/3's connection migration feature
-
-### 4. No Stream Priorities
-
-- All streams treated equally
-- No priority/weight mechanism for streams
-
-### 5. Memory Accumulation
-
-- `wait_for_more` accumulates data in memory without limits
-- Long-running accumulating streams could exhaust memory
-
-### 6. No DATAGRAM Support
-
-- HTTP/3 DATAGRAM frames not implemented
-- Only reliable stream data
-
-### 7. Self-Signed Certificates Only
-
-- No support for custom certificates or ACME
-- Clients must disable certificate validation
-
-## Example Prompts
-
-### Echo Server
+## Example prompts
 
 ```
 listen on port 4433 via http3
 When you receive data on any stream, echo it back
 ```
 
-### HTTP/3-like Server
-
 ```
-listen on port 443 via http3
-Each stream represents an HTTP request
-Read the request, respond with "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, HTTP/3!\n"
-Close the stream after responding
+listen on port 4433 via http3
+Each stream carries one line of text. Reply with the line uppercased,
+then close the stream.
 ```
 
-### Multiplexed Chat Server
+Deterministic variant (no LLM call):
 
+```json
+"event_handlers": [{
+  "event_pattern": "http3_data_received",
+  "handler": { "type": "static", "actions": [
+    { "type": "send_http3_data", "data": "ACK\n" }
+  ]}
+}]
 ```
-listen on port 5000 via http3
-Stream 0: Control channel - handle "JOIN name" and "LEAVE" commands
-Other streams: Message channels - broadcast messages to all connected clients
-```
-
-### Binary Protocol
-
-```
-listen on port 9000 via http3
-When you receive a 4-byte big-endian integer, respond with the integer + 1
-Use hex encoding for binary data
-Each stream handles independent calculations
-```
-
-## Performance Characteristics
-
-### Latency
-
-- One LLM call per received data chunk per stream (unless using `wait_for_more`)
-- TLS handshake adds ~1 RTT to connection establishment
-- Stream multiplexing allows concurrent processing
-- Typical latency: 2-5 seconds per request with qwen3-coder:30b
-
-### Throughput
-
-- Limited by LLM response time per stream
-- Multiple streams can be processed concurrently (each on separate tokio task)
-- No head-of-line blocking between streams
-- Queue mechanism prevents data loss but doesn't improve throughput
-
-### Concurrency
-
-- Unlimited concurrent connections (bounded by system resources)
-- Up to 100 concurrent streams per connection
-- Each stream has independent state and processing
-- Ollama lock serializes LLM API calls across all streams
-
-### Comparison to TCP
-
-**Advantages**:
-
-- Stream multiplexing eliminates head-of-line blocking
-- Built-in TLS 1.3 encryption (no separate TLS setup)
-- 0-RTT capability (not currently implemented)
-- Better congestion control than TCP
-
-**Disadvantages**:
-
-- UDP-based, may be blocked by some firewalls
-- More complex implementation
-- Higher CPU overhead due to encryption
-- Clients need HTTP/3-capable libraries
-
-## Security Considerations
-
-### TLS 1.3 Mandatory
-
-- All HTTP/3 connections are encrypted by default
-- Self-signed certificate used (clients must trust it)
-- No plaintext data transmission
-
-### Certificate Validation
-
-- Test clients must disable certificate validation
-- Production deployments should use proper certificates
-
-### ALPN Protocol
-
-- Uses custom ALPN: `h3`
-- Prevents accidental connection from HTTP/3 clients
 
 ## References
 
-- [RFC 9000: HTTP/3: A UDP-Based Multiplexed and Secure Transport](https://datatracker.ietf.org/doc/html/rfc9000)
-- [Quinn Documentation](https://docs.rs/quinn/)
-- [HTTP/3 Transport](https://datatracker.ietf.org/doc/html/rfc9000)
-- [HTTP/3 TLS](https://datatracker.ietf.org/doc/html/rfc9001)
-- [HTTP/3 Recovery](https://datatracker.ietf.org/doc/html/rfc9002)
+- RFC 9000/9001 (QUIC) — what this implements
+- RFC 9114 (HTTP/3), RFC 9204 (QPACK) — what this does **not** implement
+- [quinn](https://docs.rs/quinn/)

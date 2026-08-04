@@ -425,10 +425,15 @@ impl Http3Server {
             return;
         }
 
-        // Merge any queued data with new data
+        // Merge any queued data with new data. The stream can disappear between
+        // the state check above and this lock (peer reset, close_this_stream on
+        // another task), so this must not unwrap.
         let all_data = {
             let mut streams_lock = streams.lock().await;
-            let stream_data = streams_lock.get_mut(&stream_id).unwrap();
+            let Some(stream_data) = streams_lock.get_mut(&stream_id) else {
+                debug!("Stream {} closed before its data could be processed", stream_id);
+                return;
+            };
             stream_data.state = StreamState::Processing;
             let mut merged = stream_data.queued_data.clone();
             merged.extend_from_slice(&data);
@@ -456,14 +461,16 @@ impl Http3Server {
                 return; // Stream not found
             };
 
-            // Format data for event parameter
-            let data_str = if all_data
+            // Format data for event parameter. The representation switches
+            // between text and hex depending on the payload, so say which one
+            // the model is looking at instead of leaving it to guess.
+            let is_printable = all_data
                 .iter()
-                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
-            {
-                String::from_utf8_lossy(&all_data).to_string()
+                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace());
+            let (data_str, encoding) = if is_printable {
+                (String::from_utf8_lossy(&all_data).to_string(), "text")
             } else {
-                hex::encode(&all_data)
+                (hex::encode(&all_data), "hex")
             };
 
             // Create data received event
@@ -471,7 +478,8 @@ impl Http3Server {
                 &HTTP3_DATA_RECEIVED_EVENT,
                 serde_json::json!({
                     "stream_id": stream_id.to_string(),
-                    "data": data_str
+                    "data": data_str,
+                    "encoding": encoding
                 }),
             );
 

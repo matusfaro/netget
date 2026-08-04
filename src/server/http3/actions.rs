@@ -68,11 +68,14 @@ impl Protocol for Http3Protocol {
         crate::server::tls_cert_manager::get_tls_startup_parameters()
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            send_to_stream_action(),
-            close_stream_action(),
-            list_streams_action(),
-        ]
+        // Intentionally empty. `send_to_stream`, `close_stream` and
+        // `list_streams` used to be advertised here, but nothing ever consumed
+        // their results: the async (user-triggered) path has no stream context,
+        // so the bytes were serialized into an ActionResult that was dropped on
+        // the floor and the model was told an action had succeeded when nothing
+        // reached the wire. Do not re-add them without an executor that owns the
+        // quinn SendStream (see src/server/http3/CLAUDE.md).
+        Vec::new()
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -94,21 +97,31 @@ impl Protocol for Http3Protocol {
         vec!["http3"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Quinn async HTTP3 with built-in TLS 1.3")
-            .llm_control("Full stream control - all sent/received data on bidirectional streams")
-            .e2e_testing("quinn::Endpoint client")
-            .notes("UDP-based, encrypted, multiplexed transport - basis for HTTP/3")
+            // HTTP/3 runs over UDP 443 by default; the preflight check only
+            // fires when the requested port is actually < 1024.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(443))
+            .implementation("quinn v0.11 raw QUIC streams with TLS 1.3 (no HTTP/3 framing layer)")
+            .llm_control("Full stream control - all bytes sent/received on bidirectional streams")
+            .e2e_testing("quinn::Endpoint client + mocked LLM, tests/server/http3/e2e_test.rs")
+            .notes(
+                "NOT an RFC 9114 HTTP/3 server: it serves raw QUIC bidirectional streams under \
+                 ALPN h3 with no HEADERS/DATA frames and no QPACK, so real HTTP/3 clients \
+                 (curl --http3, browsers, and NetGet's own http3 client) cannot talk to it. \
+                 Use it as a QUIC stream server. request_filter is not supported.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "HTTP3 protocol server with multiplexed streams"
+        "QUIC server with multiplexed bidirectional streams (raw stream bytes, not HTTP/3 framing)"
     }
     fn example_prompt(&self) -> &'static str {
-        "HTTP3 echo server on port 4433; echo back all data received on each stream"
+        "QUIC stream echo server on port 4433; echo back all data received on each stream"
     }
     fn group_name(&self) -> &'static str {
         "Core"
@@ -231,42 +244,6 @@ impl Server for Http3Protocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_to_stream" => {
-                // Async action - not fully implemented here, needs to be handled by caller
-                // because we need async context to send data
-                let stream_id_str = action
-                    .get("stream_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'stream_id' parameter")?;
-
-                let data = action
-                    .get("data")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'data' parameter")?;
-
-                let _stream_id =
-                    ConnectionId::from_string(stream_id_str).context("Invalid stream_id format")?;
-
-                // Return the data with stream ID embedded
-                // The caller will need to handle actually sending it
-                Ok(ActionResult::Output(data.as_bytes().to_vec()))
-            }
-            "close_stream" => {
-                // Async action - signal that stream should be closed
-                let stream_id_str = action
-                    .get("stream_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'stream_id' parameter")?;
-
-                let _stream_id =
-                    ConnectionId::from_string(stream_id_str).context("Invalid stream_id format")?;
-
-                Ok(ActionResult::CloseConnection)
-            }
-            "list_streams" => {
-                // This needs to be handled specially by the caller
-                Ok(ActionResult::NoAction)
-            }
             "send_http3_data" => self.execute_send_http3_data(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             "close_this_stream" => Ok(ActionResult::CloseConnection),
@@ -287,87 +264,23 @@ impl Http3Protocol {
     }
 }
 
-/// Action definition for send_to_stream (async)
-fn send_to_stream_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "send_to_stream".to_string(),
-        description: "Send data to a specific HTTP3 stream (async action)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "stream_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Stream ID to send to".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "Data to send".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "send_to_stream",
-            "stream_id": "conn_12345",
-            "data": "Hello from HTTP3"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> HTTP/3 to stream {stream_id}")
-                .with_debug("HTTP/3 send_to_stream: stream={stream_id}"),
-        ),
-    }
-}
-
-/// Action definition for close_stream (async)
-fn close_stream_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "close_stream".to_string(),
-        description: "Close a specific HTTP3 stream (async action)".to_string(),
-        parameters: vec![Parameter {
-            name: "stream_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Stream ID to close".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "close_stream",
-            "stream_id": "conn_12345"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("HTTP/3 close stream {stream_id}")
-                .with_debug("HTTP/3 close_stream: stream={stream_id}"),
-        ),
-    }
-}
-
-/// Action definition for list_streams (async)
-fn list_streams_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_streams".to_string(),
-        description: "List all active HTTP3 streams (async action)".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_streams"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("HTTP/3 list streams")
-                .with_debug("HTTP/3 list_streams"),
-        ),
-    }
-}
-
 /// Action definition for send_http3_data (sync)
 fn send_http3_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_http3_data".to_string(),
-        description: "Send data over the current HTTP3 stream".to_string(),
+        description: "Send data on the QUIC stream that triggered this event. The stream carries \
+            raw bytes - there is no HTTP/3 framing, so if the peer expects an HTTP-shaped reply \
+            you must write the full message yourself."
+            .to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "Data to send".to_string(),
+            description: "Text to send. It is written to the stream verbatim as UTF-8: hex is NOT \
+                decoded, so \"48656c6c6f\" puts those 10 ASCII characters on the wire, not the 5 \
+                bytes they spell. Binary payloads therefore cannot be sent. Note the asymmetry \
+                with the inbound direction, where a non-printable payload is shown to you as hex \
+                (encoding=\"hex\") - you cannot echo such data back unchanged."
+                .to_string(),
             required: true,
         }],
         example: json!({
@@ -486,7 +399,18 @@ pub static HTTP3_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "string".to_string(),
-                description: "The data received (as hex string or UTF-8 if printable)".to_string(),
+                description: "The data received. Printable payloads are given verbatim as text; \
+                    anything else is hex-encoded. Check the `encoding` field before interpreting it."
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "encoding".to_string(),
+                type_hint: "string".to_string(),
+                description: "How `data` is encoded: \"text\" (verbatim UTF-8) or \"hex\" (the \
+                    payload was not printable). send_http3_data always writes text verbatim, so \
+                    hex data cannot be echoed back unchanged."
+                    .to_string(),
                 required: true,
             },
         ])
