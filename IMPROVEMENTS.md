@@ -360,6 +360,67 @@ setting or remove it and the state it depends on.
 
 ---
 
+## P2c — Found during the fix pass
+
+### 30. `register_server_task()` stores only one handle per server **[static]**
+
+`src/state/app_state.rs:487-493` overwrites any previously registered `JoinHandle`, so a
+protocol with two long-lived loops (OpenVPN's UDP listener plus its TUN reader) silently leaks
+the first — and `stop_server` then only aborts the second. OpenVPN worked around it by joining
+both loops under one task with `select!`. Either document the single-handle contract at the
+call site or change the field to a `Vec<JoinHandle<()>>`.
+
+### 31. Protocol async actions are structurally unreachable **[static]**
+
+`src/llm/actions/executor.rs:100` dispatches async actions through `Server::execute_action()`,
+which is invoked on a *stateless* protocol struct with no handle to the running server
+instance. Any async action needing live state (`list_peers`, `get_server_info`, …) can only
+return `NoAction`. Several protocols advertised such actions to the model; the VPN family's
+dead advertisements were removed, but the general fix needs a server-instance registry reachable
+from `src/llm/actions/protocol_trait.rs`.
+
+### 32. Validator accepts a superset of what the prompt advertises **[static]**
+
+Items 4 and the scheduled-task fix closed two cases where the advertised and validated action
+lists diverged outright. A milder version remains: several call sites pass the *unfiltered*
+list to the validator while the prompt builder applies `filter_actions_by_scripting_mode` to
+what it renders, so e.g. `update_script` is accepted with scripting Off. Permissive rather
+than broken, but it is the same drift. Clearest at `src/events/handler.rs:611-637` and
+`src/llm/action_helper.rs:143-167`.
+
+### 33. Development builds default to TRACE, which writes full payloads to disk **[verified]**
+
+`src/cli/args.rs` defaults dev builds to `trace`; per CLAUDE.md, TRACE logs full payloads.
+That is what produced a 481 MB `netget.log` in a day. Rotation now bounds total size
+(`e3617126`), but `debug` would be a better default, with `--log-level trace` still available
+when payload-level detail is genuinely wanted.
+
+### 34. `src/server/vpn_util/` is dead code **[static]**
+
+`TunManager` is declared at `src/server/mod.rs:511` and used by nothing — WireGuard uses
+defguard, OpenVPN uses the `tun` crate directly. It keeps a `tokio_tun` dependency alive for
+no consumer.
+
+### 35. The `easy` layer is a parallel subsystem serving one protocol **[verified]**
+
+`src/easy/` contains exactly one protocol (HTTP, 378 LOC) but carries its own trait, registry
+(`src/protocol/easy_registry.rs`), startup path (`src/cli/easy_startup.rs`), prompt templates
+(`prompts/easy_request/`), and snapshot tests. In `src/llm/action_helper.rs:361-394` it is
+checked *before* `try_execute_event_handler` and returns early, so for an easy-managed server
+the deterministic script/static path would be bypassed in favour of an LLM call. Not currently
+reachable — `easy_startup.rs` accepts no `event_handlers` — but the ordering inverts the
+project's stated preference and is a trap if easy servers ever gain handler support.
+
+### 36. Registry `resolve()` needs adopting in the startup path **[static]**
+
+`d58854ca` added `ServerRegistry::resolve()` / `ClientRegistry::resolve()`, which distinguish
+"not compiled into this build" from "no such protocol" and offer a did-you-mean suggestion.
+`src/cli/server_startup.rs` still uses the older `parse_from_str` + `get` pair at roughly
+`:52` and `:227`, so callers keep getting the bare `Unknown protocol: arp`. Two-line adoption,
+described in that commit.
+
+---
+
 ## Suggested order
 
 1. Items 1-4 — remotely-reachable panics and the broken feedback loop.
