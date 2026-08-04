@@ -160,6 +160,65 @@ Both properties are load-bearing, and both were previously absent:
 variants exist purely so synchronous test and tooling code does not have to
 build a runtime; reaching for them from async code reintroduces defect (1).
 
+## Static handlers and `{{event.…}}` interpolation
+
+`event_handler.rs` also defines the **static** handler: a fixed list of actions emitted
+with no LLM call *and* no interpreter process. It is the cheapest deterministic path —
+strictly cheaper than a script, which spawns `python3`/`node` per event.
+
+Static actions may reference the event that triggered them:
+
+| Form | Meaning |
+|---|---|
+| `{{event.query_id}}` | a top-level field |
+| `{{event.headers.host}}` | a nested field |
+| `{{event.questions.0.name}}` | an array element (numeric segment) |
+| `{{event}}` | the entire event payload |
+
+Substitution happens in `interpolate_actions` (called from
+`llm/event_handler_executor.rs::execute_static_handler`) just before the actions are
+executed. Three rules:
+
+1. **A whole-string reference keeps the value's JSON type.** `"query_id": "{{event.query_id}}"`
+   produces the *number* `4660`, not the string `"4660"`. This is the point of the
+   feature: the action executor type-checks its fields, so a stringified correlation id
+   is rejected and the client times out. Objects, arrays, booleans and null survive too.
+2. **An embedded reference splices text.** `"reply to {{event.domain}}"` →
+   `"reply to example.com"`. Non-strings render in JSON form (`42`, `true`, `null`,
+   `{"a":1}`).
+3. **Everything else is byte-identical.** Only `{{…}}` groups whose contents are `event`
+   or start with `event.` are touched. `{{ message }}` in a served Vue page,
+   `{{#if}}`/`{{> partial}}` in a served Handlebars template, `{` in a JSON body, `{{2}}`
+   in a regex, `{{braces}}` in a Rust format string — all pass through unchanged. Actions
+   containing no reference are returned untouched and never require event data.
+
+An unresolvable reference is a **hard error** naming the reference and listing the fields
+the event actually carries — never a silent `null` or empty string, so a typo cannot look
+like it works. `EventHandlerType::validate()` performs the parse-time half of that check
+(malformed paths such as `{{event.}}` or `{{event..x}}`); field existence can only be
+checked when an event arrives.
+
+```json
+{ "event_pattern": "dns_query",
+  "handler": { "type": "static",
+    "actions": [{ "type": "send_dns_a_response",
+                  "query_id": "{{event.query_id}}",
+                  "domain":   "{{event.domain}}",
+                  "ip": "93.184.216.34", "ttl": 300 }] } }
+```
+
+Use `get_protocol_docs` (MCP) or `/docs` (TUI) to see which fields a given event carries.
+
+**Why not Handlebars**, which is already a dependency for prompt templates: it renders to
+a `String`, so rule 1 would need a re-parse that turns `"007"` into `7`; it HTML-escapes
+`{{…}}` by default, corrupting JSON and URLs unless every reference is triple-stashed; and
+it owns the whole `{{…}}` namespace, so a handler that *serves* a Handlebars or Vue
+template would be rewritten or rejected. The resolver borrows only the spelling.
+
+This closes the gap that forced request/response UDP protocols — DNS `query_id`,
+DHCP/BOOTP `xid`, SNMP `request-id`, STUN transaction id, NTP origin timestamp — to use a
+script handler purely to copy one integer.
+
 ## Concurrency notes
 
 - Go temp files are named `netget_script_<pid>_<seq>.go` with a process-global
@@ -180,9 +239,16 @@ that runs 8 one-second scripts on a 2-worker runtime alongside a 10ms ticker.
 
 `tests/scripting_manager_test.rs` covers routing and config construction.
 
+`tests/static_handler_interpolation_test.rs` covers `{{event.…}}` substitution: type
+preservation per JSON type, embedded splicing, nested and indexed paths, the error text for
+a missing/typo'd field, byte-identical pass-through of literal braces, and a DNS-shaped
+static handler echoing a client's `query_id` both directly and through
+`try_execute_event_handler`.
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features tcp \
-  --test scripting_executor_test --test scripting_manager_test -- --test-threads=100
+  --test scripting_executor_test --test scripting_manager_test \
+  --test static_handler_interpolation_test -- --test-threads=100
 ```
 
 The Perl tests need the `JSON` CPAN module (`cpan JSON`); they fail on a stock

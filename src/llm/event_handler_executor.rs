@@ -12,7 +12,7 @@ use crate::scripting::EventHandlerType;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Result from checking event handlers
 pub enum EventHandlerResult {
@@ -86,13 +86,14 @@ pub async fn try_execute_event_handler(
         }
 
         EventHandlerType::Static { actions } => {
-            // Execute static handler
+            // Execute static handler (may interpolate {{event.field}} from event_data)
             execute_static_handler(
                 state,
                 server_id,
                 event_type_id,
                 event_description,
                 actions,
+                event_data.as_ref(),
                 protocol,
             )
             .await
@@ -241,12 +242,23 @@ async fn execute_script_handler(
 }
 
 /// Execute a static handler
+///
+/// Before dispatch, every `{{event.field}}` reference in the configured actions is
+/// replaced with the matching value from `event_data`. A whole-string reference keeps the
+/// referenced value's JSON type, which is what makes static mode usable for protocols that
+/// must echo a correlation id (DNS `query_id`, DHCP `xid`, SNMP `request-id`, STUN
+/// transaction id). See `crate::scripting::event_handler` for the full syntax.
+///
+/// Actions with no references are passed through untouched. An unresolvable reference is a
+/// hard error rather than a silent `null`, so a typo'd field name cannot look like it works.
+#[allow(clippy::too_many_arguments)]
 async fn execute_static_handler(
     state: &AppState,
     server_id: ServerId,
     event_type_id: &str,
     event_description: &str,
     actions: &[serde_json::Value],
+    event_data: Option<&serde_json::Value>,
     protocol: Option<&dyn Server>,
 ) -> Result<EventHandlerResult> {
     debug!(
@@ -255,8 +267,22 @@ async fn execute_static_handler(
         actions.len()
     );
 
+    // Substitute {{event.…}} references from the triggering event
+    let actions = match crate::scripting::event_handler::interpolate_actions(actions, event_data) {
+        Ok(actions) => actions,
+        Err(e) => {
+            error!(
+                "Static handler for event '{}' has an unresolvable reference: {}",
+                event_type_id, e
+            );
+            return Err(e).with_context(|| {
+                format!("Static handler for event '{}' could not be rendered", event_type_id)
+            });
+        }
+    };
+
     // Execute the static actions with server context
-    let result = execute_actions(actions.to_vec(), state, protocol, Some(server_id), None)
+    let result = execute_actions(actions, state, protocol, Some(server_id), None)
         .await
         .context("Failed to execute static actions")?;
 
