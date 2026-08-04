@@ -1,6 +1,6 @@
 //! Script manager for coordinating script execution
 
-use super::executor::execute_script;
+use super::executor::{execute_script, execute_script_async};
 use super::types::{ScriptConfig, ScriptInput, ScriptResponse};
 use anyhow::Result;
 use tracing::{debug, info, warn};
@@ -9,31 +9,20 @@ use tracing::{debug, info, warn};
 pub struct ScriptManager;
 
 impl ScriptManager {
-    /// Try to handle a request with a script, if configured
+    /// Decide whether the configured script should handle this input.
     ///
-    /// # Arguments
-    /// * `config` - Optional script configuration
-    /// * `input` - Structured input for the script
-    ///
-    /// # Returns
-    /// * `Ok(Some(ScriptResponse))` - Script handled the request successfully (returns actions array)
-    /// * `Ok(None)` - No script configured for this context
-    /// * `Err(_)` - Script execution failed (should fallback to LLM)
-    ///
-    /// # Behavior
-    /// - If no config or script doesn't handle this context → returns Ok(None)
-    /// - If script executes successfully and returns actions → returns Ok(Some(response))
-    /// - If script execution fails → logs error and returns Err (caller should fallback to LLM)
-    pub fn try_execute(
-        config: Option<&ScriptConfig>,
+    /// Returns `Some(config)` when the script applies, `None` when the caller
+    /// should fall back to the LLM.
+    fn select_config<'a>(
+        config: Option<&'a ScriptConfig>,
         input: &ScriptInput,
-    ) -> Result<Option<ScriptResponse>> {
+    ) -> Option<&'a ScriptConfig> {
         // If no script configured, use LLM
         let config = match config {
             Some(cfg) => cfg,
             None => {
                 debug!("No script configured, using LLM");
-                return Ok(None);
+                return None;
             }
         };
 
@@ -43,7 +32,7 @@ impl ScriptManager {
                 "Script does not handle context '{}', using LLM",
                 input.event_type_id
             );
-            return Ok(None);
+            return None;
         }
 
         info!(
@@ -52,8 +41,12 @@ impl ScriptManager {
             input.event_type_id
         );
 
-        // Execute the script
-        match execute_script(config, input) {
+        Some(config)
+    }
+
+    /// Interpret the executor's result for the caller.
+    fn finish(result: Result<ScriptResponse>) -> Result<Option<ScriptResponse>> {
+        match result {
             Ok(response) => {
                 debug!(
                     "Script handled request with {} actions",
@@ -67,6 +60,50 @@ impl ScriptManager {
                 Err(e)
             }
         }
+    }
+
+    /// Try to handle a request with a script, if configured (async).
+    ///
+    /// This is the entry point for async callers: it never parks a tokio worker
+    /// thread while the interpreter runs.
+    ///
+    /// # Arguments
+    /// * `config` - Optional script configuration
+    /// * `input` - Structured input for the script
+    ///
+    /// # Returns
+    /// * `Ok(Some(ScriptResponse))` - Script handled the request successfully (returns actions array)
+    /// * `Ok(None)` - No script configured for this context
+    /// * `Err(_)` - Script execution failed (should fallback to LLM)
+    pub async fn try_execute_async(
+        config: Option<&ScriptConfig>,
+        input: &ScriptInput,
+    ) -> Result<Option<ScriptResponse>> {
+        let Some(config) = Self::select_config(config, input) else {
+            return Ok(None);
+        };
+
+        Self::finish(execute_script_async(config, input).await)
+    }
+
+    /// Try to handle a request with a script, if configured (blocking).
+    ///
+    /// **Do not call this from async code** — use [`ScriptManager::try_execute_async`].
+    /// Retained for synchronous callers (tests, tooling).
+    ///
+    /// # Behavior
+    /// - If no config or script doesn't handle this context → returns Ok(None)
+    /// - If script executes successfully and returns actions → returns Ok(Some(response))
+    /// - If script execution fails → logs error and returns Err (caller should fallback to LLM)
+    pub fn try_execute(
+        config: Option<&ScriptConfig>,
+        input: &ScriptInput,
+    ) -> Result<Option<ScriptResponse>> {
+        let Some(config) = Self::select_config(config, input) else {
+            return Ok(None);
+        };
+
+        Self::finish(execute_script(config, input))
     }
 
     /// Build script configuration from action parameters
