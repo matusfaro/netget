@@ -59,6 +59,13 @@ tests had been passing straight through.
 - **DHCP remote panic**: a datagram declaring `hlen = 255` no longer kills the socket task —
   the server answered a well-formed request afterwards, echoing xid `deadbeef`, confirming both
   the panic guard and the per-datagram correlation fix.
+- **The committed tree**: `cargo check --all-features` in a clean worktree at HEAD finishes in
+  5m00s with **zero errors**. Worth re-running this way rather than in the working tree, which
+  during heavy parallel work is routinely mid-edit and produces failures belonging to nobody.
+- **TUI logging**: the rotating writer is exercised on the interactive path — netget started
+  under a real PTY produced a well-formed `netget.log` through `RotatingFileWriter`. The
+  interactive branch of `init_logging` is the only consumer, so a compile check alone would not
+  have shown this.
 
 ---
 
