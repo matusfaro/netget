@@ -83,7 +83,9 @@ impl Protocol for PostgresqlProtocol {
             .implementation("pgwire v0.35 protocol library")
             .llm_control("Query responses (columns, rows, types)")
             .e2e_testing("tokio-postgres client")
-            .notes("No authentication, no TLS; simple and extended query protocols, text format only")
+            .notes(
+                "No authentication, no TLS; simple and extended query protocols, text format only",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -292,13 +294,16 @@ pub fn postgresql_query_response_action() -> ActionDefinition {
                               Recognised types: int2/smallint, int4/int/integer, int8/bigint, \
                               float4/real, float8/double, bool/boolean, date, time, timestamp, \
                               text, varchar (anything else is sent as varchar). Rows shorter than \
-                              the column list are padded with NULLs; extra values are dropped".to_string(),
+                              the column list are padded with NULLs; extra values are dropped"
+                    .to_string(),
                 required: true,
             },
             Parameter {
                 name: "rows".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of rows. Each row is an array of values matching the column order".to_string(),
+                description:
+                    "Array of rows. Each row is an array of values matching the column order"
+                        .to_string(),
                 required: true,
             },
         ],
@@ -399,8 +404,8 @@ pub fn close_this_connection_action() -> ActionDefinition {
 // ============================================================================
 
 /// PostgreSQL query response action constant
-pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "postgresql_query_response".to_string(),
         description: "Send a result set in response to a SELECT query".to_string(),
         parameters: vec![
@@ -411,13 +416,16 @@ pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
                               Recognised types: int2/smallint, int4/int/integer, int8/bigint, \
                               float4/real, float8/double, bool/boolean, date, time, timestamp, \
                               text, varchar (anything else is sent as varchar). Rows shorter than \
-                              the column list are padded with NULLs; extra values are dropped".to_string(),
+                              the column list are padded with NULLs; extra values are dropped"
+                    .to_string(),
                 required: true,
             },
             Parameter {
                 name: "rows".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of rows. Each row is an array of values matching the column order".to_string(),
+                description:
+                    "Array of rows. Each row is an array of values matching the column order"
+                        .to_string(),
                 required: true,
             },
         ],
@@ -431,8 +439,7 @@ pub static POSTGRESQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLo
                 .with_info("-> PostgreSQL {columns_len} cols, {rows_len} rows")
                 .with_debug("PostgreSQL query_response: {columns_len} columns, {rows_len} rows"),
         ),
-    }
-});
+    });
 
 /// PostgreSQL error response action constant
 pub static POSTGRESQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {

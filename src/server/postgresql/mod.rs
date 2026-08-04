@@ -18,16 +18,17 @@ use pgwire::api::results::{
     DataRowEncoder, DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo,
     QueryResponse, Response, Tag,
 };
-use pgwire::types::format::FormatOptions;
 use pgwire::api::stmt::StoredStatement;
 use pgwire::api::{ClientInfo, PgWireServerHandlers, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
+use pgwire::messages::data::DataRow;
 use pgwire::tokio::process_socket;
+use pgwire::types::format::FormatOptions;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tokio::sync::{mpsc, Mutex as TokioMutex};
+use tracing::{debug, error, info, warn};
 
 /// PostgreSQL server implementation
 pub struct PostgresqlServer {
@@ -100,6 +101,7 @@ impl PostgresqlServer {
                             status_tx: status_tx.clone(),
                             server_id: server.server_id,
                             remote_addr: addr,
+                            describe_cache: Arc::new(TokioMutex::new(Vec::new())),
                         });
 
                         // Track the connection
@@ -128,9 +130,18 @@ impl PostgresqlServer {
                                 .await;
                         }
 
+                        let conn_state_owner = server.app_state.clone();
+                        let conn_server_id = server.server_id;
                         tokio::spawn(async move {
                             if let Err(e) = process_socket(stream, None, handler_factory).await {
                                 error!("PostgreSQL connection error: {:?}", e);
+                            }
+                            // Mark the connection closed so it does not stay Active forever
+                            // in the server's connection map.
+                            if let Some(server_id) = conn_server_id {
+                                conn_state_owner
+                                    .close_connection_on_server(server_id, connection_id)
+                                    .await;
                             }
                         });
                     }
@@ -166,39 +177,37 @@ struct PostgresqlHandlerFactory {
     status_tx: mpsc::UnboundedSender<String>,
     server_id: Option<crate::state::ServerId>,
     remote_addr: SocketAddr,
+    /// Shared between the simple and extended handlers so a Describe resolved by one is
+    /// visible to the Execute served by the other.
+    describe_cache: DescribeCache,
+}
+
+impl PostgresqlHandlerFactory {
+    fn handler(&self) -> PostgresqlHandler {
+        PostgresqlHandler {
+            connection_id: self.connection_id,
+            llm_client: self.llm_client.clone(),
+            app_state: self.app_state.clone(),
+            status_tx: self.status_tx.clone(),
+            server_id: self.server_id,
+            remote_addr: self.remote_addr,
+            protocol: Arc::new(PostgresqlProtocol::new(
+                self.connection_id,
+                self.app_state.clone(),
+                self.status_tx.clone(),
+            )),
+            describe_cache: Arc::clone(&self.describe_cache),
+        }
+    }
 }
 
 impl PgWireServerHandlers for PostgresqlHandlerFactory {
     fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> {
-        Arc::new(PostgresqlHandler {
-            connection_id: self.connection_id,
-            llm_client: self.llm_client.clone(),
-            app_state: self.app_state.clone(),
-            status_tx: self.status_tx.clone(),
-            server_id: self.server_id,
-            remote_addr: self.remote_addr,
-            protocol: Arc::new(PostgresqlProtocol::new(
-                self.connection_id,
-                self.app_state.clone(),
-                self.status_tx.clone(),
-            )),
-        })
+        Arc::new(self.handler())
     }
 
     fn extended_query_handler(&self) -> Arc<impl ExtendedQueryHandler> {
-        Arc::new(PostgresqlHandler {
-            connection_id: self.connection_id,
-            llm_client: self.llm_client.clone(),
-            app_state: self.app_state.clone(),
-            status_tx: self.status_tx.clone(),
-            server_id: self.server_id,
-            remote_addr: self.remote_addr,
-            protocol: Arc::new(PostgresqlProtocol::new(
-                self.connection_id,
-                self.app_state.clone(),
-                self.status_tx.clone(),
-            )),
-        })
+        Arc::new(self.handler())
     }
 
     fn startup_handler(&self) -> Arc<impl StartupHandler> {
@@ -218,30 +227,44 @@ pub struct PostgresqlHandler {
     remote_addr: SocketAddr,
     /// PostgreSQL protocol handler for action execution
     protocol: Arc<PostgresqlProtocol>,
+    /// Describe -> Execute correlation for the extended query protocol
+    describe_cache: DescribeCache,
 }
 
-#[async_trait::async_trait]
-impl SimpleQueryHandler for PostgresqlHandler {
-    async fn do_query<C>(
-        &self,
-        _client: &mut C,
-        query: &str,
-    ) -> PgWireResult<Vec<Response>>
-    where
-        C: ClientInfo + Unpin + Send + Sync,
-    {
-        debug!("PostgreSQL SIMPLE QUERY: {}", query);
+/// The outcome of resolving one SQL statement through the LLM/handler pipeline.
+///
+/// Extended-protocol clients ask for the row description (Describe) *before* asking for the
+/// rows (Execute). Because the schema is whatever the LLM decides, the two steps must agree,
+/// so the resolved outcome is cached per SQL text between them. This is per-connection
+/// protocol bookkeeping, not a data store: nothing is retained once the statement executes.
+enum PgOutcome {
+    Rows {
+        fields: Arc<Vec<FieldInfo>>,
+        rows: Vec<PgWireResult<DataRow>>,
+    },
+    Tag(String),
+    Close,
+}
+
+/// Cap on described-but-not-executed statements held per connection.
+const MAX_PENDING_DESCRIBES: usize = 64;
+
+/// A connection-scoped cache shared by the simple and extended handlers.
+type DescribeCache = Arc<TokioMutex<Vec<(String, PgOutcome)>>>;
+
+impl PostgresqlHandler {
+    /// Run one statement through the handler pipeline and translate the resulting action into
+    /// wire-level output. Returns `Err` for `postgresql_error_response` and for LLM failures.
+    async fn resolve(&self, sql: &str) -> PgWireResult<PgOutcome> {
+        debug!("PostgreSQL query: {}", sql);
         let _ = self
             .status_tx
-            .send(format!("[DEBUG] PostgreSQL SIMPLE QUERY: {}", query));
+            .send(format!("[DEBUG] PostgreSQL query: {}", sql));
 
-        trace!("Simple query handler calling LLM for: {}", query);
-
-        // Create query event
         let event = Event::new(
             &POSTGRESQL_QUERY_EVENT,
             serde_json::json!({
-                "query": query,
+                "query": sql,
             }),
         );
 
@@ -249,7 +272,7 @@ impl SimpleQueryHandler for PostgresqlHandler {
             .server_id
             .unwrap_or_else(|| crate::state::ServerId::new(0));
 
-        let llm_result = call_llm(
+        let execution_result = call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -257,189 +280,283 @@ impl SimpleQueryHandler for PostgresqlHandler {
             &event,
             self.protocol.as_ref(),
         )
-        .await;
+        .await
+        .map_err(|e| {
+            error!("LLM error for PostgreSQL query: {}", e);
+            let _ = self.status_tx.send(format!("[ERROR] PostgreSQL: {}", e));
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_string(),
+                "XX000".to_string(),
+                format!("netget: {}", e),
+            )))
+        })?;
 
-        match llm_result {
-            Ok(execution_result) => {
-                // Process action results to find PostgreSQL responses
-                for result in execution_result.protocol_results {
-                    match result {
-                        ActionResult::Custom { name, data } => {
-                            match name.as_str() {
-                                "postgresql_query_response" => {
-                                    // Extract columns and rows from JSON data
-                                    let columns = data
-                                        .get("columns")
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    let rows = data
-                                        .get("rows")
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
+        let mut close_requested = false;
 
-                                    // Convert columns to FieldInfo
-                                    let field_infos: Vec<FieldInfo> = columns
-                                        .iter()
-                                        .filter_map(|col| {
-                                            let name = col.get("name")?.as_str()?;
-                                            let type_name = col
-                                                .get("type")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("text");
-
-                                            let pg_type = match type_name.to_lowercase().as_str() {
-                                                "int2" | "smallint" => Type::INT2,
-                                                "int4" | "int" | "integer" => Type::INT4,
-                                                "int8" | "bigint" => Type::INT8,
-                                                "float4" | "real" => Type::FLOAT4,
-                                                "float8" | "double" | "double precision" => {
-                                                    Type::FLOAT8
-                                                }
-                                                "bool" | "boolean" => Type::BOOL,
-                                                "date" => Type::DATE,
-                                                "time" => Type::TIME,
-                                                "timestamp" => Type::TIMESTAMP,
-                                                "varchar" | "text" | _ => Type::VARCHAR,
-                                            };
-
-                                            Some(FieldInfo::new(
-                                                name.to_string(),
-                                                None,
-                                                None,
-                                                pg_type,
-                                                FieldFormat::Text,
-                                            ))
-                                        })
-                                        .collect();
-
-                                    // Create Arc once and reuse it for both encoder and response
-                                    debug!("Creating field_infos_arc with {} fields", field_infos.len());
-                                    for (idx, field) in field_infos.iter().enumerate() {
-                                        debug!("  Field {}: name={:?}, type={:?}", idx, field.name(), field.datatype());
-                                    }
-                                    let field_infos_arc = Arc::new(field_infos);
-
-                                    // Create data rows as a stream
-                                    let mut data_rows = Vec::new();
-                                    debug!("Encoding {} rows", rows.len());
-                                    for (row_idx, row_data) in rows.iter().enumerate() {
-                                        if let Some(row_values) = row_data.as_array() {
-                                            debug!("  Row {}: {} values", row_idx, row_values.len());
-                                            let mut encoder =
-                                                DataRowEncoder::new(Arc::clone(&field_infos_arc));
-
-                                            for (idx, value) in row_values.iter().enumerate() {
-                                                if idx < field_infos_arc.len() {
-                                                    let field_type = field_infos_arc[idx].datatype();
-                                                    debug!("    Encoding field {}: type={:?}, value={:?}", idx, field_type, value);
-
-                                                    // Encode based on the PostgreSQL type
-                                                    match field_type {
-                                                        &Type::INT2 => {
-                                                            let val = value.as_i64().unwrap_or(0) as i16;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT2, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::INT4 => {
-                                                            let val = value.as_i64().unwrap_or(0) as i32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT4, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::INT8 => {
-                                                            let val = value.as_i64().unwrap_or(0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT8, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::FLOAT4 => {
-                                                            let val = value.as_f64().unwrap_or(0.0) as f32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT4, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::FLOAT8 => {
-                                                            let val = value.as_f64().unwrap_or(0.0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT8, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::BOOL => {
-                                                            let val = value.as_bool().unwrap_or(false);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::BOOL, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        _ => {
-                                                            // For VARCHAR, TEXT, and other string types
-                                                            let value_str = json_value_to_string(value);
-                                                            encoder.encode_field_with_type_and_format(&value_str.as_str(), &field_type, FieldFormat::Text, &FormatOptions::default())?;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            let encoded_row = encoder.finish();
-                                            debug!("  Row {} encoded successfully", row_idx);
-                                            data_rows.push(encoded_row);
-                                        }
-                                    }
-
-                                    debug!("Total {} data rows encoded, creating stream", data_rows.len());
-                                    // Convert Vec<PgWireResult<DataRow>> to Stream
-                                    let row_stream = futures::stream::iter(data_rows);
-                                    debug!("Creating QueryResponse with {} field infos", field_infos_arc.len());
-                                    return Ok(vec![Response::Query(QueryResponse::new(
-                                        field_infos_arc,
-                                        row_stream,
-                                    ))]);
-                                }
-                                "postgresql_error" => {
-                                    // Extract error info from JSON data
-                                    let severity = data
-                                        .get("severity")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("ERROR")
-                                        .to_string();
-                                    let code = data
-                                        .get("code")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("XX000")
-                                        .to_string();
-                                    let message = data
-                                        .get("message")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Unknown error")
-                                        .to_string();
-
-                                    let _ = self.status_tx.send(format!(
-                                        "[ERROR] PostgreSQL error {} {}: {}",
-                                        severity, code, message
-                                    ));
-
-                                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                                        severity, code, message,
-                                    ))));
-                                }
-                                "postgresql_ok" => {
-                                    // Extract tag from JSON data
-                                    let tag =
-                                        data.get("tag").and_then(|v| v.as_str()).unwrap_or("OK");
-
-                                    return Ok(vec![Response::Execution(Tag::new(tag))]);
-                                }
-                                _ => {
-                                    // Unknown custom response, ignore
-                                }
-                            }
-                        }
-                        _ => {
-                            // Other action results are informational, continue processing
-                        }
+        for result in execution_result.protocol_results {
+            match result {
+                ActionResult::CloseConnection => close_requested = true,
+                ActionResult::Custom { name, data } => match name.as_str() {
+                    "postgresql_query_response" => {
+                        let columns = data
+                            .get("columns")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let rows = data
+                            .get("rows")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        return build_row_outcome(&columns, &rows);
                     }
-                }
+                    "postgresql_ok" => {
+                        let tag = data.get("tag").and_then(|v| v.as_str()).unwrap_or("OK");
+                        return Ok(PgOutcome::Tag(tag.to_string()));
+                    }
+                    "postgresql_error" => {
+                        let severity = data
+                            .get("severity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("ERROR")
+                            .to_string();
+                        let code = data
+                            .get("code")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("XX000")
+                            .to_string();
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error")
+                            .to_string();
 
-                // No PostgreSQL-specific response found, return empty result set
-                Ok(vec![Response::Execution(Tag::new("OK"))])
+                        let _ = self.status_tx.send(format!(
+                            "[ERROR] PostgreSQL error {} {}: {}",
+                            severity, code, message
+                        ));
+
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                            severity, code, message,
+                        ))));
+                    }
+                    other => {
+                        warn!(
+                            "PostgreSQL: no wire encoding for action result '{}', ignoring",
+                            other
+                        );
+                    }
+                },
+                _ => {}
             }
-            Err(e) => {
-                error!("LLM error for PostgreSQL query: {}", e);
-                Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                    "ERROR".to_string(),
-                    "XX000".to_string(),
-                    format!("LLM error: {}", e),
-                ))))
-            }
+        }
+
+        if close_requested {
+            return Ok(PgOutcome::Close);
+        }
+
+        // No response action matched. An empty result set is the safest reply for a SELECT
+        // (the client still gets a valid, if empty, row description).
+        warn!("PostgreSQL: no response action produced for {:?}", sql);
+        let _ = self
+            .status_tx
+            .send("[WARN] PostgreSQL: no response action produced".to_string());
+
+        if sql.trim_start().to_uppercase().starts_with("SELECT") {
+            Ok(PgOutcome::Rows {
+                fields: Arc::new(Vec::new()),
+                rows: Vec::new(),
+            })
+        } else {
+            Ok(PgOutcome::Tag("OK".to_string()))
+        }
+    }
+
+    /// Resolve `sql`, storing the outcome so a following Execute reuses it (one LLM call per
+    /// extended-protocol statement instead of one per Describe *and* one per Execute).
+    async fn resolve_for_describe(&self, sql: &str) -> PgWireResult<Vec<FieldInfo>> {
+        let outcome = self.resolve(sql).await?;
+        let fields = match &outcome {
+            PgOutcome::Rows { fields, .. } => fields.as_ref().clone(),
+            _ => Vec::new(),
+        };
+
+        let mut cache = self.describe_cache.lock().await;
+        cache.retain(|(key, _)| key != sql);
+        if cache.len() >= MAX_PENDING_DESCRIBES {
+            cache.remove(0);
+        }
+        cache.push((sql.to_string(), outcome));
+
+        Ok(fields)
+    }
+
+    /// Take a previously described outcome, or resolve fresh if Execute arrived without one.
+    async fn take_or_resolve(&self, sql: &str) -> PgWireResult<PgOutcome> {
+        let cached = {
+            let mut cache = self.describe_cache.lock().await;
+            cache
+                .iter()
+                .position(|(key, _)| key == sql)
+                .map(|idx| cache.remove(idx).1)
+        };
+
+        match cached {
+            Some(outcome) => Ok(outcome),
+            None => self.resolve(sql).await,
+        }
+    }
+}
+
+/// Error returned when the LLM asked to close the connection.
+fn terminating_error() -> PgWireError {
+    PgWireError::UserError(Box::new(ErrorInfo::new(
+        "FATAL".to_string(),
+        "57P01".to_string(),
+        "terminating connection due to administrator command".to_string(),
+    )))
+}
+
+/// Map a column type name from the LLM onto a PostgreSQL type OID.
+fn pg_type_for(type_name: &str) -> Type {
+    match type_name.to_lowercase().as_str() {
+        "int2" | "smallint" => Type::INT2,
+        "int4" | "int" | "integer" => Type::INT4,
+        "int8" | "bigint" => Type::INT8,
+        "float4" | "real" => Type::FLOAT4,
+        "float8" | "double" | "double precision" => Type::FLOAT8,
+        "bool" | "boolean" => Type::BOOL,
+        "date" => Type::DATE,
+        "time" => Type::TIME,
+        "timestamp" => Type::TIMESTAMP,
+        _ => Type::VARCHAR,
+    }
+}
+
+/// Encode LLM-supplied columns and rows into a row-description + data-row outcome.
+fn build_row_outcome(
+    columns: &[serde_json::Value],
+    rows: &[serde_json::Value],
+) -> PgWireResult<PgOutcome> {
+    let fields: Vec<FieldInfo> = columns
+        .iter()
+        .enumerate()
+        .map(|(idx, col)| {
+            let name = col
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("column{}", idx + 1));
+            let type_name = col.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            FieldInfo::new(name, None, None, pg_type_for(type_name), FieldFormat::Text)
+        })
+        .collect();
+
+    let fields = Arc::new(fields);
+    let mut data_rows = Vec::with_capacity(rows.len());
+
+    for row_data in rows {
+        let Some(row_values) = row_data.as_array() else {
+            warn!(
+                "PostgreSQL: skipping row that is not an array: {}",
+                row_data
+            );
+            continue;
+        };
+
+        let mut encoder = DataRowEncoder::new(Arc::clone(&fields));
+        // A short row is padded with NULLs and a long row is truncated: PostgreSQL requires
+        // exactly one value per described column, and the LLM does occasionally miscount.
+        for idx in 0..fields.len() {
+            let value = row_values.get(idx).unwrap_or(&serde_json::Value::Null);
+            let field_type = fields[idx].datatype();
+            encode_value(&mut encoder, field_type, value)?;
+        }
+        data_rows.push(encoder.finish());
+    }
+
+    Ok(PgOutcome::Rows {
+        fields,
+        rows: data_rows,
+    })
+}
+
+fn encode_value(
+    encoder: &mut DataRowEncoder,
+    field_type: &Type,
+    value: &serde_json::Value,
+) -> PgWireResult<()> {
+    if value.is_null() {
+        return encoder.encode_field_with_type_and_format(
+            &None::<&str>,
+            field_type,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        );
+    }
+
+    match *field_type {
+        Type::INT2 => encoder.encode_field_with_type_and_format(
+            &(value.as_i64().unwrap_or(0) as i16),
+            &Type::INT2,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        ),
+        Type::INT4 => encoder.encode_field_with_type_and_format(
+            &(value.as_i64().unwrap_or(0) as i32),
+            &Type::INT4,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        ),
+        Type::INT8 => encoder.encode_field_with_type_and_format(
+            &value.as_i64().unwrap_or(0),
+            &Type::INT8,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        ),
+        Type::FLOAT4 => encoder.encode_field_with_type_and_format(
+            &(value.as_f64().unwrap_or(0.0) as f32),
+            &Type::FLOAT4,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        ),
+        Type::FLOAT8 => encoder.encode_field_with_type_and_format(
+            &value.as_f64().unwrap_or(0.0),
+            &Type::FLOAT8,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        ),
+        Type::BOOL => encoder.encode_field_with_type_and_format(
+            &value.as_bool().unwrap_or(false),
+            &Type::BOOL,
+            FieldFormat::Text,
+            &FormatOptions::default(),
+        ),
+        _ => {
+            let value_str = json_value_to_string(value);
+            encoder.encode_field_with_type_and_format(
+                &value_str.as_str(),
+                field_type,
+                FieldFormat::Text,
+                &FormatOptions::default(),
+            )
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SimpleQueryHandler for PostgresqlHandler {
+    async fn do_query<C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
+    where
+        C: ClientInfo + Unpin + Send + Sync,
+    {
+        match self.resolve(query).await? {
+            PgOutcome::Rows { fields, rows } => Ok(vec![Response::Query(QueryResponse::new(
+                fields,
+                futures::stream::iter(rows),
+            ))]),
+            PgOutcome::Tag(tag) => Ok(vec![Response::Execution(Tag::new(&tag))]),
+            PgOutcome::Close => Err(terminating_error()),
         }
     }
 }
@@ -462,293 +579,32 @@ impl ExtendedQueryHandler for PostgresqlHandler {
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        // Extract the SQL from the portal and execute it like a simple query
         let sql = &portal.statement.statement;
 
-        debug!("PostgreSQL QUERY (extended): {}", sql);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] PostgreSQL QUERY (extended): {}", sql));
-
-        debug!("Extended query handler calling LLM for: {}", sql);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Extended query handler calling LLM for: {}",
-            sql
-        ));
-
-        // Create query event
-        let event = Event::new(
-            &POSTGRESQL_QUERY_EVENT,
-            serde_json::json!({
-                "query": sql,
-            }),
-        );
-
-        let server_id = self
-            .server_id
-            .unwrap_or_else(|| crate::state::ServerId::new(0));
-
-        let llm_result = call_llm(
-            &self.llm_client,
-            &self.app_state,
-            server_id,
-            Some(self.connection_id),
-            &event,
-            self.protocol.as_ref(),
-        )
-        .await;
-
-        debug!("Extended query handler LLM call completed");
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] Extended query handler LLM call completed"));
-
-        match llm_result {
-            Ok(execution_result) => {
-                let num_results = execution_result.protocol_results.len();
-                debug!(
-                    "Extended query handler received {} protocol results",
-                    num_results
-                );
-                let _ = self.status_tx.send(format!(
-                    "[DEBUG] Extended query handler received {num_results} protocol results"
-                ));
-
-                // Process action results to find PostgreSQL responses
-                for (idx, result) in execution_result.protocol_results.into_iter().enumerate() {
-                    debug!("Processing protocol result {}: {:?}", idx, result);
-                    let _ = self.status_tx.send(format!(
-                        "[DEBUG] Processing protocol result {idx}: {result:?}"
-                    ));
-
-                    match result {
-                        ActionResult::Custom { name, data } => {
-                            match name.as_str() {
-                                "postgresql_query_response" => {
-                                    // Extract columns and rows from JSON data
-                                    let columns = data
-                                        .get("columns")
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    let rows = data
-                                        .get("rows")
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
-
-                                    debug!("Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len());
-                                    let _ = self.status_tx.send(format!("[DEBUG] Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len()));
-
-                                    // Convert columns to FieldInfo
-                                    let field_infos: Vec<FieldInfo> = columns
-                                        .iter()
-                                        .filter_map(|col| {
-                                            let name = col.get("name")?.as_str()?;
-                                            let type_name = col
-                                                .get("type")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("text");
-
-                                            let pg_type = match type_name.to_lowercase().as_str() {
-                                                "int2" | "smallint" => Type::INT2,
-                                                "int4" | "int" | "integer" => Type::INT4,
-                                                "int8" | "bigint" => Type::INT8,
-                                                "float4" | "real" => Type::FLOAT4,
-                                                "float8" | "double" | "double precision" => {
-                                                    Type::FLOAT8
-                                                }
-                                                "bool" | "boolean" => Type::BOOL,
-                                                "date" => Type::DATE,
-                                                "time" => Type::TIME,
-                                                "timestamp" => Type::TIMESTAMP,
-                                                "varchar" | "text" | _ => Type::VARCHAR,
-                                            };
-
-                                            Some(FieldInfo::new(
-                                                name.to_string(),
-                                                None,
-                                                None,
-                                                pg_type,
-                                                FieldFormat::Text,
-                                            ))
-                                        })
-                                        .collect();
-
-                                    // Create Arc once and reuse it for both encoder and response
-                                    debug!("Creating field_infos_arc with {} fields", field_infos.len());
-                                    for (idx, field) in field_infos.iter().enumerate() {
-                                        debug!("  Field {}: name={:?}, type={:?}", idx, field.name(), field.datatype());
-                                    }
-                                    let field_infos_arc = Arc::new(field_infos);
-
-                                    // Create data rows as a stream
-                                    let mut data_rows = Vec::new();
-                                    debug!("Encoding {} rows", rows.len());
-                                    for (row_idx, row_data) in rows.iter().enumerate() {
-                                        if let Some(row_values) = row_data.as_array() {
-                                            debug!("  Row {}: {} values", row_idx, row_values.len());
-                                            let mut encoder =
-                                                DataRowEncoder::new(Arc::clone(&field_infos_arc));
-
-                                            for (idx, value) in row_values.iter().enumerate() {
-                                                if idx < field_infos_arc.len() {
-                                                    let field_type = field_infos_arc[idx].datatype();
-                                                    debug!("    Encoding field {}: type={:?}, value={:?}", idx, field_type, value);
-
-                                                    // Encode based on the PostgreSQL type
-                                                    match field_type {
-                                                        &Type::INT2 => {
-                                                            let val = value.as_i64().unwrap_or(0) as i16;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT2, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::INT4 => {
-                                                            let val = value.as_i64().unwrap_or(0) as i32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT4, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::INT8 => {
-                                                            let val = value.as_i64().unwrap_or(0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT8, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::FLOAT4 => {
-                                                            let val = value.as_f64().unwrap_or(0.0) as f32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT4, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::FLOAT8 => {
-                                                            let val = value.as_f64().unwrap_or(0.0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT8, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        &Type::BOOL => {
-                                                            let val = value.as_bool().unwrap_or(false);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::BOOL, FieldFormat::Text, &FormatOptions::default())?;
-                                                        },
-                                                        _ => {
-                                                            // For VARCHAR, TEXT, and other string types
-                                                            let value_str = json_value_to_string(value);
-                                                            encoder.encode_field_with_type_and_format(&value_str.as_str(), &field_type, FieldFormat::Text, &FormatOptions::default())?;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            let encoded_row = encoder.finish();
-                                            debug!("  Row {} encoded successfully", row_idx);
-                                            data_rows.push(encoded_row);
-                                        }
-                                    }
-
-                                    debug!("Total {} data rows encoded, creating stream", data_rows.len());
-                                    // Convert Vec to Stream
-                                    let row_stream = futures::stream::iter(data_rows);
-                                    debug!("Creating QueryResponse with {} field infos", field_infos_arc.len());
-                                    return Ok(Response::Query(QueryResponse::new(
-                                        field_infos_arc,
-                                        row_stream,
-                                    )));
-                                }
-                                "postgresql_error" => {
-                                    // Extract error info from JSON data
-                                    let severity = data
-                                        .get("severity")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("ERROR")
-                                        .to_string();
-                                    let code = data
-                                        .get("code")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("XX000")
-                                        .to_string();
-                                    let message = data
-                                        .get("message")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Unknown error")
-                                        .to_string();
-
-                                    let _ = self.status_tx.send(format!(
-                                        "[ERROR] PostgreSQL error {} {}: {}",
-                                        severity, code, message
-                                    ));
-
-                                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                                        severity, code, message,
-                                    ))));
-                                }
-                                "postgresql_ok" => {
-                                    // Extract tag from JSON data
-                                    let tag =
-                                        data.get("tag").and_then(|v| v.as_str()).unwrap_or("OK");
-
-                                    return Ok(Response::Execution(Tag::new(tag)));
-                                }
-                                _ => {
-                                    // Unknown custom response, ignore
-                                }
-                            }
-                        }
-                        _ => {
-                            // Other action results are informational, continue processing
-                        }
-                    }
-                }
-
-                // No PostgreSQL-specific response found, return empty result set
-                warn!("Extended query handler: No PostgreSQL response found in {} results, returning OK", num_results);
-                let _ = self.status_tx.send(format!("[WARN] No PostgreSQL response action found from LLM after processing {} results", num_results));
-
-                // For SELECT queries, return an empty result set instead of OK
-                if sql.trim_start().to_uppercase().starts_with("SELECT") {
-                    debug!("Returning empty result set for SELECT query");
-                    let _ = self
-                        .status_tx
-                        .send("[DEBUG] Returning empty result set for SELECT query".to_string());
-                    let empty_fields = vec![];
-                    let empty_stream = futures::stream::empty();
-                    Ok(Response::Query(QueryResponse::new(
-                        Arc::new(empty_fields),
-                        empty_stream,
-                    )))
-                } else {
-                    Ok(Response::Execution(Tag::new("OK")))
-                }
-            }
-            Err(e) => {
-                error!("LLM error for PostgreSQL query (extended): {}", e);
-                let _ = self
-                    .status_tx
-                    .send(format!("[ERROR] LLM error (extended): {}", e));
-
-                // For SELECT queries, try to return an empty result set instead of error
-                // This prevents the client from seeing "invalid column" errors
-                if sql.trim_start().to_uppercase().starts_with("SELECT") {
-                    warn!("Returning empty result set for SELECT after LLM error");
-                    let _ = self
-                        .status_tx
-                        .send("[WARN] Returning empty result set after LLM error".to_string());
-                    let empty_fields = vec![];
-                    let empty_stream = futures::stream::empty();
-                    Ok(Response::Query(QueryResponse::new(
-                        Arc::new(empty_fields),
-                        empty_stream,
-                    )))
-                } else {
-                    Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                        "ERROR".to_string(),
-                        "XX000".to_string(),
-                        format!("LLM error: {}", e),
-                    ))))
-                }
-            }
+        match self.take_or_resolve(sql).await? {
+            PgOutcome::Rows { fields, rows } => Ok(Response::Query(QueryResponse::new(
+                fields,
+                futures::stream::iter(rows),
+            ))),
+            PgOutcome::Tag(tag) => Ok(Response::Execution(Tag::new(&tag))),
+            PgOutcome::Close => Err(terminating_error()),
         }
     }
 
     async fn do_describe_statement<C>(
         &self,
         _client: &mut C,
-        _stmt: &StoredStatement<Self::Statement>,
+        stmt: &StoredStatement<Self::Statement>,
     ) -> PgWireResult<DescribeStatementResponse>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        Ok(DescribeStatementResponse::new(vec![], vec![]))
+        // The schema is whatever the LLM returns, so it has to be resolved here rather than
+        // guessed. Previously this returned an unconditional empty field list, which told
+        // every extended-protocol client that the statement produced zero columns and then
+        // sent it data rows anyway.
+        let fields = self.resolve_for_describe(&stmt.statement).await?;
+        Ok(DescribeStatementResponse::new(vec![], fields))
     }
 
     async fn do_describe_portal<C>(
@@ -759,17 +615,10 @@ impl ExtendedQueryHandler for PostgresqlHandler {
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        // Extract SQL from portal
-        let sql = &portal.statement.statement;
-
-        debug!("PostgreSQL DESCRIBE (extended): {}", sql);
-
-        // Parse SQL to infer column schema WITHOUT calling LLM
-        // This prevents duplicate LLM calls (Describe + Execute)
-        let field_infos = infer_schema_from_sql(sql);
-
-        debug!("Describe portal returning {} field infos (inferred from SQL)", field_infos.len());
-        Ok(DescribePortalResponse::new(field_infos))
+        let fields = self
+            .resolve_for_describe(&portal.statement.statement)
+            .await?;
+        Ok(DescribePortalResponse::new(fields))
     }
 }
 
@@ -791,46 +640,6 @@ impl pgwire::api::stmt::QueryParser for PostgresqlQueryParser {
     {
         Ok(sql.to_string())
     }
-}
-
-/// Infer column schema from SQL query WITHOUT executing it
-/// This is a simple heuristic-based approach for common queries
-fn infer_schema_from_sql(sql: &str) -> Vec<FieldInfo> {
-    let sql_lower = sql.trim().to_lowercase();
-
-    // SELECT 1 -> single integer column
-    if sql_lower.contains("select 1") || sql_lower == "select 1;" {
-        return vec![FieldInfo::new(
-            "?column?".to_string(),
-            None,
-            None,
-            Type::INT4,
-            FieldFormat::Text,
-        )];
-    }
-
-    // SELECT version() -> single text column
-    if sql_lower.contains("version(") {
-        return vec![FieldInfo::new(
-            "version".to_string(),
-            None,
-            None,
-            Type::VARCHAR,
-            FieldFormat::Text,
-        )];
-    }
-
-    // CREATE TABLE, INSERT, UPDATE, DELETE -> no columns
-    if sql_lower.starts_with("create ")
-        || sql_lower.starts_with("insert ")
-        || sql_lower.starts_with("update ")
-        || sql_lower.starts_with("delete ")
-    {
-        return vec![];
-    }
-
-    // Default: return empty (will send NoData)
-    vec![]
 }
 
 /// Convert JSON value to string representation
