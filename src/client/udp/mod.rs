@@ -82,7 +82,10 @@ impl UdpClient {
         let socket_arc = Arc::new(socket);
 
         // Call LLM with connected event
-        tokio::spawn({
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn({
             let socket_arc = socket_arc.clone();
             let client_data = client_data.clone();
             let llm_client = llm_client.clone();
@@ -141,9 +144,15 @@ impl UdpClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         // Spawn receive loop
-        tokio::spawn({
+        // Registered with AppState so stop_client can abort this task —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn({
             let socket_arc = socket_arc.clone();
             let client_data = client_data.clone();
 
@@ -227,6 +236,9 @@ impl UdpClient {
                 }
             }
         });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
 
         Ok(local_addr)
     }

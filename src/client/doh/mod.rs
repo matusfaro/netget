@@ -96,8 +96,10 @@ impl DohClient {
                     llm_result.actions.len()
                 );
 
-                // Execute any immediate actions
-                tokio::spawn(Self::execute_llm_actions(
+                // Execute any immediate actions. Registered with AppState so
+                // stop_client can abort this task — dropping a JoinHandle only
+                // detaches it in Tokio.
+                let task_handle = tokio::spawn(Self::execute_llm_actions(
                     client_id,
                     llm_result,
                     app_state.clone(),
@@ -106,6 +108,7 @@ impl DohClient {
                     protocol.clone(),
                     server_url.clone(),
                 ));
+                app_state.register_client_task(client_id, task_handle).await;
             }
             Err(e) => {
                 error!("DoH client {} LLM call failed: {}", client_id, e);

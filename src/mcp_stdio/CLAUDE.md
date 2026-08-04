@@ -114,10 +114,12 @@ not a single slot — several protocols spawn more than one task), and
 `remove_client()` aborts them all. Dropping a Tokio `JoinHandle` only detaches the
 task, so the abort is what releases the socket and stops further LLM calls.
 
-Client protocols register their tasks from `connect_with_llm_actions`. A few spawn
+Client protocols register their tasks from `connect_with_llm_actions`. Four spawn
 sites are still unregistered because they have no `app_state` / `client_id` in
 scope: `amqp`, `oauth2`, and the non-async helper spawns in `maven` and
-`bluetooth`. For those, `stop_client` still only drops the bookkeeping.
+`bluetooth`. For those, `stop_client` still only drops the bookkeeping. Protocols
+that spawn nothing at all (`arp`, `datalink`, `isis`, `mssql`, `nfc`, `sqs`,
+`syslog`, …) have no task to abort and are unaffected.
 
 Related: clients also carry a per-session LLM call budget
 (`AppState::try_consume_client_llm_call`, default 100, override with
