@@ -603,6 +603,20 @@ impl DhcpClient {
 
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {
+                // `hlen` is read straight off the wire without validation, and
+                // `Message::chaddr()` slices a fixed [u8; 16] with it - a datagram
+                // declaring hlen > 16 panics inside dhcproto. This is the client's
+                // receive path, so a malicious or merely broken DHCP server could
+                // take the client task down. Reject instead. Mirrors the server-side
+                // guard in src/server/dhcp/mod.rs.
+                if msg.hlen() as usize > 16 {
+                    tracing::warn!(
+                        "Dropping DHCP response with invalid hlen {} (max 16)",
+                        msg.hlen()
+                    );
+                    return None;
+                }
+
                 // Extract message type
                 let message_type = msg.opts().get(v4::OptionCode::MessageType).and_then(|opt| {
                     if let v4::DhcpOption::MessageType(mt) = opt {
