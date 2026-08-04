@@ -12,11 +12,41 @@ use serde_json::json;
 use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct NtpProtocol;
+/// NTP protocol handler.
+///
+/// The server builds one instance per received datagram (see
+/// [`crate::server::ntp::NtpServer::spawn_with_llm_actions`]) so the request's own
+/// transmit timestamp and version travel with the actions generated for it. The
+/// registry's instance is created with [`NtpProtocol::new`] and carries no request.
+pub struct NtpProtocol {
+    /// The client's transmit timestamp, as the raw 64-bit NTP value taken from bytes
+    /// 40-47 of the request. RFC 5905 requires the server to copy it into the reply's
+    /// origin timestamp; a client that does not find its own value there discards the
+    /// reply, which looks exactly like a timeout.
+    request_origin_timestamp: Option<u64>,
+    /// NTP version the client used, echoed back in the reply's first byte.
+    request_version: u8,
+}
 
 impl NtpProtocol {
     pub fn new() -> Self {
-        Self
+        Self {
+            request_origin_timestamp: None,
+            request_version: 4,
+        }
+    }
+
+    /// Build a handler bound to one request: `origin_timestamp` is the client's raw
+    /// 64-bit transmit timestamp and `version` the NTP version it used (1-4).
+    pub fn for_request(origin_timestamp: Option<u64>, version: u8) -> Self {
+        Self {
+            request_origin_timestamp: origin_timestamp,
+            request_version: if (1..=4).contains(&version) {
+                version
+            } else {
+                4
+            },
+        }
     }
 }
 
@@ -54,8 +84,8 @@ impl Protocol for NtpProtocol {
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(123))
             .implementation("Manual 48-byte NTP packet construction")
             .llm_control("Time responses (stratum, timestamps)")
-            .e2e_testing("Manual NTP packet construction")
-            .notes("Sub-ms with scripting, simple protocol")
+            .e2e_testing("rsntp client + raw packets (tests/server/ntp/test.rs)")
+            .notes("Client/server mode only (mode 3 -> mode 4). Origin timestamp and version are echoed from the request automatically. Sub-ms with scripting")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -181,12 +211,20 @@ impl NtpProtocol {
 
         // Timestamps - support "current_time", unix timestamp (seconds), or null
         let reference_timestamp = Self::parse_timestamp(action.get("reference_timestamp"));
-        let origin_timestamp = Self::parse_timestamp(action.get("origin_timestamp"));
         let receive_timestamp = Self::parse_timestamp(action.get("receive_timestamp"));
         let transmit_timestamp = Self::parse_timestamp(action.get("transmit_timestamp"));
 
+        // Origin timestamp: whatever the action asked for, else the client's own transmit
+        // timestamp captured from this request. Falling back to "now" would produce a
+        // reply the client rejects, so an unknown origin stays zero.
+        let origin_timestamp = match action.get("origin_timestamp") {
+            Some(serde_json::Value::Null) | None => self.request_origin_timestamp,
+            Some(v) => Self::parse_timestamp(Some(v)).or(self.request_origin_timestamp),
+        };
+
         // Build NTP response packet
         let packet = Self::build_ntp_packet(
+            self.request_version,
             leap_indicator,
             stratum,
             poll,
@@ -236,25 +274,54 @@ impl NtpProtocol {
         ntp_seconds << 32 // Return 64-bit timestamp: seconds in upper 32 bits, fraction=0 in lower 32 bits
     }
 
+    /// Decode the raw-packet escape hatch.
+    ///
+    /// `data` is documented as hex, so it is decoded strictly as hex. Falling back to the
+    /// string's own bytes (the previous behaviour) silently put ASCII on the wire whenever
+    /// the model produced slightly malformed hex, and an NTP client cannot read that.
     fn execute_send_ntp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let data = action
             .get("data")
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        // Try to decode as hex first (for binary NTP packets)
-        // If hex decode fails, treat as raw string
-        let bytes = if let Ok(decoded) = hex::decode(data) {
-            decoded
-        } else {
-            data.as_bytes().to_vec()
-        };
+        // Models routinely emit "0x" prefixes and byte separators; strip them first.
+        let cleaned: String = data
+            .chars()
+            .filter(|c| !c.is_ascii_whitespace() && *c != ':')
+            .collect();
+        let cleaned = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
+
+        if cleaned.len() % 2 != 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid hex in 'data': {} hex digits is an odd number, and every byte is two \
+                 digits. Value was {data:?}",
+                cleaned.len()
+            ));
+        }
+
+        let bytes = hex::decode(cleaned).map_err(|e| {
+            anyhow::anyhow!(
+                "Invalid hex in 'data' ({data:?}): {e}. Use only 0-9 and a-f, two digits per byte. \
+                 This field is a raw packet - there is no text mode."
+            )
+        })?;
+
+        if bytes.len() < 48 {
+            return Err(anyhow::anyhow!(
+                "'data' decodes to {} bytes; an NTP packet is at least 48 (96 hex characters). \
+                 Prefer send_ntp_time_response, which builds a correct packet for you.",
+                bytes.len()
+            ));
+        }
 
         Ok(ActionResult::Output(bytes))
     }
 
     /// Build a valid NTP response packet
+    #[allow(clippy::too_many_arguments)]
     fn build_ntp_packet(
+        version: u8,
         leap_indicator: u8,
         stratum: u8,
         poll: u8,
@@ -269,11 +336,13 @@ impl NtpProtocol {
     ) -> Vec<u8> {
         let mut packet = vec![0u8; 48];
 
-        // Byte 0: LI (2 bits), Version=4 (3 bits), Mode=4 (3 bits, server)
+        // Byte 0: LI (2 bits), Version (3 bits), Mode=4 (3 bits, server).
+        // RFC 5905 says a server answers in the version the client used, so this echoes
+        // the request's version rather than hardcoding 4.
         let li = (leap_indicator & 0x03) << 6; // LI in bits 7-6
-        let version = 0x04 << 3; // Version 4 in bits 5-3
+        let vn = (version & 0x07) << 3; // Version in bits 5-3
         let mode = 0x04; // Mode 4 (server) in bits 2-0
-        packet[0] = li | version | mode;
+        packet[0] = li | vn | mode;
 
         // Byte 1: Stratum
         packet[1] = stratum;
@@ -322,13 +391,11 @@ impl NtpProtocol {
             reference_timestamp.or_else(|| Some(Self::get_current_ntp_time())),
         );
 
-        // Origin timestamp (bytes 24-31) - client's transmit time (should be copied from request)
-        // Default to current_time if not provided (not ideal but better than zeros)
-        write_timestamp(
-            &mut packet,
-            24,
-            origin_timestamp.or_else(|| Some(Self::get_current_ntp_time())),
-        );
+        // Origin timestamp (bytes 24-31) - a verbatim copy of the client's transmit
+        // timestamp. Left as zeros when this request had none (a short or malformed
+        // packet): zeros at least make the mismatch obvious, whereas writing the current
+        // time would claim the client sent something it did not.
+        write_timestamp(&mut packet, 24, origin_timestamp);
 
         // Receive timestamp (bytes 32-39) - when we received the request
         write_timestamp(
@@ -403,8 +470,8 @@ fn send_ntp_time_response_action() -> ActionDefinition {
             },
             Parameter {
                 name: "origin_timestamp".to_string(),
-                type_hint: "string or number".to_string(),
-                description: "Client's transmit timestamp. Unix timestamp, or null. Default: extracted from client request. Leave null unless you need to test specific behavior.".to_string(),
+                type_hint: "number".to_string(),
+                description: "Leave this out. The server copies the client's own transmit timestamp from the request it is answering, which is what the client checks to accept the reply. Setting it to anything else (including the current time) makes the client discard the response and report a timeout. Only override it - with the exact 'client_transmit_timestamp' value from the event - when you are deliberately testing a mismatch".to_string(),
                 required: false,
             },
             Parameter {
@@ -435,11 +502,11 @@ fn send_ntp_time_response_action() -> ActionDefinition {
 fn send_ntp_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_ntp_response".to_string(),
-        description: "Send custom NTP response packet (advanced, for raw hex data)".to_string(),
+        description: "Escape hatch: send an NTP packet you assembled yourself, byte for byte. Prefer send_ntp_time_response, which fills in the header and echoes the client's origin timestamp; use this only for packets that action cannot express (Kiss-o'-Death, deliberately malformed replies). Nothing is echoed for you here - bytes 24-31 must contain the client's own transmit timestamp or the client will discard the packet.".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "NTP response packet as hex-encoded string (48 bytes = 96 hex chars)"
+            description: "The whole packet as hex, two digits per byte (spaces and ':' are allowed and ignored), at least 48 bytes = 96 hex characters. Decoded strictly as hex - it is never sent as text"
                 .to_string(),
             required: true,
         }],
@@ -482,19 +549,37 @@ pub static NTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "current_time".to_string(),
             type_hint: "number".to_string(),
-            description: "Current server time as Unix timestamp".to_string(),
+            description: "The server's current time as a Unix timestamp (seconds since 1970), for reference when deciding what time to report".to_string(),
             required: true,
         },
         Parameter {
             name: "client_transmit_timestamp".to_string(),
             type_hint: "number".to_string(),
-            description: "Client's transmit timestamp (Unix or NTP format) - must be echoed back as origin_timestamp".to_string(),
+            description: "The client's transmit timestamp as the raw 64-bit NTP value (upper 32 bits seconds since 1900, lower 32 bits fraction). send_ntp_time_response copies it into the reply for you, so you do not need to pass it back - it is here only so a handler can inspect or deliberately alter it. Absent if the request was shorter than 48 bytes".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_transmit_unix".to_string(),
+            type_hint: "number".to_string(),
+            description: "The same client timestamp converted to whole Unix seconds, for readability. Lossy - never echo this one back as origin_timestamp".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_version".to_string(),
+            type_hint: "number".to_string(),
+            description: "NTP version the client used, 1-4. The reply is sent in the same version automatically".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_mode".to_string(),
+            type_hint: "number".to_string(),
+            description: "Mode field of the request: 3 is a normal client query. Other values (1, 2, 5, 6) are symmetric/broadcast/control packets that this server still answers as if they were client queries".to_string(),
             required: false,
         },
         Parameter {
             name: "bytes_received".to_string(),
             type_hint: "number".to_string(),
-            description: "Size of received NTP packet in bytes".to_string(),
+            description: "Size of the received datagram in bytes. A standard request is 48; larger means extension fields or an authentication MAC, which this server ignores".to_string(),
             required: false,
         },
     ])

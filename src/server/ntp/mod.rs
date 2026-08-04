@@ -34,11 +34,12 @@ impl NtpServer {
         info!("NTP server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] NTP server listening on {}", local_addr));
 
-        let protocol = Arc::new(NtpProtocol::new());
-
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
-            let mut buffer = vec![0u8; 48];
+            // Large enough for extension fields / an authentication MAC. Only the first
+            // 48 bytes are interpreted, but a short buffer would silently truncate the
+            // datagram and misreport its size to the model.
+            let mut buffer = vec![0u8; 1024];
 
             loop {
                 match socket.recv_from(&mut buffer).await {
@@ -82,7 +83,6 @@ impl NtpServer {
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let socket_clone = socket.clone();
-                        let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
                             // Get current Unix timestamp
@@ -92,9 +92,17 @@ impl NtpServer {
                                 .unwrap()
                                 .as_secs();
 
-                            // Parse client's transmit timestamp from request (bytes 40-47)
-                            // This should be echoed back as origin_timestamp in the response
-                            // Extract full 64-bit NTP timestamp (seconds + fraction)
+                            // Version (bits 5-3) and mode (bits 2-0) of the request. The
+                            // reply must come back in the client's own version.
+                            let (client_version, client_mode) = match data.first() {
+                                Some(b) => ((b >> 3) & 0x07, b & 0x07),
+                                None => (4, 3),
+                            };
+
+                            // Parse client's transmit timestamp from request (bytes 40-47).
+                            // RFC 5905 requires this to come back verbatim as the reply's
+                            // origin timestamp; the client uses it to match the response to
+                            // its request and rejects anything else.
                             let (client_transmit_unix, client_transmit_ntp) = if data.len() >= 48 {
                                 let seconds =
                                     u32::from_be_bytes([data[40], data[41], data[42], data[43]])
@@ -116,15 +124,28 @@ impl NtpServer {
                                 (None, None)
                             };
 
+                            // One protocol instance per request, carrying that request's
+                            // origin timestamp and version, so overlapping requests cannot
+                            // pick up each other's values.
+                            let protocol =
+                                NtpProtocol::for_request(client_transmit_ntp, client_version);
+
                             // Create NTP request event
                             let mut event_data = serde_json::json!({
                                 "current_time": current_unix_time,
+                                "client_version": client_version,
+                                "client_mode": client_mode,
                                 "bytes_received": data.len()
                             });
 
+                            // Expose the raw 64-bit NTP value, which is what
+                            // origin_timestamp needs; the Unix form is lossy and is
+                            // provided only for readability.
+                            if let Some(ntp_ts) = client_transmit_ntp {
+                                event_data["client_transmit_timestamp"] = serde_json::json!(ntp_ts);
+                            }
                             if let Some(unix_ts) = client_transmit_unix {
-                                event_data["client_transmit_timestamp"] =
-                                    serde_json::json!(unix_ts);
+                                event_data["client_transmit_unix"] = serde_json::json!(unix_ts);
                             }
 
                             let event = Event::new(&NTP_REQUEST_EVENT, event_data);
@@ -141,11 +162,11 @@ impl NtpServer {
                                 server_id,
                                 None, // NTP uses UDP, no persistent connection
                                 &event,
-                                protocol_clone.as_ref(),
+                                &protocol,
                             )
                             .await
                             {
-                                Ok(mut execution_result) => {
+                                Ok(execution_result) => {
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
                                         info!("{}", message);
@@ -160,33 +181,6 @@ impl NtpServer {
                                         "[DEBUG] NTP parsed {} actions",
                                         execution_result.raw_actions.len()
                                     ));
-
-                                    // Auto-inject client's transmit timestamp as origin_timestamp if LLM didn't provide it
-                                    if let Some(ntp_ts) = client_transmit_ntp {
-                                        for action in &mut execution_result.raw_actions {
-                                            if action.get("type").and_then(|v| v.as_str())
-                                                == Some("send_ntp_time_response")
-                                            {
-                                                // Only set if LLM didn't provide origin_timestamp
-                                                if !action.get("origin_timestamp").is_some() {
-                                                    if let Some(obj) = action.as_object_mut() {
-                                                        // Insert raw NTP timestamp (will be recognized as NTP format in parse_timestamp)
-                                                        obj.insert(
-                                                            "origin_timestamp".to_string(),
-                                                            serde_json::json!(ntp_ts),
-                                                        );
-                                                        debug!("NTP auto-injected origin_timestamp: 0x{:016x}", ntp_ts);
-                                                        let _ = status_clone.send(format!("[DEBUG] NTP auto-injected origin_timestamp: 0x{:016x}", ntp_ts));
-                                                    }
-                                                } else {
-                                                    debug!(
-                                                        "NTP using LLM-provided origin_timestamp"
-                                                    );
-                                                    let _ = status_clone.send("[DEBUG] NTP using LLM-provided origin_timestamp".to_string());
-                                                }
-                                            }
-                                        }
-                                    }
 
                                     // Process protocol results
                                     debug!(

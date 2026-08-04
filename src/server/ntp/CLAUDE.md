@@ -8,6 +8,11 @@ stratum levels, reference timestamps, and clock precision using structured actio
 **Status**: Beta (Core Protocol)
 **RFC**: RFC 5905 (NTPv4), RFC 1305 (NTPv3)
 **Port**: 123 (UDP)
+**Privilege**: declares `PrivilegeRequirement::PrivilegedPort(123)`; any port above 1023 needs none.
+**Test coverage**: `tests/server/ntp/test.rs` (note the file is `test.rs`, not `e2e_test.rs`). It
+drives the server with `rsntp` and falls back to a raw 48-byte packet — but the fallback only prints
+its outcome and never asserts, so the suite passes even if the client rejects every reply. Treat it
+as a smoke test, not proof of client compatibility.
 
 ## Library Choices
 
@@ -35,16 +40,36 @@ The LLM responds with a single action:
 The `send_ntp_time_response` action has many optional parameters (stratum, precision, timestamps), all with sensible
 defaults. LLM typically only needs to specify stratum level.
 
-### 2. Automatic Origin Timestamp Injection
+### 2. Automatic Origin Timestamp Echo
 
-NTP protocol requires server to echo client's transmit timestamp as origin timestamp:
+NTP requires the server to echo the client's transmit timestamp as the origin timestamp:
 
-1. Client sends request with transmit_timestamp = T1
-2. Server must echo T1 as origin_timestamp in response
-3. This allows client to calculate round-trip delay
+1. Client sends a request with transmit_timestamp = T1
+2. The reply must carry T1 verbatim in bytes 24-31
+3. The client matches the reply to its request by that value and uses it for round-trip delay —
+   `rsntp`, `chrony` and `ntpdate` all discard a reply whose origin timestamp is anything else,
+   which surfaces as a timeout rather than an error
 
-**Implementation**: Server automatically extracts client's transmit timestamp from request (bytes 40-47) and injects it
-into the response if LLM doesn't provide it. This reduces LLM burden - it doesn't need to understand timestamp echoing.
+**Implementation**: the socket loop reads bytes 40-47 of the request and builds a per-request
+`NtpProtocol::for_request(origin, version)` handler. `send_ntp_time_response` writes that value into
+the reply unless the action explicitly overrides `origin_timestamp`. Because the handler instance
+belongs to one datagram, concurrent requests cannot pick up each other's timestamps.
+
+Two things this deliberately does *not* do:
+
+- It does not fall back to the current time when the request carried no usable timestamp (a request
+  shorter than 48 bytes). Those bytes stay zero — a visible mismatch beats a fabricated one.
+- It does not modify the action list after `call_llm` returns. An earlier version tried to inject
+  `origin_timestamp` into `execution_result.raw_actions` after the call, but `call_llm` has already
+  executed the actions and built the packet by then, so that code never affected a single byte on
+  the wire and the origin timestamp was always zero-or-now. Any similar post-hoc mutation of
+  `raw_actions` is dead code.
+
+### 2b. Version Echo
+
+RFC 5905 says a server answers in the version the client used. Byte 0's version field is copied from
+the request (clamped to 1-4, default 4), so an NTPv3 client gets a v3 reply. Mode is always 4
+(server).
 
 ### 3. Flexible Timestamp Format
 
@@ -82,10 +107,10 @@ LLM can override any field if instructed (e.g., "act as stratum 1 server").
 
 Each NTP request creates a "connection" entry:
 
-- Connection ID: Unique per request
-- Protocol info: `ProtocolConnectionInfo::Ntp` with recent_clients list
-- Tracks client addresses and timestamps
-- Status: Active during processing
+- Connection ID: unique per request
+- Protocol info: `ProtocolConnectionInfo::empty()` — no NTP-specific payload is attached
+- Records the peer address, byte and packet counts
+- Status: Active. Entries are never reaped, so a busy server accumulates one per request
 
 ## LLM Integration
 
@@ -95,9 +120,15 @@ Each NTP request creates a "connection" entry:
 
 Event parameters:
 
-- `current_time` (number) - Current server time as Unix timestamp
-- `client_transmit_timestamp` (number, optional) - Client's transmit time
-- `bytes_received` (number) - Size of received packet
+- `current_time` (number) - server's current time as a Unix timestamp
+- `client_transmit_timestamp` (number, optional) - the client's transmit time as the **raw 64-bit
+  NTP value**; absent when the request was shorter than 48 bytes
+- `client_transmit_unix` (number, optional) - the same value in whole Unix seconds, lossy, for
+  readability only
+- `client_version` (number) - NTP version of the request, echoed in the reply
+- `client_mode` (number) - mode field of the request (3 = normal client query)
+- `bytes_received` (number) - size of the received datagram; > 48 means extension fields or an
+  authentication MAC, which are ignored
 
 ### Available Actions
 
@@ -115,15 +146,18 @@ Parameters (all optional except where noted):
 - `root_dispersion` - Max error relative to primary reference in seconds (default: 0.0)
 - `reference_id` - 4-char identifier: "LOCL", "GPS.", "PPS.", "ATOM", or IP (default: "")
 - `reference_timestamp` - When clock was last set (default: current_time)
-- `origin_timestamp` - Client's transmit time (default: auto-extracted from request)
+- `origin_timestamp` - leave unset; the server copies the client's transmit time from the request
 - `receive_timestamp` - When server received request (default: current_time)
 - `transmit_timestamp` - When server sends response (default: current_time)
 
-**Note**: LLM should leave origin_timestamp null - server auto-injects correct value.
+**Note**: leave `origin_timestamp` unset — the server writes the correct value.
 
 #### `send_ntp_response` (Advanced)
 
-Send custom NTP response packet as hex string (96 hex chars = 48 bytes).
+Send a complete packet as hex, at least 96 hex characters (48 bytes). The field is decoded strictly
+as hex: whitespace, `:` separators and a leading `0x` are stripped, anything else that fails to
+decode returns an error instead of being sent as literal ASCII. Nothing is echoed into a raw packet,
+so bytes 24-31 must hold the client's transmit timestamp or the reply will be discarded.
 
 #### `ignore_request`
 
@@ -197,11 +231,13 @@ Fixed 48-byte packet:
 
 ## Known Limitations
 
-### 1. NTPv4 Only
+### 1. NTPv1-v4 Only
 
-- Server responds with version 4 packets
-- Accepts any version in requests (NTPv1-4)
+- Accepts any version in requests and answers in the same version (default 4)
 - No NTPv5 support (still in draft)
+- The mode field of the request is reported to the LLM as `client_mode` but not enforced: a mode 4
+  or mode 5 packet is answered as if it were a client query, so pointing two NetGet NTP servers at
+  each other would loop
 
 ### 2. No NTP Extensions
 
