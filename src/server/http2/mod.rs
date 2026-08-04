@@ -28,7 +28,14 @@ use actions::HTTP2_REQUEST_EVENT;
 // Re-export for convenience
 pub use h2_server::H2Server;
 
-/// HTTP/2 server that delegates request handling to LLM
+/// HTTP/2 server that delegates request handling to LLM.
+///
+/// NOTE: this is the hyper-based HTTP/2 server. `Http2Protocol::spawn()` does
+/// **not** use it — it spawns [`H2Server`] (`h2_server.rs`), which talks to the
+/// `h2` crate directly because hyper's service API cannot express server push.
+/// This implementation is kept as the plain request/response variant; if you
+/// change request handling here, mirror it in `h2_server.rs`, which is the path
+/// that actually serves traffic.
 pub struct Http2Server;
 
 impl Http2Server {
@@ -208,6 +215,10 @@ impl Http2Server {
                 startup_params.as_ref(),
             ),
         );
+        // Filter parsing is fail-open; surface dropped rules on the status stream.
+        for warning in filter.warnings() {
+            let _ = status_tx.send(format!("[ERROR] HTTP/2 request_filter: {}", warning));
+        }
 
         // Create a service that handles requests with LLM
         let service = service_fn(move |req: Request<Incoming>| {

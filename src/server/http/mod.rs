@@ -208,6 +208,12 @@ impl HttpServer {
                 startup_params.as_ref(),
             ),
         );
+        // Filter parsing is fail-open: a bad rule is dropped, not fatal, so every
+        // request would silently reach the LLM. Make that visible in the TUI/MCP
+        // status stream, not just in netget.log.
+        for warning in filter.warnings() {
+            let _ = status_tx.send(format!("[ERROR] HTTP request_filter: {}", warning));
+        }
 
         // Create a service that handles requests with LLM
         let service = service_fn(move |req: Request<Incoming>| {
@@ -278,6 +284,7 @@ async fn handle_http_request_with_llm_actions(
                     let app_state_clone = app_state.clone();
                     let status_tx_clone = status_tx.clone();
                     let protocol_clone = protocol.clone();
+                    let filter_clone = filter.clone();
 
                     tokio::spawn(async move {
                         // Wait for upgrade to complete
@@ -302,6 +309,7 @@ async fn handle_http_request_with_llm_actions(
                                     app_state_clone,
                                     status_tx_clone,
                                     protocol_clone,
+                                    filter_clone,
                                 )
                                 .await
                                 {
@@ -402,15 +410,25 @@ async fn handle_http_request_with_llm_actions(
         serde_json::Value::Object(serde_json::Map::new())
     };
 
-    // Create HTTP request event with path, query_string, and parsed query
+    // Create HTTP request event with path, query_string, and parsed query.
+    //
+    // Request bodies are attacker-controlled and need not be UTF-8. Action/event
+    // design rules forbid handing the model raw bytes or base64, so the body is
+    // always presented as (lossily) decoded text, and a non-UTF8 body is flagged
+    // explicitly rather than silently mangled into U+FFFD.
+    let body_is_binary = std::str::from_utf8(&request_data.body_bytes).is_err();
     let body_text = String::from_utf8_lossy(&request_data.body_bytes);
     let mut event_data = serde_json::json!({
         "method": request_data.method,
         "path": path,
         "query": query,
         "headers": request_data.headers,
-        "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+        "body": if body_text.is_empty() { "" } else { body_text.as_ref() },
+        "body_bytes": request_data.body_bytes.len()
     });
+    if body_is_binary {
+        event_data["body_is_binary"] = serde_json::Value::Bool(true);
+    }
 
     // Add query_string field if present
     if let Some(qs) = query_string {
@@ -462,6 +480,7 @@ async fn handle_http_request_with_llm_actions(
 
 /// Handle an upgraded h2c connection (only available with http2 feature)
 #[cfg(feature = "http2")]
+#[allow(clippy::too_many_arguments)]
 async fn handle_upgraded_h2c_connection<T>(
     io: T,
     connection_id: ConnectionId,
@@ -470,6 +489,7 @@ async fn handle_upgraded_h2c_connection<T>(
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     _protocol: Arc<HttpProtocol>,
+    filter: Arc<crate::server::http_common::handler::RequestFilter>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -494,6 +514,7 @@ where
                 let app_state_clone = app_state.clone();
                 let status_tx_clone = status_tx.clone();
                 let protocol_clone = protocol.clone();
+                let filter_clone = filter.clone();
 
                 // Spawn task to handle this HTTP/2 request
                 tokio::spawn(async move {
@@ -506,6 +527,7 @@ where
                         app_state_clone,
                         status_tx_clone,
                         protocol_clone,
+                        filter_clone,
                     )
                     .await
                     {

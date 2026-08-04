@@ -55,13 +55,22 @@ impl Protocol for Http2Protocol {
         ]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("hyper v1.0 HTTP/2 server library")
-            .llm_control("Response content (status, headers, body)")
-            .e2e_testing("reqwest HTTP/2 client - 6 LLM calls")
+            // HTTP/2 normally runs on 443 (TLS); h2c is often 80. The preflight
+            // check only fires when the requested port is actually < 1024.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(443))
+            .implementation("h2 crate directly (server push), optional TLS via rustls")
+            .llm_control("Response content (status, headers, text body) + server push")
+            .e2e_testing("h2/reqwest + mocked LLM, tests/server/http2/e2e_test.rs (3 scenarios)")
+            .notes(
+                "Text bodies only, no streaming; ALPN is not negotiated, so a browser will not \
+                 pick HTTP/2 over TLS on its own - clients must select h2 explicitly or use h2c",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -223,25 +232,35 @@ impl Http2Protocol {
 fn send_http2_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_http2_response".to_string(),
-        description: "Send an HTTP/2 response to the current request".to_string(),
+        description: "Respond to the HTTP/2 request that triggered this event. Emit it exactly \
+            once per request: the response is sent complete, in one piece. There is no way to \
+            stream or chunk it, and the body is sent as UTF-8 text, so binary payloads cannot be \
+            produced. If you emit no send_http2_response, the client gets an empty 200."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "status".to_string(),
                 type_hint: "number".to_string(),
-                description: "HTTP status code (e.g., 200, 404, 500)".to_string(),
+                description: "HTTP status code as a number between 100 and 599 (e.g. 200, 404, 500).".to_string(),
                 required: true,
             },
             Parameter {
                 name: "headers".to_string(),
                 type_hint: "object".to_string(),
-                description: "Response headers as key-value pairs".to_string(),
+                description: "Optional response headers as a flat name->value object. Do not set \
+                    HTTP/2 pseudo-headers (:status, :path, ...) or content-length; they are \
+                    handled by the server. Illegal header names/values are dropped."
+                    .to_string(),
                 required: false,
             },
             Parameter {
                 name: "body".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response body".to_string(),
-                required: true,
+                description: "Response body as text. Optional: omit for an empty body (204/304). \
+                    A JSON object or array is serialized to compact JSON text. Text only - bytes \
+                    cannot be sent."
+                    .to_string(),
+                required: false,
             },
         ],
         example: json!({
@@ -264,7 +283,12 @@ fn send_http2_response_action() -> ActionDefinition {
 fn push_resource_action() -> ActionDefinition {
     ActionDefinition {
         name: "push_resource".to_string(),
-        description: "Push a resource to the client proactively (HTTP/2 server push - not yet fully implemented)".to_string(),
+        description: "Push a resource to the client proactively (HTTP/2 server push). Emit it \
+            alongside send_http2_response in the same batch; pushes are sent before the main \
+            response. Clients may refuse pushes (most modern browsers have disabled them), in \
+            which case the push is dropped and only the main response is delivered. Text bodies \
+            only."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "path".to_string(),

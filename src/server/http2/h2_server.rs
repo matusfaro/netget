@@ -15,6 +15,7 @@ use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
+use crate::server::http_common::handler::{RequestData, RequestFilter};
 use crate::server::Http2Protocol;
 use crate::state::app_state::AppState;
 
@@ -34,7 +35,11 @@ impl H2Server {
         server_id: crate::state::ServerId,
         tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = TcpListener::bind(listen_addr).await?;
+        // Same reuse semantics as the HTTP/1.1 listener, so a restart on the
+        // same port does not fail with EADDRINUSE while the old socket lingers.
+        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr)
+            .await
+            .unwrap_or(TcpListener::bind(listen_addr).await?);
         let local_addr = listener.local_addr()?;
 
         let protocol_name = if tls_config.is_some() {
@@ -47,11 +52,28 @@ impl H2Server {
 
         let protocol = Arc::new(Http2Protocol::new());
 
+        // Build the per-server request filter once, up front. This is the code
+        // path `Http2Protocol::spawn()` actually uses, so without this the
+        // `request_filter` startup param would be silently ignored for HTTP/2.
+        let filter = Arc::new(RequestFilter::from_startup_params(
+            app_state
+                .get_server(server_id)
+                .await
+                .and_then(|s| s.startup_params)
+                .as_ref(),
+        ));
+        // Fail-open parsing: surface any dropped rule loudly, since the effect
+        // is that more requests reach the LLM, not fewer.
+        for warning in filter.warnings() {
+            let _ = status_tx.send(format!("[ERROR] HTTP/2 request_filter: {}", warning));
+        }
+
         // Create TLS acceptor if TLS is enabled
         let tls_acceptor = tls_config.map(|config| tokio_rustls::TlsAcceptor::from(config));
 
         // Spawn server loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((tcp_stream, remote_addr)) => {
@@ -94,6 +116,7 @@ impl H2Server {
                         let status_tx_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
                         let tls_acceptor_clone = tls_acceptor.clone();
+                        let filter_clone = filter.clone();
 
                         // Spawn task to handle this connection
                         tokio::spawn(async move {
@@ -118,6 +141,7 @@ impl H2Server {
                                                 app_state_clone.clone(),
                                                 status_tx_clone.clone(),
                                                 protocol_clone,
+                                                filter_clone,
                                             )
                                             .await
                                         }
@@ -140,6 +164,7 @@ impl H2Server {
                                         app_state_clone.clone(),
                                         status_tx_clone.clone(),
                                         protocol_clone,
+                                        filter_clone,
                                     )
                                     .await
                                 };
@@ -167,11 +192,18 @@ impl H2Server {
             }
         });
 
+        // Without this, stop_server cannot cancel the accept loop and the socket
+        // stays bound after the server is removed.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
+
         Ok(local_addr)
     }
 }
 
 /// Handle a single HTTP/2 connection with full server push support
+#[allow(clippy::too_many_arguments)]
 async fn handle_h2_connection<T>(
     tcp_stream: T,
     connection_id: ConnectionId,
@@ -180,6 +212,7 @@ async fn handle_h2_connection<T>(
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<Http2Protocol>,
+    filter: Arc<RequestFilter>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -196,6 +229,7 @@ where
         let app_state_clone = app_state.clone();
         let status_clone = status_tx.clone();
         let protocol_clone = protocol.clone();
+        let filter_clone = filter.clone();
 
         // Spawn task for each request (stream)
         tokio::spawn(async move {
@@ -208,6 +242,7 @@ where
                 app_state_clone,
                 status_clone,
                 protocol_clone,
+                filter_clone,
             )
             .await
             {
@@ -219,7 +254,43 @@ where
     Ok(())
 }
 
+/// Build an `http::Response<()>` from model- or config-supplied parts without
+/// panicking and without failing the whole request: an out-of-range status
+/// becomes 500 and headers hyper rejects (e.g. containing CR/LF) are dropped.
+fn build_h2_response_head(
+    status: u16,
+    headers: impl IntoIterator<Item = (String, String)>,
+    context: &str,
+) -> Response<()> {
+    let status_code = StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!(
+            "{}: invalid HTTP status {} (must be 100-599), sending 500 instead",
+            context, status
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    let mut builder = Response::builder().status(status_code);
+    for (name, value) in headers {
+        match (
+            http::header::HeaderName::from_bytes(name.as_bytes()),
+            http::header::HeaderValue::from_str(&value),
+        ) {
+            (Ok(n), Ok(v)) => builder = builder.header(n, v),
+            _ => warn!("{}: dropping invalid response header {:?}", context, name),
+        }
+    }
+
+    builder.body(()).unwrap_or_else(|e| {
+        error!("{}: failed to build response ({}), sending bare 500", context, e);
+        let mut fallback = Response::new(());
+        *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+        fallback
+    })
+}
+
 /// Handle a single HTTP/2 request with server push support
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_h2_request(
     request: Request<h2::RecvStream>,
     mut send_response: SendResponse<Bytes>,
@@ -229,6 +300,7 @@ pub async fn handle_h2_request(
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<Http2Protocol>,
+    filter: Arc<RequestFilter>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Extract request metadata
     let method = request.method().to_string();
@@ -287,6 +359,31 @@ pub async fn handle_h2_request(
         body_bytes.len()
     ));
 
+    // Apply the per-server request filter before spending an LLM call: only
+    // allowlisted requests reach the model, everything else gets the configured
+    // auto-response (default 404). Same semantics as HTTP/1.1.
+    let path = uri.split('?').next().unwrap_or(&uri).to_string();
+    if !filter.is_pass_through() {
+        let request_data = RequestData {
+            method: method.clone(),
+            uri: uri.clone(),
+            version: version.clone(),
+            headers: headers.clone(),
+            body_bytes: Bytes::from(body_bytes.clone()),
+        };
+        if !filter.allows(&request_data, &path) {
+            let (status, hdrs, body) = filter.rejection_parts();
+            let _ = status_tx.send(format!(
+                "↩ HTTP/2 filtered {} {} → {} (no LLM call)",
+                method, path, status
+            ));
+            let response = build_h2_response_head(status, hdrs, "HTTP/2 filtered_response");
+            let mut stream = send_response.send_response(response, false)?;
+            stream.send_data(Bytes::from(body), true)?;
+            return Ok(());
+        }
+    }
+
     // Create event for LLM
     let body_text = String::from_utf8_lossy(&body_bytes);
     let event = Event::new(
@@ -296,7 +393,8 @@ pub async fn handle_h2_request(
             "uri": uri,
             "version": version,
             "headers": headers,
-            "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+            "body": if body_text.is_empty() { "" } else { body_text.as_ref() },
+            "body_bytes": body_bytes.len()
         }),
     );
 
@@ -476,12 +574,9 @@ pub async fn handle_h2_request(
                 response_body.len()
             ));
 
-            let mut response = Response::builder().status(status_code);
-            for (name, value) in response_headers {
-                response = response.header(name, value);
-            }
-
-            let response = response.body(())?;
+            // Status and headers come from model output; never let a bogus
+            // value abort the request without a response.
+            let response = build_h2_response_head(status_code, response_headers, "HTTP/2");
             let mut stream = send_response.send_response(response, false)?;
             stream.send_data(Bytes::from(response_body), true)?;
         }
