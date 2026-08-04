@@ -79,6 +79,49 @@ tests had been passing straight through.
 
 ## P0 — Correctness bugs reachable from untrusted input
 
+### 56. Sixteen protocols never show the model their own actions **[verified]**
+
+`call_llm` builds the model's action list from `event.event_type.actions`
+(`src/llm/action_helper.rs:455`) — **not** from `get_sync_actions()`. Only its sibling
+`call_llm_with_actions` consults the protocol (`:130`). So a protocol that uses `call_llm` and
+never calls `.with_actions(...)` on its `EventType`s offers the model nothing it can act on,
+however many actions it declares. Anything protocol-specific the model returns is rejected as
+an unknown action, retried twice, and fails.
+
+Measured empirically. An npm server was pointed at a capturing endpoint and sent a real HTTP
+request; the tool list in the prompt was exactly:
+
+```
+set_memory, append_memory, show_message, append_to_log
+```
+
+Zero npm actions, against five declared. The model cannot answer an npm request at all.
+
+Affected — using `call_llm`, no `.with_actions(...)` anywhere, declaring sync actions:
+`bluetooth_ble`, `dc` (10 actions), `ipsec`, `isis`, `nntp` (8), `npm` (5), `ollama`,
+`openai` (**Beta**), `openvpn`, `rip`, `rss`, `sip` (6), `smb` (10), `stun`, `tftp`,
+`wireguard`.
+
+MongoDB had exactly this and was fixed in `b769f29a` — its six actions were all being rejected
+as unknown, which is also why its E2E suite was failing silently against a broken protocol.
+
+Two fixes are needed, and the second matters more:
+1. Add `.with_actions(...)` to the affected event types.
+2. Remove the trap. Two functions that differ only in whether the protocol's own actions reach
+   the model is a footgun that has now caught at least 17 protocols. Either have `call_llm`
+   consult the protocol too, or make `EventType` require its actions at construction so the
+   omission cannot compile.
+
+Reproduce the sweep with:
+```bash
+for f in src/server/*/actions.rs; do d=$(dirname $f); p=$(basename $d)
+  ev=$(grep -c "EventType::new(" $f); wa=$(grep -c "\.with_actions(" $f)
+  sy=$(sed -n '/fn get_sync_actions/,/^    }/p' $f | grep -cE "_action\(\)")
+  pl=$(grep -rl "call_llm(" $d | wc -l); wi=$(grep -rl "call_llm_with_actions(" $d | wc -l)
+  [ "$ev" -gt 0 ] && [ "$wa" -eq 0 ] && [ "$sy" -gt 0 ] && [ "$pl" -gt 0 ] && [ "$wi" -eq 0 ] && echo "$p ($sy invisible)"
+done
+```
+
 ### 1. `StartupParams` panics on malformed input; MCP callers hang forever **[verified]**
 
 `src/protocol/spawn_context.rs:42` and every `get_*` accessor (`:63-311`) call `panic!` on an
