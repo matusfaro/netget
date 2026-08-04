@@ -9,6 +9,9 @@ transport for request/response protocol.
 **Status**: Beta (Network Management Protocol)
 **RFC**: RFC 1157 (SNMPv1), RFC 3416 (SNMPv2c), RFC 3584 (SNMPv2 Coexistence)
 **Port**: 161 (agent), 162 (trap receiver)
+**Privilege**: declares `PrivilegeRequirement::PrivilegedPort(161)`; any port above 1023 needs none.
+**Test coverage**: `tests/server/snmp/test.rs` (the file is `test.rs`, not `e2e_test.rs`), driving the
+agent with the `snmp` crate's client.
 
 ## Library Choices
 
@@ -28,7 +31,10 @@ transport for request/response protocol.
 - **Manual BER encoding** - Custom BER encoder for responses
     - Needed because rasn-snmp doesn't provide easy response building
     - Encodes: OID, Integer, OctetString, Counter, Gauge, TimeTicks
-    - Handles short and long form length encoding
+    - Length encoding goes through one `encode_length()` helper covering the short form and the
+      0x81/0x82/0x83 long forms. This matters: the earlier per-site encoder only handled lengths
+      below 256, so a sysDescr longer than 255 bytes — or simply a response with several variable
+      bindings — emitted a truncated length byte and the client rejected the packet
     - Constructs complete SNMP response messages
 
 **Rationale**: rasn-snmp is the most mature pure-Rust SNMP library with async support. However, it focuses on parsing (
@@ -49,9 +55,9 @@ SNMP uses UDP (stateless):
 
 **Connection Tracking**:
 
-- "Connection" = recent peer address that sent request
-- Tracked in `ProtocolConnectionInfo::Snmp` with timestamp
-- Used for UI display only (not protocol requirement)
+- "Connection" = recent peer address that sent a request
+- Recorded with `ProtocolConnectionInfo::empty()` — no SNMP-specific payload is attached
+- Used for UI display only (not a protocol requirement), and never reaped
 
 ### 2. LLM Control Point
 
@@ -142,6 +148,10 @@ OID handling is critical for SNMP:
 2. Remaining components encoded as base-128 (7 bits per byte, MSB=1 for continuation)
 3. Example: "1.3.6" → `[0x2B, 0x06]` (43, 6)
 
+**Validation**: `encode_oid` rejects an OID whose first component is above 2, whose second component
+is 40 or more (when the first is 0 or 1), or that contains a non-numeric component. A non-numeric
+component used to be dropped silently, which turned a typo into a different, valid-looking OID.
+
 ### 6. Error Handling
 
 SNMP has built-in error responses:
@@ -157,9 +167,11 @@ SNMP has built-in error responses:
 
 **Error Responses**:
 
-- LLM can return `{"error": true, "error_message": "..."}` in JSON
-- Server converts to genErr (5) with empty variable bindings
-- Client receives error status in response PDU
+- `send_snmp_error` takes `error_message` (logs only — SNMP has no field for text), an optional
+  `error_status` given as a name (`noSuchName`, `badValue`, `readOnly`, `tooBig`, `genErr`) or as
+  the matching code 0-5, and an optional 1-based `error_index`
+- The reply carries that status with empty variable bindings
+- Omitting `error_status` yields genErr (5), the previous fixed behaviour
 
 ### 7. Dual Logging
 
@@ -179,15 +191,23 @@ The LLM responds to SNMP events with actions:
 
 **Events**:
 
-- `snmp_request` - SNMP request received (GET, GETNEXT, GETBULK, SET)
-    - Parameters: `request_type`, `oids`, `community`
+- `snmp_request` - SNMP request received
+    - Parameters: `request_type` (`GetRequest` / `GetNextRequest` / `GetBulkRequest` /
+      `SetRequest` — note the exact spelling, it is dhcproto-style CamelCase, not `GET`), `oids`,
+      `community`, `request_id`, `version` (`v1` / `v2c`), `client_ip`
+
+**Request/response correlation**: the request-id, community string and version are captured
+per-request in the socket task and passed into `build_snmp_response` as plain locals — they are
+never read from shared state, so overlapping requests cannot cross-contaminate. The LLM does not
+need to (and cannot) set them.
 
 **Available Actions**:
 
 - `send_snmp_response` - Send SNMP response with variable bindings
-- `send_snmp_error` - Send error response
+- `send_snmp_error` - Send error response with a chosen error-status
 - `ignore_request` - Don't respond (client will timeout and retry)
-- `send_trap` - Send SNMP trap (async, not fully implemented)
+- `send_trap` - **not implemented**: the executor validates its arguments and returns JSON that the
+  server drops. No datagram is sent. Its description says so
 - Common actions: `show_message`, `update_instruction`, etc.
 
 ### Example LLM Responses
@@ -301,13 +321,13 @@ exchange).
 
 **Workaround**: LLM can acknowledge SET but won't persist changes. Useful for honeypot scenarios (log SET attempts).
 
-### 3. No Trap Sending (Yet)
+### 3. No Trap Sending
 
-- `send_trap` action defined but not fully implemented
-- Would require LLM-initiated UDP send
-- Would need trap receiver address configuration
-
-**Future Enhancement**: Allow LLM to send proactive notifications (e.g., "alert when CPU > 90%").
+- `send_trap` is advertised as an async action, parses `target` and `variables`, and then returns
+  JSON that nobody sends anywhere. Nothing reaches the network
+- Implementing it means encoding a Trap/Trap-v2 PDU (a different PDU shape from GetResponse) and
+  opening an outbound socket, plus a decision about where traps may be sent
+- Until then the action's own description says NOT IMPLEMENTED, so the LLM is not misled
 
 ### 4. No MIB Loading
 
@@ -403,7 +423,7 @@ Track which OIDs are queried most frequently
 
 ### Memory
 
-- Each request allocates ~65KB buffer (max UDP packet size)
+- One 64KB receive buffer per server (reused across requests), plus a copy of each datagram
 - BER encoding allocates small vectors (<1KB typical)
 - No persistent state per client (stateless protocol)
 

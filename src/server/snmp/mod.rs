@@ -21,36 +21,6 @@ use crate::state::app_state::AppState;
 use crate::{console_debug, console_trace};
 use actions::SNMP_REQUEST_EVENT;
 
-/// Get LLM context and output format instructions for SNMP stack
-pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
-    let context = r#"You are handling SNMP requests. Return appropriate SNMP responses with OID values.
-Common OIDs:
-- 1.3.6.1.2.1.1.1.0: System description
-- 1.3.6.1.2.1.1.5.0: System name
-- 1.3.6.1.2.1.1.3.0: System uptime"#;
-
-    let output_format = r#"IMPORTANT: Respond with a JSON object containing SNMP variable bindings:
-{
-  "variables": [
-    {"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "System Description"},
-    {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "hostname"}
-  ],
-  "error": false,
-  "error_message": null
-}
-
-Supported value types: "string", "integer", "counter", "gauge", "timeticks", "null"
-
-For errors, respond with:
-{
-  "error": true,
-  "error_message": "Error description"
-}
-"#;
-
-    (context, output_format)
-}
-
 /// Parsed SNMP message information
 #[derive(Debug)]
 pub struct ParsedSnmpInfo {
@@ -66,189 +36,6 @@ pub struct ParsedSnmpInfo {
 pub struct SnmpServer;
 
 impl SnmpServer {
-    /// Spawn SNMP agent with integrated LLM handling
-    pub async fn spawn_with_llm(
-        listen_addr: SocketAddr,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        server_id: crate::state::ServerId,
-    ) -> Result<SocketAddr> {
-        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
-        let local_addr = socket.local_addr()?;
-        info!("SNMP agent listening on {}", local_addr);
-
-        let protocol = Arc::new(SnmpProtocol::new());
-
-        tokio::spawn(async move {
-            let mut buffer = vec![0u8; 65535];
-
-            loop {
-                match socket.recv_from(&mut buffer).await {
-                    Ok((n, peer_addr)) => {
-                        let data = buffer[..n].to_vec();
-
-                        // DEBUG: Log summary
-                        console_debug!(status_tx, "SNMP received {} bytes from {}", n, peer_addr);
-
-                        // TRACE: Log full payload
-                        let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "SNMP data (hex): {}", hex_str);
-
-                        // Parse the SNMP message
-                        let parsed = match Self::parse_snmp_message(&data) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                error!("Failed to parse SNMP message: {}", e);
-                                continue;
-                            }
-                        };
-
-                        let llm_clone = llm_client.clone();
-                        let state_clone = app_state.clone();
-                        let status_clone = status_tx.clone();
-                        let socket_clone = socket.clone();
-                        let protocol_clone = protocol.clone();
-                        let version = parsed.version;
-                        let request_id = parsed.request_id;
-                        let community = parsed.community.clone();
-                        let requested_oids = parsed.requested_oids.clone();
-
-                        // Spawn task to handle request with LLM
-                        tokio::spawn(async move {
-                            // Create Event with SNMP request data
-                            let event = Event::new(
-                                &SNMP_REQUEST_EVENT,
-                                serde_json::json!({
-                                    "request_type": parsed.request_type,
-                                    "oids": parsed.requested_oids,
-                                    "community": String::from_utf8_lossy(&parsed.community).to_string()
-                                }),
-                            );
-
-                            debug!("SNMP calling LLM for request from {}", peer_addr);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] SNMP calling LLM for request from {}",
-                                peer_addr
-                            ));
-
-                            match call_llm(
-                                &llm_clone,
-                                &state_clone,
-                                server_id,
-                                None,
-                                &event,
-                                protocol_clone.as_ref(),
-                            )
-                            .await
-                            {
-                                Ok(execution_result) => {
-                                    for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
-                                    }
-
-                                    debug!(
-                                        "SNMP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] SNMP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    ));
-
-                                    // For legacy function, extract first raw action as JSON response
-                                    if let Some(first_action) = execution_result.raw_actions.first()
-                                    {
-                                        let llm_output =
-                                            serde_json::to_string(first_action).unwrap_or_default();
-                                        debug!("SNMP LLM response: {}", llm_output);
-
-                                        // Build SNMP response from LLM output
-                                        match Self::build_snmp_response(
-                                            &llm_output,
-                                            version,
-                                            request_id,
-                                            &community,
-                                            &requested_oids,
-                                        ) {
-                                            Ok(snmp_response) => {
-                                                if let Err(e) = socket_clone
-                                                    .send_to(&snmp_response, peer_addr)
-                                                    .await
-                                                {
-                                                    error!("Failed to send SNMP response: {}", e);
-                                                } else {
-                                                    // DEBUG: Log summary
-                                                    debug!(
-                                                        "SNMP sent {} bytes to {}",
-                                                        snmp_response.len(),
-                                                        peer_addr
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "[DEBUG] SNMP sent {} bytes to {}",
-                                                        snmp_response.len(),
-                                                        peer_addr
-                                                    ));
-
-                                                    // TRACE: Log full payload
-                                                    let hex_dump: String = snmp_response
-                                                        .iter()
-                                                        .map(|b| format!("{:02X}", b))
-                                                        .collect::<Vec<_>>()
-                                                        .join(" ");
-                                                    trace!("SNMP sent (hex): {}", hex_dump);
-                                                    let _ = status_clone.send(format!(
-                                                        "[TRACE] SNMP sent (hex): {}",
-                                                        hex_dump
-                                                    ));
-
-                                                    let _ = status_clone.send(format!(
-                                                        "→ SNMP response to {} ({} bytes)",
-                                                        peer_addr,
-                                                        snmp_response.len()
-                                                    ));
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to build SNMP response: {}", e);
-                                                // Send error response
-                                                if let Ok(error_response) =
-                                                    Self::build_error_response(
-                                                        version, request_id, &community,
-                                                    )
-                                                {
-                                                    let _ = socket_clone
-                                                        .send_to(&error_response, peer_addr)
-                                                        .await;
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        debug!("SNMP no raw actions from LLM");
-                                        let _ = status_clone.send(
-                                            "[DEBUG] SNMP no raw actions from LLM".to_string(),
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("SNMP LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ SNMP LLM error: {}", e));
-                                }
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("SNMP receive error: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(local_addr)
-    }
-
     /// Spawn SNMP agent with integrated LLM actions
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
@@ -330,13 +117,18 @@ impl SnmpServer {
                             let requested_oids_clone = requested_oids.clone();
                             let community_clone = community.clone();
 
-                            // Create SNMP request event
+                            // Create SNMP request event. request_id and the community
+                            // string are echoed into the response automatically - they are
+                            // exposed here so a handler can inspect or log them.
                             let event = Event::new(
                                 &SNMP_REQUEST_EVENT,
                                 serde_json::json!({
                                     "request_type": parsed.request_type,
                                     "oids": parsed.requested_oids,
-                                    "community": String::from_utf8_lossy(&parsed.community).to_string()
+                                    "community": String::from_utf8_lossy(&parsed.community).to_string(),
+                                    "request_id": parsed.request_id,
+                                    "version": if parsed.version == 0 { "v1" } else { "v2c" },
+                                    "client_ip": peer_addr.ip().to_string()
                                 }),
                             );
 
@@ -699,8 +491,22 @@ impl SnmpServer {
                     let error_msg = response_data["error_message"]
                         .as_str()
                         .unwrap_or("Unknown error");
-                    debug!("LLM reported error: {}", error_msg);
-                    return Self::build_error_response(version, request_id, community);
+                    // SNMP carries the reason as a numeric error-status; the text is for
+                    // our logs only, since the wire format has nowhere to put it.
+                    let error_status = response_data["error_status"].as_u64().unwrap_or(5) as u8;
+                    let error_index = response_data["error_index"].as_u64().unwrap_or(0) as u8;
+                    debug!(
+                        "LLM reported SNMP error status {}: {}",
+                        error_status, error_msg
+                    );
+                    return Self::build_response_message(
+                        version,
+                        request_id,
+                        community,
+                        error_status,
+                        error_index,
+                        vec![],
+                    );
                 }
 
                 // Build response with variable bindings
@@ -799,6 +605,24 @@ impl SnmpServer {
         Self::build_response_message(version, request_id, community, 0, 0, vec![var_bind])
     }
 
+    /// Encode a BER definite length.
+    ///
+    /// Short form for < 128, then one, two or three length bytes. The previous code only
+    /// handled the short form and `0x81` with a `len as u8`, so any value 256 bytes or
+    /// longer - a long sysDescr, or simply a response with several variable bindings -
+    /// silently wrapped to a wrong length and produced a packet the client rejected.
+    fn encode_length(len: usize) -> Vec<u8> {
+        if len < 0x80 {
+            vec![len as u8]
+        } else if len <= 0xFF {
+            vec![0x81, len as u8]
+        } else if len <= 0xFFFF {
+            vec![0x82, (len >> 8) as u8, len as u8]
+        } else {
+            vec![0x83, (len >> 16) as u8, (len >> 8) as u8, len as u8]
+        }
+    }
+
     /// Encode a single variable binding
     fn encode_var_bind(
         oid_str: &str,
@@ -840,13 +664,7 @@ impl SnmpServer {
         // Construct SEQUENCE for variable binding
         result.push(0x30); // SEQUENCE tag
         let len = oid_bytes.len() + value_bytes.len();
-        if len < 128 {
-            result.push(len as u8);
-        } else {
-            // Long form length encoding
-            result.push(0x81);
-            result.push(len as u8);
-        }
+        result.extend_from_slice(&Self::encode_length(len));
         result.extend_from_slice(&oid_bytes);
         result.extend_from_slice(&value_bytes);
 
@@ -855,57 +673,83 @@ impl SnmpServer {
 
     /// Encode OID
     fn encode_oid(oid_str: &str) -> Result<Vec<u8>> {
-        let parts: Vec<u32> = oid_str
-            .split('.')
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        // Every component must be a number. Skipping unparseable ones (the previous
+        // behaviour) turned a typo into a different, silently wrong OID.
+        let mut parts: Vec<u32> = Vec::new();
+        for component in oid_str.split('.').filter(|s| !s.is_empty()) {
+            parts.push(component.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid OID {oid_str:?}: component {component:?} is not a number. \
+                     Use dotted decimal, e.g. \"1.3.6.1.2.1.1.1.0\""
+                )
+            })?);
+        }
 
         if parts.len() < 2 {
-            return Err(anyhow::anyhow!("Invalid OID"));
+            return Err(anyhow::anyhow!(
+                "Invalid OID {oid_str:?}: at least two components are required, \
+                 e.g. \"1.3.6.1.2.1.1.1.0\""
+            ));
+        }
+
+        // First arc is 0, 1 or 2; the second is below 40 unless the first is 2.
+        if parts[0] > 2 {
+            return Err(anyhow::anyhow!(
+                "Invalid OID {oid_str:?}: the first component must be 0, 1 or 2, got {}",
+                parts[0]
+            ));
+        }
+        if parts[0] < 2 && parts[1] >= 40 {
+            return Err(anyhow::anyhow!(
+                "Invalid OID {oid_str:?}: with a first component of {}, the second must be \
+                 below 40, got {}",
+                parts[0],
+                parts[1]
+            ));
         }
 
         let mut encoded = Vec::new();
 
-        // First two components are encoded specially
-        encoded.push((parts[0] * 40 + parts[1]) as u8);
+        // First two components share one base-128 value: first * 40 + second.
+        let first_arc = parts[0] * 40 + parts[1];
+        Self::push_base128(&mut encoded, first_arc);
 
         // Encode remaining components
         for &part in &parts[2..] {
-            if part < 128 {
-                encoded.push(part as u8);
-            } else {
-                // Multi-byte encoding for values >= 128
-                let mut bytes = Vec::new();
-                let mut val = part;
-
-                while val > 0 {
-                    bytes.push((val & 0x7F) as u8);
-                    val >>= 7;
-                }
-
-                bytes.reverse();
-                for (i, &byte) in bytes.iter().enumerate() {
-                    if i < bytes.len() - 1 {
-                        encoded.push(byte | 0x80);
-                    } else {
-                        encoded.push(byte);
-                    }
-                }
-            }
+            Self::push_base128(&mut encoded, part);
         }
 
         // Wrap with OID tag
         let mut result = vec![0x06]; // OBJECT IDENTIFIER tag
-        if encoded.len() < 128 {
-            result.push(encoded.len() as u8);
-        } else {
-            result.push(0x81);
-            result.push(encoded.len() as u8);
-        }
+        result.extend_from_slice(&Self::encode_length(encoded.len()));
         result.extend_from_slice(&encoded);
 
         Ok(result)
+    }
+
+    /// Append one OID sub-identifier in base-128, high bit set on all but the last byte.
+    fn push_base128(out: &mut Vec<u8>, value: u32) {
+        if value < 128 {
+            out.push(value as u8);
+            return;
+        }
+
+        let mut bytes = Vec::new();
+        let mut val = value;
+        while val > 0 {
+            bytes.push((val & 0x7F) as u8);
+            val >>= 7;
+        }
+        bytes.reverse();
+
+        let last = bytes.len() - 1;
+        for (i, &byte) in bytes.iter().enumerate() {
+            if i < last {
+                out.push(byte | 0x80);
+            } else {
+                out.push(byte);
+            }
+        }
     }
 
     /// Encode integer
@@ -935,12 +779,7 @@ impl SnmpServer {
     /// Encode octet string
     fn encode_octet_string(value: &[u8]) -> Vec<u8> {
         let mut result = vec![0x04]; // OCTET STRING tag
-        if value.len() < 128 {
-            result.push(value.len() as u8);
-        } else {
-            result.push(0x81);
-            result.push(value.len() as u8);
-        }
+        result.extend_from_slice(&Self::encode_length(value.len()));
         result.extend_from_slice(value);
         result
     }
@@ -1031,13 +870,7 @@ impl SnmpServer {
         // Encode variable bindings list
         let mut var_binds_list = vec![0x30]; // SEQUENCE tag
         let var_binds_total_len: usize = var_binds.iter().map(|v| v.len()).sum();
-
-        if var_binds_total_len < 128 {
-            var_binds_list.push(var_binds_total_len as u8);
-        } else {
-            var_binds_list.push(0x81);
-            var_binds_list.push(var_binds_total_len as u8);
-        }
+        var_binds_list.extend_from_slice(&Self::encode_length(var_binds_total_len));
 
         for var_bind in var_binds {
             var_binds_list.extend_from_slice(&var_bind);
@@ -1048,13 +881,7 @@ impl SnmpServer {
             + error_status_bytes.len()
             + error_index_bytes.len()
             + var_binds_list.len();
-
-        if pdu_len < 128 {
-            pdu.push(pdu_len as u8);
-        } else {
-            pdu.push(0x81);
-            pdu.push(pdu_len as u8);
-        }
+        pdu.extend_from_slice(&Self::encode_length(pdu_len));
 
         pdu.extend_from_slice(&request_id_bytes);
         pdu.extend_from_slice(&error_status_bytes);
@@ -1064,24 +891,12 @@ impl SnmpServer {
         // Build complete message
         message.push(0x30); // SEQUENCE tag
         let message_len = version_bytes.len() + community_bytes.len() + pdu.len();
-
-        if message_len < 128 {
-            message.push(message_len as u8);
-        } else {
-            message.push(0x81);
-            message.push(message_len as u8);
-        }
+        message.extend_from_slice(&Self::encode_length(message_len));
 
         message.extend_from_slice(&version_bytes);
         message.extend_from_slice(&community_bytes);
         message.extend_from_slice(&pdu);
 
         Ok(message)
-    }
-
-    /// Build a generic error response
-    fn build_error_response(version: u8, request_id: i32, community: &[u8]) -> Result<Vec<u8>> {
-        // Build response with genErr (5) and no variable bindings
-        Self::build_response_message(version, request_id, community, 5, 0, vec![])
     }
 }

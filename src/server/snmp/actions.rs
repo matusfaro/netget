@@ -46,14 +46,17 @@ impl Protocol for SnmpProtocol {
         vec!["snmp", "snmp agent"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(161))
             .implementation("rasn-snmp v0.18 for parsing + manual BER encoding")
             .llm_control("OID responses (sysDescr, ifTable, custom MIBs)")
-            .e2e_testing("net-snmp tools (snmpget)")
-            .notes("SNMPv1/v2c only, manual BER encoding")
+            .e2e_testing("snmp crate client (tests/server/snmp/test.rs)")
+            .notes("SNMPv1/v2c only. request-id and community are echoed from the request automatically. send_trap is defined but never leaves the process")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -199,10 +202,55 @@ impl SnmpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'error_message' parameter")?;
 
+        // SNMP puts the reason on the wire as a number, not text: map the optional
+        // 'error_status' (name or code) onto it, defaulting to genErr.
+        let error_status = match action.get("error_status") {
+            None => 5,
+            Some(v) if v.is_null() => 5,
+            Some(v) => {
+                if let Some(n) = v.as_u64() {
+                    if n > 5 {
+                        return Err(anyhow::anyhow!(
+                            "Invalid 'error_status' {n}: SNMPv1 defines 0-5 \
+                             (0 noError, 1 tooBig, 2 noSuchName, 3 badValue, 4 readOnly, 5 genErr)"
+                        ));
+                    }
+                    n as u8
+                } else if let Some(s) = v.as_str() {
+                    match s.trim().to_ascii_lowercase().as_str() {
+                        "noerror" => 0,
+                        "toobig" => 1,
+                        "nosuchname" => 2,
+                        "badvalue" => 3,
+                        "readonly" => 4,
+                        "generr" | "genericerror" => 5,
+                        other => {
+                            return Err(anyhow::anyhow!(
+                                "Invalid 'error_status' {other:?}: expected one of noError, \
+                                 tooBig, noSuchName, badValue, readOnly, genErr, or the \
+                                 matching code 0-5"
+                            ))
+                        }
+                    }
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Invalid 'error_status': expected a name or a code 0-5, got {v}"
+                    ));
+                }
+            }
+        };
+
+        let error_index = action
+            .get("error_index")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
         // Encode error response as JSON
         let response_data = json!({
             "error": true,
-            "error_message": error_message
+            "error_message": error_message,
+            "error_status": error_status,
+            "error_index": error_index
         });
 
         Ok(ActionResult::Output(
@@ -215,7 +263,7 @@ impl SnmpProtocol {
 fn send_trap_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_trap".to_string(),
-        description: "Send SNMP trap to a target address (async action)".to_string(),
+        description: "NOT IMPLEMENTED: this action validates its arguments and returns, but no trap datagram is ever sent to 'target'. It is listed here only so existing instructions do not fail outright - do not rely on it to notify anything.".to_string(),
         parameters: vec![
             Parameter {
                 name: "target".to_string(),
@@ -249,11 +297,11 @@ fn send_trap_action() -> ActionDefinition {
 fn send_snmp_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_snmp_response".to_string(),
-        description: "Send SNMP response with variable bindings".to_string(),
+        description: "Answer the request with a set of OID values. The request-id, community string and SNMP version are copied from the request being answered, so you only supply the values. Normally return one entry per OID in the event's 'oids' list, in the same order.".to_string(),
         parameters: vec![Parameter {
             name: "variables".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of variable bindings with oid, type, and value".to_string(),
+            description: "Variable bindings, each an object {\"oid\": ..., \"type\": ..., \"value\": ...}. 'oid' is dotted decimal such as \"1.3.6.1.2.1.1.1.0\" (first component 0-2, every component numeric). 'type' is one of: \"string\" (text), \"integer\" (signed 32-bit), \"counter\" (Counter32, monotonically increasing), \"gauge\" (Gauge32, a value that goes up and down), \"timeticks\" (hundredths of a second since start-up, e.g. sysUpTime), \"null\" (no value for this OID). 'value' must match the type: a JSON string for \"string\", a JSON number for the numeric types, omitted for \"null\". An unrecognised type encodes as NULL".to_string(),
             required: true,
         }],
         example: json!({
@@ -275,16 +323,32 @@ fn send_snmp_response_action() -> ActionDefinition {
 fn send_snmp_error_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_snmp_error".to_string(),
-        description: "Send SNMP error response".to_string(),
-        parameters: vec![Parameter {
-            name: "error_message".to_string(),
-            type_hint: "string".to_string(),
-            description: "Error message".to_string(),
-            required: true,
-        }],
+        description: "Answer the request with an SNMP error instead of values - use it when the requested OID does not exist here, or when a SET is refused. The reply carries the numeric error-status and no variable bindings; the request-id and community are echoed automatically.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "error_message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Why the request failed. SNMP has no field for text, so this only reaches NetGet's logs and access log - the client sees 'error_status'".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error_status".to_string(),
+                type_hint: "string or number".to_string(),
+                description: "Which error the client is told about: \"noSuchName\" (2) for an OID this agent does not serve, \"badValue\" (3) for a SET with an unusable value, \"readOnly\" (4) for a SET of a read-only OID, \"tooBig\" (1) if the answer would not fit, \"genErr\" (5) for anything else. Accepts the name or the number. Default: genErr".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "error_index".to_string(),
+                type_hint: "number".to_string(),
+                description: "1-based position of the offending OID in the request's list, or 0 when no single OID is to blame. Default 0".to_string(),
+                required: false,
+            },
+        ],
         example: json!({
             "type": "send_snmp_error",
-            "error_message": "No such object"
+            "error_message": "OID 1.3.6.1.4.1.9999.1.0 is not served by this agent",
+            "error_status": "noSuchName",
+            "error_index": 1
         }),
         log_template: Some(
             LogTemplate::new()
@@ -330,19 +394,37 @@ pub static SNMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "request_type".to_string(),
             type_hint: "string".to_string(),
-            description: "SNMP request type (GET, GETNEXT, GETBULK, SET)".to_string(),
+            description: "PDU type of the request, spelled exactly: 'GetRequest', 'GetNextRequest', 'GetBulkRequest' or 'SetRequest'. GetNextRequest asks for the OID that follows the one given (table walking); GetBulkRequest asks for several at once".to_string(),
             required: true,
         },
         Parameter {
             name: "oids".to_string(),
             type_hint: "array".to_string(),
-            description: "Requested OIDs".to_string(),
+            description: "OIDs the client asked about, in dotted decimal, in request order. Answer with one variable binding per OID in the same order".to_string(),
             required: true,
         },
         Parameter {
             name: "community".to_string(),
             type_hint: "string".to_string(),
-            description: "SNMP community string".to_string(),
+            description: "Community string the client sent - SNMPv1/v2c's only credential, typically 'public'. It is echoed back automatically; check it here if the instruction says to reject unknown communities".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "request_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Request id chosen by the client. The response echoes it automatically - it is exposed only for logging".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "version".to_string(),
+            type_hint: "string".to_string(),
+            description: "'v1' or 'v2c'. The reply uses the same version".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "IP address the request came from".to_string(),
             required: false,
         },
     ])
@@ -353,8 +435,8 @@ pub static SNMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     ])
     .with_log_template(
         LogTemplate::new()
-            .with_info("SNMP {client_ip} {oid}")
-            .with_debug("SNMP request from {client_ip}:{client_port}, OID={oid}")
+            .with_info("SNMP {request_type} from {client_ip}")
+            .with_debug("SNMP {request_type} from {client_ip} ({version}, community={community}): {oids}")
             .with_trace("SNMP: {json_pretty(.)}"),
     )
 });
