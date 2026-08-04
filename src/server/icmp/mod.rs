@@ -5,12 +5,10 @@
 
 pub mod actions;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use pnet::packet::icmp::echo_request::EchoRequestPacket;
 // Note: pnet doesn't provide timestamp packet types
-use pnet::packet::icmp::{
-    IcmpCode, IcmpPacket, IcmpTypes, MutableIcmpPacket,
-};
+use pnet::packet::icmp::{IcmpCode, IcmpPacket, IcmpTypes, MutableIcmpPacket};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::Packet;
@@ -26,7 +24,9 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::{console_error, console_info, console_trace};
 use actions::{
-    IcmpProtocol, ICMP_ECHO_REQUEST_EVENT, ICMP_OTHER_MESSAGE_EVENT,
+    IcmpProtocol,
+    ICMP_ECHO_REQUEST_EVENT,
+    ICMP_OTHER_MESSAGE_EVENT,
     // ICMP_TIMESTAMP_REQUEST_EVENT, // TODO: Removed - timestamp support requires pnet timestamp packet types
 };
 
@@ -48,30 +48,53 @@ impl IcmpServer {
             interface
         );
 
+        // Retained by this function; the receive task takes ownership of `status_tx`.
+        let status_tx_ready = status_tx.clone();
+
         let protocol = Arc::new(IcmpProtocol::new());
 
-        // ICMP requires raw sockets, so we run it in a blocking task
+        // ICMP requires raw sockets, so we run it in a blocking task.
+        //
+        // Creating an AF_INET/SOCK_RAW/IPPROTO_ICMP socket needs root on macOS and the BSDs,
+        // and root or CAP_NET_RAW on Linux. The outcome is reported back over a oneshot so
+        // `spawn_with_llm` can return Err and the server is marked Error, rather than reporting
+        // Running while never receiving a packet.
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+
         let interface_clone = interface.clone();
         let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
-            // Create raw ICMP socket
-            let socket = match Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)) {
-                Ok(s) => s,
+            let open_sockets = || -> Result<(Socket, Arc<Socket>)> {
+                // Create raw ICMP socket
+                let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
+                    .context(
+                        "failed to create raw ICMP receive socket \
+                         (needs root, or CAP_NET_RAW on Linux)",
+                    )?;
+
+                // Set socket to non-blocking for timeout handling
+                socket
+                    .set_nonblocking(true)
+                    .context("failed to put the raw ICMP socket in non-blocking mode")?;
+
+                // Create a separate socket for sending (to avoid conflicts)
+                let send_socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
+                    .context("failed to create raw ICMP send socket")?;
+
+                Ok((socket, Arc::new(send_socket)))
+            };
+
+            let (socket, send_socket) = match open_sockets() {
+                Ok(sockets) => {
+                    let _ = ready_tx.send(Ok(()));
+                    sockets
+                }
                 Err(e) => {
-                    console_error!(
-                        status_tx,
-                        "Failed to create raw ICMP socket (need root/CAP_NET_RAW): {}",
-                        e
-                    );
+                    console_error!(status_tx, "ICMP raw socket startup failed: {:#}", e);
+                    let _ = ready_tx.send(Err(e));
                     return;
                 }
             };
-
-            // Set socket to non-blocking for timeout handling
-            if let Err(e) = socket.set_nonblocking(true) {
-                console_error!(status_tx, "Failed to set socket non-blocking: {}", e);
-                return;
-            }
 
             // TODO: Bind to specific interface if needed
             // For now, we receive on all interfaces
@@ -84,15 +107,6 @@ impl IcmpServer {
 
             let runtime = tokio::runtime::Handle::current();
 
-            // Create a separate socket for sending (to avoid conflicts)
-            let send_socket = match Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)) {
-                Ok(s) => Arc::new(s),
-                Err(e) => {
-                    console_error!(status_tx, "Failed to create send socket: {}", e);
-                    return;
-                }
-            };
-
             // Receive loop
             let mut buffer = vec![std::mem::MaybeUninit::uninit(); 65535];
             loop {
@@ -104,7 +118,11 @@ impl IcmpServer {
                         };
 
                         // DEBUG: Log raw received data
-                        trace!("Raw socket received {} bytes: {}", n, hex::encode(&data[..std::cmp::min(n, 60)]));
+                        trace!(
+                            "Raw socket received {} bytes: {}",
+                            n,
+                            hex::encode(&data[..std::cmp::min(n, 60)])
+                        );
 
                         // Parse IP packet
                         let ip_packet = match Ipv4Packet::new(&data) {
@@ -116,9 +134,11 @@ impl IcmpServer {
                         };
 
                         // DEBUG: Log IP packet details
-                        trace!("IP header length: {}, payload length: {}",
-                               ip_packet.get_header_length() * 4,
-                               ip_packet.payload().len());
+                        trace!(
+                            "IP header length: {}, payload length: {}",
+                            ip_packet.get_header_length() * 4,
+                            ip_packet.payload().len()
+                        );
 
                         // Check if it's ICMP
                         if ip_packet.get_next_level_protocol() != IpNextHeaderProtocols::Icmp {
@@ -135,10 +155,14 @@ impl IcmpServer {
                         let icmp_data: Vec<u8>;
                         let icmp_payload = if ip_payload.len() >= 20 && ip_payload[0] == 0x45 {
                             if let Some(inner_ip) = Ipv4Packet::new(ip_payload) {
-                                if inner_ip.get_next_level_protocol() == IpNextHeaderProtocols::Icmp {
+                                if inner_ip.get_next_level_protocol() == IpNextHeaderProtocols::Icmp
+                                {
                                     trace!("Detected IP-in-IP encapsulation on loopback, unwrapping inner packet");
                                     icmp_data = inner_ip.payload().to_vec();
-                                    trace!("Inner IP payload (actual ICMP): {}", hex::encode(&icmp_data));
+                                    trace!(
+                                        "Inner IP payload (actual ICMP): {}",
+                                        hex::encode(&icmp_data)
+                                    );
                                     icmp_data.as_slice()
                                 } else {
                                     ip_payload
@@ -167,11 +191,18 @@ impl IcmpServer {
                         let icmp_code = icmp_packet.get_icmp_code();
 
                         // DEBUG: Log ICMP type extraction
-                        trace!("ICMP type extracted: {} (raw: {}), code: {}",
-                               icmp_type.0, icmp_type.0, icmp_code.0);
-                        trace!("First 4 bytes of icmp_payload: {:02x} {:02x} {:02x} {:02x}",
-                               icmp_payload[0], icmp_payload[1],
-                               icmp_payload.get(2).unwrap_or(&0), icmp_payload.get(3).unwrap_or(&0));
+                        trace!(
+                            "ICMP type extracted: {} (raw: {}), code: {}",
+                            icmp_type.0,
+                            icmp_type.0,
+                            icmp_code.0
+                        );
+                        // Never index a wire-supplied slice directly: this task is the whole
+                        // server, so one out-of-range index would kill it silently.
+                        trace!(
+                            "First 4 bytes of icmp_payload: {}",
+                            hex::encode(&icmp_payload[..std::cmp::min(icmp_payload.len(), 4)])
+                        );
 
                         // DEBUG: Log summary
                         debug!(
@@ -270,7 +301,10 @@ impl IcmpServer {
                                 }
                             };
 
-                            debug!("ICMP calling LLM for {} packet", icmp_type_to_string(icmp_type));
+                            debug!(
+                                "ICMP calling LLM for {} packet",
+                                icmp_type_to_string(icmp_type)
+                            );
                             let _ = status_clone.send(format!(
                                 "[DEBUG] ICMP calling LLM for {} packet",
                                 icmp_type_to_string(icmp_type)
@@ -314,7 +348,9 @@ impl IcmpServer {
                                                     0,
                                                 ));
 
-                                                match send_socket_clone.send_to(output_data, &dest_addr.into()) {
+                                                match send_socket_clone
+                                                    .send_to(output_data, &dest_addr.into())
+                                                {
                                                     Ok(_) => {
                                                         debug!(
                                                             "ICMP sent {} bytes to {}",
@@ -377,6 +413,20 @@ impl IcmpServer {
             }
         });
 
+        // Wait for the blocking task to report whether the raw sockets actually opened.
+        match ready_rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "ICMP receive task for '{}' exited before signalling readiness",
+                    interface
+                ))
+            }
+        }
+
+        console_info!(status_tx_ready, "ICMP raw sockets active on {}", interface);
+
         Ok(interface)
     }
 
@@ -397,8 +447,7 @@ impl IcmpServer {
         let mut icmp_buffer = vec![0u8; icmp_size];
 
         {
-            let mut echo_reply =
-                MutableEchoReplyPacket::new(&mut icmp_buffer).unwrap();
+            let mut echo_reply = MutableEchoReplyPacket::new(&mut icmp_buffer).unwrap();
             echo_reply.set_icmp_type(IcmpTypes::EchoReply);
             echo_reply.set_icmp_code(IcmpCode::new(0));
             echo_reply.set_identifier(identifier);
@@ -413,8 +462,7 @@ impl IcmpServer {
         };
 
         {
-            let mut echo_reply =
-                MutableEchoReplyPacket::new(&mut icmp_buffer).unwrap();
+            let mut echo_reply = MutableEchoReplyPacket::new(&mut icmp_buffer).unwrap();
             echo_reply.set_checksum(icmp_checksum);
         }
 

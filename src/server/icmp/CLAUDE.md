@@ -74,18 +74,6 @@ Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
 }
 ```
 
-#### ICMP Timestamp Request
-```json
-{
-  "event_type": "icmp_timestamp_request",
-  "source_ip": "192.168.1.50",
-  "destination_ip": "192.168.1.100",
-  "identifier": 5678,
-  "sequence": 1,
-  "originate_timestamp": 12345678
-}
-```
-
 #### Other ICMP Messages
 ```json
 {
@@ -134,18 +122,6 @@ Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
 }
 ```
 
-#### Send Timestamp Reply
-```json
-{
-  "type": "send_timestamp_reply",
-  "source_ip": "192.168.1.1",
-  "destination_ip": "192.168.1.50",
-  "identifier": 5678,
-  "sequence": 1,
-  "originate_timestamp": 12345678
-}
-```
-
 #### Ignore ICMP
 ```json
 {
@@ -155,15 +131,24 @@ Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
 
 ## ICMP Message Types Supported
 
-### Implemented
+### Implemented (server can construct and send)
 - **Echo Request/Reply (Type 8/0)** - Ping functionality
-- **Timestamp Request/Reply (Type 13/14)** - Time synchronization
 - **Destination Unreachable (Type 3)** - Error reporting (codes: net, host, protocol, port, etc.)
 - **Time Exceeded (Type 11)** - TTL expiry (used in traceroute)
 
-### Observable (via `icmp_other_message` event)
+### NOT implemented
+- **Timestamp Request/Reply (Type 13/14)** - the `icmp_timestamp_request` event, the
+  `send_timestamp_reply` action and `IcmpServer::build_timestamp_reply()` are all present in the
+  source but **commented out** (`src/server/icmp/mod.rs`, `src/server/icmp/actions.rs`) because
+  `pnet` 0.35 ships no `timestamp` / `timestamp_reply` packet types. A Timestamp request therefore
+  arrives as a generic `icmp_other_message` event with `icmp_type: 13`, and there is no action that
+  can answer it. Do not document or promise timestamp support until pnet gains those types (or the
+  20-byte message is built by hand).
+
+### Observable only (surface as `icmp_other_message`, no reply action)
 - **Source Quench (Type 4)**
 - **Redirect (Type 5)**
+- **Timestamp Request/Reply (Type 13/14)**
 - **Parameter Problem (Type 12)**
 - **Address Mask Request/Reply (Type 17/18)**
 - **Router Advertisement/Solicitation**
@@ -194,9 +179,26 @@ Calculated using `pnet::packet::icmp::checksum()`:
 - Testing requires elevated permissions
 
 ### Platform Considerations
-- **Linux**: Full support with raw sockets
-- **macOS**: Full support (requires sudo)
-- **Windows**: Limited support (may require additional configuration)
+`socket2`'s `Domain::IPV4` / `Type::RAW` / `Protocol::ICMPV4` maps to the POSIX
+`socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)` on every Unix, so there is no per-OS code path here.
+
+- **Linux**: works as root or with `CAP_NET_RAW` (`setcap cap_net_raw+ep ./netget`).
+- **macOS**: works **only as root** - macOS has no capabilities model, and unlike ping(8) this
+  server uses `SOCK_RAW` rather than the unprivileged `SOCK_DGRAM`/`IPPROTO_ICMP` path. Note also
+  that the macOS kernel answers echo requests itself, so a userspace reply is a *second* reply on
+  the wire; test against a target that has `net.inet.icmp.bmcastecho`-style kernel handling in mind.
+- **Windows**: not shipped - `icmp` is excluded from the `dist-windows` feature set.
+
+### Startup failure is loud
+Raw-socket creation happens inside a `spawn_blocking` task, but its result is handed back over a
+`oneshot` before `spawn_with_llm` returns. A privilege failure therefore propagates out of
+`Server::spawn()`, `server_startup` records `ServerStatus::Error(..)`, and an MCP caller sees:
+
+```
+Failed to start server: failed to create raw ICMP receive socket (needs root, or CAP_NET_RAW on Linux)
+```
+
+The server is never reported as `Running` when the socket did not open.
 
 ### Kernel Interaction
 - Kernel may handle some ICMP types automatically
@@ -205,10 +207,11 @@ Calculated using `pnet::packet::icmp::checksum()`:
 - Testing should verify userspace server receives packets
 
 ### Interface Binding
-Current implementation receives on all interfaces:
-- TODO: Bind to specific interface if needed
-- Interface parameter accepted but not yet used for binding
-- May receive packets from multiple interfaces
+The `interface` argument is **accepted but not honoured**: it is only used for log messages, and
+the raw socket receives ICMP from every interface. The protocol's `default_binding()` is
+`interface_based(DEFAULT_LOOPBACK_INTERFACE)` - `lo` on Linux/Windows, `lo0` on macOS/BSD - purely
+so the flexible-binding plumbing has a value to carry.
+- TODO: actually bind with `SO_BINDTODEVICE` (Linux) / `IP_BOUND_IF` (macOS).
 
 ### IPv6 Support
 Not yet implemented:
@@ -275,10 +278,6 @@ console_trace!(status_tx, "Packet hex: {}", hex::encode(data));
 "Log all ICMP traffic but don't send any replies - silent ICMP honeypot"
 ```
 
-### Timestamp Server
-```
-"Respond to ICMP timestamp requests with accurate system time"
-```
 
 ## Performance
 
@@ -308,10 +307,10 @@ See `tests/server/icmp/CLAUDE.md` for test strategy and E2E test details.
 
 ## Future Enhancements
 
-1. **IPv6 Support**: ICMPv6 with Neighbor Discovery
-2. **Interface Binding**: Bind to specific interface parameter
-3. **BPF Filtering**: Kernel-level packet filtering for efficiency
-4. **Scripting Mode**: Fast path for predictable responses
+1. **Timestamp Request/Reply**: hand-build the 20-byte Type 13/14 messages, or wait for pnet
+2. **IPv6 Support**: ICMPv6 with Neighbor Discovery
+3. **Interface Binding**: Bind to specific interface parameter
+4. **BPF Filtering**: Kernel-level packet filtering for efficiency
 5. **Router Advertisement**: Full router simulation
 6. **Multicast ICMP**: Group management messages
 

@@ -11,6 +11,29 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+/// Name of the loopback interface on this platform.
+///
+/// Linux and Windows call it `lo`; macOS and the BSDs call it `lo0`. Hardcoding `lo` made the
+/// default binding unresolvable on macOS ("Device 'lo' not found").
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+const DEFAULT_LOOPBACK_INTERFACE: &str = "lo0";
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+)))]
+const DEFAULT_LOOPBACK_INTERFACE: &str = "lo";
+
 /// ICMP protocol action handler
 pub struct IcmpProtocol;
 
@@ -24,7 +47,9 @@ impl IcmpProtocol {
 impl Protocol for IcmpProtocol {
     fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
         // ICMP uses interface-based binding (loopback by default)
-        Some(crate::protocol::BindingDefaults::interface_based("lo"))
+        Some(crate::protocol::BindingDefaults::interface_based(
+            DEFAULT_LOOPBACK_INTERFACE,
+        ))
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -216,8 +241,9 @@ impl IcmpProtocol {
         // Parse IP addresses
         let source_ip_parsed: std::net::Ipv4Addr =
             source_ip.parse().context("Invalid source_ip format")?;
-        let destination_ip_parsed: std::net::Ipv4Addr =
-            destination_ip.parse().context("Invalid destination_ip format")?;
+        let destination_ip_parsed: std::net::Ipv4Addr = destination_ip
+            .parse()
+            .context("Invalid destination_ip format")?;
 
         // Build ICMP echo reply packet
         use crate::server::icmp::IcmpServer;
@@ -233,7 +259,10 @@ impl IcmpProtocol {
     }
 
     /// Execute send_destination_unreachable action
-    fn execute_send_destination_unreachable(&self, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_send_destination_unreachable(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
         let source_ip = action
             .get("source_ip")
             .and_then(|v| v.as_str())
@@ -254,13 +283,15 @@ impl IcmpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'original_packet_hex' parameter")?;
 
-        let original_packet = hex::decode(original_packet_hex).context("Invalid hex in original_packet_hex")?;
+        let original_packet =
+            hex::decode(original_packet_hex).context("Invalid hex in original_packet_hex")?;
 
         // Parse IP addresses
         let source_ip_parsed: std::net::Ipv4Addr =
             source_ip.parse().context("Invalid source_ip format")?;
-        let destination_ip_parsed: std::net::Ipv4Addr =
-            destination_ip.parse().context("Invalid destination_ip format")?;
+        let destination_ip_parsed: std::net::Ipv4Addr = destination_ip
+            .parse()
+            .context("Invalid destination_ip format")?;
 
         // Build ICMP destination unreachable packet
         use crate::server::icmp::IcmpServer;
@@ -286,23 +317,22 @@ impl IcmpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'destination_ip' parameter")?;
 
-        let code = action
-            .get("code")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u8; // Default to 0 (TTL exceeded in transit)
+        let code = action.get("code").and_then(|v| v.as_u64()).unwrap_or(0) as u8; // Default to 0 (TTL exceeded in transit)
 
         let original_packet_hex = action
             .get("original_packet_hex")
             .and_then(|v| v.as_str())
             .context("Missing 'original_packet_hex' parameter")?;
 
-        let original_packet = hex::decode(original_packet_hex).context("Invalid hex in original_packet_hex")?;
+        let original_packet =
+            hex::decode(original_packet_hex).context("Invalid hex in original_packet_hex")?;
 
         // Parse IP addresses
         let source_ip_parsed: std::net::Ipv4Addr =
             source_ip.parse().context("Invalid source_ip format")?;
-        let destination_ip_parsed: std::net::Ipv4Addr =
-            destination_ip.parse().context("Invalid destination_ip format")?;
+        let destination_ip_parsed: std::net::Ipv4Addr = destination_ip
+            .parse()
+            .context("Invalid destination_ip format")?;
 
         // Build ICMP time exceeded packet
         use crate::server::icmp::IcmpServer;
@@ -414,7 +444,9 @@ fn send_echo_reply_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> ICMP echo reply to {destination_ip}")
-                .with_debug("ICMP send_echo_reply: dst={destination_ip} id={identifier} seq={sequence}"),
+                .with_debug(
+                    "ICMP send_echo_reply: dst={destination_ip} id={identifier} seq={sequence}",
+                ),
         ),
     }
 }
