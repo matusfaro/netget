@@ -26,35 +26,39 @@ impl SqsProtocol {
 
 /// SQS request event - triggered when an SQS API request is received
 pub static SQS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sqs_request", "SQS API request received", json!({"type": "placeholder", "event_id": "sqs_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "operation".to_string(),
-                type_hint: "string".to_string(),
-                description: "SQS operation (SendMessage, ReceiveMessage, CreateQueue, etc.)"
-                    .to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "queue_url".to_string(),
-                type_hint: "string".to_string(),
-                description: "Target queue URL (if available)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "request_body".to_string(),
-                type_hint: "string".to_string(),
-                description: "JSON request body".to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![send_sqs_response_action(), show_message_action()])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} SQS {operation} {queue_url} -> {status} ({duration_ms}ms)")
-                .with_debug("SQS {operation} queue={queue_url} from {client_ip}")
-                .with_trace("SQS request: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "sqs_request",
+        "SQS API request received",
+        json!({"type": "placeholder", "event_id": "sqs_request"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "SQS operation (SendMessage, ReceiveMessage, CreateQueue, etc.)"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "queue_url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Target queue URL (if available)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "request_body".to_string(),
+            type_hint: "string".to_string(),
+            description: "JSON request body".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![send_sqs_response_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} SQS {operation} {queue_url} -> {status} ({duration_ms}ms)")
+            .with_debug("SQS {operation} queue={queue_url} from {client_ip}")
+            .with_trace("SQS request: {json_pretty(.)}"),
+    )
 });
 
 fn send_sqs_response_action() -> ActionDefinition {
@@ -89,26 +93,27 @@ fn send_sqs_response_action() -> ActionDefinition {
     }
 }
 
-fn show_message_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "show_message".to_string(),
-        description: "Display a message in the TUI output panel".to_string(),
-        parameters: vec![Parameter {
-            name: "message".to_string(),
-            type_hint: "string".to_string(),
-            description: "Message to display".to_string(),
-            required: true,
-        }],
-        example: serde_json::json!({
-            "type": "show_message",
-            "message": "Message sent to orders-queue"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("{message}")
-                .with_debug("SQS: {message}"),
-        ),
+/// Read and validate the model-supplied `status_code`.
+///
+/// The old `as u64 as u16` cast wrapped silently, so a status of 65736 became 200 and a
+/// status of 99 or 1000 reached `Response::builder().status()`, which rejects it - and the
+/// `.unwrap()` on the other side of that turned a typo in model output into a panic that
+/// killed the connection task. Reject it here instead, where the message reaches the model.
+pub(crate) fn parse_status_code(action: &Value) -> Result<u16> {
+    let raw = action
+        .get("status_code")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code: expected a number"))?;
+
+    if !(100..=599).contains(&raw) {
+        return Err(anyhow::anyhow!(
+            "Invalid status_code {raw}: must be an HTTP status between 100 and 599. \
+             SQS uses 200 for success and 400 with an {{\"__type\": ..., \"message\": ...}} \
+             body for client errors."
+        ));
     }
+
+    Ok(raw as u16)
 }
 
 pub fn get_sqs_event_types() -> Vec<EventType> {
@@ -118,29 +123,12 @@ pub fn get_sqs_event_types() -> Vec<EventType> {
 // Implement Protocol trait (common functionality)
 impl Protocol for SqsProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-                ParameterDefinition {
-                    name: "default_visibility_timeout".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "Default visibility timeout in seconds (0-43200, default: 30)".to_string(),
-                    required: false,
-                    example: json!(30),
-                },
-                ParameterDefinition {
-                    name: "default_message_retention".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "Default message retention period in seconds (60-1209600, default: 345600 = 4 days)".to_string(),
-                    required: false,
-                    example: json!(345600),
-                },
-                ParameterDefinition {
-                    name: "max_receive_count".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "Maximum number of receives before message considered undeliverable (default: 10)".to_string(),
-                    required: false,
-                    example: json!(10),
-                },
-            ]
+        // Deliberately empty. `default_visibility_timeout`, `default_message_retention` and
+        // `max_receive_count` used to be declared here, but the server holds no queue state
+        // to apply them to and `spawn()` never read them - the LLM owns visibility and
+        // retention behaviour entirely, through the instruction. Declaring them promised
+        // enforcement that did not exist.
+        vec![]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // No async actions for SQS currently (all operations are request-driven)
@@ -169,7 +157,7 @@ impl Protocol for SqsProtocol {
             .implementation("hyper v1.5 HTTP with AWS JSON protocol")
             .llm_control("All SQS operations (SendMessage, ReceiveMessage, DeleteMessage)")
             .e2e_testing("aws-sdk-sqs client")
-            .notes("Virtual queues, visibility timeout tracking")
+            .notes("Virtual queues (no persistence); no auth; visibility timeouts are the LLM's job, the server tracks nothing")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -257,11 +245,7 @@ impl Server for SqsProtocol {
 
         match action_type {
             "send_sqs_response" => {
-                let status_code = action
-                    .get("status_code")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))?
-                    as u16;
+                let status_code = parse_status_code(&action)?;
 
                 let body = action
                     .get("body")

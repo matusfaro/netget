@@ -81,11 +81,13 @@ storage.
 3. Extract operation from `x-amz-target` header
 4. Parse queue URL from JSON body (if present)
 5. Create `SQS_REQUEST_EVENT` with operation, queue_url, request_body
-6. Call LLM via `call_llm()` with event and protocol
+6. Call LLM via `call_llm()` (which first tries any script/static handler, so those cost no
+   model call)
 7. Process action result:
-    - `send_sqs_response`: Build HTTP response with status/body
+    - `ActionResult::Custom { name: "sqs_response", .. }`: Build HTTP response with
+      status/body
 8. If no action, return empty JSON `{}`
-9. Close connection (HTTP/1.1 without keep-alive)
+9. Keep the connection open for further requests
 
 ### Operation Detection
 
@@ -97,7 +99,8 @@ storage.
 
 ### Response Format
 
-- Status: 200 (success), 400 (client error), 500 (server error)
+- Status: 200 (success), 400 (client error), 500 (server error). `send_sqs_response`
+  rejects any `status_code` outside 100-599 rather than truncating it.
 - Headers:
     - `Content-Type: application/x-amz-json-1.0`
     - `x-amzn-RequestId: <hex-timestamp>`
@@ -110,7 +113,13 @@ storage.
 
 **Sync Actions** (network event context required):
 
-- `send_sqs_response`: Return HTTP response with status and body
+- `send_sqs_response` — parameters `status_code` (number, required) and `body` (string,
+  required, a JSON document). This is the only protocol-specific action. `sqs_response` is
+  the *internal* `ActionResult::Custom` name the server matches on; it is not an action name
+  the model may emit.
+
+The generic actions (`show_message`, memory operations, …) are supplied centrally by
+`get_network_event_common_actions()`.
 
 **Event Types**:
 
@@ -119,12 +128,12 @@ storage.
 
 ### Startup Parameters
 
-The LLM can configure the SQS server with these parameters via the `open_server` action:
-
-- **`default_visibility_timeout`** (number): Default visibility timeout in seconds (0-43200, default: 30)
-- **`default_message_retention`** (number): Default message retention period in seconds (60-1209600, default: 345600 = 4
-  days)
-- **`max_receive_count`** (number): Maximum receives before message considered undeliverable (default: 10)
+**None.** `get_startup_parameters()` returns an empty list. `default_visibility_timeout`,
+`default_message_retention` and `max_receive_count` were declared here until they were
+removed: nothing ever read them, because the server holds no queue state to apply them to.
+Visibility timeouts and retention are entirely the LLM's responsibility and belong in the
+server instruction. Passing any of them now fails with a clear "Undeclared startup
+parameter" error rather than being silently ignored.
 
 ### Example LLM Prompts
 
@@ -174,18 +183,19 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 
 1. Server accepts TCP connection on port 9324
 2. Create `ConnectionId` for tracking
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Sqs`
+3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::empty()` (that type is a
+   generic `serde_json::Value` wrapper, not a per-protocol enum)
 4. Spawn HTTP service handler
-5. `http1::Builder` serves single request
-6. Connection closed after response sent
+5. `http1::Builder::serve_connection` serves the connection, including keep-alive
+6. Connection closed when the client closes it
 
 ### State Tracking
 
 - Connection state stored in `ServerInstance.connections` HashMap
-- Protocol-specific: `recent_operations` Vec (operation, queue_url, time)
-- Tracks: remote_addr, local_addr, bytes_sent/received
-- Status: Active → Closed after each request
-- HTTP/1.1 without keep-alive (new connection per request)
+- No protocol-specific connection state is recorded; there is no `recent_operations` list
+- Tracks: remote_addr, local_addr. `bytes_sent`/`bytes_received` are initialised to 0 and
+  never updated
+- Status: Active → Closed when the connection ends
 
 ### Concurrency
 
@@ -224,61 +234,36 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 3. **DeleteMessage**: Message permanently removed using receipt handle
 4. **Expiration**: Message deleted after retention period
 
-## LLM-Controlled Authentication
+## Authentication
 
-The SQS server supports LLM-controlled authentication:
+**Not implemented, and not visible to the LLM.** The server never inspects the
+`Authorization`, `X-Amz-Date` or `X-Amz-Security-Token` headers, and none of them are put
+into `SQS_REQUEST_EVENT` - its data is exactly `{operation, queue_url, request_body}`. The
+LLM therefore cannot make an authentication decision, because it is never shown the
+credentials. Every request is served unconditionally.
 
-### Authentication Flow
-
-1. Client sends request with AWS Signature V4 headers
-2. Server parses signature headers (but does not validate)
-3. Signature details included in event context
-4. **LLM decides whether to accept or reject the request**
-5. LLM can return error response for invalid/missing signatures
-
-### Signature Headers
-
-- `Authorization`: AWS4-HMAC-SHA256 signature
-- `X-Amz-Date`: Request timestamp
-- `X-Amz-Security-Token`: (optional) Session token
-
-### LLM Decisions
-
-- **Accept all**: Honeypot mode, log but accept everything
-- **Reject invalid**: Validate signature format (not crypto)
-- **Selective auth**: Accept specific access keys, reject others
-- **Custom logic**: Time-based access, rate limiting, etc.
+Adding LLM-controlled auth would mean carrying the parsed signature fields (access key id,
+signed headers, timestamp - never the signature bytes) in the event data.
 
 ## Scripting Mode Support
 
-The SQS protocol is designed with scripting mode in mind to minimize LLM calls during testing:
+SQS uses the generic handler mechanism - there is nothing SQS-specific about it. A
+`script` or `static` event handler on `sqs_request` is dispatched by
+`try_execute_event_handler` before any model call, so deterministic operations
+(SendMessage acknowledgements, GetQueueAttributes) cost nothing.
 
-### Scriptable Operations
-
-- **SendMessage**: Repetitive, predictable response (MessageId, MD5)
-- **GetQueueAttributes**: Simple response with queue stats
-
-### Non-Scriptable Operations
-
-- **ReceiveMessage**: Requires queue state inspection
-- **DeleteMessage**: Requires receipt handle validation
-- **CreateQueue**: Initial queue setup
-
-### Script Generation
-
-- On server startup, LLM generates Python/JavaScript script
-- Script handles SendMessage requests without calling LLM
-- Script can access queue state from LLM-provided context
-- Reduces E2E test LLM calls from ~10 to ~3-5
+There is **no** SQS-specific "script generation on startup" step; the earlier claim that
+the LLM emits a Python/JavaScript handler when the server starts described behaviour that
+does not exist. Handlers come from the caller, via `open_server`'s `event_handlers`.
 
 ## Limitations
 
 ### Protocol Features
 
 - **No persistent storage** - queues and messages only exist in LLM conversation context
-- **No authentication crypto** - AWS Signature V4 parsed but not cryptographically validated
+- **No authentication at all** - Signature V4 headers are neither parsed nor validated, and
+  are not shown to the LLM
 - **HTTP/1.1 only** - no HTTP/2 support
-- **No keep-alive** - new connection per request
 - **JSON protocol only** - legacy Query protocol not implemented
 - **No streaming** - full request/response buffering
 - **Standard queues only** - FIFO queues not implemented

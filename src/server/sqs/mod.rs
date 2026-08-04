@@ -47,7 +47,8 @@ impl SqsServer {
         let protocol = Arc::new(SqsProtocol::new());
 
         // Spawn server loop
-        tokio::spawn(async move {
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
@@ -135,6 +136,14 @@ impl SqsServer {
                 }
             }
         });
+
+        // Register the accept loop so stop_server can abort it and release the port.
+        // Without this the handle was dropped on the floor: the task kept running and the
+        // socket stayed bound after the server was closed, so restarting on the same port
+        // failed with EADDRINUSE while the UI reported the server as stopped.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }
@@ -238,21 +247,9 @@ async fn handle_sqs_request_with_llm(
                             trace!("SQS response body: {}", body);
                             let _ = status_tx.send(format!("[TRACE] SQS response: {}", body));
 
-                            // Generate a simple request ID using timestamp
-                            let request_id = format!(
-                                "{:x}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_nanos()
-                            );
+                            let request_id = new_request_id();
 
-                            return Ok(Response::builder()
-                                .status(status)
-                                .header("Content-Type", "application/x-amz-json-1.0")
-                                .header("x-amzn-RequestId", request_id)
-                                .body(Full::new(Bytes::from(body.to_string())))
-                                .unwrap());
+                            return Ok(build_sqs_response(status, &request_id, body.to_string()));
                         }
                     }
                     _ => {
@@ -265,41 +262,53 @@ async fn handle_sqs_request_with_llm(
             debug!("SQS response: 200 (default)");
             let _ = status_tx.send("[DEBUG] SQS → 200 response (default)".to_string());
 
-            let request_id = format!(
-                "{:x}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            );
+            let request_id = new_request_id();
 
-            Ok(Response::builder()
-                .status(200)
-                .header("Content-Type", "application/x-amz-json-1.0")
-                .header("x-amzn-RequestId", request_id)
-                .body(Full::new(Bytes::from("{}")))
-                .unwrap())
+            Ok(build_sqs_response(200, &request_id, "{}".to_string()))
         }
         Err(e) => {
             error!("LLM execution failed for SQS request: {}", e);
             let _ = status_tx.send(format!("[ERROR] LLM execution failed: {}", e));
 
-            let request_id = format!(
-                "{:x}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            );
+            let request_id = new_request_id();
 
-            Ok(Response::builder()
-                .status(500)
-                .header("Content-Type", "application/x-amz-json-1.0")
-                .header("x-amzn-RequestId", request_id)
-                .body(Full::new(Bytes::from(
-                    r#"{"__type":"InternalFailure","message":"Internal server error"}"#,
-                )))
-                .unwrap())
+            Ok(build_sqs_response(
+                500,
+                &request_id,
+                r#"{"__type":"InternalFailure","message":"Internal server error"}"#.to_string(),
+            ))
         }
     }
+}
+
+/// Build an AWS-JSON response.
+///
+/// `status` originates in model output. `Response::builder().status()` rejects anything
+/// outside 100-999 and the previous `.unwrap()` turned that into a panic, killing the
+/// hyper connection task and leaving the client waiting on a socket that never answers.
+/// `SqsProtocol::execute_action` already rejects out-of-range values with a message the
+/// model sees; this is the belt-and-braces path.
+fn build_sqs_response(status: u16, request_id: &str, body: String) -> Response<Full<Bytes>> {
+    let status = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!("Invalid SQS status code {}, sending 500 instead", status);
+        hyper::StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/x-amz-json-1.0")
+        .header("x-amzn-RequestId", request_id)
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|_| Response::new(Full::new(Bytes::from("{}"))))
+}
+
+/// Timestamp-derived request id, echoed in `x-amzn-RequestId`.
+fn new_request_id() -> String {
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    )
 }
