@@ -2,229 +2,178 @@
 
 ## Overview
 
-SSH Agent is a key management protocol that stores SSH private keys and performs signing operations without exposing the
-keys. This implementation provides an LLM-controlled SSH Agent server that responds to client requests (ssh-add, ssh,
-etc.).
+An SSH agent on a Unix domain socket. Real agents hold private keys and sign challenges with
+them; this one holds nothing — a handler (script, static or LLM) answers every request, so the
+identities it lists and the signatures it returns are invented.
 
-## Protocol Specification
+**Status**: Experimental
+**Transport**: Unix domain socket (`#![cfg(unix)]`; no Windows named-pipe support)
+**Privilege**: none — a socket path, not a privileged port
+**Spec**: draft-ietf-sshm-ssh-agent-05
+**Feature**: `ssh-agent`
+**Files**: `mod.rs` (framing, wire parsing, responses), `actions.rs` (events, actions, metadata)
 
-- **Standard**: IETF draft-ietf-sshm-ssh-agent-05
-- **Transport**: Unix domain socket (Unix/Linux/macOS)
-- **Wire Format**: SSH protocol binary format (uint32 length prefix + message type + data)
-- **Stack**: Application layer
+## The signature caveat
 
-## Library Choices
+No private key exists here, so `send_sign_response` returns bytes the handler made up. A real
+SSH server will reject them — agent authentication cannot succeed against a genuine peer. What
+this *is* good for: observing what a client asks for, honeypots, and exercising client-side
+agent code paths.
 
-### Custom Implementation
-
-This implementation uses a **custom SSH Agent protocol parser** instead of `ssh-agent-lib` for the following reasons:
-
-1. **Full LLM Control**: Direct access to all protocol messages for LLM integration
-2. **Simplicity**: No need for complex trait implementations
-3. **Flexibility**: Easy to customize behavior for NetGet's architecture
-4. **Dependencies**: Minimal dependencies (only bytes, hex, tokio)
-
-The protocol parser handles:
-
-- Message type detection (11 types)
-- SSH wire format parsing (uint32 length + string/blob encoding)
-- Response generation with proper wire format
-
-### Dependencies
-
-- `tokio::net::UnixListener` - Unix domain socket server
-- `bytes` - Efficient byte buffer manipulation
-- `hex` - Encoding/decoding for LLM-friendly hex strings
+Similarly, `ssh_agent_lock` / `ssh_agent_unlock` and key constraints (`ssh-add -t`, `-c`) are
+reported to the handler but **not enforced** by anything. If the agent should behave as locked,
+the handler has to remember that itself and refuse later requests.
 
 ## Architecture
 
-### Connection Model
+### Message framing
+
+The wire format is `uint32 length || byte type || payload`. The reader accumulates bytes and
+drains every complete frame:
 
 ```
-Unix Socket Listener
-    ↓
-Accept Connection
-    ↓
-Split Stream (read/write halves)
-    ↓
-Reader Task ──→ Parse Message ──→ Call LLM ──→ Execute Actions ──→ Write Response
+read() -> append to pending -> while take_framed_message(&mut pending) -> handle
 ```
 
-### State Machine
+This matters. The previous reader treated each `read()` as exactly one message, so a client
+pipelining two requests into one segment had the second silently discarded, and a request split
+across two segments failed to parse. Frames are capped at 256 KiB (`MAX_AGENT_MESSAGE_LEN`) —
+the length prefix is attacker-controlled, and without a cap a client could announce a huge
+message and make the server buffer unboundedly. A zero-length or oversized frame closes the
+connection.
 
-Each connection maintains a state machine to prevent concurrent LLM calls:
+Messages are handled **sequentially and inline**. Spawning a task per read let concurrent
+requests race for the connection lock and be answered out of order, which a protocol that is a
+strict request/response sequence on a single socket cannot tolerate. The
+Idle/Processing/Accumulating state machine in `ConnectionData` therefore rarely leaves Idle; it
+is retained but is no longer what provides ordering.
 
-- **Idle**: Ready to process new data
-- **Processing**: LLM call in progress, queue incoming data
-- **Accumulating**: Queuing data while processing
+### Lifecycle
 
-### Message Types Supported
+1. A stale socket at `socket_path` is unlinked — but only if it really is a socket. The path
+   comes from a startup parameter, i.e. ultimately from model output, and unconditionally
+   removing whatever is there would let a bad value delete a regular file. Anything else at
+   that path is a hard startup error.
+2. `UnixListener::bind` — failure propagates with `?`, so `server_startup` reports `Error`
+   rather than a phantom `Running`.
+3. The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
+   `stop_server` aborts it and releases the socket.
+4. Per connection: split the stream, register it in `ServerInstance`, raise
+   `ssh_agent_connection_opened`, then read frames until EOF.
 
-| Type               | Code | Operation            | LLM Event                         |
-|--------------------|------|----------------------|-----------------------------------|
-| REQUEST_IDENTITIES | 11   | List keys            | `ssh_agent_request_identities`    |
-| SIGN_REQUEST       | 13   | Sign data            | `ssh_agent_sign_request`          |
-| ADD_IDENTITY       | 17   | Add key              | `ssh_agent_add_identity`          |
-| REMOVE_IDENTITY    | 18   | Remove key           | `ssh_agent_remove_identity`       |
-| REMOVE_ALL         | 19   | Clear all keys       | `ssh_agent_remove_all_identities` |
-| LOCK               | 22   | Lock agent           | `ssh_agent_lock`                  |
-| UNLOCK             | 23   | Unlock agent         | `ssh_agent_unlock`                |
-| ADD_ID_CONSTRAINED | 25   | Add with constraints | `ssh_agent_add_identity`          |
+### Responses
 
-**Response Types**:
+`send_response` prepends the length and writes. It waits on the write lock; it used to
+`try_lock()` and, on failure, silently drop the response — leaving the client blocked forever
+on a reply that was never sent.
 
-- SSH_AGENT_FAILURE (5)
-- SSH_AGENT_SUCCESS (6)
-- SSH_AGENT_IDENTITIES_ANSWER (12)
-- SSH_AGENT_SIGN_RESPONSE (14)
+Hex fields from the handler are validated. `public_key_blob_hex` and `signature_hex` that are
+not valid hex, or that decode to zero bytes, now fail the request with `SSH_AGENT_FAILURE`
+instead of putting an empty blob on the wire that the client reads as a valid-but-empty key or
+signature.
 
 ## LLM Integration
 
-### Control Points
+Every event goes through `call_llm` → `try_execute_event_handler`, so script and static
+handlers run in-process at **zero** LLM calls.
 
-1. **Connection Opened** (`ssh_agent_connection_opened`)
-    - Triggered when client connects
-    - LLM can initialize state, prepare keys
+### Events
 
-2. **Request Identities** (`ssh_agent_request_identities`)
-    - Client wants list of available keys
-    - LLM returns structured identities (key type, blob, comment)
+| Event                             | Msg | Parameters |
+|-----------------------------------|-----|------------|
+| `ssh_agent_connection_opened`     | –   | `connection_id` |
+| `ssh_agent_request_identities`    | 11  | – |
+| `ssh_agent_sign_request`          | 13  | `key_type`, `public_key_blob_hex`, `data_hex`, `flags` |
+| `ssh_agent_add_identity`          | 17, 25 | `key_type`, `public_key_blob_hex`, `comment`, `constrained` |
+| `ssh_agent_remove_identity`       | 18  | `public_key_blob_hex` |
+| `ssh_agent_remove_all_identities` | 19  | – |
+| `ssh_agent_lock`                  | 22  | `passphrase` |
+| `ssh_agent_unlock`                | 23  | `passphrase` |
 
-3. **Sign Request** (`ssh_agent_sign_requested`)
-    - Client wants to sign data with a specific key
-    - LLM receives: public key blob (hex), data to sign (hex), flags
-    - LLM returns: signature blob (hex)
+Two things were fixed here. Every event used to declare a required `connection_id` parameter,
+but `parse_message` emitted `{}` for most of them, so the field was documented and never
+delivered; only `ssh_agent_connection_opened` genuinely carries one, and the rest no longer
+claim to. And `lock`/`unlock` parsed the passphrase off the wire and threw it away, delivering
+an empty event — a handler could not tell a correct unlock passphrase from a wrong one, which
+is the entire point of the operation.
 
-4. **Add Identity** (`ssh_agent_add_identity`)
-    - Client wants to add a key to the agent
-    - LLM receives: key type, public key blob (hex), comment, constrained flag
-    - LLM can store in memory, apply lifetime constraints
+`sign_request` now also carries `key_type` (`"ssh-ed25519"`, `"ssh-rsa"`, …) decoded from the
+key blob, so a handler can identify the key without decoding hex itself.
 
-5. **Remove/Lock/Unlock** operations
-    - LLM controls key lifecycle and access control
+### Actions
 
-### Action Design (Structured Data)
+| Action                  | Sends                        | Answers |
+|-------------------------|------------------------------|---------|
+| `send_identities_list`  | `SSH_AGENT_IDENTITIES_ANSWER` | `request_identities` |
+| `send_sign_response`    | `SSH_AGENT_SIGN_RESPONSE`    | `sign_request` |
+| `send_success`          | `SSH_AGENT_SUCCESS`          | add / remove / remove_all / lock / unlock |
+| `send_failure`          | `SSH_AGENT_FAILURE`          | any (refusal) |
+| `close_connection`      | nothing — drops the socket   | any |
+| `wait_for_more`         | nothing                      | rarely correct |
 
-**CRITICAL**: All action parameters use structured JSON, NOT binary/base64:
+Returning **no** action sends nothing, and the client blocks. Refuse explicitly with
+`send_failure`.
 
-**Identities List** (CORRECT ✅):
+There are no async (user-triggered) actions. `modify_instruction` produced an
+`ActionResult::Custom` that the executor ignored — the common `update_instruction` action does
+the job. `close_connection` declared a `connection_id` parameter the executor discarded (it
+always closed the connection that raised the event), so it moved to the sync actions without
+that parameter.
 
-```json
-{
-  "type": "send_identities_list",
-  "identities": [
-    {
-      "key_type": "ssh-ed25519",
-      "public_key_blob_hex": "0000000b7373682d656432353531390000002104...",
-      "comment": "my-key-2025"
-    }
-  ]
-}
-```
+### Hex in event data
 
-**Sign Response** (CORRECT ✅):
+The action-design rule bans raw bytes and base64. Hex is used here deliberately: SSH key blobs
+and signatures *are* opaque byte strings, there is no structured alternative, and hex is the
+one encoding a model can read and write digit by digit. Where structure is available it is
+provided alongside — hence `key_type` and `comment` next to the blob.
 
-```json
-{
-  "type": "send_sign_response",
-  "signature_hex": "0000000b7373682d65643235353139000000400a1b2c3d..."
-}
-```
+## Storage
 
-**AVOID** (INCORRECT ❌):
+None. No keys are persisted, no file is written apart from the socket itself. Keys a client
+adds exist only in whatever the handler chooses to remember.
 
-```json
-{
-  "type": "send_sign_response",
-  "signature": "AQAA..."  // base64 binary - LLM can't construct this
-}
-```
+## Known limitations
 
-### Memory Usage
-
-The LLM can use memory to:
-
-- Store added keys (key type, blob, comment)
-- Track signing operations
-- Implement access control (lock/unlock state)
-- Apply key constraints (lifetime, confirmation)
-
-## Logging Strategy
-
-**Dual Logging** (CRITICAL):
-
-- `trace!`, `debug!`, `info!`, `error!` macros → `netget.log`
-- `status_tx.send()` → TUI display
-
-**Log Levels**:
-
-- ERROR: Failed to parse message, write errors
-- INFO: Connection lifecycle (opened, closed)
-- DEBUG: Message type received, action execution
-- TRACE: Raw hex data, detailed protocol parsing
-
-## Limitations
-
-1. **Platform**: Unix/Linux/macOS only (Unix domain sockets)
-2. **Wire Format**: Current implementation assumes message type byte at position 0 (may need full length-prefixed
-   parsing)
-3. **Key Storage**: Virtual only (not persistent, stored in LLM memory)
-4. **Smartcard**: Not implemented
-5. **Extensions**: OpenSSH extensions (session-bind, restrict-destination) not supported
-6. **Constraints**: Lifetime/confirmation constraints parsed but not enforced
-7. **Windows**: Named pipes not supported (would need separate implementation)
-
-## Security Considerations
-
-1. **Socket Permissions**: Unix socket should have proper permissions (0600)
-2. **Key Exposure**: Private keys never transmitted (only sign operations)
-3. **LLM Memory**: Keys stored in LLM memory - consider security implications
-4. **Local Only**: Agent listens only on local Unix socket (no network exposure)
-
-## Example Prompts
-
-### Basic Agent
-
-```
-Start SSH Agent server on ./netget-ssh-agent.sock
-Provide 2 pre-configured Ed25519 keys:
-  - admin-key (full access)
-  - deploy-key (read-only)
-Sign any requests automatically
-```
-
-### Secure Agent
-
-```
-Start SSH Agent server
-Require approval before signing (respond with send_failure first, then send_sign_response on confirmation)
-Store added keys in memory
-Lock agent after 5 minutes of inactivity
-```
-
-### Learning Agent
-
-```
-Start SSH Agent server
-Learn keys dynamically as clients add them
-Track signing operations and data signed
-Provide statistics on key usage
-```
-
-## Integration Points
-
-- `protocol/registry.rs`: Register SshAgentProtocol
-- `cli/server_startup.rs`: Add SSH Agent startup case
-- `state/server.rs`: Add SshAgentConnectionInfo variant
-- `src/server/mod.rs`: Re-export SshAgentProtocol
+1. **Fabricated signatures** — see above.
+2. **ADD_IDENTITY parsing assumes the Ed25519 layout** (`key_type`, public blob, private blob,
+   comment). RSA and other multi-field key types have a different field sequence, so
+   `public_key_blob_hex` and `comment` may be wrong or the message may fail to parse. The event
+   parameter descriptions say so.
+3. **Lock/unlock and constraints are not enforced** — reported only.
+4. **No OpenSSH extensions** (`session-bind@openssh.com`, `restrict-destination-v00@…`).
+5. **No smartcard operations** (`ADD_SMARTCARD_KEY`, `REMOVE_SMARTCARD_KEY`).
+6. **Unix only** — Windows would need a named-pipe implementation.
+7. The socket is created with the process umask; a real agent socket should be 0600.
 
 ## Testing
 
-See `tests/server/ssh_agent/CLAUDE.md` for testing strategy.
+`tests/server/ssh_agent/e2e_test.rs` exists (unlike ssh, telnet and ftp). Manual check:
+
+```
+SSH_AUTH_SOCK=./netget-ssh-agent.sock ssh-add -l
+```
+
+## Example prompts
+
+### Two fixed keys
+
+```
+Start SSH Agent on ./netget-ssh-agent.sock
+On ssh_agent_request_identities return two identities: admin-key and deploy-key
+Refuse every sign request with send_failure
+```
+
+### Learning agent
+
+```
+Start SSH Agent on ./netget-ssh-agent.sock
+Remember every key added with ssh_agent_add_identity (key_type and comment) and
+list them back on ssh_agent_request_identities
+Accept remove and remove_all with send_success
+```
 
 ## References
 
-- IETF SSH Agent Protocol: draft-ietf-sshm-ssh-agent-05
-- OpenSSH Agent: https://github.com/openssh/openssh-portable/blob/master/authfd.h
-- SSH Protocol RFC 4251: Binary Packet Protocol
-- NetGet docs: `/docs/SSH_AGENT_PROTOCOL_RESEARCH.md`
+- IETF draft-ietf-sshm-ssh-agent-05
+- OpenSSH `authfd.h`: https://github.com/openssh/openssh-portable/blob/master/authfd.h
+- RFC 4251 §5 (SSH binary data types)

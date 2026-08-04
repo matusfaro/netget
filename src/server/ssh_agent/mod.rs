@@ -39,6 +39,45 @@ const SSH_AGENT_SUCCESS: u8 = 6;
 const SSH_AGENT_IDENTITIES_ANSWER: u8 = 12;
 const SSH_AGENT_SIGN_RESPONSE: u8 = 14;
 
+/// Largest agent message accepted, matching OpenSSH's own limit.
+///
+/// The length prefix is attacker-controlled, so without a cap a client could make the server
+/// buffer arbitrary memory by announcing a huge message and never sending it.
+const MAX_AGENT_MESSAGE_LEN: usize = 256 * 1024;
+
+/// Pull one complete length-prefixed agent message off the front of `pending`.
+///
+/// The wire format is `uint32 length || byte type || payload`, and one TCP read is not one
+/// message: a client may pipeline several requests into a single segment, or split one
+/// request across segments. The previous reader treated every `read()` as exactly one message,
+/// so pipelined requests after the first were discarded and split requests failed to parse.
+///
+/// Returns the frame including its 4-byte length prefix (which is what `parse_message` expects),
+/// or `None` when more bytes are needed. `Err` means the stream is unusable and must be closed.
+fn take_framed_message(pending: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
+    if pending.len() < 4 {
+        return Ok(None);
+    }
+
+    let length = u32::from_be_bytes([pending[0], pending[1], pending[2], pending[3]]) as usize;
+
+    if length == 0 {
+        anyhow::bail!("SSH Agent message declared zero length");
+    }
+    if length > MAX_AGENT_MESSAGE_LEN {
+        anyhow::bail!(
+            "SSH Agent message length {length} exceeds the {MAX_AGENT_MESSAGE_LEN} byte limit"
+        );
+    }
+    if pending.len() < 4 + length {
+        return Ok(None);
+    }
+
+    let frame = pending[..4 + length].to_vec();
+    pending.drain(..4 + length);
+    Ok(Some(frame))
+}
+
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionState {
@@ -67,8 +106,19 @@ impl SshAgentServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<PathBuf> {
-        // Remove existing socket file if present
-        if socket_path.exists() {
+        // Remove a stale socket left behind by a previous run, so bind() does not fail with
+        // EADDRINUSE. Only ever unlink an actual socket: `socket_path` comes from a startup
+        // parameter, i.e. ultimately from model output, and blindly removing whatever is at
+        // that path would let a bad value delete a regular file.
+        if let Ok(metadata) = std::fs::symlink_metadata(&socket_path) {
+            use std::os::unix::fs::FileTypeExt;
+            if !metadata.file_type().is_socket() {
+                anyhow::bail!(
+                    "Refusing to start SSH Agent: {:?} already exists and is not a Unix socket. \
+                     Choose a different socket_path.",
+                    socket_path
+                );
+            }
             std::fs::remove_file(&socket_path).with_context(|| {
                 format!("Failed to remove existing socket file: {:?}", socket_path)
             })?;
@@ -160,6 +210,8 @@ impl SshAgentServer {
                         tokio::spawn(async move {
                             let mut buffer = vec![0u8; 8192];
                             let mut read_half = read_half;
+                            // Bytes received but not yet forming a complete message.
+                            let mut pending: Vec<u8> = Vec::new();
 
                             loop {
                                 match read_half.read(&mut buffer).await {
@@ -177,32 +229,63 @@ impl SshAgentServer {
                                         break;
                                     }
                                     Ok(n) => {
-                                        let data = Bytes::copy_from_slice(&buffer[..n]);
                                         trace!(
                                             "SSH Agent received {} bytes on connection {}",
                                             n,
                                             connection_id
                                         );
+                                        pending.extend_from_slice(&buffer[..n]);
 
-                                        // Handle data in separate task
-                                        let llm_clone = llm_client_clone.clone();
-                                        let state_clone = app_state_clone.clone();
-                                        let status_clone = status_tx_clone.clone();
-                                        let conns_clone = connections_clone.clone();
-                                        let protocol_clone = protocol_clone.clone();
-                                        tokio::spawn(async move {
-                                            Self::handle_data_with_actions(
-                                                connection_id,
-                                                server_id,
-                                                data,
-                                                llm_clone,
-                                                state_clone,
-                                                status_clone,
-                                                conns_clone,
-                                                protocol_clone,
-                                            )
-                                            .await;
-                                        });
+                                        // Drain every complete message this read produced.
+                                        // Handled sequentially and inline: spawning a task per
+                                        // read let concurrent requests race for the connection
+                                        // lock and be answered out of order, which the agent
+                                        // protocol - a strict request/response sequence on one
+                                        // socket - cannot tolerate.
+                                        let mut fatal = false;
+                                        loop {
+                                            match take_framed_message(&mut pending) {
+                                                Ok(Some(frame)) => {
+                                                    Self::handle_data_with_actions(
+                                                        connection_id,
+                                                        server_id,
+                                                        Bytes::from(frame),
+                                                        llm_client_clone.clone(),
+                                                        app_state_clone.clone(),
+                                                        status_tx_clone.clone(),
+                                                        connections_clone.clone(),
+                                                        protocol_clone.clone(),
+                                                    )
+                                                    .await;
+                                                }
+                                                Ok(None) => break,
+                                                Err(e) => {
+                                                    error!(
+                                                        "Malformed framing on SSH Agent connection {}: {}",
+                                                        connection_id, e
+                                                    );
+                                                    let _ = status_tx_clone.send(format!(
+                                                        "[ERROR] SSH Agent framing error on connection {}: {}",
+                                                        connection_id, e
+                                                    ));
+                                                    fatal = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if fatal {
+                                            connections_clone.lock().await.remove(&connection_id);
+                                            app_state_clone
+                                                .close_connection_on_server(
+                                                    server_id,
+                                                    connection_id,
+                                                )
+                                                .await;
+                                            let _ =
+                                                status_tx_clone.send("__UPDATE_UI__".to_string());
+                                            break;
+                                        }
                                     }
                                     Err(e) => {
                                         error!(
@@ -470,7 +553,11 @@ impl SshAgentServer {
         let msg_type = data[4];
         let mut cursor = &data[5..];
 
-        debug!("SSH Agent: parsing message type {} from {} bytes", msg_type, data.len());
+        debug!(
+            "SSH Agent: parsing message type {} from {} bytes",
+            msg_type,
+            data.len()
+        );
 
         match msg_type {
             SSH_AGENTC_REQUEST_IDENTITIES => Ok(Some(Event::new(
@@ -486,6 +573,7 @@ impl SshAgentServer {
                 Ok(Some(Event::new(
                     &SSH_AGENT_SIGN_REQUEST_EVENT,
                     serde_json::json!({
+                        "key_type": Self::key_type_of(public_key_blob),
                         "public_key_blob_hex": hex::encode(public_key_blob),
                         "data_hex": hex::encode(data_to_sign),
                         "flags": flags,
@@ -527,18 +615,44 @@ impl SshAgentServer {
                 &SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT,
                 serde_json::json!({}),
             ))),
-            SSH_AGENTC_LOCK => Ok(Some(Event::new(
-                &SSH_AGENT_LOCK_EVENT,
-                serde_json::json!({}),
-            ))),
-            SSH_AGENTC_UNLOCK => Ok(Some(Event::new(
-                &SSH_AGENT_UNLOCK_EVENT,
-                serde_json::json!({}),
-            ))),
+            // Both carry a single `string passphrase`. It was previously parsed away and the
+            // event delivered empty, so a handler could not tell a correct unlock passphrase
+            // from a wrong one - the whole point of the operation.
+            SSH_AGENTC_LOCK => {
+                let passphrase = Self::read_string(&mut cursor)?;
+                Ok(Some(Event::new(
+                    &SSH_AGENT_LOCK_EVENT,
+                    serde_json::json!({
+                        "passphrase": String::from_utf8_lossy(passphrase),
+                    }),
+                )))
+            }
+            SSH_AGENTC_UNLOCK => {
+                let passphrase = Self::read_string(&mut cursor)?;
+                Ok(Some(Event::new(
+                    &SSH_AGENT_UNLOCK_EVENT,
+                    serde_json::json!({
+                        "passphrase": String::from_utf8_lossy(passphrase),
+                    }),
+                )))
+            }
             _ => {
                 debug!("Unknown SSH Agent message type: {}", msg_type);
                 Ok(None)
             }
+        }
+    }
+
+    /// Extract the algorithm name from an SSH public key blob.
+    ///
+    /// Every blob starts with its algorithm as a length-prefixed string ("ssh-ed25519",
+    /// "ssh-rsa", ...). Surfacing it saves a handler from having to decode hex just to work
+    /// out which key a sign request refers to. Returns "" for a blob it cannot read.
+    fn key_type_of(blob: &[u8]) -> String {
+        let mut cursor = blob;
+        match Self::read_string(&mut cursor) {
+            Ok(name) => String::from_utf8_lossy(name).to_string(),
+            Err(_) => String::new(),
         }
     }
 
@@ -620,19 +734,43 @@ impl SshAgentServer {
         identities: &Vec<serde_json::Value>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     ) {
-        let mut response = BytesMut::new();
-        response.put_u8(SSH_AGENT_IDENTITIES_ANSWER);
-        response.put_u32(identities.len() as u32);
-
+        // Decode every key blob before committing to a reply. Previously an unparseable hex
+        // string became an empty blob via unwrap_or_default(), so the client silently received
+        // an identity with a zero-length key instead of an error it could act on.
+        let mut decoded: Vec<(Vec<u8>, &str)> = Vec::with_capacity(identities.len());
         for identity in identities {
             let key_blob_hex = identity["public_key_blob_hex"].as_str().unwrap_or("");
             let comment = identity["comment"].as_str().unwrap_or("");
 
-            let key_blob = hex::decode(key_blob_hex).unwrap_or_default();
+            match hex::decode(key_blob_hex) {
+                Ok(blob) if !blob.is_empty() => decoded.push((blob, comment)),
+                Ok(_) => {
+                    error!(
+                        "SSH Agent: identity {:?} has an empty public_key_blob_hex; failing the request",
+                        comment
+                    );
+                    Self::send_failure(connection_id, connections).await;
+                    return;
+                }
+                Err(e) => {
+                    error!(
+                        "SSH Agent: identity {:?} has invalid hex in public_key_blob_hex: {}",
+                        comment, e
+                    );
+                    Self::send_failure(connection_id, connections).await;
+                    return;
+                }
+            }
+        }
 
+        let mut response = BytesMut::new();
+        response.put_u8(SSH_AGENT_IDENTITIES_ANSWER);
+        response.put_u32(decoded.len() as u32);
+
+        for (key_blob, comment) in &decoded {
             // Write key blob (string)
             response.put_u32(key_blob.len() as u32);
-            response.put_slice(&key_blob);
+            response.put_slice(key_blob);
 
             // Write comment (string)
             response.put_u32(comment.len() as u32);
@@ -648,7 +786,21 @@ impl SshAgentServer {
         signature_hex: &str,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     ) {
-        let signature_blob = hex::decode(signature_hex).unwrap_or_default();
+        // A malformed signature used to be sent as a zero-length blob, which the client reads
+        // as a valid-but-empty signature and then fails to verify with no useful diagnostic.
+        let signature_blob = match hex::decode(signature_hex) {
+            Ok(blob) if !blob.is_empty() => blob,
+            Ok(_) => {
+                error!("SSH Agent: signature_hex decoded to zero bytes; failing the sign request");
+                Self::send_failure(connection_id, connections).await;
+                return;
+            }
+            Err(e) => {
+                error!("SSH Agent: invalid hex in signature_hex: {}", e);
+                Self::send_failure(connection_id, connections).await;
+                return;
+            }
+        };
 
         let mut response = BytesMut::new();
         response.put_u8(SSH_AGENT_SIGN_RESPONSE);
@@ -691,11 +843,18 @@ impl SshAgentServer {
             message.put_u32(data.len() as u32);
             message.put_slice(&data);
 
-            if let Ok(mut write_half) = conn_data.write_half.try_lock() {
-                if let Err(e) = write_half.write_all(&message).await {
-                    error!("Failed to write SSH Agent response: {}", e);
-                }
+            // Wait for the write half rather than try_lock: a failed try_lock silently
+            // dropped the response, leaving the client blocked forever on a reply that was
+            // never sent.
+            let mut write_half = conn_data.write_half.lock().await;
+            if let Err(e) = write_half.write_all(&message).await {
+                error!("Failed to write SSH Agent response: {}", e);
             }
+        } else {
+            debug!(
+                "SSH Agent: dropping response for closed connection {}",
+                connection_id
+            );
         }
     }
 
