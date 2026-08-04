@@ -15,7 +15,10 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
+
+/// TDS packet size we advertise in the login ENVCHANGE and honour when writing.
+const TDS_PACKET_SIZE: usize = 4096;
 
 /// MSSQL server implementation
 pub struct MssqlServer {
@@ -175,8 +178,24 @@ impl MssqlHandler {
         }
     }
 
-    /// Handle a single MSSQL connection
-    async fn handle_connection(self, mut stream: TcpStream) -> Result<()> {
+    /// Run the connection, then always mark it closed in `AppState`.
+    async fn handle_connection(self, stream: TcpStream) -> Result<()> {
+        let server_id = self.server_id;
+        let connection_id = self.connection_id;
+        let app_state = self.app_state.clone();
+
+        let result = self.run(stream).await;
+
+        if let Some(server_id) = server_id {
+            app_state
+                .close_connection_on_server(server_id, connection_id)
+                .await;
+        }
+
+        result
+    }
+
+    async fn run(self, mut stream: TcpStream) -> Result<()> {
         info!("MSSQL connection established");
 
         // Handle TDS protocol negotiation and queries
@@ -200,7 +219,11 @@ impl MssqlHandler {
             let mut data = vec![0u8; data_len as usize];
             stream.read_exact(&mut data).await?;
 
-            trace!("TDS packet type: 0x{:02x}, length: {}", header.packet_type, header.length);
+            trace!(
+                "TDS packet type: 0x{:02x}, length: {}",
+                header.packet_type,
+                header.length
+            );
 
             match header.packet_type {
                 0x12 => {
@@ -219,7 +242,9 @@ impl MssqlHandler {
                     debug!("Received SQL Batch packet");
                     let query = self.parse_sql_batch(&data)?;
                     debug!("SQL Query: {}", query);
-                    self.handle_query(&mut stream, &query).await?;
+                    if self.handle_query(&mut stream, &query).await? {
+                        break;
+                    }
                 }
                 0x03 => {
                     // RPC Request (sp_executesql, sp_prepare, etc.)
@@ -227,7 +252,9 @@ impl MssqlHandler {
                     let query = self.parse_rpc_request(&data)?;
                     if !query.is_empty() {
                         debug!("RPC Query: {}", query);
-                        self.handle_query(&mut stream, &query).await?;
+                        if self.handle_query(&mut stream, &query).await? {
+                            break;
+                        }
                     } else {
                         debug!("RPC call without extractable query (ignoring)");
                         // Send empty result set for RPCs we can't parse
@@ -237,7 +264,8 @@ impl MssqlHandler {
                 0x0E => {
                     // Bulk Load
                     debug!("Received Bulk Load (not implemented)");
-                    self.send_error(&mut stream, 40002, "Bulk load not supported", 16).await?;
+                    self.send_error(&mut stream, 40002, "Bulk load not supported", 16)
+                        .await?;
                 }
                 0x07 => {
                     // Attention (cancel)
@@ -246,7 +274,8 @@ impl MssqlHandler {
                 }
                 _ => {
                     debug!("Unknown TDS packet type: 0x{:02x}", header.packet_type);
-                    self.send_error(&mut stream, 40002, "Unknown packet type", 16).await?;
+                    self.send_error(&mut stream, 40002, "Unknown packet type", 16)
+                        .await?;
                 }
             }
         }
@@ -317,13 +346,16 @@ impl MssqlHandler {
 
     /// Send Login response (accept all logins)
     async fn send_login_response(&self, stream: &mut TcpStream) -> Result<()> {
-        let _ = self.status_tx.send("[DEBUG] MSSQL → Login accepted".to_string());
+        let _ = self
+            .status_tx
+            .send("[DEBUG] MSSQL → Login accepted".to_string());
 
         let mut response = Vec::new();
 
         // ENVCHANGE: Database context
         let db_name = "master";
-        let db_name_utf16: Vec<u8> = db_name.encode_utf16()
+        let db_name_utf16: Vec<u8> = db_name
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -340,9 +372,7 @@ impl MssqlHandler {
 
         // ENVCHANGE: Language (us_english)
         let lang = "us_english";
-        let lang_utf16: Vec<u8> = lang.encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
-            .collect();
+        let lang_utf16: Vec<u8> = lang.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
 
         let mut envchange_lang = Vec::new();
         envchange_lang.push(0xE3); // ENVCHANGE token
@@ -357,10 +387,12 @@ impl MssqlHandler {
         // ENVCHANGE: Packet size ("4096" as string)
         let pkt_size_new = "4096";
         let pkt_size_old = "512"; // Default packet size
-        let pkt_size_new_utf16: Vec<u8> = pkt_size_new.encode_utf16()
+        let pkt_size_new_utf16: Vec<u8> = pkt_size_new
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
-        let pkt_size_old_utf16: Vec<u8> = pkt_size_old.encode_utf16()
+        let pkt_size_old_utf16: Vec<u8> = pkt_size_old
+            .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -377,9 +409,7 @@ impl MssqlHandler {
 
         // INFO message
         let msg = "Login succeeded";
-        let msg_utf16: Vec<u8> = msg.encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
-            .collect();
+        let msg_utf16: Vec<u8> = msg.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
 
         response.push(0xAB); // INFO token
         let info_len = 4 + 1 + 1 + 2 + msg_utf16.len() + 1 + 1 + 4;
@@ -440,7 +470,10 @@ impl MssqlHandler {
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");
-        debug!("RPC data preview (first {} bytes): {}", preview_len, hex_preview);
+        debug!(
+            "RPC data preview (first {} bytes): {}",
+            preview_len, hex_preview
+        );
 
         // Try to find UTF-16 encoded SQL in the RPC data
         // Look for common SQL keywords as markers
@@ -472,16 +505,25 @@ impl MssqlHandler {
                text_upper.contains("DELETE ") ||
                text_upper.contains("CREATE ") ||
                text_upper.contains("DROP ") ||
-               text_upper.contains("ALTER ") {
+               text_upper.contains("ALTER ")
+            {
                 // Found SQL - extract it by finding the SQL keyword and taking everything until null or non-printable chars
-                let sql_start_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"];
+                let sql_start_keywords = [
+                    "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
+                ];
                 for keyword in &sql_start_keywords {
                     if let Some(pos) = text_upper.find(keyword) {
                         let sql_part = &text[pos..];
                         // Take only printable ASCII characters (SQL queries should be ASCII)
                         let sql: String = sql_part
                             .chars()
-                            .take_while(|c| c.is_ascii() && (*c == '\n' || *c == '\r' || *c == '\t' || !c.is_ascii_control()))
+                            .take_while(|c| {
+                                c.is_ascii()
+                                    && (*c == '\n'
+                                        || *c == '\r'
+                                        || *c == '\t'
+                                        || !c.is_ascii_control())
+                            })
                             .collect();
                         let sql = sql.trim().to_string();
                         if !sql.is_empty() && sql.len() >= keyword.len() {
@@ -496,8 +538,10 @@ impl MssqlHandler {
         Ok(String::new())
     }
 
-    /// Handle SQL query with LLM
-    async fn handle_query(&self, stream: &mut TcpStream, query: &str) -> Result<()> {
+    /// Handle SQL query with LLM.
+    ///
+    /// Returns `true` when the LLM asked to close the connection.
+    async fn handle_query(&self, stream: &mut TcpStream, query: &str) -> Result<bool> {
         trace!("Calling LLM for MSSQL query: {}", query);
 
         // Create query event
@@ -524,202 +568,165 @@ impl MssqlHandler {
 
         match llm_result {
             Ok(execution_result) => {
+                let close_requested = execution_result
+                    .protocol_results
+                    .iter()
+                    .any(|r| matches!(r, ActionResult::CloseConnection));
+                let mut responded = false;
+
                 // Process action results to find MSSQL responses
                 for result in execution_result.protocol_results {
+                    if responded {
+                        break;
+                    }
                     match result {
-                        ActionResult::Custom { name, data } => {
-                            match name.as_str() {
-                                "mssql_query_response" => {
-                                    let columns = data
-                                        .get("columns")
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    let rows = data
-                                        .get("rows")
-                                        .and_then(|v| v.as_array())
-                                        .cloned()
-                                        .unwrap_or_default();
+                        ActionResult::Custom { name, data } => match name.as_str() {
+                            "mssql_query_response" => {
+                                let columns = data
+                                    .get("columns")
+                                    .and_then(|v| v.as_array())
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let rows = data
+                                    .get("rows")
+                                    .and_then(|v| v.as_array())
+                                    .cloned()
+                                    .unwrap_or_default();
 
-                                    return self.send_result_set(stream, columns, rows).await;
-                                }
-                                "mssql_error" => {
-                                    let error_number = data
-                                        .get("error_number")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(50000) as u32;
-                                    let message = data
-                                        .get("message")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Unknown error");
-                                    let severity = data
-                                        .get("severity")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(16) as u8;
-
-                                    return self.send_error(stream, error_number, message, severity).await;
-                                }
-                                "mssql_ok" => {
-                                    let rows_affected = data
-                                        .get("rows_affected")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-
-                                    return self.send_done(stream, rows_affected).await;
-                                }
-                                _ => {}
+                                self.send_result_set(stream, columns, rows).await?;
+                                responded = true;
                             }
-                        }
+                            "mssql_error" => {
+                                let error_number = data
+                                    .get("error_number")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(50000)
+                                    as u32;
+                                let message = data
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Unknown error");
+                                let severity =
+                                    data.get("severity").and_then(|v| v.as_u64()).unwrap_or(16)
+                                        as u8;
+
+                                self.send_error(stream, error_number, message, severity)
+                                    .await?;
+                                responded = true;
+                            }
+                            "mssql_ok" => {
+                                let rows_affected = data
+                                    .get("rows_affected")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+
+                                self.send_done(stream, rows_affected).await?;
+                                responded = true;
+                            }
+                            other => {
+                                warn!(
+                                    "MSSQL: no wire encoding for action result '{}', ignoring",
+                                    other
+                                );
+                            }
+                        },
                         _ => {}
                     }
                 }
 
-                // No MSSQL-specific response found, return empty done
-                self.send_done(stream, 0).await
+                if !responded {
+                    // TDS clients block until a DONE arrives, so something must be sent.
+                    warn!(
+                        "MSSQL: no response action produced for query {:?}; sending empty DONE",
+                        query
+                    );
+                    self.send_done(stream, 0).await?;
+                }
+
+                Ok(close_requested)
             }
             Err(e) => {
                 error!("LLM error for MSSQL query: {}", e);
-                self.send_error(stream, 50000, &format!("LLM error: {}", e), 16).await
+                self.send_error(stream, 50000, &format!("netget: {}", e), 16)
+                    .await?;
+                Ok(false)
             }
         }
     }
 
     /// Send result set
+    ///
+    /// Every column is emitted as one of TDS's *nullable* (variable-length) types, because
+    /// those are the only ones whose COLMETADATA carries a length byte and whose row values
+    /// carry a length prefix - which is the shape this encoder produces. The previous mapping
+    /// handed out FIXEDLENTYPE codes (INT4TYPE 0x38, INT8TYPE 0x7F, BITTYPE 0x32, FLT4TYPE
+    /// 0x3B) while still writing length bytes, so anything other than a string column put
+    /// malformed tokens on the wire.
     async fn send_result_set(
         &self,
         stream: &mut TcpStream,
         columns: Vec<serde_json::Value>,
         rows: Vec<serde_json::Value>,
     ) -> Result<()> {
-        debug!("send_result_set called: {} columns, {} rows", columns.len(), rows.len());
+        debug!(
+            "send_result_set called: {} columns, {} rows",
+            columns.len(),
+            rows.len()
+        );
+
+        let col_types: Vec<TdsColumnType> = columns
+            .iter()
+            .map(|col| {
+                TdsColumnType::from_name(
+                    col.get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("NVARCHAR"),
+                )
+            })
+            .collect();
+
         let mut response = Vec::new();
 
         // COLMETADATA token
         response.push(0x81);
         response.extend_from_slice(&(columns.len() as u16).to_le_bytes());
 
-        for col in &columns {
+        for (col, col_type) in columns.iter().zip(&col_types) {
             let col_name = col.get("name").and_then(|v| v.as_str()).unwrap_or("column");
-            let col_type = col.get("type").and_then(|v| v.as_str()).unwrap_or("NVARCHAR");
-            let tds_type = get_tds_type(col_type);
 
-            // Column definition
             response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // UserType
-            response.extend_from_slice(&[0x00, 0x00]); // Flags
-            response.push(tds_type); // Type
+            response.extend_from_slice(&[0x00, 0x02]); // Flags: nullable
+            col_type.write_type_info(&mut response);
 
-            // Type-specific metadata
-            match col_type.to_uppercase().as_str() {
-                "INT" | "INTEGER" => {
-                    response.push(0x04); // Length: 4 bytes for INT32
-                }
-                "BIGINT" => {
-                    response.push(0x08); // Length: 8 bytes for INT64
-                }
-                "SMALLINT" => {
-                    response.push(0x02); // Length: 2 bytes for INT16
-                }
-                "TINYINT" => {
-                    response.push(0x01); // Length: 1 byte for INT8
-                }
-                _ => {
-                    // NVARCHAR or other string types
-                    response.extend_from_slice(&[0xFF, 0xFF]); // Max length
-                    response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // Collation
-                }
+            // Column name is a B_VARCHAR: length in UTF-16 code units, then UTF-16LE.
+            let name_units: Vec<u16> = col_name.encode_utf16().take(128).collect();
+            response.push(name_units.len() as u8);
+            for unit in &name_units {
+                response.extend_from_slice(&unit.to_le_bytes());
             }
-
-            // Column name
-            response.push(col_name.len() as u8);
-            response.extend_from_slice(col_name.encode_utf16().flat_map(|c| c.to_le_bytes()).collect::<Vec<u8>>().as_slice());
         }
 
         // ROW tokens
         for row in &rows {
             response.push(0xD1); // ROW token
 
-            if let Some(row_values) = row.as_array() {
-                for (idx, value) in row_values.iter().enumerate() {
-                    // Get column type for proper encoding
-                    let col_type = columns
-                        .get(idx)
-                        .and_then(|c| c.get("type"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("NVARCHAR");
-
-                    match col_type.to_uppercase().as_str() {
-                        "INT" | "INTEGER" => {
-                            // INT: length byte + 4-byte little-endian value
-                            if value.is_null() {
-                                response.push(0x00); // NULL
-                            } else {
-                                response.push(0x04); // Length: 4 bytes
-                                let int_val = value.as_i64().unwrap_or(0) as i32;
-                                response.extend_from_slice(&int_val.to_le_bytes());
-                            }
-                        }
-                        "BIGINT" => {
-                            // BIGINT: length byte + 8-byte little-endian value
-                            if value.is_null() {
-                                response.push(0x00); // NULL
-                            } else {
-                                response.push(0x08); // Length: 8 bytes
-                                let int_val = value.as_i64().unwrap_or(0);
-                                response.extend_from_slice(&int_val.to_le_bytes());
-                            }
-                        }
-                        "SMALLINT" => {
-                            // SMALLINT: length byte + 2-byte little-endian value
-                            if value.is_null() {
-                                response.push(0x00); // NULL
-                            } else {
-                                response.push(0x02); // Length: 2 bytes
-                                let int_val = value.as_i64().unwrap_or(0) as i16;
-                                response.extend_from_slice(&int_val.to_le_bytes());
-                            }
-                        }
-                        "TINYINT" => {
-                            // TINYINT: length byte + 1-byte value
-                            if value.is_null() {
-                                response.push(0x00); // NULL
-                            } else {
-                                response.push(0x01); // Length: 1 byte
-                                let int_val = value.as_i64().unwrap_or(0) as u8;
-                                response.push(int_val);
-                            }
-                        }
-                        _ => {
-                            // NVARCHAR: 2-byte length + UTF-16LE string
-                            let value_str = json_to_string(value);
-                            let value_u16: Vec<u16> = value_str.encode_utf16().collect();
-                            let value_bytes: Vec<u8> = value_u16.iter().flat_map(|c| c.to_le_bytes()).collect();
-
-                            response.extend_from_slice(&(value_bytes.len() as u16).to_le_bytes());
-                            response.extend_from_slice(&value_bytes);
-                        }
-                    }
-                }
+            let row_values = row.as_array().cloned().unwrap_or_default();
+            // TDS requires exactly one value per described column: pad short rows with NULL
+            // and drop extras rather than desynchronising the token stream.
+            for (idx, col_type) in col_types.iter().enumerate() {
+                let value = row_values.get(idx).unwrap_or(&serde_json::Value::Null);
+                col_type.write_value(&mut response, value);
             }
         }
 
-        // DONE token
+        // DONE token. DONE_COUNT (0x0010) is what makes the client believe the row count.
         response.push(0xFD);
-        response.extend_from_slice(&[0x00, 0x00]); // Status: final
-        response.extend_from_slice(&[0xC1, 0x00]); // CurCmd
+        response.extend_from_slice(&0x0010u16.to_le_bytes()); // Status: final + count valid
+        response.extend_from_slice(&0x00C1u16.to_le_bytes()); // CurCmd: SELECT
         response.extend_from_slice(&(rows.len() as u64).to_le_bytes());
 
-        debug!("Sending result set packet: {} bytes", response.len());
-        // Log hex dump of first 100 bytes for debugging
-        let preview_len = std::cmp::min(response.len(), 100);
-        let hex_dump: String = response[..preview_len]
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(" ");
-        debug!("Result set hex (first {} bytes): {}", preview_len, hex_dump);
-        let result = self.send_tds_packet(stream, 0x04, &response).await;
-        debug!("Result set packet sent: {:?}", result);
-        result
+        debug!("Sending result set: {} bytes", response.len());
+        self.send_tds_packet(stream, 0x04, &response).await
     }
 
     /// Send empty result set (just DONE token)
@@ -736,7 +743,13 @@ impl MssqlHandler {
     }
 
     /// Send error response
-    async fn send_error(&self, stream: &mut TcpStream, error_number: u32, message: &str, severity: u8) -> Result<()> {
+    async fn send_error(
+        &self,
+        stream: &mut TcpStream,
+        error_number: u32,
+        message: &str,
+        severity: u8,
+    ) -> Result<()> {
         let mut response = Vec::new();
 
         // ERROR token (0xAA)
@@ -771,32 +784,68 @@ impl MssqlHandler {
         let mut response = Vec::new();
 
         response.push(0xFD); // DONE token
-        response.extend_from_slice(&[0x00, 0x00]); // Status: final
-        response.extend_from_slice(&[0xC1, 0x00]); // CurCmd
+                             // DONE_COUNT (0x0010) must be set or the client ignores DoneRowCount entirely, which
+                             // silently discarded the `rows_affected` value the LLM supplied via mssql_ok_response.
+        response.extend_from_slice(&0x0010u16.to_le_bytes()); // Status: final + count valid
+        response.extend_from_slice(&0x00C1u16.to_le_bytes()); // CurCmd
         response.extend_from_slice(&rows_affected.to_le_bytes());
 
         self.send_tds_packet(stream, 0x04, &response).await
     }
 
-    /// Send TDS packet with header
-    async fn send_tds_packet(&self, stream: &mut TcpStream, packet_type: u8, data: &[u8]) -> Result<()> {
-        let total_len = 8 + data.len();
-        let mut packet = Vec::with_capacity(total_len);
+    /// Send a TDS message, split across packets of the negotiated size.
+    ///
+    /// The header length field is a `u16`, so a single oversized write used to wrap around and
+    /// emit a packet whose declared length was far shorter than its payload. TDS solves this
+    /// with continuation packets: every packet but the last carries status 0x00, the last
+    /// carries 0x01 (EOM).
+    async fn send_tds_packet(
+        &self,
+        stream: &mut TcpStream,
+        packet_type: u8,
+        data: &[u8],
+    ) -> Result<()> {
+        let max_payload = TDS_PACKET_SIZE - 8;
+        let mut packet_id: u8 = 1;
+        let mut offset = 0;
 
-        // TDS header
-        packet.push(packet_type); // Type
-        packet.push(0x01); // Status (EOM)
-        packet.extend_from_slice(&(total_len as u16).to_be_bytes()); // Length
-        packet.extend_from_slice(&[0x00, 0x00]); // SPID
-        packet.push(0x01); // PacketID
-        packet.push(0x00); // Window
+        loop {
+            let end = std::cmp::min(offset + max_payload, data.len());
+            let chunk = &data[offset..end];
+            let is_last = end == data.len();
 
-        // Data
-        packet.extend_from_slice(data);
+            let mut packet = Vec::with_capacity(8 + chunk.len());
+            packet.push(packet_type); // Type
+            packet.push(if is_last { 0x01 } else { 0x00 }); // Status: EOM on the last packet
+            packet.extend_from_slice(&((8 + chunk.len()) as u16).to_be_bytes()); // Length
+            packet.extend_from_slice(&[0x00, 0x00]); // SPID
+            packet.push(packet_id); // PacketID
+            packet.push(0x00); // Window
+            packet.extend_from_slice(chunk);
 
-        stream.write_all(&packet).await?;
+            stream.write_all(&packet).await?;
+
+            if let Some(server_id) = self.server_id {
+                self.app_state
+                    .update_connection_stats(
+                        server_id,
+                        self.connection_id,
+                        None,
+                        Some(packet.len() as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
+            }
+
+            if is_last {
+                break;
+            }
+            offset = end;
+            packet_id = packet_id.wrapping_add(1).max(1);
+        }
+
         stream.flush().await?;
-
         Ok(())
     }
 }
@@ -816,25 +865,151 @@ struct TdsHeader {
     window: u8,
 }
 
-/// Map SQL type name to TDS type code
-fn get_tds_type(type_name: &str) -> u8 {
-    match type_name.to_uppercase().as_str() {
-        "INT" | "INTEGER" => 0x38,       // INTN
-        "BIGINT" => 0x7F,                 // INT8
-        "SMALLINT" => 0x34,               // INT2
-        "TINYINT" => 0x30,                // INT1
-        "BIT" => 0x32,                    // BIT
-        "FLOAT" | "REAL" => 0x3B,         // FLT4/FLT8
-        "NVARCHAR" | "NCHAR" | "NTEXT" => 0xE7, // NVARCHAR
-        "VARCHAR" | "CHAR" | "TEXT" => 0xA7,    // VARCHAR
-        _ => 0xE7,                        // Default: NVARCHAR
+/// Maximum bytes of NVARCHAR payload a single column value may carry.
+///
+/// 4000 UTF-16 code units is the largest non-MAX `nvarchar`. Declaring `nvarchar(max)` instead
+/// would oblige us to emit PLP-chunked row values, which this encoder does not do.
+const NVARCHAR_MAX_BYTES: usize = 8000;
+
+/// The TDS wire representation chosen for one result-set column.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TdsColumnType {
+    /// INTNTYPE (0x26) with the given byte width: 1, 2, 4 or 8.
+    Int(u8),
+    /// BITNTYPE (0x68).
+    Bit,
+    /// FLTNTYPE (0x6D), 8-byte double.
+    Float,
+    /// NVARCHARTYPE (0xE7), UTF-16LE with a USHORT length prefix.
+    NVarChar,
+}
+
+impl TdsColumnType {
+    /// Map an LLM-supplied SQL type name onto a wire type. Unknown names become NVARCHAR.
+    fn from_name(type_name: &str) -> Self {
+        match type_name.trim().to_uppercase().as_str() {
+            "TINYINT" => TdsColumnType::Int(1),
+            "SMALLINT" => TdsColumnType::Int(2),
+            "INT" | "INTEGER" => TdsColumnType::Int(4),
+            "BIGINT" => TdsColumnType::Int(8),
+            "BIT" | "BOOL" | "BOOLEAN" => TdsColumnType::Bit,
+            "FLOAT" | "REAL" | "DOUBLE" | "DECIMAL" | "NUMERIC" | "MONEY" => TdsColumnType::Float,
+            _ => TdsColumnType::NVarChar,
+        }
+    }
+
+    /// Write the COLMETADATA TYPE_INFO for this column.
+    fn write_type_info(&self, out: &mut Vec<u8>) {
+        match self {
+            TdsColumnType::Int(width) => {
+                out.push(0x26); // INTNTYPE
+                out.push(*width);
+            }
+            TdsColumnType::Bit => {
+                out.push(0x68); // BITNTYPE
+                out.push(0x01);
+            }
+            TdsColumnType::Float => {
+                out.push(0x6D); // FLTNTYPE
+                out.push(0x08);
+            }
+            TdsColumnType::NVarChar => {
+                out.push(0xE7); // NVARCHARTYPE
+                out.extend_from_slice(&(NVARCHAR_MAX_BYTES as u16).to_le_bytes());
+                out.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // COLLATION
+            }
+        }
+    }
+
+    /// Write one row value, including its length prefix. JSON `null` becomes a real SQL NULL.
+    fn write_value(&self, out: &mut Vec<u8>, value: &serde_json::Value) {
+        match self {
+            TdsColumnType::Int(width) => {
+                match value_as_i64(value) {
+                    Some(v) => {
+                        out.push(*width);
+                        match width {
+                            1 => out.push(v as u8),
+                            2 => out.extend_from_slice(&(v as i16).to_le_bytes()),
+                            4 => out.extend_from_slice(&(v as i32).to_le_bytes()),
+                            _ => out.extend_from_slice(&v.to_le_bytes()),
+                        }
+                    }
+                    // NULL, or a value that is not an integer at all.
+                    None => out.push(0x00),
+                }
+            }
+            TdsColumnType::Bit => match value_as_bool(value) {
+                Some(b) => {
+                    out.push(0x01);
+                    out.push(u8::from(b));
+                }
+                None => out.push(0x00),
+            },
+            TdsColumnType::Float => match value_as_f64(value) {
+                Some(f) => {
+                    out.push(0x08);
+                    out.extend_from_slice(&f.to_le_bytes());
+                }
+                None => out.push(0x00),
+            },
+            TdsColumnType::NVarChar => {
+                if value.is_null() {
+                    // 0xFFFF is the NVARCHAR NULL marker. Writing the text "NULL" here, as the
+                    // previous encoder did, made every NULL arrive as a four-character string.
+                    out.extend_from_slice(&0xFFFFu16.to_le_bytes());
+                    return;
+                }
+                let text = json_to_string(value);
+                let mut bytes: Vec<u8> = Vec::new();
+                for unit in text.encode_utf16() {
+                    if bytes.len() + 2 > NVARCHAR_MAX_BYTES {
+                        break;
+                    }
+                    bytes.extend_from_slice(&unit.to_le_bytes());
+                }
+                out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+                out.extend_from_slice(&bytes);
+            }
+        }
     }
 }
 
-/// Convert JSON value to string
+fn value_as_i64(value: &serde_json::Value) -> Option<i64> {
+    match value {
+        serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        serde_json::Value::Bool(b) => Some(i64::from(*b)),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn value_as_f64(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn value_as_bool(value: &serde_json::Value) -> Option<bool> {
+    match value {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::Number(n) => n.as_i64().map(|v| v != 0),
+        serde_json::Value::String(s) => match s.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Convert a JSON value to its NVARCHAR text form.
 fn json_to_string(value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Null => String::new(),
         serde_json::Value::Bool(b) => if *b { "1" } else { "0" }.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => s.clone(),

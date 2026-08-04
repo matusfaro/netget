@@ -1,285 +1,153 @@
 # MSSQL Server Protocol Implementation
 
-## Overview
+Microsoft SQL Server TDS 7.4 server. No Rust TDS *server* library exists
+(`tiberius` is a client), so pre-login, login, packet framing and every response
+token are built by hand. **There is no database** — the LLM answers every query.
 
-MSSQL server implementing Microsoft SQL Server TDS (Tabular Data Stream) protocol version 7.x. The server handles SQL queries with full LLM control over query responses, implementing a simplified TDS protocol manually due to the absence of Rust TDS server libraries.
+**State**: Experimental — LLM-authored, not human-reviewed. The pre-login/login
+handshake and the COLMETADATA/ROW/DONE token stream were decoded byte-by-byte
+against MS-TDS during review; no SQL Server client was available on the review
+machine, so `tiberius` interop rests on `tests/server/mssql/test.rs`.
+**Port**: 1433 by default. **Privilege**: `None` (1433 > 1024).
+**Stack**: `ETH>IP>TCP>TDS>MSSQL`.
 
-**Port**: 1433 (default MSSQL port)
-**Protocol Version**: TDS 7.4 compatible
-**Stack Representation**: `ETH>IP>TCP>TDS>MSSQL`
+## What the model sees and controls
 
-## Library Choices
+**Event**: `mssql_query`, fired for SQL Batch (0x01) and for RPC (0x03) when SQL
+text could be recovered from the packet.
 
-**Manual TDS Implementation**:
-- **Rationale**: No Rust TDS server libraries exist (only client libraries like `tiberius`)
-- **Approach**: Manual protocol parsing and packet construction
-- **Scope**: Simplified subset of TDS protocol sufficient for basic query execution
-- **Reference**: Microsoft [MS-TDS] Tabular Data Stream Protocol specification
+| Field | Notes |
+|---|---|
+| `query` | the SQL text |
 
-**No Database Engine**:
-- LLM controls all query responses through action system
-- No actual data storage - responses generated on demand
-- Similar pattern to MySQL/PostgreSQL implementations in NetGet
+**Actions** (all sync; there are no async actions):
 
-## Architecture Decisions
+| Action | Parameters | Tokens sent |
+|---|---|---|
+| `mssql_query_response` | `columns` (required), `rows` (required) | COLMETADATA + ROW* + DONE |
+| `mssql_ok_response` | `rows_affected` (optional) | DONE with DONE_COUNT |
+| `mssql_error_response` | `error_number` (required), `message` (required), `severity` | ERROR + DONE |
+| `close_this_connection` | — | answers the query, then closes |
 
-### TDS Protocol Implementation
+### Column types
 
-**Packet Structure**:
-- 8-byte header: type (1), status (1), length (2), SPID (2), packet_id (1), window (1)
-- Variable-length data payload
-- Big-endian length in header, little-endian data in payload
+`columns` is an array of `{"name": …, "type": …}`. Every column is emitted as one
+of TDS's **nullable** (variable-length) types, because those are the only ones
+whose COLMETADATA carries a length byte and whose row values carry a length
+prefix — which is the shape this encoder writes.
 
-**Supported Packet Types**:
-- `0x12`: Pre-Login - Version negotiation
-- `0x10`: TDS7 Login - Authentication (no-op, accepts all)
-- `0x01`: SQL Batch - Query execution (LLM-controlled)
-- `0x04`: Tabular Result - Response packet type
-- `0x03`: RPC Request - Not implemented (returns error)
-- `0x0E`: Bulk Load - Not implemented (returns error)
-- `0x07`: Attention - Connection cancellation
+| Type name | TDS type | Metadata length | Row encoding |
+|---|---|---|---|
+| `TINYINT` | INTNTYPE 0x26 | 1 | 1-byte length + int |
+| `SMALLINT` | INTNTYPE 0x26 | 2 | 1-byte length + int LE |
+| `INT`, `INTEGER` | INTNTYPE 0x26 | 4 | 1-byte length + int LE |
+| `BIGINT` | INTNTYPE 0x26 | 8 | 1-byte length + int LE |
+| `BIT`, `BOOL`, `BOOLEAN` | BITNTYPE 0x68 | 1 | 1-byte length + 0/1 |
+| `FLOAT`, `REAL`, `DOUBLE`, `DECIMAL`, `NUMERIC`, `MONEY` | FLTNTYPE 0x6D | 8 | 1-byte length + f64 LE |
+| anything else (`NVARCHAR`, `VARCHAR`, `TEXT`, …) | NVARCHARTYPE 0xE7 | 8000 bytes | USHORT length + UTF-16LE |
 
-### Connection Handler Design
+JSON `null` becomes a real SQL NULL (length 0, or 0xFFFF for NVARCHAR). A row
+shorter than the column list is padded with NULLs and extras are dropped, because
+TDS requires exactly one value per described column. NVARCHAR values are
+truncated at 4000 UTF-16 code units — `nvarchar(max)` would require PLP-chunked
+row values, which this encoder does not produce.
 
-- Each connection spawns independent `MssqlHandler`
-- Handler owns connection-specific protocol instance
-- No connection pooling or multiplexing
-- Single-threaded query processing per connection
+The previous mapping handed out FIXEDLENTYPE codes (INT4TYPE 0x38, INT8TYPE 0x7F,
+BITTYPE 0x32, FLT4TYPE 0x3B) while still writing length bytes, so every non-string
+column put structurally invalid tokens on the wire. `VARCHAR` mapped to 0xA7
+(non-Unicode) but was written as UTF-16. NULL was written as the four-character
+string `"NULL"`.
 
-### Pre-Login/Login Flow
+DONE tokens set DONE_COUNT (0x0010); without it the client ignores DoneRowCount
+entirely, which silently discarded the `rows_affected` the LLM supplied.
 
-1. **Pre-Login**: Client sends version and encryption preferences
-   - Server responds with SQL Server 16.0.0.0 (SQL Server 2022)
-   - Encryption: NOT_SUP (no TLS support)
-   - ThreadID: 0
+### Failure behavior
 
-2. **Login**: Client sends authentication credentials
-   - Server accepts all logins (no authentication)
-   - Sends ENVCHANGE (database=master), INFO (success message), DONE tokens
-   - No validation of username/password/database
+- **No response action** → empty DONE, logged at WARN. TDS clients block until a
+  DONE arrives, so something must always be sent.
+- **LLM call fails** → ERROR 50000 severity 16 with the message.
+- **Action result the handler does not recognise** → logged at WARN and skipped.
+- **TDS packet length below 8** → connection closed.
+- **Bulk Load (0x0E) or an unknown packet type** → ERROR 40002.
 
-### Query Execution Flow
+## Packet framing
 
-1. Client sends SQL Batch packet (0x01)
-2. Parse header (22 bytes) and extract UTF-16LE SQL text
-3. Create `MSSQL_QUERY_EVENT` with query string
-4. Call LLM via `call_llm()` with event and protocol
-5. Process action results:
-   - `mssql_query_response`: Send COLMETADATA + ROW + DONE tokens
-   - `mssql_ok`: Send DONE token with rows_affected
-   - `mssql_error`: Send ERROR + DONE tokens
-6. If no action found, send empty DONE token
+8-byte header: `type | status | length (u16 big-endian) | SPID | packetID |
+window`, then payload.
 
-### Response Token Structure
+Outbound messages are split into `TDS_PACKET_SIZE` (4096) byte packets, with
+status 0x00 on every packet but the last and 0x01 (EOM) on the last. A single
+oversized write used to wrap the u16 length field and emit a packet declaring a
+length far shorter than its payload.
 
-**COLMETADATA (0x81)**:
-- Column count (2 bytes)
-- For each column:
-  - UserType (4 bytes), Flags (2 bytes), Type (1 byte)
-  - MaxLength (2 bytes), Collation (5 bytes)
-  - Column name (1 byte length + UTF-16LE string)
-- Simplified: All types sent as NVARCHAR (0xE7) with max length 0xFFFF
+Handled inbound packet types: 0x12 pre-login, 0x10 login, 0x01 SQL batch, 0x03
+RPC, 0x0E bulk load (rejected), 0x07 attention (ends the connection).
 
-**ROW (0xD1)**:
-- For each row:
-  - ROW token (1 byte)
-  - For each column value:
-    - Length (2 bytes for NVARCHAR)
-    - UTF-16LE encoded value
+### RPC parsing is heuristic
 
-**DONE (0xFD)**:
-- Status (2 bytes): 0x0000 = final
-- CurCmd (2 bytes): 0x00C1 = SELECT
-- DoneRowCount (8 bytes): number of rows
+`parse_rpc_request` does not decode the RPC header or its parameters. It scans
+the packet on 2-byte boundaries, decodes each window as UTF-16LE, and returns the
+first run that starts with `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`DROP`/
+`ALTER`. A parameterised `sp_executesql` therefore reaches the model with its
+`@P1` placeholders intact and its parameter values missing, and an RPC whose SQL
+does not begin with one of those keywords yields an empty DONE.
 
-**ERROR (0xAA)**:
-- Token length (2 bytes)
-- Error number (4 bytes)
-- State (1 byte), Severity (1 byte)
-- Message length (2 bytes) + UTF-16LE message
-- Server name (1 byte length), Procedure name (1 byte length)
-- Line number (4 bytes)
+## Architecture
 
-## LLM Integration
+- `spawn_with_llm_actions` binds with `?` (so a bind failure surfaces as
+  `ServerStatus::Error` — confirmed: a busy port reports
+  `Error: Address already in use`) and registers the accept-loop `JoinHandle` via
+  `AppState::register_server_task()` so `stop_server` releases the socket.
+- One task per connection. `handle_connection` wraps `run` so the connection is
+  always marked `Closed` in `AppState` on exit; outbound bytes/packets are
+  recorded per write.
+- Pre-login advertises version 16.0.0.0 and ENCRYPT_NOT_SUP. Login is accepted
+  unconditionally and answered with ENVCHANGE (database `master`, language
+  `us_english`, packet size 4096), an INFO token and DONE.
 
-### Action-Based Responses
+## Not implemented
 
-**Sync Actions** (network event context required):
+- **Authentication** — username, password and database are ignored. No NTLM, no
+  Windows auth, no Azure AD.
+- **TLS** — pre-login advertises ENCRYPT_NOT_SUP.
+- **Prepared statements / RPC parameters** — see above.
+- **Transactions, MARS, cursors, bulk load, `nvarchar(max)`, VARBINARY, XML,
+  spatial and decimal precision/scale.**
+- **`SELECT @@VERSION` and other system queries** — the model must be told to
+  answer them.
 
-- `mssql_query_response`: Return result set with columns and rows
-- `mssql_ok`: Return completion status (for DDL/DML)
-- `mssql_error`: Return error response
+## Testing
 
-**Event Types**:
+`tests/server/mssql/test.rs` (note: `test.rs`, not `e2e_test.rs`), declared in
+`tests/server/mod.rs`.
 
-- `MSSQL_QUERY_EVENT`: Fired for every SQL Batch operation
-  - Data: `{ "query": "SELECT * FROM users" }`
-
-### Example LLM Prompts
-
-**Basic SELECT query**:
-```
-For SELECT 1 query, use mssql_query_response with:
-columns=[{name:'result',type:'INT'}]
-rows=[[1]]
-```
-
-**Multi-row result**:
-```
-For SELECT * FROM users, use mssql_query_response with:
-columns=[{name:'id',type:'INT'},{name:'name',type:'NVARCHAR'}]
-rows=[[1,'Alice'],[2,'Bob']]
+```bash
+./cargo-isolated.sh test --no-default-features --features mssql \
+    --test server::mssql::test -- --test-threads=100
 ```
 
-**DDL/DML operations**:
+**Gap**: every case in that file — including `test_mssql_multi_row_query` —
+responds with `mssql_ok_response`. The entire COLMETADATA/ROW encoding path is
+uncovered. It was verified during review with a raw socket that performs
+pre-login and login, sends a SQL batch, and decodes the token stream:
+
 ```
-For CREATE/INSERT/UPDATE queries, use mssql_ok with rows_affected=1
-```
-
-## Connection Management
-
-### Connection Lifecycle
-
-1. Server accepts TCP connection on port 1433
-2. Create `MssqlHandler` with unique `ConnectionId`
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::empty()`
-4. Spawn task running `handler.handle_connection(stream)`
-5. Handler processes TDS packets until disconnect/error
-6. Connection marked closed in ServerInstance
-
-### State Tracking
-
-- Connection state stored in `ServerInstance.connections` HashMap
-- Tracks: remote_addr, local_addr, bytes_sent/received, packets_sent/received
-- Status: Active or Closed
-- Last activity timestamp per packet
-
-### Concurrency
-
-- Multiple connections handled concurrently
-- Each connection has independent LLM call queue
-- No shared state between connections
-- No prepared statement caching (each connection is stateless)
-
-## Limitations
-
-### Authentication
-
-- **No authentication implemented** - all connections accepted
-- Username/password/database in login packet ignored
-- Production use would require TDS authentication implementation
-- No support for Windows Authentication or Azure AD
-
-### Protocol Features
-
-- **No SSL/TLS support** - plain TCP only
-- **No prepared statements** - SQL Batch only (no RPC)
-- **No transactions** - BEGIN/COMMIT/ROLLBACK handled as regular queries
-- **No stored procedures/functions**
-- **No bulk operations** - Bulk Load packet returns error
-- **No cursors or scrollable result sets**
-- **No multiple active result sets (MARS)**
-
-### Type System
-
-- **Limited type support** - all column types sent as NVARCHAR (0xE7)
-- Numeric types (INT, BIGINT, FLOAT) mapped but serialized as strings
-- No binary data support (VARBINARY, IMAGE)
-- No XML, JSON, or spatial types
-- Simplified column metadata (no precision/scale for decimals)
-
-### Performance
-
-- Each query triggers LLM call (unless scripting is used)
-- No query caching or optimization
-- Synchronous query processing per connection
-- Manual UTF-16LE encoding/decoding overhead
-
-## Known Issues
-
-1. **Type precision**: All values sent as NVARCHAR strings, may lose type information for clients
-2. **Error handling**: ERROR token structure may not match all SQL Server clients' expectations
-3. **Collation**: Hardcoded collation (0x00000000) may cause issues with non-ASCII data
-4. **System queries**: `SELECT @@VERSION` and similar require explicit LLM prompting
-
-## Type Mapping
-
-### LLM Type Names → TDS Type Codes
-
-- `INT`, `INTEGER` → 0x38 (INTN)
-- `BIGINT` → 0x7F (INT8)
-- `SMALLINT` → 0x34 (INT2)
-- `TINYINT` → 0x30 (INT1)
-- `BIT` → 0x32 (BIT)
-- `FLOAT`, `REAL` → 0x3B (FLT4/FLT8)
-- `NVARCHAR`, `NCHAR`, `NTEXT` → 0xE7 (NVARCHAR)
-- `VARCHAR`, `CHAR`, `TEXT` → 0xA7 (VARCHAR)
-- **Default**: 0xE7 (NVARCHAR)
-
-**Note**: Despite type code mapping, all values are currently serialized as NVARCHAR (UTF-16LE strings).
-
-## Example Responses
-
-### Successful Query
-
-```json
-{
-  "actions": [
-    {
-      "type": "mssql_query_response",
-      "columns": [
-        {"name": "id", "type": "INT"},
-        {"name": "email", "type": "NVARCHAR"}
-      ],
-      "rows": [
-        [1, "alice@example.com"],
-        [2, "bob@example.com"]
-      ]
-    }
-  ]
-}
+columns: id type=0x26 len 4 | big type=0x26 len 8 | flag type=0x68 len 1
+         score type=0x6d len 8 | name type=0xe7 len 8000
+rows:    [[1, 9007199254740991, True, 3.5, 'Alice'], [2, None, False, None, None]]
+DONE     status=0x0010 curcmd=0x00c1 rowcount=2, no trailing bytes
 ```
 
-### DDL Operation
+## Example prompts
 
-```json
-{
-  "actions": [
-    {
-      "type": "mssql_ok",
-      "rows_affected": 0
-    }
-  ]
-}
 ```
-
-### Error Response
-
-```json
-{
-  "actions": [
-    {
-      "type": "mssql_error",
-      "error_number": 208,
-      "message": "Invalid object name 'table_name'",
-      "severity": 16
-    }
-  ]
-}
+Start an MSSQL server on port 1433. Answer SELECT with mssql_query_response
+using INT for numeric columns and NVARCHAR for text, answer INSERT/UPDATE with
+mssql_ok_response, and answer a query against an unknown object with
+mssql_error_response error_number 208 severity 16.
 ```
 
 ## References
 
-- [MS-TDS] Tabular Data Stream Protocol - Microsoft documentation
-- TDS Protocol versions: 7.0 (SQL Server 7.0), 7.1 (SQL Server 2000), 7.2 (SQL Server 2005), 7.3 (SQL Server 2008), 7.4 (SQL Server 2012+)
-- [tiberius crate](https://docs.rs/tiberius/) - TDS client implementation (used for E2E testing)
-
-## Future Improvements
-
-1. **Type system**: Proper binary encoding for INT/BIGINT/FLOAT (not as strings)
-2. **Authentication**: Implement SQL Server authentication (NTLM or basic)
-3. **Prepared statements**: Support RPC packet type for parameterized queries
-4. **Transactions**: Track BEGIN/COMMIT/ROLLBACK state per connection
-5. **TLS**: Add encryption support for pre-login negotiation
-6. **Error codes**: Comprehensive mapping of MSSQL error numbers
-7. **System tables**: Auto-respond to `SELECT * FROM sys.tables` and similar without LLM
+- [MS-TDS] Tabular Data Stream Protocol, Microsoft Open Specifications
+- [tiberius](https://docs.rs/tiberius/) — the TDS client used by the E2E tests
