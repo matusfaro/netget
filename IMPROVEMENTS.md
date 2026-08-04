@@ -7,6 +7,26 @@ file:line so it can be verified independently.
 Findings marked **[verified]** were reproduced against a binary built from HEAD.
 Findings marked **[static]** come from code reading only.
 
+## Fixed
+
+Items below are resolved; kept here with their commit so the reasoning stays findable.
+Delete an entry once its context is no longer useful.
+
+| Item | Commit | What landed |
+|---|---|---|
+| 2 — TCP hex never decoded | `d70bb5b5` | Explicit `encoding` field on `send_tcp_data`/`send_to_connection`, defaulting to `utf8`; inbound events now carry `encoding` too, so echo is symmetric |
+| 3 — UTF-8 truncation panics | `b9aa1058` | `src/utils/truncate.rs` with char-boundary helpers; 24 sites across 8 files; model-facing cuts now carry a truncation notice |
+| 4 — feedback loop always failed | `b7c9a204` | Advertised and validated action lists are now the same filtered list |
+| 6 — no CI | `45b8bde4` | PR/master workflow: blocking clippy correctness+suspicious, tests on a feature subset, and an orphaned-test-dir gate |
+| 24 — scripts parked worker threads | `efd990e5`, `c3d92a16` | `tokio::process`-based async executor; both call sites switched |
+| 25 — unbounded stdin deadlock | `efd990e5` | stdin write, stdout/stderr drain and `wait()` joined under one timeout; child reaped on timeout |
+| 26 — script trust boundary undocumented | `65ed6bcf` | `src/scripting/CLAUDE.md` leads with the arbitrary-code-execution boundary |
+| Scheduled tasks could never act | `2789cb40` | Same empty-action-list bug as item 4, in the scheduled-task path; found while fixing item 4 |
+| Runtime prompt was 81% irrelevant | `73d334c8` | Dropped the handler-configuration tutorial from the per-event template: system prompt 11853 → 2219 chars, request 16377 → 8230 bytes |
+
+Verified together end to end after landing: a Python script handler returning
+`{"data":"48454c4c4f","encoding":"hex"}` puts `HELLO` on the wire, with no LLM call.
+
 ---
 
 ## P0 — Correctness bugs reachable from untrusted input
