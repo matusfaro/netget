@@ -33,7 +33,10 @@ impl StunServer {
         let local_addr = socket.local_addr()?;
         info!("STUN server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] STUN server listening on {}", local_addr));
-        let _ = status_tx.send(format!("[DEBUG] STUN socket bound - requested: {}, actual: {}", listen_addr, local_addr));
+        let _ = status_tx.send(format!(
+            "[DEBUG] STUN socket bound - requested: {}, actual: {}",
+            listen_addr, local_addr
+        ));
 
         let protocol = Arc::new(StunProtocol::new());
 
@@ -41,14 +44,18 @@ impl StunServer {
         let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 2048]; // STUN messages are typically < 2KB
 
-            let _ = status_tx.send("[DEBUG] STUN receive loop started, waiting for packets...".to_string());
+            let _ = status_tx
+                .send("[DEBUG] STUN receive loop started, waiting for packets...".to_string());
 
             loop {
                 debug!("STUN calling recv_from...");
                 let _ = status_tx.send(format!("[TRACE] STUN about to call recv_from (iteration)"));
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
-                        let _ = status_tx.send(format!("[TRACE] STUN recv_from returned OK: {} bytes from {}", n, peer_addr));
+                        let _ = status_tx.send(format!(
+                            "[TRACE] STUN recv_from returned OK: {} bytes from {}",
+                            n, peer_addr
+                        ));
                         let data = buffer[..n].to_vec();
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
@@ -242,17 +249,29 @@ impl StunServer {
         // Extract message type (first 2 bytes)
         let message_type_raw = u16::from_be_bytes([data[0], data[1]]);
 
-        // Message type encoding: 0bMMMMMMMMMMCCCCMM
-        // M = method (14 bits), C = class (2 bits)
-        let class = ((message_type_raw & 0x0110) >> 4) | ((message_type_raw & 0x0100) >> 7);
+        // RFC 8489 section 5: the 14-bit type interleaves method and class bits as
+        //   0b00 M11 M10 M9 M8 M7 C1 M6 M5 M4 C0 M3 M2 M1 M0
+        // so C0 is bit 4 and C1 is bit 8, and class == C1<<1 | C0.
+        //
+        // The previous expression, ((raw & 0x0110) >> 4) | ((raw & 0x0100) >> 7),
+        // works out to C0 + 18*C1, which happens to be right only when C1 is 0
+        // (requests and indications). Success and error responses decoded to 18
+        // and 19, so their arms below were unreachable and every response was
+        // labelled "Unknown".
+        let c0 = (message_type_raw >> 4) & 0x1;
+        let c1 = (message_type_raw >> 8) & 0x1;
+        let class = (c1 << 1) | c0;
         let method = (message_type_raw & 0x000F)
             | ((message_type_raw & 0x00E0) >> 1)
             | ((message_type_raw & 0x3E00) >> 2);
 
+        // Class values: 0 = request, 1 = indication, 2 = success response,
+        // 3 = error response.
         let message_type = match (class, method) {
             (0, 1) => "BindingRequest",
-            (1, 1) => "BindingResponse",
-            (2, 1) => "BindingError",
+            (1, 1) => "BindingIndication",
+            (2, 1) => "BindingResponse",
+            (3, 1) => "BindingError",
             _ => "Unknown",
         };
 

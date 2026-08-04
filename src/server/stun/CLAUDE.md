@@ -110,22 +110,47 @@ for WebRTC, VoIP, and peer-to-peer applications.
     {
       "type": "send_stun_binding_response",
       "transaction_id": "0102030405060708090a0b0c",
-      "client_address": "203.0.113.5",
-      "client_port": 54321,
-      "xor_mapped": true,
+      "mapped_address": "203.0.113.5:54321",
+      "xor_mapped_address": true,
       "software": "NetGet STUN/1.0"
     }
   ]
 }
 ```
 
-**Action Parameters**:
+**Action Parameters** (these are the names the executor actually reads; the docs
+previously listed `client_address`, `client_port` and `xor_mapped`, none of which
+exist, so a response built from them failed with "Missing 'mapped_address' field"
+and the client timed out):
 
-- `transaction_id`: Hex string (must match request)
-- `client_address`: Public IP to return (usually peer_addr from UDP packet)
-- `client_port`: Public port to return
-- `xor_mapped`: true = XOR-MAPPED-ADDRESS, false = MAPPED-ADDRESS
-- `software`: Optional SOFTWARE attribute value
+- `transaction_id`: Hex string, exactly 24 hex chars / 12 bytes. **Must** match the
+  request; clients discard responses whose transaction ID differs.
+- `mapped_address`: Single `"ip:port"` string to return (usually the event's
+  `peer_addr`)
+- `xor_mapped_address`: true = XOR-MAPPED-ADDRESS (default), false = MAPPED-ADDRESS
+- `software`: Optional SOFTWARE attribute value (default `"NetGet/1.0"`)
+- `message_integrity`: Accepted but **not implemented** - no MESSAGE-INTEGRITY
+  attribute is ever added
+
+### Echoing the transaction ID without an LLM call
+
+Static handlers interpolate event fields, so a zero-LLM STUN server is expressible
+directly:
+
+```json
+{
+  "type": "static",
+  "actions": [{
+    "type": "send_stun_binding_response",
+    "transaction_id": "{{event.transaction_id}}",
+    "mapped_address": "{{event.peer_addr}}",
+    "xor_mapped_address": true
+  }]
+}
+```
+
+Verified with a raw UDP STUN client: the response echoes the request's transaction
+ID and its XOR-MAPPED-ADDRESS decodes to the client's real source address.
 
 **Action Execution**:
 
@@ -181,6 +206,12 @@ Stun {
 
 **Invalid Requests**: Silently ignored (no error response sent per RFC 8489).
 
+**Message class decoding**: class is `C1<<1 | C0` where C0 is bit 4 and C1 is bit 8
+(RFC 8489 section 5), giving 0 = request, 1 = indication, 2 = success response,
+3 = error response. An earlier expression collapsed the two class bits incorrectly
+and decoded every response class as 18 or 19, so responses were labelled "Unknown".
+This only ever affected labelling, since a server receives requests.
+
 ### Response Generation
 
 **Minimal Valid Response**:
@@ -214,8 +245,9 @@ Stun {
     - Does not relay traffic (use separate TURN server for relay)
 
 4. **Minimal Attribute Support**
-    - Only XOR-MAPPED-ADDRESS and optional SOFTWARE
+    - Only XOR-MAPPED-ADDRESS/MAPPED-ADDRESS, SOFTWARE and ERROR-CODE
     - No FINGERPRINT, REALM, NONCE, etc.
+    - `message_integrity` is accepted by the action and ignored
 
 5. **No UDP Retransmission Handling**
     - STUN clients typically retry on timeout

@@ -97,7 +97,11 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
                     }
                 }]
             }),
-            // Static mode: Fixed responses
+            // Static mode: no LLM call, but still echoes the client's own
+            // transaction ID and address by interpolating the event fields. A
+            // hardcoded transaction ID would never match the client's request,
+            // and every STUN client discards a response whose transaction ID
+            // differs from the one it sent.
             json!({
                 "type": "open_server",
                 "port": 3478,
@@ -108,10 +112,9 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
                         "type": "static",
                         "actions": [{
                             "type": "send_stun_binding_response",
-                            "transaction_id": "000000000000",
-                            "client_address": "0.0.0.0",
-                            "client_port": 0,
-                            "xor_mapped": true
+                            "transaction_id": "{{event.transaction_id}}",
+                            "mapped_address": "{{event.peer_addr}}",
+                            "xor_mapped_address": true
                         }]
                     }
                 }]
@@ -500,7 +503,7 @@ fn send_stun_binding_response_action() -> ActionDefinition {
             Parameter {
                 name: "transaction_id".to_string(),
                 type_hint: "string".to_string(),
-                description: "Transaction ID from request (hex string)".to_string(),
+                description: "Transaction ID from the request, hex-encoded (exactly 24 hex chars = 12 bytes). MUST be copied from the event's transaction_id: a STUN client silently discards any response whose transaction ID does not match the request it sent.".to_string(),
                 required: true,
             },
             Parameter {
@@ -601,9 +604,9 @@ pub static STUN_BINDING_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "STUN binding request received from client",
         json!({
             "type": "send_stun_binding_response",
-            "mapped_address": "203.0.113.45:54321",
-            "transaction_id": "0123456789abcdef01234567"
-        })
+            "mapped_address": "{{event.peer_addr}}",
+            "transaction_id": "{{event.transaction_id}}"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -636,6 +639,15 @@ pub static STUN_BINDING_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Number of bytes in the STUN request".to_string(),
             required: true,
         },
+    ])
+    // Without this the event advertised no actions at all, so every action the
+    // model produced was rejected as "Unknown Action" and the request went
+    // unanswered. Only static/script handlers, which skip that validation, could
+    // reply.
+    .with_actions(vec![
+        send_stun_binding_response_action(),
+        send_stun_error_response_action(),
+        ignore_request_action(),
     ])
     .with_log_template(
         LogTemplate::new()
