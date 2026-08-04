@@ -38,17 +38,11 @@ jobs:
         with:
           key: lint-${{ env.CI_FEATURES }}
 
-      # ADVISORY, not blocking: a full-repo `cargo fmt --check` currently
-      # reports diffs in ~2,700 spots across src/ and tests/ (verified
-      # 2026-08-04). Failing the gate on that today would block every PR
-      # for pre-existing debt unrelated to the change being reviewed.
-      # Runs so the diff is visible in logs; tighten (make blocking, or
-      # scope to changed files) once a repo-wide format pass lands.
-      - name: cargo fmt --check (advisory)
-        continue-on-error: true
-        run: |
-          echo "::notice::cargo fmt --check is advisory-only: the repo is not fmt-clean yet (~2,700 diffs as of 2026-08-04). This step reports but does not block. See job summary/logs for the diff."
-          cargo fmt --check
+      # BLOCKING. This was advisory while the repo carried ~2,700 pre-existing
+      # fmt diffs; the repo-wide pass landed in f17b7938, so the tree is clean
+      # and the gate now holds it there. If this fails, run `cargo fmt`.
+      - name: cargo fmt --check
+        run: cargo fmt --check
 
       # BLOCKING, but narrowly scoped: a full default `cargo clippy` on
       # CI_FEATURES currently emits ~50 warnings (redundant_closure,
