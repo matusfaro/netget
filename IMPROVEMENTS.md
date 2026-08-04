@@ -522,6 +522,25 @@ so no server ever starts. This breaks all 10 `tests/server/http/*` tests, all 4 
 mock helper or the docs-gate flow turns several protocol suites green at once. Closely related
 to item 39.
 
+### 46. Feature declarations are incomplete, and `--all-features` hides it **[verified — 2 found, both fixed]**
+
+Two protocols did not build with the single-protocol command CLAUDE.md mandates
+(`--no-default-features --features <protocol>`), while building fine under `--all-features`
+because another enabled feature happened to supply what they needed through Cargo feature
+unification:
+
+- `openid = []` declared no dependencies although `src/server/openid/mod.rs` uses `urlencoding`
+  at 8 sites — `E0433`, fixed in `e6353886`. Every other feature using that crate declares it.
+- `usb-fido2` did not enable `ring/std`, without which `ring` does not implement
+  `std::error::Error` for `Unspecified`/`KeyRejected`, so `?` into `anyhow` failed at 8 sites
+  in `ctap2.rs`/`u2f.rs` — `E0277`, fixed in `b7b1d5ae`.
+
+The class matters more than the two instances: `--all-features` is structurally incapable of
+catching an under-declared feature, and it is the only build CI runs. A sweep of 30 other
+protocol features found no further cases, so this is not endemic — but nothing prevents the
+next one. Add a CI job that builds a rotating sample of individual protocol features, or all of
+them on a schedule; it is the only thing that can catch this.
+
 ---
 
 ## Suggested order
