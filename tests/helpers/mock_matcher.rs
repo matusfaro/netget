@@ -4,6 +4,51 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What kind of LLM request the prompt represents.
+///
+/// NetGet renders a different Handlebars template per situation, and the
+/// template's own task text is the only reliable signal for which one it is —
+/// prompt *bodies* routinely mention protocol and event names (protocol
+/// documentation is literally a list of them), so keyword sniffing over the
+/// whole prompt cannot tell a network event from a startup request.
+///
+/// See `prompts/network_request/task.hbs` vs `prompts/user_input/task.hbs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RequestKind {
+    /// Rendered from `prompts/network_request/**` (server) or the client
+    /// network loop in `src/llm/action_helper.rs::call_llm_for_client`.
+    /// A real protocol event is being handled — `event_type` is meaningful.
+    NetworkEvent,
+
+    /// Rendered from `prompts/user_input/**`. A user command such as
+    /// "listen on port N via http" — there is no network event, so
+    /// `event_type` must stay `None`.
+    UserInput,
+
+    /// The `DocumentationRequired` retry that `open_server` / `open_client`
+    /// force before the first server is allowed to start
+    /// (`src/events/handler.rs`). Structurally a user-input turn whose latest
+    /// message is a wall of protocol documentation.
+    DocumentationRetry,
+
+    /// A scheduled task firing (`src/cli/rolling_tui.rs` sends the fixed user
+    /// message "Execute the task."). Timer-driven, so there is no event id —
+    /// what identifies the run sits in the system prompt's `Trigger:` block.
+    ScheduledTask,
+
+    /// Some other template (feedback, easy mode) or a prompt with no
+    /// recognisable marker. Classification falls back to legacy best-effort
+    /// extraction.
+    Unknown,
+}
+
+impl RequestKind {
+    /// Whether an `event_type` may legitimately be extracted for this kind.
+    pub fn carries_network_event(&self) -> bool {
+        matches!(self, RequestKind::NetworkEvent | RequestKind::Unknown)
+    }
+}
+
 /// Context passed to matchers when LLM is called
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct LlmContext {
@@ -24,6 +69,14 @@ pub struct LlmContext {
 
     /// Full prompt text sent to LLM
     pub prompt: String,
+
+    /// Which prompt template produced this request
+    #[serde(default = "default_request_kind")]
+    pub request_kind: RequestKind,
+}
+
+fn default_request_kind() -> RequestKind {
+    RequestKind::Unknown
 }
 
 impl LlmContext {
@@ -36,7 +89,14 @@ impl LlmContext {
             iteration: 1,
             message_role: None,
             prompt,
+            request_kind: RequestKind::Unknown,
         }
+    }
+
+    /// Set the request kind
+    pub fn with_request_kind(mut self, kind: RequestKind) -> Self {
+        self.request_kind = kind;
+        self
     }
 
     /// Set event type
@@ -242,9 +302,7 @@ pub struct MessageRoleMatcher {
 
 impl MessageRoleMatcher {
     pub fn new(role: impl Into<String>) -> Self {
-        Self {
-            role: role.into(),
-        }
+        Self { role: role.into() }
     }
 }
 

@@ -13,7 +13,8 @@ use super::mock_matcher::{LlmContext, MockMatcher};
 ///
 /// This enables protocol-correct responses for correlation IDs (DNS query_id, STUN transaction_id, etc.)
 /// The closure receives event data extracted from the LLM prompt and returns actions.
-pub type ResponseGenerator = Arc<dyn Fn(&serde_json::Value) -> Vec<serde_json::Value> + Send + Sync>;
+pub type ResponseGenerator =
+    Arc<dyn Fn(&serde_json::Value) -> Vec<serde_json::Value> + Send + Sync>;
 
 /// Complete mock LLM configuration
 #[derive(Serialize, Deserialize)]
@@ -33,6 +34,14 @@ pub struct MockLlmConfig {
     /// History of all LLM calls (for debugging)
     #[serde(skip)]
     pub call_history: Arc<Mutex<Vec<MockCallRecord>>>,
+
+    /// Problems the mock harness itself detected while serving requests
+    /// (misrouted rules, response-shaped answers to startup calls, ...).
+    ///
+    /// These are surfaced by `verify_calls()` and by the startup helper so a
+    /// misroute never degrades into an opaque "No servers or clients started".
+    #[serde(skip)]
+    pub harness_diagnostics: Arc<Mutex<Vec<String>>>,
 }
 
 impl Clone for MockLlmConfig {
@@ -42,6 +51,7 @@ impl Clone for MockLlmConfig {
             serialized_rules: self.serialized_rules.clone(),
             was_verified: Arc::clone(&self.was_verified),
             call_history: Arc::clone(&self.call_history),
+            harness_diagnostics: Arc::clone(&self.harness_diagnostics),
         }
     }
 }
@@ -50,16 +60,14 @@ impl MockLlmConfig {
     /// Create a new mock configuration
     pub fn new(rules: Vec<MockRule>) -> Self {
         // Serialize rules for environment variable passing
-        let serialized_rules = rules
-            .iter()
-            .map(|r| r.to_serialized())
-            .collect();
+        let serialized_rules = rules.iter().map(|r| r.to_serialized()).collect();
 
         Self {
             rules,
             serialized_rules,
             was_verified: Arc::new(AtomicBool::new(false)),
             call_history: Arc::new(Mutex::new(Vec::new())),
+            harness_diagnostics: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -75,6 +83,7 @@ impl MockLlmConfig {
             serialized_rules: serialized,
             was_verified: Arc::new(AtomicBool::new(false)),
             call_history: Arc::new(Mutex::new(Vec::new())),
+            harness_diagnostics: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -96,7 +105,12 @@ impl MockLlmConfig {
     }
 
     /// Record a matched call to history (separate method to avoid holding config lock)
-    pub async fn record_call(&self, context: LlmContext, matched_rule_idx: usize, rule_description: String) {
+    pub async fn record_call(
+        &self,
+        context: LlmContext,
+        matched_rule_idx: usize,
+        rule_description: String,
+    ) {
         let mut history = self.call_history.lock().await;
         history.push(MockCallRecord {
             context,
@@ -115,6 +129,30 @@ impl MockLlmConfig {
         } else {
             None
         }
+    }
+
+    /// Record a problem the harness itself detected (not a rule mismatch).
+    ///
+    /// Also echoed to stderr immediately: a misroute usually kills the test
+    /// long before `verify_mocks()` is reached.
+    pub async fn record_harness_diagnostic(&self, message: String) {
+        eprintln!("🚨 MOCK HARNESS: {}", message);
+        self.harness_diagnostics.lock().await.push(message);
+    }
+
+    /// All problems the harness detected, formatted for a failure message.
+    /// Returns `None` when nothing went wrong.
+    pub async fn harness_diagnostics_report(&self) -> Option<String> {
+        let diagnostics = self.harness_diagnostics.lock().await;
+        if diagnostics.is_empty() {
+            return None;
+        }
+
+        let mut report = String::from("Mock harness detected inconsistent LLM routing:\n");
+        for (idx, diagnostic) in diagnostics.iter().enumerate() {
+            report.push_str(&format!("  {}. {}\n", idx + 1, diagnostic));
+        }
+        Some(report)
     }
 
     /// Mark as verified
@@ -180,6 +218,14 @@ impl MockRule {
     /// Get description of this rule
     pub fn describe(&self) -> String {
         self.serialized_matcher.describe()
+    }
+
+    /// The `event_type` this rule requires, if it is an `on_event(...)` rule.
+    ///
+    /// Used by the mock server to detect a misroute: an event rule matching a
+    /// request that is not a network event at all.
+    pub fn matcher_event_type(&self) -> Option<&str> {
+        self.serialized_matcher.event_type.as_deref()
     }
 
     /// Convert to serialized format
@@ -290,7 +336,8 @@ impl SerializedMatcher {
         // CRITICAL FIX: Instruction-based matching should only match user input, not network events
         // If this rule uses instruction matching but the context has an event_type,
         // it means this is a network event (not user input), so skip instruction matching
-        let has_instruction_criteria = !self.instruction_contains.is_empty() || self.instruction_regex.is_some();
+        let has_instruction_criteria =
+            !self.instruction_contains.is_empty() || self.instruction_regex.is_some();
         let is_network_event = context.event_type.is_some();
 
         if has_instruction_criteria && is_network_event && self.event_type.is_none() {
@@ -378,7 +425,10 @@ impl SerializedMatcher {
         }
 
         if !self.instruction_contains.is_empty() {
-            parts.push(format!("instruction contains {:?}", self.instruction_contains));
+            parts.push(format!(
+                "instruction contains {:?}",
+                self.instruction_contains
+            ));
         }
 
         if let Some(ref regex) = self.instruction_regex {
@@ -465,15 +515,15 @@ impl MockResponse {
 impl Clone for MockResponse {
     fn clone(&self) -> Self {
         match self {
-            MockResponse::Actions { actions } => {
-                MockResponse::Actions { actions: actions.clone() }
-            }
-            MockResponse::DynamicActions { generator } => {
-                MockResponse::DynamicActions { generator: Arc::clone(generator) }
-            }
-            MockResponse::Raw { content } => {
-                MockResponse::Raw { content: content.clone() }
-            }
+            MockResponse::Actions { actions } => MockResponse::Actions {
+                actions: actions.clone(),
+            },
+            MockResponse::DynamicActions { generator } => MockResponse::DynamicActions {
+                generator: Arc::clone(generator),
+            },
+            MockResponse::Raw { content } => MockResponse::Raw {
+                content: content.clone(),
+            },
         }
     }
 }
@@ -493,13 +543,11 @@ impl Serialize for MockResponse {
                 state.serialize_field("actions", actions)?;
                 state.end()
             }
-            MockResponse::DynamicActions { .. } => {
-                Err(serde::ser::Error::custom(
-                    "DynamicActions cannot be serialized. \
+            MockResponse::DynamicActions { .. } => Err(serde::ser::Error::custom(
+                "DynamicActions cannot be serialized. \
                      Dynamic mocks require MOCK_OLLAMA_BASE_URL (in-process mock server), \
-                     not NETGET_MOCK_LLM_CONFIG (environment variable serialization)."
-                ))
-            }
+                     not NETGET_MOCK_LLM_CONFIG (environment variable serialization).",
+            )),
             MockResponse::Raw { content } => {
                 let mut state = serializer.serialize_struct("MockResponse", 2)?;
                 state.serialize_field("type", "raw")?;
@@ -532,6 +580,11 @@ impl<'de> Deserialize<'de> for MockResponse {
     }
 }
 
+/// Sentinel `matched_rule_idx` for calls the mock harness answered itself
+/// (currently only the forced `open_server` documentation retry). Such calls
+/// consume no rule and count against no `expect_calls`.
+pub const HARNESS_ANSWERED_RULE_IDX: usize = usize::MAX;
+
 /// Record of a mock LLM call
 #[derive(Clone)]
 pub struct MockCallRecord {
@@ -541,4 +594,26 @@ pub struct MockCallRecord {
     pub matched_rule_idx: usize,
     /// Description of matched rule
     pub rule_description: String,
+}
+
+impl MockCallRecord {
+    /// Human-readable label for what answered this call.
+    pub fn rule_label(&self) -> String {
+        if self.matched_rule_idx == HARNESS_ANSWERED_RULE_IDX {
+            "<harness>".to_string()
+        } else {
+            format!("rule #{}", self.matched_rule_idx)
+        }
+    }
+
+    /// One-line summary for failure output.
+    pub fn describe(&self) -> String {
+        format!(
+            "kind={:?} event={} -> {} ({})",
+            self.context.request_kind,
+            self.context.event_type.as_deref().unwrap_or("(none)"),
+            self.rule_label(),
+            self.rule_description
+        )
+    }
 }

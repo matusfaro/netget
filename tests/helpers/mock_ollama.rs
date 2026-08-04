@@ -9,6 +9,9 @@
 //! - True E2E testing (netget subprocess makes real HTTP calls)
 //! - Easy debugging (server can log all requests)
 
+use super::common::E2EResult;
+use super::mock_config::{MockLlmConfig, HARNESS_ANSWERED_RULE_IDX};
+use super::mock_matcher::{LlmContext, RequestKind};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -16,14 +19,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use super::mock_config::MockLlmConfig;
-use super::mock_matcher::LlmContext;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tracing::{debug, info, warn};
-use super::common::E2EResult;
 
 /// Mock Ollama server that responds with configured mock responses
 pub struct MockOllamaServer {
@@ -112,6 +112,178 @@ struct ServerState {
     config: Arc<Mutex<MockLlmConfig>>,
 }
 
+// ============================================================================
+// Request classification
+// ============================================================================
+//
+// NetGet renders a *different prompt template* per situation. That template
+// choice — not the prompt's wording — is what distinguishes a live network
+// event from a user command, and it is the only signal that cannot rot as
+// protocol text changes:
+//
+//   * `prompts/network_request/**`  -> handling a network event on a running server
+//   * `prompts/user_input/**`       -> interpreting a user command (e.g. "listen on port N")
+//   * `src/llm/action_helper.rs`    -> `call_llm_for_client` builds the client-side
+//                                      network-event prompt inline (no template)
+//
+// Sniffing the prompt *body* for protocol/event names does not work, and used
+// to be the bug this module carried: `open_server` forces a
+// `DocumentationRequired` retry whose message embeds the protocol's own
+// documentation, and that documentation lists every event as
+// `### Event: http_request`. The old extractor picked that line up and
+// reported `event_type: Some("http_request")` for the **startup** call, so an
+// `on_event("http_request")` rule answered it with `send_http_response`, the
+// startup path rejected the unknown action, and no server ever started.
+
+/// Marker sentences emitted only by network-event prompts.
+///
+/// Sources (all read-only from this crate's point of view):
+/// - `prompts/network_request/task.hbs`
+/// - `prompts/network_request/partials/instructions.hbs`
+/// - `src/llm/action_helper.rs::call_llm_for_client` (client system prompt)
+/// - `prompts/easy_request/main.hbs` (easy mode, still a network request)
+const NETWORK_EVENT_TEMPLATE_MARKERS: &[&str] = &[
+    "You are being invoked in response to a network event",
+    "## Network Event Instructions",
+    "You are controlling a network client",
+    "## Network Request Received",
+];
+
+/// Marker sentences emitted only by `prompts/user_input/task.hbs`.
+const USER_INPUT_TEMPLATE_MARKERS: &[&str] = &[
+    "You are an API that interprets user commands",
+    "The user wants to start servers, connect clients",
+];
+
+/// Phrases from `ActionExecutionError::DocumentationRequired`
+/// (`src/events/errors.rs`) — the forced read-the-docs retry before the first
+/// `open_server` / `open_client` is allowed through.
+const DOCUMENTATION_RETRY_MARKERS: &[&str] = &[
+    "you must first read the documentation",
+    "you must provide the action again",
+];
+
+/// The literal user message a scheduled-task run sends
+/// (`src/cli/rolling_tui.rs`). Everything that identifies the task lives in
+/// the system prompt, which ends with `\n\nTrigger: Scheduled task '<name>' …`.
+const SCHEDULED_TASK_TRIGGER_MESSAGE: &str = "Execute the task.";
+
+/// Marker introducing the trigger block at the end of a task system prompt
+/// (`PromptBuilder::build_task_execution_prompt`).
+const TASK_TRIGGER_MARKER: &str = "\n\nTrigger: ";
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| haystack.contains(n))
+}
+
+/// Classify a request from the template text (system prompt / whole prompt)
+/// and the latest turn addressed to the model.
+fn classify_request(template_text: &str, latest_message: &str) -> RequestKind {
+    // Checked first: a server-scoped task renders `network_request/main` too,
+    // but it is triggered by a timer, not by a packet.
+    if latest_message.trim() == SCHEDULED_TASK_TRIGGER_MESSAGE
+        && template_text.contains(TASK_TRIGGER_MARKER)
+    {
+        return RequestKind::ScheduledTask;
+    }
+
+    if contains_any(template_text, NETWORK_EVENT_TEMPLATE_MARKERS) {
+        return RequestKind::NetworkEvent;
+    }
+
+    let latest_lower = latest_message.to_lowercase();
+    if DOCUMENTATION_RETRY_MARKERS
+        .iter()
+        .all(|m| latest_lower.contains(m))
+    {
+        return RequestKind::DocumentationRetry;
+    }
+
+    if contains_any(template_text, USER_INPUT_TEMPLATE_MARKERS) {
+        return RequestKind::UserInput;
+    }
+
+    RequestKind::Unknown
+}
+
+/// Extract the event id from a network-event trigger message.
+///
+/// Only ever called for requests classified as network events, so the
+/// `Event:` fallback cannot latch onto a `### Event: <id>` heading inside
+/// embedded protocol documentation.
+fn extract_event_type(text: &str) -> Option<String> {
+    // Preferred: "Event ID: <id>" (PromptBuilder::build_event_trigger_message_with_id)
+    if let Some(event_id_line) = text.lines().find(|line| line.contains("Event ID:")) {
+        if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
+            let event_id = event_id.trim();
+            if !event_id.is_empty() {
+                debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
+                return Some(event_id.to_string());
+            }
+        }
+    }
+
+    // Legacy: "Event: <description>" (PromptBuilder::build_event_trigger_message)
+    if let Some(event_line) = text.lines().find(|line| line.contains("Event:")) {
+        if let Some(event_type) = event_line.split("Event:").nth(1) {
+            let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
+            if !event_type.is_empty() {
+                debug!("🔧 Extracted event type from Event: '{}'", event_type);
+                return Some(event_type.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// Action name prefixes/suffixes that only make sense as a reply on the wire.
+/// Seeing one of these answer a *startup* call means a rule was misrouted.
+fn response_shaped_action_names(response_text: &str) -> Vec<String> {
+    let parsed: serde_json::Value = match serde_json::from_str(response_text) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    parsed
+        .get("actions")
+        .and_then(|a| a.as_array())
+        .map(|actions| {
+            actions
+                .iter()
+                .filter_map(|a| a.get("type").and_then(|t| t.as_str()))
+                .filter(|name| {
+                    name.starts_with("send_")
+                        || name.starts_with("respond_")
+                        || name.ends_with("_response")
+                })
+                .map(|name| name.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The last assistant turn that carries an `{"actions": [...]}` payload.
+///
+/// Used to satisfy the documentation gate: the retry literally asks the model
+/// to "provide the action again", so replaying its own previous answer is the
+/// correct response and needs no per-test mock rule.
+fn last_assistant_action_payload(messages: &[OllamaMessage]) -> Option<String> {
+    messages.iter().rev().find_map(|m| {
+        if m.role != "assistant" {
+            return None;
+        }
+        let content = m.content.trim();
+        let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+        let actions = parsed.get("actions")?.as_array()?;
+        if actions.is_empty() {
+            None
+        } else {
+            Some(content.to_string())
+        }
+    })
+}
+
 impl MockOllamaServer {
     /// Start a mock Ollama server on a random available port
     ///
@@ -180,12 +352,9 @@ impl MockOllamaServer {
     /// Verify that all mock expectations were met
     pub async fn verify_calls(&self) -> E2EResult<()> {
         // Add timeout to prevent deadlock on lock acquisition
-        let config = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            self.config.lock()
-        )
-        .await
-        .map_err(|_| "Timeout acquiring mock config lock (deadlock detected)")?;
+        let config = tokio::time::timeout(std::time::Duration::from_secs(10), self.config.lock())
+            .await
+            .map_err(|_| "Timeout acquiring mock config lock (deadlock detected)")?;
 
         config.mark_verified();
 
@@ -234,6 +403,10 @@ impl MockOllamaServer {
             }
         }
 
+        // Informational: they explain why counts are off, but never fail a run
+        // that otherwise met its expectations.
+        let harness_report = config.harness_diagnostics_report().await;
+
         if !errors.is_empty() {
             let mut error_msg = String::from("Mock verification failed:\n");
             for error in &errors {
@@ -242,10 +415,15 @@ impl MockOllamaServer {
                 error_msg.push('\n');
             }
 
+            if let Some(ref report) = harness_report {
+                error_msg.push('\n');
+                error_msg.push_str(report);
+            }
+
             // Get call history for debugging (with timeout to prevent deadlock)
             let history = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                config.call_history.lock()
+                config.call_history.lock(),
             )
             .await
             .map_err(|_| "Timeout acquiring call history lock (deadlock detected)")?;
@@ -253,10 +431,12 @@ impl MockOllamaServer {
                 error_msg.push_str("\nAll LLM call history:\n");
                 for (idx, call) in history.iter().enumerate() {
                     error_msg.push_str(&format!("  Call #{}: ", idx + 1));
+                    error_msg.push_str(&format!("kind={:?} ", call.context.request_kind));
                     error_msg.push_str(&format!("instruction=\"{}\" ", call.context.instruction));
                     if let Some(ref event_type) = call.context.event_type {
                         error_msg.push_str(&format!("event_type=\"{}\" ", event_type));
                     }
+                    error_msg.push_str(&format!("-> {}", call.rule_description));
                     error_msg.push('\n');
                 }
             }
@@ -265,6 +445,17 @@ impl MockOllamaServer {
         }
 
         Ok(())
+    }
+
+    /// Problems the harness detected while serving requests, if any.
+    ///
+    /// Exposed so startup failures can explain themselves before a test ever
+    /// reaches `verify_mocks()`.
+    pub async fn harness_diagnostics_report(&self) -> Option<String> {
+        let config = tokio::time::timeout(std::time::Duration::from_secs(10), self.config.lock())
+            .await
+            .ok()?;
+        config.harness_diagnostics_report().await
     }
 }
 
@@ -284,35 +475,126 @@ async fn handle_chat(
 
     // DEBUG: Log extracted context [FIX v2]
     eprintln!("🔍🔍🔍 Mock context extracted:");
+    eprintln!("  request_kind: {:?}", context.request_kind);
     eprintln!("  event_type: {:?}", context.event_type);
-    eprintln!("  instruction: {}", &context.instruction[..context.instruction.len().min(200)]);
-    eprintln!("  prompt preview: {}", &context.prompt[..context.prompt.len().min(500)]);
+    let instruction_preview: String = context.instruction.chars().take(200).collect();
+    eprintln!("  instruction: {}", instruction_preview);
+    let prompt_preview: String = context.prompt.chars().take(500).collect();
+    eprintln!("  prompt preview: {}", prompt_preview);
+
+    // The documentation gate (src/events/handler.rs) forces one extra LLM turn
+    // before the first open_server/open_client succeeds. It is harness
+    // plumbing, not a decision any test models, so answer it centrally by
+    // replaying the model's own previous action — exactly what the retry asks
+    // for ("please confirm your open_server action by providing it again").
+    // No rule is consumed, so per-test `expect_calls` counts stay honest.
+    if context.request_kind == RequestKind::DocumentationRetry {
+        match last_assistant_action_payload(&request.messages) {
+            Some(payload) => {
+                eprintln!(
+                    "📚 Documentation gate detected — replaying previous action (no rule consumed)"
+                );
+                state
+                    .config
+                    .lock()
+                    .await
+                    .record_call(
+                        context.clone(),
+                        HARNESS_ANSWERED_RULE_IDX,
+                        "<harness> documentation gate replay (no rule consumed)".to_string(),
+                    )
+                    .await;
+
+                let response = OllamaChatResponse {
+                    model: request.model,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    message: OllamaResponseMessage {
+                        role: "assistant".to_string(),
+                        content: payload,
+                    },
+                    done: true,
+                };
+                return Json(response).into_response();
+            }
+            None => {
+                state
+                    .config
+                    .lock()
+                    .await
+                    .record_harness_diagnostic(
+                        "open_server documentation gate fired but no previous assistant action \
+                         was found to replay; falling back to rule matching. The startup call \
+                         will most likely be answered with the wrong action."
+                            .to_string(),
+                    )
+                    .await;
+            }
+        }
+    }
 
     // Get mock response (using synchronous matching to avoid holding lock across await)
-    let match_result = {
+    let (match_result, matched_rule_event_type) = {
         let config = state.config.lock().await;
 
         // DEBUG: Log all rules and their match status
         eprintln!("🔍 Checking {} mock rules:", config.rules.len());
         for (idx, rule) in config.rules.iter().enumerate() {
             let matches = rule.matches(&context);
-            eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
+            eprintln!(
+                "  Rule #{}: {} -> {}",
+                idx,
+                rule.describe(),
+                if matches { "✅ MATCH" } else { "❌ no match" }
+            );
         }
 
-        config.find_match_sync(&context)
+        let result = config.find_match_sync(&context);
+        let event_type = result.as_ref().and_then(|(idx, _, _)| {
+            config
+                .rules
+                .get(*idx)
+                .and_then(|r| r.matcher_event_type().map(|e| e.to_string()))
+        });
+        (result, event_type)
     }; // Lock is dropped here!
 
     // Record call history AFTER releasing config lock
     let mock_response = match match_result {
         Some((idx, response, description)) => {
             eprintln!("✅ Using matched rule #{}", idx);
+            report_routing_inconsistencies(
+                &state,
+                &context,
+                idx,
+                &description,
+                matched_rule_event_type.as_deref(),
+                &response.to_response_string(Some(&context.event_data)),
+            )
+            .await;
             // Record call in separate lock acquisition
-            state.config.lock().await.record_call(context.clone(), idx, description).await;
+            state
+                .config
+                .lock()
+                .await
+                .record_call(context.clone(), idx, description)
+                .await;
             response
-        },
+        }
         None => {
             eprintln!("❌ NO RULE MATCHED!");
             warn!("🔧 No mock rule matched, returning default error");
+            state
+                .config
+                .lock()
+                .await
+                .record_harness_diagnostic(format!(
+                    "No mock rule matched a {:?} request (event_type={:?}, instruction=\"{}\"). \
+                     NetGet will report an LLM failure for this turn.",
+                    context.request_kind,
+                    context.event_type,
+                    context.instruction.chars().take(120).collect::<String>()
+                ))
+                .await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -339,6 +621,55 @@ async fn handle_chat(
     Json(response).into_response()
 }
 
+/// Flag a match whose classification looks inconsistent.
+///
+/// Two shapes matter, and both used to fail silently as
+/// "No servers or clients started":
+/// 1. an `on_event(...)` rule answering a request that is not a network event
+/// 2. a wire-response action (`send_*` / `*_response`) answering a startup or
+///    documentation turn, which NetGet rejects as an unknown action
+async fn report_routing_inconsistencies(
+    state: &ServerState,
+    context: &LlmContext,
+    rule_idx: usize,
+    rule_description: &str,
+    rule_event_type: Option<&str>,
+    response_text: &str,
+) {
+    if context.request_kind.carries_network_event() {
+        return;
+    }
+
+    if let Some(event_type) = rule_event_type {
+        state
+            .config
+            .lock()
+            .await
+            .record_harness_diagnostic(format!(
+                "Rule #{} ({}) matched a {:?} request. An on_event(\"{}\") rule must only match \
+                 network events; matching a startup/documentation turn means the request was \
+                 misclassified.",
+                rule_idx, rule_description, context.request_kind, event_type
+            ))
+            .await;
+    }
+
+    let response_shaped = response_shaped_action_names(response_text);
+    if !response_shaped.is_empty() {
+        state
+            .config
+            .lock()
+            .await
+            .record_harness_diagnostic(format!(
+                "Rule #{} ({}) answered a {:?} request with wire-response action(s) {:?}. \
+                 NetGet only accepts open_server/open_client/tool actions here, will reject these \
+                 as unknown actions, and no server will start.",
+                rule_idx, rule_description, context.request_kind, response_shaped
+            ))
+            .await;
+    }
+}
+
 /// Handle POST /api/generate
 async fn handle_generate(
     State(state): State<ServerState>,
@@ -355,6 +686,7 @@ async fn handle_generate(
 
     // DEBUG: Log extracted context
     eprintln!("🔍🔍🔍 Mock generate context extracted:");
+    eprintln!("  request_kind: {:?}", context.request_kind);
     eprintln!("  event_type: {:?}", context.event_type);
     // Use chars().take() to avoid splitting UTF-8 characters
     let instruction_preview: String = context.instruction.chars().take(200).collect();
@@ -368,30 +700,68 @@ async fn handle_generate(
     eprintln!("  prompt last 500 chars: {}", last_500);
 
     // Get mock response (using synchronous matching to avoid holding lock across await)
-    let match_result = {
+    let (match_result, matched_rule_event_type) = {
         let config = state.config.lock().await;
 
         // DEBUG: Log all rules and their match status
         eprintln!("🔍 Checking {} mock rules:", config.rules.len());
         for (idx, rule) in config.rules.iter().enumerate() {
             let matches = rule.matches(&context);
-            eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
+            eprintln!(
+                "  Rule #{}: {} -> {}",
+                idx,
+                rule.describe(),
+                if matches { "✅ MATCH" } else { "❌ no match" }
+            );
         }
 
-        config.find_match_sync(&context)
+        let result = config.find_match_sync(&context);
+        let event_type = result.as_ref().and_then(|(idx, _, _)| {
+            config
+                .rules
+                .get(*idx)
+                .and_then(|r| r.matcher_event_type().map(|e| e.to_string()))
+        });
+        (result, event_type)
     }; // Lock is dropped here!
 
     // Record call history AFTER releasing config lock
     let mock_response = match match_result {
         Some((idx, response, description)) => {
             eprintln!("✅ Using matched rule #{}", idx);
+            report_routing_inconsistencies(
+                &state,
+                &context,
+                idx,
+                &description,
+                matched_rule_event_type.as_deref(),
+                &response.to_response_string(Some(&context.event_data)),
+            )
+            .await;
             // Record call in separate lock acquisition
-            state.config.lock().await.record_call(context.clone(), idx, description).await;
+            state
+                .config
+                .lock()
+                .await
+                .record_call(context.clone(), idx, description)
+                .await;
             response
-        },
+        }
         None => {
             eprintln!("❌ NO RULE MATCHED!");
             warn!("🔧 No mock rule matched generate request, returning default error");
+            state
+                .config
+                .lock()
+                .await
+                .record_harness_diagnostic(format!(
+                    "No mock rule matched a {:?} generate request (event_type={:?}, \
+                     instruction=\"{}\"). NetGet will report an LLM failure for this turn.",
+                    context.request_kind,
+                    context.event_type,
+                    context.instruction.chars().take(120).collect::<String>()
+                ))
+                .await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -448,34 +818,63 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
         .map(|m| m.content.as_str())
         .unwrap_or("");
 
-    let mut context = LlmContext::new(prompt.to_string());
+    // Classify on the template that produced this request, not on the wording
+    // of the message body. The system message carries the template's task text.
+    let template_text = request
+        .messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let request_kind = classify_request(&template_text, prompt);
 
-    // Try to extract event type from prompt
-    // First look for "Event ID:" format (preferred for mock testing)
-    if let Some(event_id_line) = prompt.lines().find(|line| line.contains("Event ID:")) {
-        if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
-            let event_id = event_id.trim();
-            if !event_id.is_empty() {
-                debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
-                context.event_type = Some(event_id.to_string());
-            }
-        }
-    } else if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
-        // Fallback: try to extract from "Event:" line (legacy format)
-        if let Some(event_type) = event_line.split("Event:").nth(1) {
-            let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
-            if !event_type.is_empty() {
-                debug!("🔧 Extracted event type from Event: '{}'", event_type);
-                context.event_type = Some(event_type.to_string());
-            }
-        }
+    // A scheduled task's user message is the fixed string "Execute the task.";
+    // everything identifying the run (the `Trigger: Scheduled task '<name>' …`
+    // block and the task instruction) lives in the system prompt. Match on
+    // that instead, or every task run looks identical.
+    if request_kind == RequestKind::ScheduledTask {
+        let mut context = LlmContext::new(template_text.clone()).with_request_kind(request_kind);
+        context.instruction = match template_text.rfind(TASK_TRIGGER_MARKER) {
+            Some(idx) => template_text[idx..].trim().to_string(),
+            None => template_text.clone(),
+        };
+        context.iteration = request
+            .messages
+            .iter()
+            .filter(|m| m.role == "assistant")
+            .count();
+        debug!(
+            "🔧 Scheduled task request, instruction from system prompt: '{}'",
+            context.instruction.chars().take(120).collect::<String>()
+        );
+        return context;
     }
 
-    // Try to extract instruction
-    // Look for "Your instruction:" or similar patterns
-    if let Some(instruction_line) = prompt.lines().find(|line| {
-        line.contains("Your instruction:") || line.contains("instruction:")
-    }) {
+    let mut context = LlmContext::new(prompt.to_string()).with_request_kind(request_kind);
+
+    // Only network-event requests carry an event type. Startup and
+    // documentation turns embed protocol docs full of `### Event: <id>`
+    // headings, which must never be mistaken for a live event.
+    if request_kind.carries_network_event() {
+        context.event_type = extract_event_type(prompt);
+    }
+
+    // For a user command there is nothing to guess: the latest user message
+    // *is* the instruction, verbatim. Line-sniffing here used to shred
+    // multi-line prompts down to their last line, so a rule written as
+    // `instruction contains "listen on port"` missed a prompt that opens with
+    // exactly that phrase.
+    if request_kind == RequestKind::UserInput {
+        context.instruction = prompt.trim().to_string();
+        debug!(
+            "🔧 Instruction = full user message ({} chars)",
+            context.instruction.len()
+        );
+    } else if let Some(instruction_line) = prompt
+        .lines()
+        .find(|line| line.contains("Your instruction:") || line.contains("instruction:"))
+    {
         if let Some(instruction) = instruction_line
             .split("instruction:")
             .nth(1)
@@ -509,7 +908,8 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
     }
 
     // Try to extract event data (JSON after "Context data:", "Event data:", or "Data:")
-    if let Some(data_start_idx) = prompt.find("Context data:")
+    if let Some(data_start_idx) = prompt
+        .find("Context data:")
         .or_else(|| prompt.find("Event data:"))
         .or_else(|| prompt.find("Data:"))
     {
@@ -521,7 +921,8 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
 
             // Try to parse as JSON using streaming parser (stops at first complete JSON value)
             use serde_json::Deserializer;
-            let mut deserializer = Deserializer::from_str(json_str).into_iter::<serde_json::Value>();
+            let mut deserializer =
+                Deserializer::from_str(json_str).into_iter::<serde_json::Value>();
             if let Some(Ok(json)) = deserializer.next() {
                 debug!("🔧 Successfully parsed event data: {}", json);
                 context.event_data = json;
@@ -541,42 +942,44 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
 
 /// Extract LLM context from a generate request prompt
 fn extract_context_from_prompt(prompt: &str) -> LlmContext {
-    let mut context = LlmContext::new(prompt.to_string());
+    // /api/generate collapses system prompt and trigger into one blob, so the
+    // template markers and the trigger live in the same string.
+    let request_kind = classify_request(prompt, prompt);
 
-    // Try to extract event type from prompt
-    // First look for "Event ID:" format (preferred for mock testing)
-    if let Some(event_id_line) = prompt.lines().find(|line| line.contains("Event ID:")) {
-        if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
-            let event_id = event_id.trim();
-            if !event_id.is_empty() {
-                debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
-                context.event_type = Some(event_id.to_string());
-            }
-        }
-    } else if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
-        // Fallback: try to extract from "Event:" line (legacy format)
-        if let Some(event_type) = event_line.split("Event:").nth(1) {
-            let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
-            if !event_type.is_empty() {
-                debug!("🔧 Extracted event type from Event: '{}'", event_type);
-                context.event_type = Some(event_type.to_string());
-            }
-        }
+    let mut context = LlmContext::new(prompt.to_string()).with_request_kind(request_kind);
+
+    if request_kind.carries_network_event() {
+        context.event_type = extract_event_type(prompt);
     }
 
     // Try to extract instruction - look for patterns
     // First, try to find the user input section at the end of the prompt
     // User input typically appears after system capabilities or markers like "## System Capabilities"
-    let has_user_message = if let Some(cap_idx) = prompt.find("## System Capabilities").or_else(|| prompt.find("# Current State")) {
+    let has_user_message = if let Some(cap_idx) = prompt
+        .find("## System Capabilities")
+        .or_else(|| prompt.find("# Current State"))
+    {
         // Extract everything after the capabilities section
         let after_cap = &prompt[cap_idx..];
 
         // Try to find the end of the capabilities section using various markers
         let end_marker_and_len = [
-            ("DataLink protocol unavailable", "DataLink protocol unavailable".len()),
-            ("- **Raw socket access**: ✓ Available", "- **Raw socket access**: ✓ Available".len()),
-            ("- **Raw socket access**: ✗ Unavailable", "- **Raw socket access**: ✗ Unavailable".len()),
-            ("- **Privileged ports (<1024)**: ✓ Available", "- **Privileged ports (<1024)**: ✓ Available".len()),
+            (
+                "DataLink protocol unavailable",
+                "DataLink protocol unavailable".len(),
+            ),
+            (
+                "- **Raw socket access**: ✓ Available",
+                "- **Raw socket access**: ✓ Available".len(),
+            ),
+            (
+                "- **Raw socket access**: ✗ Unavailable",
+                "- **Raw socket access**: ✗ Unavailable".len(),
+            ),
+            (
+                "- **Privileged ports (<1024)**: ✓ Available",
+                "- **Privileged ports (<1024)**: ✓ Available".len(),
+            ),
         ];
 
         let mut after_system = None;
@@ -600,8 +1003,10 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
                 .to_string();
 
             if !instruction_text.is_empty() {
-                debug!("🔧 Extracted instruction from end of prompt (first 200 chars): '{}'",
-                    &instruction_text[..instruction_text.len().min(200)]);
+                debug!(
+                    "🔧 Extracted instruction from end of prompt (first 200 chars): '{}'",
+                    &instruction_text[..instruction_text.len().min(200)]
+                );
                 context.instruction = instruction_text;
                 true
             } else {
@@ -619,7 +1024,10 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             if let Some(after_user) = user_line.split("[user]").nth(1) {
                 let instruction_trimmed = after_user.trim();
                 if !instruction_trimmed.is_empty() {
-                    debug!("🔧 Extracted instruction from [user] message: '{}'", instruction_trimmed);
+                    debug!(
+                        "🔧 Extracted instruction from [user] message: '{}'",
+                        instruction_trimmed
+                    );
                     context.instruction = instruction_trimmed.to_string();
                     true
                 } else {
@@ -635,9 +1043,10 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
 
     // If no [user] message found, try traditional instruction markers
     if !has_user_message {
-        if let Some(instruction_line) = prompt.lines().find(|line| {
-            line.contains("Your instruction:") || line.contains("instruction:")
-        }) {
+        if let Some(instruction_line) = prompt
+            .lines()
+            .find(|line| line.contains("Your instruction:") || line.contains("instruction:"))
+        {
             if let Some(instruction) = instruction_line
                 .split("instruction:")
                 .nth(1)
@@ -696,8 +1105,7 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
                             || lower.starts_with("open")
                             || lower.starts_with("run")
                             || lower.starts_with("spawn")
-                            || lower.starts_with("connect")
-                        )
+                            || lower.starts_with("connect"))
                     {
                         debug!("🔧 Extracted instruction (forward fallback): '{}'", trimmed);
                         context.instruction = trimmed.to_string();
@@ -709,7 +1117,8 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
     }
 
     // Try to extract event data
-    if let Some(data_start_idx) = prompt.find("Context data:")
+    if let Some(data_start_idx) = prompt
+        .find("Context data:")
         .or_else(|| prompt.find("Event data:"))
         .or_else(|| prompt.find("Data:"))
     {
@@ -717,7 +1126,8 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
         if let Some(json_start) = after_data.find('{') {
             let json_str = &after_data[json_start..];
             use serde_json::Deserializer;
-            let mut deserializer = Deserializer::from_str(json_str).into_iter::<serde_json::Value>();
+            let mut deserializer =
+                Deserializer::from_str(json_str).into_iter::<serde_json::Value>();
             if let Some(Ok(json)) = deserializer.next() {
                 debug!("🔧 Successfully parsed event data: {}", json);
                 context.event_data = json;

@@ -1,14 +1,14 @@
 // Core NetGet startup and parsing functionality
 
+use super::common::*;
+use super::mock_builder::MockLlmBuilder;
+use super::mock_config::MockLlmConfig;
 use netget::protocol::server_registry;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
-use super::common::*;
-use super::mock_builder::MockLlmBuilder;
-use super::mock_config::MockLlmConfig;
 
 /// Represents a running NetGet process with 0+ servers and 0+ clients
 pub struct NetGetInstance {
@@ -309,7 +309,10 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
             println!("🔧 Mock Ollama server started on {}", server.base_url());
             Some(server)
         } else {
-            println!("🔧 Using configured mock LLM responses ({} rules)", config.mock_config.as_ref().unwrap().rules.len());
+            println!(
+                "🔧 Using configured mock LLM responses ({} rules)",
+                config.mock_config.as_ref().unwrap().rules.len()
+            );
 
             // Start mock Ollama HTTP server with user-configured mocks
             let mock_config = config.mock_config.clone().unwrap();
@@ -407,8 +410,24 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     });
 
     // Wait for startup and parse both servers and clients
+    //
+    // On failure, prepend anything the mock harness noticed about how it
+    // answered the startup conversation. A misrouted mock rule otherwise
+    // surfaces only as an opaque "No servers or clients started".
     let (servers, clients) =
-        wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
+        match wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await {
+            Ok(result) => result,
+            Err(e) => {
+                let mock_report = match mock_ollama_server {
+                    Some(ref mock) => mock.harness_diagnostics_report().await,
+                    None => None,
+                };
+                return Err(match mock_report {
+                    Some(report) => format!("{}\n\n{}", report, e).into(),
+                    None => e,
+                });
+            }
+        };
 
     // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
     // Without this, the server will crash with "Broken pipe" when stdout buffer fills
@@ -645,10 +664,7 @@ async fn wait_for_netget_startup_with_capture(
                             .take_while(|c| c.is_ascii_digit())
                             .collect();
                         if let Ok(port) = port_str.parse::<u16>() {
-                            println!(
-                                "[DEBUG] Parsed listening confirmation: port={}",
-                                port
-                            );
+                            println!("[DEBUG] Parsed listening confirmation: port={}", port);
                             server_confirmations.insert(port.to_string());
 
                             // Update the most recent server with port 0
@@ -723,7 +739,11 @@ async fn wait_for_netget_startup_with_capture(
                                                         port
                                                     );
                                                     // Update the most recent server with port 0
-                                                    if let Some(server) = servers.iter_mut().rev().find(|s| s.port == 0) {
+                                                    if let Some(server) = servers
+                                                        .iter_mut()
+                                                        .rev()
+                                                        .find(|s| s.port == 0)
+                                                    {
                                                         println!(
                                                             "[DEBUG] Updating server #{} port from 0 to {}",
                                                             server.id, port
@@ -764,7 +784,8 @@ async fn wait_for_netget_startup_with_capture(
             return Err(format!(
                 "No servers or clients started in netget\n\nCaptured output:\n{}",
                 output_str
-            ).into());
+            )
+            .into());
         }
 
         let final_servers = servers;
@@ -861,21 +882,26 @@ impl NetGetInstance {
             }
         }
 
+        // Harness diagnostics are informational: they explain *why* counts are
+        // off, but on their own they do not fail a test that otherwise met its
+        // expectations.
+        let harness_report = mock_config.harness_diagnostics_report().await;
+
         if !errors.is_empty() {
             // Print detailed diagnostics
             eprintln!("\n❌ Mock verification failed:");
             for error in &errors {
                 eprintln!("  {}", error);
             }
+            if let Some(ref report) = harness_report {
+                eprintln!();
+                eprint!("{}", report);
+                errors.push(report.trim_end().to_string());
+            }
             eprintln!("\nAll LLM call history:");
             let history = mock_config.call_history.lock().await;
             for (idx, call) in history.iter().enumerate() {
-                eprintln!(
-                    "  Call #{}: {} -> matched rule #{}",
-                    idx + 1,
-                    call.context.event_type.as_deref().unwrap_or("(none)"),
-                    call.matched_rule_idx
-                );
+                eprintln!("  Call #{}: {}", idx + 1, call.describe());
             }
             eprintln!();
 
@@ -922,7 +948,12 @@ impl NetGetInstance {
 
     /// Wait for a log pattern to appear N times
     #[allow(dead_code)]
-    pub async fn wait_for_log_count(&self, pattern: &str, min_count: usize, timeout_secs: u64) -> E2EResult<()> {
+    pub async fn wait_for_log_count(
+        &self,
+        pattern: &str,
+        min_count: usize,
+        timeout_secs: u64,
+    ) -> E2EResult<()> {
         let start = std::time::Instant::now();
         let timeout_duration = Duration::from_secs(timeout_secs);
 
@@ -932,7 +963,10 @@ impl NetGetInstance {
                 let lines = self.output_lines.lock().await;
                 let count = lines.iter().filter(|line| line.contains(pattern)).count();
                 if count >= min_count {
-                    println!("[DEBUG] Found log pattern '{}' {} times (needed {})", pattern, count, min_count);
+                    println!(
+                        "[DEBUG] Found log pattern '{}' {} times (needed {})",
+                        pattern, count, min_count
+                    );
                     return Ok(());
                 }
             }
@@ -991,13 +1025,11 @@ impl NetGetInstance {
         self.stderr_reader_handle.abort();
 
         // Wait briefly for tasks to abort
-        let _ = tokio::time::timeout(
-            Duration::from_millis(100),
-            async {
-                let _ = (&mut self.stdout_reader_handle).await;
-                let _ = (&mut self.stderr_reader_handle).await;
-            }
-        ).await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), async {
+            let _ = (&mut self.stdout_reader_handle).await;
+            let _ = (&mut self.stderr_reader_handle).await;
+        })
+        .await;
 
         result
     }

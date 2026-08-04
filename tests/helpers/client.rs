@@ -1,11 +1,11 @@
 // Client-specific test helpers
 
-use std::time::Duration;
-use tokio::process::Child;
-use tokio::time::sleep;
 use super::common::*;
 use super::mock_config::MockLlmConfig;
 use super::netget::NetGetConfig;
+use std::time::Duration;
+use tokio::process::Child;
+use tokio::time::sleep;
 
 /// A running NetGet client process
 #[allow(dead_code)]
@@ -89,13 +89,11 @@ impl NetGetClient {
         self.stderr_reader_handle.abort();
 
         // Wait briefly for tasks to abort
-        let _ = tokio::time::timeout(
-            Duration::from_millis(100),
-            async {
-                let _ = (&mut self.stdout_reader_handle).await;
-                let _ = (&mut self.stderr_reader_handle).await;
-            }
-        ).await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), async {
+            let _ = (&mut self.stdout_reader_handle).await;
+            let _ = (&mut self.stderr_reader_handle).await;
+        })
+        .await;
 
         result
     }
@@ -180,21 +178,26 @@ impl NetGetClient {
             }
         }
 
+        // Harness diagnostics are informational: they explain *why* counts are
+        // off, but on their own they do not fail a test that otherwise met its
+        // expectations.
+        let harness_report = mock_config.harness_diagnostics_report().await;
+
         if !errors.is_empty() {
             // Print detailed diagnostics
             eprintln!("\n❌ Mock verification failed:");
             for error in &errors {
                 eprintln!("  {}", error);
             }
+            if let Some(ref report) = harness_report {
+                eprintln!();
+                eprint!("{}", report);
+                errors.push(report.trim_end().to_string());
+            }
             eprintln!("\nAll LLM call history:");
             let history = mock_config.call_history.lock().await;
             for (idx, call) in history.iter().enumerate() {
-                eprintln!(
-                    "  Call #{}: {} -> matched rule #{}",
-                    idx + 1,
-                    call.context.event_type.as_deref().unwrap_or("(none)"),
-                    call.matched_rule_idx
-                );
+                eprintln!("  Call #{}: {}", idx + 1, call.describe());
             }
 
             return Err(format!("Mock verification failed: {} errors", errors.len()).into());
@@ -219,7 +222,14 @@ impl NetGetClient {
                     "Timeout waiting for pattern '{}' after {:?}.\nLast 20 lines:\n{}",
                     pattern,
                     timeout,
-                    lines.iter().rev().take(20).rev().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
+                    lines
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .rev()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 )
                 .into());
             }
@@ -242,11 +252,9 @@ impl NetGetClient {
                 }
             }
             if start.elapsed() >= timeout {
-                return Err(format!(
-                    "Timeout waiting for regex pattern after {:?}",
-                    timeout
-                )
-                .into());
+                return Err(
+                    format!("Timeout waiting for regex pattern after {:?}", timeout).into(),
+                );
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

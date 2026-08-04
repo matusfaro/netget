@@ -92,13 +92,11 @@ impl NetGetServer {
         self.stderr_reader_handle.abort();
 
         // Wait briefly for tasks to abort
-        let _ = tokio::time::timeout(
-            Duration::from_millis(100),
-            async {
-                let _ = (&mut self.stdout_reader_handle).await;
-                let _ = (&mut self.stderr_reader_handle).await;
-            }
-        ).await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), async {
+            let _ = (&mut self.stdout_reader_handle).await;
+            let _ = (&mut self.stderr_reader_handle).await;
+        })
+        .await;
 
         result
     }
@@ -164,7 +162,12 @@ impl NetGetServer {
 
     /// Wait for a log pattern to appear N times
     #[allow(dead_code)]
-    pub async fn wait_for_log_count(&self, pattern: &str, min_count: usize, timeout_secs: u64) -> E2EResult<()> {
+    pub async fn wait_for_log_count(
+        &self,
+        pattern: &str,
+        min_count: usize,
+        timeout_secs: u64,
+    ) -> E2EResult<()> {
         let start = std::time::Instant::now();
         let timeout_duration = Duration::from_secs(timeout_secs);
 
@@ -174,7 +177,10 @@ impl NetGetServer {
                 let lines = self.output_lines.lock().await;
                 let count = lines.iter().filter(|line| line.contains(pattern)).count();
                 if count >= min_count {
-                    println!("[DEBUG] Found log pattern '{}' {} times (needed {})", pattern, count, min_count);
+                    println!(
+                        "[DEBUG] Found log pattern '{}' {} times (needed {})",
+                        pattern, count, min_count
+                    );
                     return Ok(());
                 }
             }
@@ -271,21 +277,26 @@ impl NetGetServer {
             }
         }
 
+        // Harness diagnostics are informational: they explain *why* counts are
+        // off, but on their own they do not fail a test that otherwise met its
+        // expectations.
+        let harness_report = mock_config.harness_diagnostics_report().await;
+
         if !errors.is_empty() {
             // Print detailed diagnostics
             eprintln!("\n❌ Mock verification failed:");
             for error in &errors {
                 eprintln!("  {}", error);
             }
+            if let Some(ref report) = harness_report {
+                eprintln!();
+                eprint!("{}", report);
+                errors.push(report.trim_end().to_string());
+            }
             eprintln!("\nAll LLM call history:");
             let history = mock_config.call_history.lock().await;
             for (idx, call) in history.iter().enumerate() {
-                eprintln!(
-                    "  Call #{}: {} -> matched rule #{}",
-                    idx + 1,
-                    call.context.event_type.as_deref().unwrap_or("(none)"),
-                    call.matched_rule_idx
-                );
+                eprintln!("  Call #{}: {}", idx + 1, call.describe());
             }
             eprintln!();
 
@@ -399,7 +410,6 @@ impl Drop for NetGetServer {
 
 /// Configuration for a server test (re-export for backward compatibility)
 pub use super::netget::NetGetConfig as ServerConfig;
-
 
 /// Start a NetGet server with the given configuration (backward compatible wrapper)
 /// Asserts exactly 1 server and 0 clients were started
