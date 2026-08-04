@@ -49,8 +49,8 @@ pub async fn start_server_by_id(
 
     // Get protocol implementation from registry
     let protocol = crate::protocol::server_registry::registry()
-        .get(&protocol_name)
-        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol_name))?;
+        .resolve(&protocol_name)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Check privilege requirements before spawning
     let metadata = protocol.metadata();
@@ -239,14 +239,13 @@ pub async fn start_server_from_action(
 ) -> Result<ServerId> {
     use crate::state::server::ServerStatus;
 
-    // Get protocol from registry (supports case-insensitive lookup via parse_from_str)
+    // Resolve the protocol from the registry. `resolve()` is case-insensitive and
+    // distinguishes "compiled out of this build" from "no such protocol", with a
+    // did-you-mean suggestion for the latter.
     let registry = crate::protocol::server_registry::registry();
-    let protocol_name = registry
-        .parse_from_str(protocol)
-        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol))?;
     let protocol_impl = registry
-        .get(&protocol_name)
-        .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol))?;
+        .resolve(protocol)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // === send_first ===
     //

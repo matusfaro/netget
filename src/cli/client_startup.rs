@@ -39,6 +39,23 @@ pub fn resolve_client_protocol(protocol: &str) -> Option<String> {
         .or_else(|| registry.parse_from_str(protocol))
 }
 
+/// Build the error for a client protocol name that `resolve_client_protocol`
+/// could not map to a compiled-in protocol.
+///
+/// Defers to `ClientRegistry::resolve()`, which distinguishes "exists but is not
+/// compiled into this build (rebuild with --features X)" from "no such protocol"
+/// and offers a did-you-mean suggestion. `resolve_client_protocol` stays the
+/// lookup, because it also matches spellings `resolve()` does not; this only
+/// supplies the diagnostic once that lookup has already failed.
+fn unknown_client_protocol_error(protocol: &str) -> anyhow::Error {
+    match crate::protocol::CLIENT_REGISTRY.resolve(protocol) {
+        Err(e) => anyhow::anyhow!("{e}"),
+        // resolve() succeeded where resolve_client_protocol() did not; keep a
+        // sensible message rather than claiming success.
+        Ok(_) => anyhow::anyhow!("Unknown client protocol: {}", protocol),
+    }
+}
+
 /// Start a specific client by ID
 pub async fn start_client_by_id(
     state: &AppState,
@@ -70,9 +87,12 @@ pub async fn start_client_by_id(
     use crate::state::client::ClientStatus;
 
     // Get protocol implementation from registry (accepting any casing)
-    let protocol = resolve_client_protocol(&protocol_name)
+    let protocol = match resolve_client_protocol(&protocol_name)
         .and_then(|name| crate::protocol::CLIENT_REGISTRY.get(&name))
-        .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol_name))?;
+    {
+        Some(p) => p,
+        None => return Err(unknown_client_protocol_error(&protocol_name).into()),
+    };
 
     // Build type-safe startup params if provided
     //
@@ -165,11 +185,14 @@ pub async fn start_client_from_action(
     // ("TCP", "Redis", …), so resolve the caller's spelling to the canonical name
     // first — the same normalization `start_server_from_action` does — and store
     // that canonical name on the instance so later lookups by protocol_name work.
-    let protocol = resolve_client_protocol(protocol)
-        .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
-    let protocol_impl = crate::protocol::CLIENT_REGISTRY
-        .get(&protocol)
-        .ok_or_else(|| anyhow::anyhow!("Unknown client protocol: {}", protocol))?;
+    let protocol = match resolve_client_protocol(protocol) {
+        Some(name) => name,
+        None => return Err(unknown_client_protocol_error(protocol)),
+    };
+    let protocol_impl = match crate::protocol::CLIENT_REGISTRY.get(&protocol) {
+        Some(p) => p,
+        None => return Err(unknown_client_protocol_error(&protocol)),
+    };
 
     // === Validate startup params BEFORE registering the client ===
     //
