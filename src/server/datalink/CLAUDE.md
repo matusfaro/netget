@@ -14,7 +14,7 @@ analysis, and honeypot operations at the lowest network level.
 
 ### Core Packet Capture
 
-- **pcap v1.1** - Rust bindings to libpcap
+- **pcap v2.2** - Rust bindings to libpcap
     - Low-level packet capture at data link layer
     - Promiscuous mode support (capture all packets on interface)
     - BPF (Berkeley Packet Filter) for packet filtering
@@ -254,13 +254,28 @@ DataLink has no connection concept:
 
 ### 1. Requires Root/Admin Privileges
 
-**Why**: Promiscuous mode requires raw socket access
+**Why**: libpcap needs a capture handle on the interface. One code path on all platforms
+(`pcap::Capture::open()`), but different requirements:
 
-**Workaround**:
+- **Linux**: root, or `sudo setcap cap_net_raw,cap_net_admin+ep /path/to/netget`.
+- **macOS / BSD**: root, **or** read/write access to `/dev/bpf*`. Stock macOS ships those as
+  `crw------- root:wheel`, so an unprivileged user fails even when in the `access_bpf` group
+  (Wireshark's *ChmodBPF* daemon is what usually loosens them). `pcap::Device::list()` succeeds
+  without privileges, so enumeration says nothing about whether capture will work.
+- **Windows**: `datalink` is not built into the `dist-windows` feature set.
 
-- Linux: Run as root or use `sudo setcap cap_net_raw+ep /path/to/netget`
-- macOS: Run as root or use `sudo`
-- Windows: Run as Administrator
+**Failure mode**: startup is *not* fire-and-forget. `spawn_with_llm` awaits a `oneshot` readiness
+signal from the blocking pcap task, so a permission failure, an unknown device, or an invalid BPF
+filter all propagate out of `Server::spawn()` and land in `ServerStatus::Error(..)`. An
+unprivileged MCP caller sees:
+
+```
+Failed to start server: failed to open pcap capture on 'en0' (needs root, or read access to
+/dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)
+```
+
+**Default interface**: `default_binding()` resolves to `lo` on Linux/Windows, `lo0` on macOS/BSD
+(`DEFAULT_LOOPBACK_INTERFACE` in `actions.rs`).
 
 **Test Impact**: E2E tests may fail if not run with privileges.
 

@@ -16,7 +16,7 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
+use crate::{console_debug, console_error, console_info, console_trace};
 use actions::{DataLinkProtocol, DATALINK_PACKET_CAPTURED_EVENT};
 
 /// Get LLM context and output format instructions for DataLink stack
@@ -61,42 +61,63 @@ impl DataLinkServer {
         filter: Option<String>,
         server_id: crate::state::ServerId,
     ) -> Result<String> {
-        info!("Starting packet capture on interface: {}", interface);
+        console_info!(
+            status_tx,
+            "Starting packet capture on interface: {}",
+            interface
+        );
+
+        // Retained by this function; the capture task takes ownership of `status_tx`.
+        let status_tx_ready = status_tx.clone();
 
         let protocol = Arc::new(DataLinkProtocol::new());
 
-        // Datalink/pcap is blocking, so we run it in a blocking task
+        // Datalink/pcap is blocking, so we run it in a blocking task.
+        //
+        // Opening the pcap handle needs privileges (root, or read access to /dev/bpf* on
+        // macOS/BSD, or CAP_NET_RAW on Linux) and a valid BPF filter. Both are reported back
+        // over a oneshot so `spawn_with_llm` can return Err and the server is marked Error,
+        // rather than reporting Running while capturing nothing.
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+
         let interface_clone = interface.clone();
         let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
-            // Find device
-            let device = match Self::find_device(&interface_clone) {
-                Ok(d) => d,
+            let open_capture = || -> Result<pcap::Capture<pcap::Active>> {
+                let device = Self::find_device(&interface_clone)
+                    .with_context(|| format!("no such capture device '{}'", interface_clone))?;
+
+                let mut cap = Capture::from_device(device)
+                    .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
+                    .and_then(|c| c.open())
+                    .with_context(|| {
+                        format!(
+                            "failed to open pcap capture on '{}' (needs root, or \
+                             read access to /dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)",
+                            interface_clone
+                        )
+                    })?;
+
+                // Apply filter if provided
+                if let Some(ref filter_str) = filter {
+                    cap.filter(filter_str, true)
+                        .with_context(|| format!("invalid BPF filter '{}'", filter_str))?;
+                }
+
+                Ok(cap)
+            };
+
+            let mut cap = match open_capture() {
+                Ok(cap) => {
+                    let _ = ready_tx.send(Ok(()));
+                    cap
+                }
                 Err(e) => {
-                    error!("Failed to find device: {}", e);
+                    console_error!(status_tx, "DataLink capture startup failed: {:#}", e);
+                    let _ = ready_tx.send(Err(e));
                     return;
                 }
             };
-
-            // Open capture
-            let mut cap = match Capture::from_device(device)
-                .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
-                .and_then(|c| c.open())
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to open capture: {}", e);
-                    return;
-                }
-            };
-
-            // Apply filter if provided
-            if let Some(ref filter_str) = filter {
-                if let Err(e) = cap.filter(filter_str, true) {
-                    error!("Failed to apply filter: {}", e);
-                    return;
-                }
-            }
 
             let runtime = tokio::runtime::Handle::current();
 
@@ -179,12 +200,26 @@ impl DataLinkServer {
                         continue;
                     }
                     Err(e) => {
-                        error!("Packet capture error: {}", e);
+                        console_error!(status_tx, "Packet capture error: {}", e);
                         break;
                     }
                 }
             }
         });
+
+        // Wait for the blocking task to report whether the capture actually came up.
+        match ready_rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "DataLink capture task on '{}' exited before signalling readiness",
+                    interface
+                ))
+            }
+        }
+
+        console_info!(status_tx_ready, "DataLink capture active on {}", interface);
 
         Ok(interface)
     }
