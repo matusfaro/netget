@@ -1,235 +1,164 @@
 # XML-RPC Server Implementation
 
-## Overview
+XML-RPC over HTTP POST. The LLM (or a script/static handler) implements every method;
+there is no method registry and no response cache in Rust.
 
-XML-RPC server over HTTP POST where the LLM controls all RPC method execution. Supports standard XML-RPC types (int,
-boolean, string, double, dateTime, base64, array, struct), introspection methods, and fault responses.
+**State**: Experimental — LLM-authored, not human-reviewed. The parser and the fault
+serializer were rewritten and verified with `curl`.
+**Port**: any (no default privileged port). **Stack**: `ETH>IP>TCP>HTTP>XMLRPC`.
+**Spec**: http://xmlrpc.com/spec.md
 
-## Protocol Version
+## Library choices
 
-- **XML-RPC**: Specification from http://xmlrpc.com/spec.md
-- **Transport**: HTTP/1.1 POST with XML request/response bodies
-- **Content-Type**: `text/xml`
+- **quick-xml** v0.37 — parsing and writing. Note: it does **not** expand DTD entities,
+  so billion-laughs and XXE are not reachable (both return a `-32700` fault).
+- **hyper** v1 — HTTP/1.1
+- **base64** — `<base64>` decode/encode
 
-## Library Choices
+## What the model sees
 
-### Core Dependencies
+**Event**: `xmlrpc_method_call`, one per request.
 
-- **quick-xml** v0.36 - Fast XML parsing and writing
-    - Chosen for: Performance, low memory usage, streaming support
-    - Used for: Parsing `<methodCall>` and generating `<methodResponse>`
-- **hyper** v1 - HTTP/1.1 server
-- **base64** - Base64 encoding for `<base64>` type
+| Field | Notes |
+|---|---|
+| `method_name` | non-empty; a request without one is rejected before any model call |
+| `params` | array of parameters, **typed** |
 
-### Why Manual XML Parsing?
+Type mapping into event JSON:
 
-- XML-RPC has simple, well-defined structure
-- quick-xml provides full control over parsing
-- No comprehensive XML-RPC server library for Rust exists
+| XML-RPC | Event JSON |
+|---|---|
+| `<int>` / `<i4>` | number (i32) |
+| `<i8>` | number (i64) |
+| `<boolean>` | `true` / `false` |
+| `<string>`, or untyped text in `<value>` | string |
+| `<double>` | number (non-finite is rejected) |
+| `<dateTime.iso8601>` | string, unvalidated |
+| `<base64>` | `{"xmlrpc_type":"base64","byte_length":N,"text":<string or null>}` |
+| `<array>` | array |
+| `<struct>` | object |
+| `<nil/>` | `null` |
 
-## Architecture Decisions
+`<base64>` is deliberately **not** handed over as a base64 string: the project rule
+forbids encoded blobs in event data, since a model cannot usefully read or write them.
 
-### LLM Control Points
+### The parser was rewritten
 
-**Complete Method Implementation** - LLM handles all method logic:
+Everything below was broken and is fixed; each is verified with `curl` against a static
+handler that echoes `{{event.params}}`:
 
-1. **Parse**: Extract `methodName` and `params` from XML
-2. **LLM Call**: Send method details to LLM as JSON event
-3. **Generate**: Convert LLM response to XML `<methodResponse>`
+| Input | Was | Now |
+|---|---|---|
+| `add(<int>5</int>, <int>3</int>)` | `["5","3"]` | `[5,3]` |
+| `[<int>1</int>,<int>2</int>,<int>3</int>]` | `[[3]]` — only the last element, the rest leaking into the next parameter | `[[1,2,3]]` |
+| `f(<string></string>, <int>7</int>)` | `[7]` — the empty parameter vanished, shifting positions | `["",7]` |
+| `<html><body>hi</body></html>` | method `""`, 0 params, one wasted model call | `-32700` fault |
+| `<methodCall><methodName>f</methodName>` (truncated) | method `f`, treated as complete | `-32700` fault |
 
-**Action-Based Responses**:
+The old parser pushed `XmlRpcValue::String(text)` for every text node and never looked at
+the type element, so six of the ten `XmlRpcValue` variants were unreachable on input.
+`Int`, `I8`, `Boolean`, `Double`, `DateTime` and `Base64` now all decode, and a malformed
+one (`<int>abc</int>`) is a fault rather than a silent string.
 
-```json
-{
-  "actions": [
-    {
-      "type": "xmlrpc_success",
-      "value": {"type": "int", "value": 8}
-    }
-  ]
-}
-```
+Nesting is capped at `MAX_VALUE_DEPTH` (64) and the request body at
+`MAX_REQUEST_BODY_BYTES` (4 MiB) — neither had a limit.
 
-Or for faults:
+## Actions
 
-```json
-{
-  "actions": [
-    {
-      "type": "xmlrpc_fault",
-      "faultCode": -32601,
-      "faultString": "Method not found"
-    }
-  ]
-}
-```
+All sync; there are no async actions (XML-RPC is strictly request/response).
 
-### Type System
+| Action | Parameters |
+|---|---|
+| `xmlrpc_success_response` | `value_type` (required: `int`/`i4`, `i8`, `boolean`, `string`, `double`, `array`, `struct`, `nil`), `value` (required) |
+| `xmlrpc_fault_response` | `fault_code` (int), `fault_string` (required) |
+| `xmlrpc_list_methods_response` | `methods` (array of strings) |
+| `xmlrpc_method_help_response` | `help_text` (string) |
+| `xmlrpc_method_signature_response` | `signatures` (array of arrays of type-name strings) |
 
-**XML-RPC Types Supported**:
+Every declared field is read by the executor; there are no dead actions and no
+undeclared executor branches. The last three are convenience wrappers over
+`xmlrpc_success_response` for the `system.*` introspection methods.
 
-- `<int>` / `<i4>` - 32-bit integer
-- `<i8>` - 64-bit integer (extension)
-- `<boolean>` - 0 or 1
-- `<string>` - UTF-8 text
-- `<double>` - Floating point
-- `<dateTime.iso8601>` - ISO 8601 timestamp
-- `<base64>` - Binary data (base64 encoded)
-- `<array>` - Ordered list
-- `<struct>` - Key-value map
-- `<nil>` - Null value (extension)
+Executor behaviour that changed:
 
-**Conversion to JSON for LLM**:
+- `value_type: "int"` with a value outside i32 is now an error naming `i8`, instead of
+  silently wrapping (5000000000 used to go out as 705032704). Same for `fault_code`.
+- non-finite `double` is rejected instead of emitting `NaN`/`inf`, which is not a valid
+  `<double>`.
+- `methods` and `signatures` entries of the wrong shape are now errors. They used to be
+  dropped by `filter_map`, so a flat `["int","int"]` signature produced an empty array
+  with no error, and the log reported the pre-filter count.
 
-- XML types converted to JSON for LLM interpretation
-- LLM returns JSON, converted back to XML
+## Response generation
 
-### Introspection Support
+- Success responses go through `quick_xml::Writer`, which escapes text.
+- **Faults are now escaped too.** `generate_fault` interpolated its message raw with
+  `format!`, so a `fault_string` containing `<`, `>` or `&` — "Unknown method: `<foo>`" is
+  entirely plausible from a model — produced a document no client could parse. The same
+  path carries `quick-xml` and LLM error text. Verified: a fault quoting `a<b&c` now
+  parses as valid XML.
+- The first `ActionResult::Output` from any action is sent, unwrapping
+  `ActionResult::Multiple` (a nested `Output` used to fall through to "no response
+  generated"). If nothing produced XML, the client gets a `-32603` fault rather than an
+  empty body.
+- `Content-Type` is `text/xml; charset=utf-8`. Without the charset, RFC 3023 makes
+  `text/xml` default to US-ASCII, so strict clients mis-decoded non-ASCII strings.
 
-**Standard Methods** (LLM can implement):
+## Architecture
 
-- `system.listMethods` - List available methods
-- `system.methodHelp` - Get method documentation
-- `system.methodSignature` - Get method signature
-- `system.multicall` - Batch method calls (extension)
+- `spawn_with_llm_actions` binds with `?` and registers the accept-loop `JoinHandle`
+  exactly once via `AppState::register_server_task`.
+- One tokio task per TCP connection; hyper handles framing, `Content-Length` and
+  keep-alive. `service_fn` guarantees exactly one response per request on the right
+  connection, so correlation is structural — there is no request id to echo.
+- Connections are marked closed on exit.
 
-### Connection Management
+## Not implemented / known gaps
 
-- Each HTTP connection spawned as tokio task
-- Connections tracked in `ProtocolConnectionInfo::XmlRpc` with `recent_methods` Vec
-- HTTP/1.1 handled by hyper
+- **`system.multicall`** — no action, no handling. Earlier docs claimed support.
+- **No authentication, no rate limiting, no path routing** — every path is an endpoint.
+- **Non-POST** returns HTTP 200 with a fault body rather than `405`, so the port looks
+  like a working web endpoint to a scanner. (`tests/server/xmlrpc/test.rs` asserts the
+  200 behaviour, so changing it means changing that test.)
+- **No `Content-Type` validation** on requests.
+- **No per-request timeout** — a slow body holds a connection task.
+- **Request charset** — the body is read as UTF-8 (`from_utf8_lossy`), so a legal
+  `encoding="ISO-8859-1"` document is mangled.
+- **Connection byte/packet counters are never updated**, so stats read zero.
+- Per-connection tasks are untracked, so `stop_server` does not abort in-flight requests.
 
-## Limitations
+## Example
 
-### Not Implemented
-
-- **Transport negotiation** - Only HTTP POST supported
-- **Authentication** - No auth layer
-- **Compression** - No gzip support
-- **Custom extensions** - Only standard + nil/i8 extensions
-
-### Type Limitations
-
-- **Date parsing** - Accepts ISO 8601 strings, no validation
-- **Number precision** - double may lose precision
-- **Struct key ordering** - Not preserved
-
-### Performance
-
-- **XML parsing overhead** - Slower than JSON
-- **Manual type conversion** - Extra overhead vs. binary protocols
-
-## Example Prompts and Responses
-
-### Startup
-
-```
-listen on port 8080 via xmlrpc stack.
-
-Implement these methods:
-- add(a int, b int) -> int: Return sum of a and b
-- greet(name string) -> string: Return "Hello, {name}!"
-- system.listMethods() -> array: Return ["add", "greet", "system.listMethods"]
-
-For unknown methods, return fault code -32601 with message "Method not found".
-```
-
-### Network Event (Method Call)
-
-**Received XML**:
-
-```xml
-<?xml version="1.0"?>
-<methodCall>
-  <methodName>add</methodName>
-  <params>
-    <param><value><int>5</int></value></param>
-    <param><value><int>3</int></value></param>
-  </params>
-</methodCall>
-```
-
-**Converted to JSON for LLM**:
+Static handler, no model call:
 
 ```json
-{
-  "event_type": "xmlrpc_method_call",
-  "method_name": "add",
-  "params": [5, 3]
-}
+{"type": "open_server", "port": 8080, "base_stack": "xmlrpc",
+ "event_handlers": [{"event_pattern": "xmlrpc_method_call",
+   "handler": {"type": "static", "actions": [
+     {"type": "xmlrpc_success_response", "value_type": "string", "value": "pong"}]}}]}
 ```
 
-**LLM Response**:
+LLM mode:
 
-```json
-{
-  "actions": [
-    {
-      "type": "xmlrpc_success",
-      "value": 8
-    }
-  ]
-}
+```
+listen on port 8080 via xmlrpc.
+Implement add(a,b) -> int and greet(name) -> string.
+For anything else return fault -32601 "Method not found".
 ```
 
-**Sent to Client**:
+Because parameters now arrive typed, a script handler can do arithmetic directly:
 
-```xml
-<?xml version="1.0"?>
-<methodResponse>
-  <params>
-    <param><value><int>8</int></value></param>
-  </params>
-</methodResponse>
+```python
+respond([{'type': 'xmlrpc_success_response', 'value_type': 'int',
+          'value': event['params'][0] + event['params'][1]}])
 ```
 
-### Fault Response
-
-**LLM Response**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "xmlrpc_fault",
-      "faultCode": -32601,
-      "faultString": "Method not found"
-    }
-  ]
-}
-```
-
-**Sent to Client**:
-
-```xml
-<?xml version="1.0"?>
-<methodResponse>
-  <fault>
-    <value>
-      <struct>
-        <member>
-          <name>faultCode</name>
-          <value><int>-32601</int></value>
-        </member>
-        <member>
-          <name>faultString</name>
-          <value><string>Method not found</string></value>
-        </member>
-      </struct>
-    </value>
-  </fault>
-</methodResponse>
-```
+That script was shipped as the protocol's script-mode startup example while the parser
+was still producing strings, so it concatenated `"5"+"3"` into `"53"` and then failed the
+integer conversion, returning `-32603`.
 
 ## References
 
 - [XML-RPC Specification](http://xmlrpc.com/spec.md)
-- [quick-xml Documentation](https://docs.rs/quick-xml/)
-
-## Key Design Principles
-
-1. **Spec Compliance** - Follows XML-RPC specification exactly
-2. **Type Safety** - Validates and converts all XML-RPC types
-3. **Introspection** - Supports standard introspection methods
-4. **Fault Handling** - Uses XML-RPC fault structure for errors
-5. **LLM Control** - All method logic implemented by LLM
+- [quick-xml](https://docs.rs/quick-xml/)
+- Testing notes: `tests/server/xmlrpc/CLAUDE.md`

@@ -39,7 +39,17 @@ impl XmlRpcProtocol {
         // Convert JSON value to XmlRpcValue
         let xmlrpc_value = match value_type {
             "int" | "i4" => {
-                let i = value.as_i64().context("Invalid integer value")? as i32;
+                // Range-checked, not cast: `as i32` silently wrapped, so 5000000000
+                // went on the wire as 705032704.
+                let i = value
+                    .as_i64()
+                    .context("value must be an integer for value_type 'int'")?;
+                let i = i32::try_from(i).map_err(|_| {
+                    anyhow::anyhow!(
+                        "{} does not fit in an XML-RPC <int> (-2147483648..2147483647); use value_type 'i8'",
+                        i
+                    )
+                })?;
                 XmlRpcValue::Int(i)
             }
             "i8" => {
@@ -56,6 +66,10 @@ impl XmlRpcProtocol {
             }
             "double" => {
                 let d = value.as_f64().context("Invalid double value")?;
+                if !d.is_finite() {
+                    // NaN/inf render as "NaN"/"inf", which is not valid <double>.
+                    return Err(anyhow::anyhow!("double value must be finite"));
+                }
                 XmlRpcValue::Double(d)
             }
             "array" => {
@@ -85,10 +99,16 @@ impl XmlRpcProtocol {
     }
 
     fn execute_fault_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let code = action
+        let code_i64 = action
             .get("fault_code")
             .and_then(|v| v.as_i64())
-            .unwrap_or(-32603) as i32;
+            .unwrap_or(-32603);
+        let code = i32::try_from(code_i64).map_err(|_| {
+            anyhow::anyhow!(
+                "fault_code {} does not fit in an XML-RPC <int>",
+                code_i64
+            )
+        })?;
 
         let message = action
             .get("fault_string")
@@ -107,18 +127,24 @@ impl XmlRpcProtocol {
             .and_then(|v| v.as_array())
             .context("Missing 'methods' parameter")?;
 
+        // Non-string entries used to be dropped silently while the log still
+        // reported methods.len(), so the log disagreed with the wire.
         let method_list: Vec<XmlRpcValue> = methods
             .iter()
-            .filter_map(|v| v.as_str())
-            .map(|s| XmlRpcValue::String(s.to_string()))
-            .collect();
+            .map(|v| {
+                v.as_str()
+                    .map(|s| XmlRpcValue::String(s.to_string()))
+                    .context("every entry of 'methods' must be a method-name string")
+            })
+            .collect::<Result<Vec<_>>>()?;
 
+        let method_count = method_list.len();
         let response_value = XmlRpcValue::Array(method_list);
         let xml = generate_success_response(&response_value);
 
         debug!(
             "XML-RPC system.listMethods response ({} methods)",
-            methods.len()
+            method_count
         );
         Ok(ActionResult::Output(xml.as_bytes().to_vec()))
     }
@@ -143,18 +169,26 @@ impl XmlRpcProtocol {
             .context("Missing 'signatures' parameter")?;
 
         // Convert signatures array to XML-RPC array of arrays
+        // A flat list like ["int","int"] used to produce an empty result with no
+        // error, because every non-array entry was filtered out.
         let sig_list: Vec<XmlRpcValue> = signatures
             .iter()
-            .filter_map(|v| v.as_array())
-            .map(|arr| {
+            .map(|v| {
+                let arr = v.as_array().context(
+                    "each entry of 'signatures' must itself be an array of type names, \
+                     starting with the return type",
+                )?;
                 let types: Vec<XmlRpcValue> = arr
                     .iter()
-                    .filter_map(|t| t.as_str())
-                    .map(|s| XmlRpcValue::String(s.to_string()))
-                    .collect();
-                XmlRpcValue::Array(types)
+                    .map(|t| {
+                        t.as_str()
+                            .map(|s| XmlRpcValue::String(s.to_string()))
+                            .context("signature type names must be strings")
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(XmlRpcValue::Array(types))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let response_value = XmlRpcValue::Array(sig_list);
         let xml = generate_success_response(&response_value);
@@ -232,10 +266,18 @@ impl Protocol for XmlRpcProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual XML-RPC parsing")
-            .llm_control("Method responses")
-            .e2e_testing("XML-RPC client libs")
-            .notes("Legacy RPC format")
+            .implementation("Hand-written XML-RPC codec over HTTP POST (quick-xml, hyper 1)")
+            .llm_control("Every method call: a typed return value or a fault code/string")
+            .e2e_testing("curl and mocked in-process HTTP")
+            .notes(
+                "Parameters reach the model with their XML-RPC types: <int>5</int> is the \
+                 number 5, not \"5\". <base64> is reported as a structural description, not \
+                 an encoded blob. Faults are XML-escaped, so a fault_string containing < or \
+                 & is still valid XML. system.multicall is not implemented. Any path is \
+                 accepted; there is no auth, no rate limiting, and non-POST returns a fault \
+                 body with HTTP 200 rather than 405. Request bodies are capped at 4 MiB and \
+                 value nesting at 64 levels.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -531,10 +573,15 @@ fn xmlrpc_value_to_json(value: &XmlRpcValue) -> serde_json::Value {
         XmlRpcValue::String(s) => json!(s),
         XmlRpcValue::Double(d) => json!(d),
         XmlRpcValue::DateTime(dt) => json!(dt),
-        XmlRpcValue::Base64(bytes) => {
-            use base64::Engine;
-            json!(base64::engine::general_purpose::STANDARD.encode(bytes))
-        }
+        // Never hand the model a base64 blob (project rule: no raw bytes or
+        // encoded payloads in event data). Report it structurally, with the text
+        // only when the bytes happen to be UTF-8. This path is newly reachable:
+        // before the parser was fixed, <base64> was decoded as a plain string.
+        XmlRpcValue::Base64(bytes) => json!({
+            "xmlrpc_type": "base64",
+            "byte_length": bytes.len(),
+            "text": std::str::from_utf8(bytes).ok(),
+        }),
         XmlRpcValue::Array(arr) => {
             let items: Vec<serde_json::Value> = arr.iter().map(xmlrpc_value_to_json).collect();
             json!(items)

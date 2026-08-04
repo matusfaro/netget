@@ -13,7 +13,7 @@
 
 pub mod actions;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response};
@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::console_error;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
@@ -33,9 +34,13 @@ use crate::state::app_state::AppState;
 use crate::state::server::{
     ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo, ServerId,
 };
-use crate::console_error;
 
 pub use actions::XmlRpcProtocol;
+
+/// Largest request body accepted, in bytes. hyper imposes no limit of its own, and
+/// the body is buffered whole, copied into a `String` and traced in full.
+#[cfg(feature = "xmlrpc")]
+const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// XML-RPC server that handles RPC method calls with LLM
 pub struct XmlRpcServer;
@@ -170,12 +175,13 @@ async fn handle_xmlrpc_request(
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<XmlRpcProtocol>,
 ) -> Result<Response<Full<Bytes>>> {
-    // Collect request body
+    // Collect request body, capped: hyper imposes no limit, and the body was
+    // buffered whole, copied into a String and then traced in full.
     let (parts, body) = req.into_parts();
-    let body_bytes = body
+    let body_bytes = http_body_util::Limited::new(body, MAX_REQUEST_BODY_BYTES)
         .collect()
         .await
-        .context("Failed to read request body")?
+        .map_err(|e| anyhow::anyhow!("Failed to read request body: {}", e))?
         .to_bytes();
 
     let body_str = String::from_utf8_lossy(&body_bytes);
@@ -211,7 +217,7 @@ async fn handle_xmlrpc_request(
         ));
         return Ok(Response::builder()
             .status(200)
-            .header("Content-Type", "text/xml")
+            .header("Content-Type", "text/xml; charset=utf-8")
             .body(Full::new(Bytes::from(fault_xml)))
             .unwrap());
     }
@@ -224,7 +230,7 @@ async fn handle_xmlrpc_request(
             let fault_xml = generate_fault(-32700, &format!("Parse error: {}", e));
             return Ok(Response::builder()
                 .status(200)
-                .header("Content-Type", "text/xml")
+                .header("Content-Type", "text/xml; charset=utf-8")
                 .body(Full::new(Bytes::from(fault_xml)))
                 .unwrap());
         }
@@ -261,7 +267,7 @@ async fn handle_xmlrpc_request(
             let fault_xml = generate_fault(-32603, &format!("Internal error: {}", e));
             return Ok(Response::builder()
                 .status(200)
-                .header("Content-Type", "text/xml")
+                .header("Content-Type", "text/xml; charset=utf-8")
                 .body(Full::new(Bytes::from(fault_xml)))
                 .unwrap());
         }
@@ -272,14 +278,20 @@ async fn handle_xmlrpc_request(
         let _ = status_tx.send(msg);
     }
 
-    // Parse action result (should be XML response)
-    let mut response_xml = String::new();
-    for protocol_result in execution_result.protocol_results {
-        if let ActionResult::Output(bytes) = protocol_result {
-            response_xml = String::from_utf8_lossy(&bytes).to_string();
-            break;
+    // Take the first XML document any action produced. ActionResult::Multiple is
+    // unwrapped: a nested Output used to fall through to "no response generated".
+    fn first_output(result: &ActionResult) -> Option<String> {
+        match result {
+            ActionResult::Output(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
+            ActionResult::Multiple(inner) => inner.iter().find_map(first_output),
+            _ => None,
         }
     }
+    let mut response_xml = execution_result
+        .protocol_results
+        .iter()
+        .find_map(first_output)
+        .unwrap_or_default();
 
     // If no XML response was generated, return a fault
     if response_xml.is_empty() {
@@ -304,7 +316,7 @@ async fn handle_xmlrpc_request(
 
     Ok(Response::builder()
         .status(200)
-        .header("Content-Type", "text/xml")
+        .header("Content-Type", "text/xml; charset=utf-8")
         .body(Full::new(Bytes::from(response_xml)))
         .unwrap())
 }
@@ -331,115 +343,192 @@ pub enum XmlRpcValue {
     Nil,                                // Extension: null value
 }
 
-/// Parse XML-RPC methodCall from XML string
+/// Maximum `<array>`/`<struct>`/`<value>` nesting accepted from a client.
+///
+/// The parser is iterative, so deep nesting cannot overflow the stack, but each
+/// level costs a heap frame; this bounds what one request can allocate.
+#[cfg(feature = "xmlrpc")]
+const MAX_VALUE_DEPTH: usize = 64;
+
+/// A container currently being filled.
+#[cfg(feature = "xmlrpc")]
+enum Container {
+    Array(Vec<XmlRpcValue>),
+    Struct {
+        members: Vec<(String, XmlRpcValue)>,
+        pending_name: Option<String>,
+    },
+}
+
+/// Parse an XML-RPC `<methodCall>`.
+///
+/// The previous implementation pushed `XmlRpcValue::String(text)` for every text
+/// node and never looked at the type element, so `<int>5</int>` reached the model
+/// as `"5"` and six of the ten `XmlRpcValue` variants were unreachable. It also
+/// collected array elements only at `</data>` (keeping just the last one and
+/// leaking the rest into the next parameter), dropped parameters whose value was
+/// empty (shifting every later parameter down one position), and returned
+/// `Ok(MethodCall { method_name: "", .. })` for input that was not XML-RPC at all.
+///
+/// This version tracks the active type element, closes each value at `</value>`,
+/// and validates the document shape.
 #[cfg(feature = "xmlrpc")]
 fn parse_method_call(xml: &str) -> Result<MethodCall> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    let mut method_name = String::new();
-    let mut params = Vec::new();
+    let mut method_name: Option<String> = None;
+    let mut params: Vec<XmlRpcValue> = Vec::new();
     let mut buf = Vec::new();
 
+    let mut saw_method_call = false;
+    let mut method_call_closed = false;
     let mut in_method_name = false;
-    let mut _in_params = false;
-    let mut _in_param = false;
-    let mut in_value = false;
+    let mut in_member_name = false;
 
-    let mut value_stack: Vec<XmlRpcValue> = Vec::new();
-    let mut array_stack: Vec<Vec<XmlRpcValue>> = Vec::new();
-    let mut struct_stack: Vec<Vec<(String, XmlRpcValue)>> = Vec::new();
-    let mut member_name: Option<String> = None;
+    // One frame per open <value>; the frame holds the value once its type element
+    // has been closed.
+    let mut value_frames: Vec<Option<XmlRpcValue>> = Vec::new();
+    let mut containers: Vec<Container> = Vec::new();
+    // The type element currently open inside the innermost <value>, if any.
+    let mut current_type: Option<Vec<u8>> = None;
+    let mut current_param: Option<XmlRpcValue> = None;
+
+    /// Attach a completed value to the innermost open `<value>`.
+    fn set_frame(frames: &mut [Option<XmlRpcValue>], value: XmlRpcValue) {
+        if let Some(frame) = frames.last_mut() {
+            *frame = Some(value);
+        }
+    }
+
+    /// A closed `<value>` belongs to the enclosing container, or to the parameter.
+    fn emit(
+        containers: &mut [Container],
+        current_param: &mut Option<XmlRpcValue>,
+        value: XmlRpcValue,
+    ) {
+        match containers.last_mut() {
+            Some(Container::Array(items)) => items.push(value),
+            Some(Container::Struct {
+                members,
+                pending_name,
+            }) => {
+                let name = pending_name.take().unwrap_or_default();
+                members.push((name, value));
+            }
+            None => *current_param = Some(value),
+        }
+    }
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(XmlEvent::Start(ref e)) => {
-                match e.name().as_ref() {
+                let name = e.name().as_ref().to_vec();
+                match name.as_slice() {
+                    b"methodCall" => saw_method_call = true,
                     b"methodName" => in_method_name = true,
-                    b"params" => _in_params = true,
-                    b"param" => _in_param = true,
-                    b"value" => in_value = true,
-                    b"array" => {
-                        array_stack.push(Vec::new());
-                    }
-                    b"struct" => {
-                        struct_stack.push(Vec::new());
-                    }
-                    b"member" => {
-                        // Struct member
-                    }
-                    b"name" if !struct_stack.is_empty() => {
-                        // Read member name for struct
-                        if let Ok(XmlEvent::Text(t)) = reader.read_event_into(&mut buf) {
-                            member_name = Some(t.unescape()?.to_string());
+                    b"param" => current_param = None,
+                    b"value" => {
+                        if value_frames.len() + containers.len() >= MAX_VALUE_DEPTH {
+                            return Err(anyhow::anyhow!(
+                                "value nesting deeper than {} levels",
+                                MAX_VALUE_DEPTH
+                            ));
                         }
+                        value_frames.push(None);
+                        current_type = None;
+                    }
+                    b"array" => containers.push(Container::Array(Vec::new())),
+                    b"struct" => containers.push(Container::Struct {
+                        members: Vec::new(),
+                        pending_name: None,
+                    }),
+                    b"name" => in_member_name = true,
+                    b"i4" | b"int" | b"i8" | b"boolean" | b"string" | b"double"
+                    | b"dateTime.iso8601" | b"base64" | b"nil" => {
+                        current_type = Some(name);
                     }
                     _ => {}
                 }
             }
-            Ok(XmlEvent::End(ref e)) => {
-                match e.name().as_ref() {
-                    b"methodName" => in_method_name = false,
-                    b"params" => _in_params = false,
-                    b"param" => {
-                        _in_param = false;
-                        if let Some(val) = value_stack.pop() {
-                            params.push(val);
-                        }
-                    }
-                    b"value" => in_value = false,
-                    b"array" => {
-                        if let Some(arr) = array_stack.pop() {
-                            value_stack.push(XmlRpcValue::Array(arr));
-                        }
-                    }
-                    b"data" => {
-                        // Array data end
-                        if let Some(arr) = array_stack.last_mut() {
-                            if let Some(val) = value_stack.pop() {
-                                arr.push(val);
-                            }
-                        }
-                    }
-                    b"struct" => {
-                        if let Some(s) = struct_stack.pop() {
-                            value_stack.push(XmlRpcValue::Struct(s));
-                        }
-                    }
-                    b"member" => {
-                        if let Some(s) = struct_stack.last_mut() {
-                            if let (Some(name), Some(val)) = (member_name.take(), value_stack.pop())
-                            {
-                                s.push((name, val));
-                            }
-                        }
-                    }
-                    _ => {}
+            Ok(XmlEvent::End(ref e)) => match e.name().as_ref() {
+                b"methodCall" => method_call_closed = true,
+                b"methodName" => in_method_name = false,
+                b"name" => in_member_name = false,
+                b"value" => {
+                    // An empty <value/> or <value></value> is the empty string
+                    // (spec: "If no type is indicated, the type is string").
+                    let value = value_frames
+                        .pop()
+                        .flatten()
+                        .unwrap_or_else(|| XmlRpcValue::String(String::new()));
+                    emit(&mut containers, &mut current_param, value);
+                    current_type = None;
                 }
-            }
+                b"param" => {
+                    params.push(
+                        current_param
+                            .take()
+                            .unwrap_or_else(|| XmlRpcValue::String(String::new())),
+                    );
+                }
+                b"array" => {
+                    if let Some(Container::Array(items)) = containers.pop() {
+                        set_frame(&mut value_frames, XmlRpcValue::Array(items));
+                    }
+                }
+                b"struct" => {
+                    if let Some(Container::Struct { members, .. }) = containers.pop() {
+                        set_frame(&mut value_frames, XmlRpcValue::Struct(members));
+                    }
+                }
+                tag @ (b"i4" | b"int" | b"i8" | b"boolean" | b"string" | b"double"
+                | b"dateTime.iso8601" | b"base64" | b"nil") => {
+                    // No text node arrived, e.g. <string></string> or <int></int>.
+                    if value_frames.last().map(|f| f.is_none()).unwrap_or(false) {
+                        set_frame(&mut value_frames, empty_typed_value(tag));
+                    }
+                    current_type = None;
+                }
+                _ => {}
+            },
             Ok(XmlEvent::Text(e)) => {
                 let text = e.unescape()?.to_string();
                 if in_method_name {
-                    method_name = text;
-                } else if in_value {
-                    // Default to string
-                    value_stack.push(XmlRpcValue::String(text));
+                    method_name = Some(text);
+                } else if in_member_name {
+                    if let Some(Container::Struct { pending_name, .. }) = containers.last_mut() {
+                        *pending_name = Some(text);
+                    }
+                } else if !value_frames.is_empty() {
+                    let value = typed_value(current_type.as_deref(), &text)?;
+                    set_frame(&mut value_frames, value);
                 }
             }
             Ok(XmlEvent::Empty(ref e)) => {
-                if in_value {
-                    match e.name().as_ref() {
-                        b"i4" | b"int" => {
-                            // Read next text
+                // Self-closing type element: <nil/>, <string/>, <int/>.
+                let tag = e.name().as_ref().to_vec();
+                if !value_frames.is_empty() {
+                    match tag.as_slice() {
+                        b"i4" | b"int" | b"i8" | b"boolean" | b"string" | b"double"
+                        | b"dateTime.iso8601" | b"base64" | b"nil" => {
+                            set_frame(&mut value_frames, empty_typed_value(&tag));
                         }
-                        b"boolean" => {}
-                        b"string" => {}
-                        b"double" => {}
-                        b"nil" => {
-                            value_stack.push(XmlRpcValue::Nil);
+                        b"value" => {
+                            emit(
+                                &mut containers,
+                                &mut current_param,
+                                XmlRpcValue::String(String::new()),
+                            );
                         }
                         _ => {}
                     }
+                } else if tag.as_slice() == b"value" {
+                    emit(
+                        &mut containers,
+                        &mut current_param,
+                        XmlRpcValue::String(String::new()),
+                    );
                 }
             }
             Ok(XmlEvent::Eof) => break,
@@ -449,13 +538,92 @@ fn parse_method_call(xml: &str) -> Result<MethodCall> {
         buf.clear();
     }
 
+    // Reject anything that is not a well-formed methodCall rather than reporting a
+    // call to the empty method name. A browser GET, a JSON body or a truncated
+    // document all used to arrive at the model as method "" with no parameters.
+    if !saw_method_call {
+        return Err(anyhow::anyhow!("not an XML-RPC methodCall document"));
+    }
+    // quick-xml reports EOF rather than an error when elements are still open, so
+    // a body truncated mid-document used to be handled as a complete call.
+    if !method_call_closed {
+        return Err(anyhow::anyhow!("truncated methodCall document"));
+    }
+    let method_name = match method_name {
+        Some(name) if !name.is_empty() => name,
+        _ => return Err(anyhow::anyhow!("methodCall has no methodName")),
+    };
+    if !value_frames.is_empty() || !containers.is_empty() {
+        return Err(anyhow::anyhow!("unterminated value, array or struct"));
+    }
+
     Ok(MethodCall {
         method_name,
         params,
     })
 }
 
-/// Generate XML-RPC fault response
+/// Decode a text node according to the type element that encloses it.
+#[cfg(feature = "xmlrpc")]
+fn typed_value(tag: Option<&[u8]>, text: &str) -> Result<XmlRpcValue> {
+    let parse_err = |ty: &str| anyhow::anyhow!("invalid <{}> value: {:?}", ty, text);
+    Ok(match tag {
+        // Untyped text inside <value> is a string, per the specification.
+        None | Some(b"string") => XmlRpcValue::String(text.to_string()),
+        Some(b"i4") | Some(b"int") => {
+            XmlRpcValue::Int(text.trim().parse::<i32>().map_err(|_| parse_err("int"))?)
+        }
+        Some(b"i8") => XmlRpcValue::I8(text.trim().parse::<i64>().map_err(|_| parse_err("i8"))?),
+        Some(b"boolean") => match text.trim() {
+            "1" | "true" => XmlRpcValue::Boolean(true),
+            "0" | "false" => XmlRpcValue::Boolean(false),
+            _ => return Err(parse_err("boolean")),
+        },
+        Some(b"double") => {
+            let d = text
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| parse_err("double"))?;
+            if !d.is_finite() {
+                return Err(parse_err("double"));
+            }
+            XmlRpcValue::Double(d)
+        }
+        Some(b"dateTime.iso8601") => XmlRpcValue::DateTime(text.trim().to_string()),
+        Some(b"base64") => {
+            use base64::Engine;
+            XmlRpcValue::Base64(
+                base64::engine::general_purpose::STANDARD
+                    .decode(text.trim())
+                    .map_err(|_| parse_err("base64"))?,
+            )
+        }
+        Some(b"nil") => XmlRpcValue::Nil,
+        Some(_) => XmlRpcValue::String(text.to_string()),
+    })
+}
+
+/// The value of a type element that contains no text, e.g. `<string/>`.
+#[cfg(feature = "xmlrpc")]
+fn empty_typed_value(tag: &[u8]) -> XmlRpcValue {
+    match tag {
+        b"i4" | b"int" => XmlRpcValue::Int(0),
+        b"i8" => XmlRpcValue::I8(0),
+        b"boolean" => XmlRpcValue::Boolean(false),
+        b"double" => XmlRpcValue::Double(0.0),
+        b"base64" => XmlRpcValue::Base64(Vec::new()),
+        b"nil" => XmlRpcValue::Nil,
+        _ => XmlRpcValue::String(String::new()),
+    }
+}
+
+/// Generate an XML-RPC fault response.
+///
+/// The message is XML-escaped. It used to be interpolated raw with `format!`, so a
+/// fault_string from the model containing `<`, `>` or `&` — "Unknown method: <foo>"
+/// is entirely plausible — produced a document no client could parse. The same
+/// applied to the parse-error and internal-error paths, which embed the text of a
+/// `serde`/`quick-xml` error.
 #[cfg(feature = "xmlrpc")]
 pub fn generate_fault(code: i32, message: &str) -> String {
     format!(
@@ -476,8 +644,26 @@ pub fn generate_fault(code: i32, message: &str) -> String {
     </value>
   </fault>
 </methodResponse>"#,
-        code, message
+        code,
+        escape_xml_text(message)
     )
+}
+
+/// Escape the five XML predefined entities in character data.
+#[cfg(feature = "xmlrpc")]
+fn escape_xml_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Generate XML-RPC success response with a value
