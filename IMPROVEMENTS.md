@@ -41,6 +41,10 @@ Delete an entry once its context is no longer useful.
 | 45 — mock harness misrouted the docs step | `98c54d4e` | Context extraction classified the *startup* call as an `http_request` event, because the documentation retry embeds `### Event: <id>` headings. Now classified on the prompt template rather than wording. **`--test server` 5/24 → 18/24, `server::tcp` 0/10 → 10/10, `server::dns` 0/4 → 4/4, `--test examples` 13/34 → 34/34, `--test client` 5/9 → 12/13** |
 | — tests phoning external endpoints | `da4c86f5` | The DoT and Git client tests connect to `dns.google:853`, `1.1.1.1:853` and `github.com`. Harmless while orphaned; wiring them in made the calls live, violating the localhost-only policy |
 | 51 — remaining HTTP test failures | `2528629` | 7/10 → 10/10 in `tests/server/http/`; mocks keyed on `uri` where the event emits `path`, and a `write_file` action HTTP does not have, replaced with the real `append_to_log` |
+| 1 — `StartupParams` panicked on model input | `a9f03fd6` | All 16 panic sites return `Result`; 163 call sites across 74 protocol modules converted. Params are now validated *before* `add_server`, so a rejected request leaves no orphan. Verified over MCP: an undeclared key went from **no JSON-RPC response at all** (caller hangs, server stuck in `Starting`) to a clean tool error naming the key and listing the allowed ones, with `list_servers` empty |
+| 36 — registry `resolve()` unadopted | `a158da2f` | `start_server` now answers `Protocol 'ARP' exists but is not compiled into this build (rebuild with --features arp)` and `Unknown protocol: 'htpp'. Did you mean 'HTTP'?` |
+| 18 (rest) — gate ANDed the wrong capability | `aa713be3` | Both sites (`:72`, `:417`) now test `PrivilegeRequirement::is_met_by()` alone; a failed `spawn()` also drops its registration instead of leaving a zombie `Error` row |
+| — test targets broken under narrow features | `57a4c42f` | `server_stop_releases_port_test` (stale arity after `ec79eda5`) and `examples` (empty feature-gated vec, E0282) failed to *compile* with `--features telnet`, silently disabling every test in those targets |
 | 7 + 41 — action failures were invisible | `5deee649`, `0069d90c` | Static handlers naming a nonexistent action are now rejected at `start_server` with the valid list; execution failures are recorded as `FAILED: <name>` in the access log with the error and original action, and logged at `error!`. Batch semantics are continue-and-report, not abort — aborting would suppress the valid actions after a bad one |
 | 18 (part) — raw-socket gate never fired | `c9a65c80` | `has_raw_socket_capability()` used `pcap::Device::list()`, a `getifaddrs` wrapper that succeeds for any user, so it always returned true and the pre-flight never ran. Now probes a real `SOCK_RAW` socket plus `/dev/bpf*`. `is_running_as_root()` also fixed — it stat'd `/root` and compared `$USER`, so `sudo -E` and most containers fooled it |
 | — raw-socket family started but did nothing | `1e977cbe`, `b58b5788`, `21b09483`, `4204bbbc` | ARP, DataLink and ICMP opened their privileged handle in a fire-and-forget `spawn_blocking` and returned `Ok` unconditionally, so an unprivileged start sat in `Running` capturing nothing forever. Now report readiness. Also fixed IGMP's `from_raw_fd`-before-check unsoundness, a checksum underflow, a 100%-CPU spin on recv error, and a `"lo"` default that does not exist on macOS |
@@ -616,6 +620,12 @@ catching an under-declared feature, and it is the only build CI runs. A sweep of
 protocol features found no further cases, so this is not endemic — but nothing prevents the
 next one. Add a CI job that builds a rotating sample of individual protocol features, or all of
 them on a schedule; it is the only thing that can catch this.
+
+**The same blind spot applies to test targets, and there it is worse.** `--features telnet`
+alone failed to *compile* two test targets (`57a4c42f`) — and a test target that does not
+compile does not report failures, it simply contributes nothing, exactly like the orphaned
+directories in item 5. So the sweep should be `cargo check --tests`, not `cargo check`, or the
+next silent gap will be a whole target rather than a directory.
 
 ### 47. Several tests pass while the protocol is broken **[verified]**
 
