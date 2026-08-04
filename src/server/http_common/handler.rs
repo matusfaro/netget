@@ -118,6 +118,60 @@ pub async fn extract_request_data(
     }
 }
 
+/// Build a hyper `Response` from parts that came from the LLM or from server
+/// startup params, without ever panicking.
+///
+/// Everything here is attacker- or model-influenced, so nothing is trusted:
+///
+/// - an out-of-range status (`status < 100 || status > 599`) is replaced by 500,
+/// - header names/values hyper rejects (notably ones containing CR/LF, i.e.
+///   response-splitting attempts) are dropped individually,
+/// - if the builder still fails for any reason, a bare 500 is returned.
+///
+/// The previous implementation ended in `.body(..).unwrap()`, which turned any
+/// of the above into a panic inside the connection task.
+pub fn build_safe_response(
+    status: u16,
+    headers: impl IntoIterator<Item = (String, String)>,
+    body: String,
+    context: &str,
+) -> Response<Full<Bytes>> {
+    let status_code = match hyper::StatusCode::from_u16(status) {
+        Ok(code) => code,
+        Err(_) => {
+            error!(
+                "{}: invalid HTTP status {} (must be 100-599), sending 500 instead",
+                context, status
+            );
+            hyper::StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+
+    let mut builder = Response::builder().status(status_code);
+    for (name, value) in headers {
+        match (
+            hyper::header::HeaderName::from_bytes(name.as_bytes()),
+            hyper::header::HeaderValue::from_str(&value),
+        ) {
+            (Ok(n), Ok(v)) => builder = builder.header(n, v),
+            _ => warn!(
+                "{}: dropping invalid response header {:?} (name or value is not a legal HTTP header)",
+                context, name
+            ),
+        }
+    }
+
+    match builder.body(Full::new(Bytes::from(body))) {
+        Ok(response) => response,
+        Err(e) => {
+            error!("{}: failed to build response ({}), sending bare 500", context, e);
+            let mut fallback = Response::new(Full::new(Bytes::from_static(b"Internal Server Error")));
+            *fallback.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+            fallback
+        }
+    }
+}
+
 /// Build HTTP response from LLM execution results
 pub fn build_response(
     protocol_results: Vec<ActionResult>,
@@ -161,17 +215,14 @@ pub fn build_response(
         response_body.len()
     ));
 
-    // Build the HTTP response
-    let mut response = Response::builder().status(status_code);
-
-    // Add headers
-    for (name, value) in response_headers {
-        response = response.header(name, value);
-    }
-
-    Ok(response
-        .body(Full::new(Bytes::from(response_body)))
-        .unwrap())
+    // Build the HTTP response. Status/headers/body all originate from model
+    // output, so this must not be able to panic (see build_safe_response).
+    Ok(build_safe_response(
+        status_code,
+        response_headers,
+        response_body,
+        protocol_label,
+    ))
 }
 
 /// Build error response for LLM failures
@@ -293,38 +344,84 @@ impl Default for FilteredResponse {
 pub struct RequestFilter {
     rules: Vec<FilterRule>,
     filtered_response: FilteredResponse,
+    /// Human-readable problems found while parsing the config. Callers surface
+    /// these on the status channel so a typo is visible in the TUI/MCP stream,
+    /// not just in `netget.log`.
+    warnings: Vec<String>,
 }
 
 impl RequestFilter {
     /// Parse a filter from a server's `startup_params`.
     ///
-    /// Lenient by design: a missing `request_filter` yields a pass-through
+    /// **Fail-open by design.** A missing `request_filter` yields a pass-through
     /// filter, and any individual malformed rule (or invalid path regex) is
-    /// skipped with a warning rather than failing the whole server.
+    /// skipped rather than failing the whole server. The consequence is worth
+    /// stating plainly: if every rule you wrote is malformed, the filter ends up
+    /// empty and *every* request reaches the LLM — slow and billable — instead
+    /// of being rejected. Server startup is never failed on a bad filter, so the
+    /// only signal is loud logging plus [`RequestFilter::warnings`]; callers are
+    /// expected to forward those to the status channel.
     pub fn from_startup_params(params: Option<&serde_json::Value>) -> Self {
         let mut rules = Vec::new();
+        let mut warnings = Vec::new();
 
-        if let Some(arr) = params
-            .and_then(|p| p.get("request_filter"))
-            .and_then(|v| v.as_array())
-        {
-            for (i, raw) in arr.iter().enumerate() {
-                match Self::parse_rule(raw) {
-                    Ok(rule) => rules.push(rule),
-                    Err(e) => warn!("Skipping invalid request_filter rule #{}: {}", i, e),
+        match params.and_then(|p| p.get("request_filter")) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::Array(arr)) => {
+                for (i, raw) in arr.iter().enumerate() {
+                    match Self::parse_rule(raw) {
+                        Ok(rule) => rules.push(rule),
+                        Err(e) => {
+                            let msg = format!("invalid request_filter rule #{}: {} — rule ignored", i, e);
+                            error!("{}", msg);
+                            warnings.push(msg);
+                        }
+                    }
                 }
+                if !arr.is_empty() && rules.is_empty() {
+                    let msg = "request_filter was configured but EVERY rule was invalid — \
+                               the filter is disabled and every request will reach the LLM \
+                               (fail-open)"
+                        .to_string();
+                    error!("{}", msg);
+                    warnings.push(msg);
+                }
+            }
+            Some(other) => {
+                let msg = format!(
+                    "request_filter must be an array of rule objects, got {} — \
+                     filter ignored, every request will reach the LLM (fail-open)",
+                    kind_of(other)
+                );
+                error!("{}", msg);
+                warnings.push(msg);
             }
         }
 
         let filtered_response = params
             .and_then(|p| p.get("filtered_response"))
-            .map(Self::parse_filtered_response)
+            .map(|raw| Self::parse_filtered_response(raw, &mut warnings))
             .unwrap_or_default();
+
+        if rules.is_empty() && params.and_then(|p| p.get("filtered_response")).is_some() {
+            let msg = "filtered_response is set but no valid request_filter rules exist — \
+                       it will never be used"
+                .to_string();
+            warn!("{}", msg);
+            warnings.push(msg);
+        }
 
         Self {
             rules,
             filtered_response,
+            warnings,
         }
+    }
+
+    /// Problems found while parsing the filter config (empty when it is clean).
+    /// Every one of these means the filter is doing less than the caller asked.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     fn parse_rule(raw: &serde_json::Value) -> Result<FilterRule, String> {
@@ -388,10 +485,25 @@ impl RequestFilter {
         })
     }
 
-    fn parse_filtered_response(raw: &serde_json::Value) -> FilteredResponse {
+    fn parse_filtered_response(
+        raw: &serde_json::Value,
+        warnings: &mut Vec<String>,
+    ) -> FilteredResponse {
         let mut resp = FilteredResponse::default();
-        if let Some(status) = raw.get("status").and_then(|v| v.as_u64()) {
-            resp.status = status as u16;
+        if let Some(status) = raw.get("status") {
+            match status.as_u64() {
+                // Reject out-of-range values here rather than truncating with
+                // `as u16` and blowing up later while building the response.
+                Some(s) if (100..=599).contains(&s) => resp.status = s as u16,
+                _ => {
+                    let msg = format!(
+                        "filtered_response.status {} is not a valid HTTP status (100-599) — using {}",
+                        status, resp.status
+                    );
+                    error!("{}", msg);
+                    warnings.push(msg);
+                }
+            }
         }
         if let Some(body) = raw.get("body").and_then(|v| v.as_str()) {
             resp.body = body.to_string();
@@ -415,15 +527,39 @@ impl RequestFilter {
         self.is_pass_through() || self.rules.iter().any(|r| r.matches(req, path))
     }
 
+    /// The configured auto-response as raw parts, for transports that build
+    /// their own response type (HTTP/2 through the `h2` crate).
+    pub fn rejection_parts(&self) -> (u16, Vec<(String, String)>, String) {
+        (
+            self.filtered_response.status,
+            self.filtered_response.headers.clone(),
+            self.filtered_response.body.clone(),
+        )
+    }
+
     /// Build the auto-response for a request that matched no rule.
+    ///
+    /// `filtered_response` comes straight from caller-supplied startup params,
+    /// so this goes through the non-panicking builder.
     pub fn rejection(&self) -> Response<Full<Bytes>> {
-        let mut builder = Response::builder().status(self.filtered_response.status);
-        for (name, value) in &self.filtered_response.headers {
-            builder = builder.header(name, value);
-        }
-        builder
-            .body(Full::new(Bytes::from(self.filtered_response.body.clone())))
-            .expect("filtered_response is always valid")
+        build_safe_response(
+            self.filtered_response.status,
+            self.filtered_response.headers.iter().cloned(),
+            self.filtered_response.body.clone(),
+            "filtered_response",
+        )
+    }
+}
+
+/// Name of a JSON value's type, for error messages.
+fn kind_of(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
     }
 }
 
@@ -445,7 +581,10 @@ pub fn request_handling_startup_parameters() -> Vec<crate::llm::actions::Paramet
                 mapping header name to either true = must be present, or a string = value must \
                 contain that substring case-insensitively, e.g. {\"accept\": \"text/html\"}). \
                 Example filter that only sends real browser page loads to the LLM (favicon/OPTIONS/\
-                XHR are auto-404'd): [{\"methods\":[\"GET\"],\"headers\":{\"accept\":\"text/html\"}}]."
+                XHR are auto-404'd): [{\"methods\":[\"GET\"],\"headers\":{\"accept\":\"text/html\"}}]. \
+                Fail-open: a malformed rule (e.g. an invalid `path` regex) is dropped with a loud \
+                error instead of failing startup, so a typo means MORE requests reach the LLM, not \
+                fewer. Check the server status output after starting."
                 .to_string(),
             required: false,
             example: serde_json::json!([
