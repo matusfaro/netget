@@ -25,37 +25,52 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
 /// DNS-over-TLS server
-pub struct DotServer {
-    bind_addr: SocketAddr,
-}
+pub struct DotServer;
 
 impl DotServer {
-    /// Create a new DoT server
-    pub fn new(bind_addr: SocketAddr) -> Self {
-        Self { bind_addr }
-    }
-
-    /// Spawn the DoT server
+    /// Spawn the DoT server.
+    ///
+    /// The listener is bound here, *before* the accept loop is spawned, so that
+    /// a bind failure (port in use, permission denied) is returned to the
+    /// caller instead of being swallowed by the background task - otherwise the
+    /// server would be reported as `Running` while nothing is listening.
+    /// Binding here also means the returned address carries the real port when
+    /// the caller asked for port 0.
     pub async fn spawn(
         bind_addr: SocketAddr,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         server_id: ServerId,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        let server = Self::new(bind_addr);
-
+    ) -> Result<SocketAddr> {
         // Generate TLS configuration (use default self-signed cert)
         let tls_config = crate::server::tls_cert_manager::generate_default_tls_config()
             .context("Failed to generate TLS configuration")?;
 
         console_info!(status_tx, "Starting DoT server on {}", bind_addr);
 
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .context("Failed to bind DoT TCP listener")?;
+
+        // Actual bound address (important for port 0 dynamic allocation)
+        let local_addr = listener
+            .local_addr()
+            .context("Failed to get DoT listener local address")?;
+
+        console_info!(status_tx, "DoT server listening on {}", local_addr);
+
         let task_registrar = app_state.clone();
         let handle = tokio::spawn(async move {
-            if let Err(e) = server
-                .run(tls_config, llm_client, app_state, server_id, status_tx)
-                .await
+            if let Err(e) = Self::run(
+                listener,
+                tls_config,
+                llm_client,
+                app_state,
+                server_id,
+                status_tx,
+            )
+            .await
             {
                 error!("DoT server error: {}", e);
             }
@@ -64,30 +79,19 @@ impl DotServer {
         // Register the accept loop so stop_server can abort it and release the port.
         task_registrar.register_server_task(server_id, handle).await;
 
-        Ok(())
+        Ok(local_addr)
     }
 
-    /// Run the DoT server
+    /// Run the DoT accept loop on an already-bound listener
     async fn run(
-        self,
+        listener: TcpListener,
         tls_config: Arc<rustls::ServerConfig>,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         server_id: ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let listener = TcpListener::bind(self.bind_addr)
-            .await
-            .context("Failed to bind DoT TCP listener")?;
-
-        // Get the actual bound address (important for port 0 dynamic allocation)
-        let local_addr = listener
-            .local_addr()
-            .context("Failed to get DoT listener local address")?;
-
         let acceptor = TlsAcceptor::from(tls_config);
-
-        console_info!(status_tx, "DoT server listening on {}", local_addr);
 
         loop {
             match listener.accept().await {

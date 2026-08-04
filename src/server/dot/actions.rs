@@ -92,14 +92,18 @@ impl Protocol for DotProtocol {
         vec!["dot", "dns-over-tls", "dns over tls"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Beta)
-            .implementation("hickory-proto + tokio-rustls")
+            // RFC 7858 assigns DoT to TCP/853, which is a privileged port.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(853))
+            .implementation("hickory-proto + tokio-rustls; DNS actions and action execution are delegated to the DNS protocol")
             .llm_control("Same as DNS (delegates to DNS protocol)")
-            .e2e_testing("hickory-client with TLS")
-            .notes("Self-signed certs, TLS overhead")
+            .e2e_testing("tests/server/dot/e2e_test.rs - raw rustls client, mock-driven")
+            .notes("Self-signed certs only, no client auth, TLS overhead")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -131,11 +135,15 @@ impl Protocol for DotProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "# Echo DNS response over TLS\nif event.get('domain') == 'example.com':\n    respond([{'type': 'send_dns_a_response', 'query_id': event['query_id'], 'domain': event['domain'], 'ip': '93.184.216.34'}])\nelse:\n    respond([{'type': 'send_dns_nxdomain', 'query_id': event['query_id'], 'domain': event['domain']}])"
+                        "code": "# Echo the client's transaction ID and queried name\nif event.get('domain', '').rstrip('.') == 'example.com':\n    respond([{'type': 'send_dns_a_response', 'query_id': event['query_id'], 'domain': event['domain'], 'ip': '93.184.216.34', 'ttl': 300}])\nelse:\n    respond([{'type': 'send_dns_nxdomain', 'query_id': event['query_id'], 'domain': event['domain'], 'query_type': event.get('query_type', 'A')}])"
                     }
                 }]
             }),
-            // Static handler example
+            // Static handler example: static actions are fixed JSON with no
+            // access to the event, so they cannot echo the client's random
+            // transaction ID or the queried name. Dropping queries is the only
+            // thing static mode does correctly for DNS-over-TLS; use script
+            // mode for deterministic answers.
             json!({
                 "type": "open_server",
                 "port": 853,
@@ -145,11 +153,7 @@ impl Protocol for DotProtocol {
                     "handler": {
                         "type": "static",
                         "actions": [{
-                            "type": "send_dns_a_response",
-                            "query_id": 0,
-                            "domain": "example.com",
-                            "ip": "127.0.0.1",
-                            "ttl": 300
+                            "type": "ignore_query"
                         }]
                     }
                 }]
@@ -168,20 +172,17 @@ impl Server for DotProtocol {
     > {
         Box::pin(async move {
             use crate::server::dot::DotServer;
-            // DoT spawn returns JoinHandle, but we need to return the socket address
-            // Get listen address before moving ctx fields
-            let listen_addr = ctx.legacy_listen_addr();
-
-            // The server binds before spawning, so we can return listen_addr
-            let _ = DotServer::spawn(
-                listen_addr,
+            // DotServer::spawn binds the listener before returning, so bind
+            // failures surface here and the address it returns is the real
+            // bound address (resolving port 0 to the OS-assigned port).
+            DotServer::spawn(
+                ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.server_id,
                 ctx.status_tx,
             )
-            .await?;
-            Ok(listen_addr)
+            .await
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {

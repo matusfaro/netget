@@ -7,7 +7,16 @@ while NetGet handles TLS encryption and connection management.
 
 **Status**: Beta (Core Protocol)
 **RFC**: RFC 7858 (DNS over TLS), RFC 1035 (DNS), RFC 5246 (TLS 1.2)
-**Port**: 853 (TCP with TLS)
+**Port**: 853 (TCP with TLS), declared as `PrivilegeRequirement::PrivilegedPort(853)`
+
+### What "Beta" covers here
+
+DoT contributes the TLS transport and TCP framing; every DNS semantic - the
+action set, action execution, response construction - is the DNS protocol's,
+reached through delegation (see below). So DoT is as mature as DNS on the wire
+format, plus a TLS layer that is exercised by `tests/server/dot/e2e_test.rs`
+against a real rustls client. Not covered: CA-signed or custom certificates,
+mutual TLS, connection limits, EDNS0.
 
 ## Library Choices
 
@@ -32,12 +41,21 @@ while the libraries handle encryption.
 
 ### 1. Delegation to DNS Protocol
 
-DoT delegates all DNS logic to the standard DNS protocol implementation:
+DoT defines **no actions of its own**. `DotProtocol` wraps a `DnsProtocol` and
+forwards everything DNS-shaped to it:
 
-- `DotProtocol` wraps `DnsProtocol`
-- All action definitions come from DNS actions
-- Action execution forwards to DNS implementation
-- This ensures consistency between DNS and DoT responses
+- `get_sync_actions()` / `get_async_actions()` return the DNS action definitions
+  verbatim
+- `execute_action()` forwards to `DnsProtocol::execute_action`
+- `DOT_QUERY_EVENT` is built by calling `DnsProtocol::get_sync_actions()` and
+  attaching that list to the event
+
+The only thing DoT owns is the event type (`dot_query`, one event, carrying an
+extra `peer_addr` field) and the transport. So "DoT has zero actions defined in
+`src/server/dot/actions.rs`" is true as a grep result and misleading as a
+statement about capability: the LLM sees the full DNS action set on every
+`dot_query`, and this delegation is what keeps DNS, DoT and DoH answering
+identically.
 
 ### 2. TLS Transport Layer
 
@@ -100,19 +118,28 @@ Event parameters:
 
 ### Available Actions
 
-DoT reuses all DNS actions:
+DoT reuses all DNS actions, and only those:
 
-- `dns_response` - Send DNS response as hex-encoded packet
 - `send_dns_a_response` - Return IPv4 address (A record)
 - `send_dns_aaaa_response` - Return IPv6 address (AAAA record)
 - `send_dns_mx_response` - Return mail exchange record
 - `send_dns_txt_response` - Return text record
 - `send_dns_cname_response` - Return canonical name alias
 - `send_dns_nxdomain` - Domain does not exist
+- `send_dns_response` - Hand-assembled response, hex-encoded (escape hatch)
 - `ignore_query` - Don't send response
-- `close_connection` - Close TLS connection
 
 See `src/server/dns/CLAUDE.md` for detailed action documentation.
+
+Two actions previously listed here do not exist and never did: `dns_response`
+(the real name is `send_dns_response`) and `close_connection`. The connection
+handler *does* honour `ActionResult::CloseConnection` if some other action
+produces it, but no DNS action does, so there is no way for the LLM to close a
+DoT connection - it ends when the client closes it or a read fails.
+
+As with plain DNS, a **static** event handler cannot serve DoT answers: it
+cannot echo the client's random transaction ID or the queried name. Use script
+mode for deterministic answers; static mode is only useful for `ignore_query`.
 
 ### Example LLM Response
 
@@ -136,12 +163,26 @@ See `src/server/dns/CLAUDE.md` for detailed action documentation.
 
 ## Connection Management
 
+### Startup
+
+`DotServer::spawn` binds the `TcpListener` **before** spawning the accept loop
+and returns the bound `SocketAddr`. That ordering matters: if the bind were done
+inside the spawned task, a port conflict or permission error would be swallowed
+by the background task while `open_server` reported the server as `Running`, and
+a caller that asked for port 0 would be told the port was 0. The accept loop's
+`JoinHandle` is registered with `AppState::register_server_task` so
+`stop_server` can abort it and release the port.
+
 ### Connection Lifecycle
 
 1. **Accept**: TCP listener accepts connection on port 853
 2. **TLS Handshake**: `TlsAcceptor::accept()` performs TLS negotiation
-3. **Register**: Connection logged in INFO messages
-4. **Query Loop**: Read DNS queries, call LLM, send responses
+3. **Register**: Connection logged in INFO messages only - DoT adds no entry to
+   `ServerInstance.connections`, so DoT connections are invisible to the TUI
+   connection list and to per-connection scheduled tasks
+4. **Query Loop**: Read DNS queries, dispatch through `call_llm` (which runs any
+   configured script/static handler first and only calls the model if none
+   matches), send responses
 5. **Close**: Connection ends on client disconnect or error
 
 ### State Management
@@ -172,7 +213,7 @@ See `src/server/dns/CLAUDE.md` for detailed action documentation.
 
 All limitations from standard DNS protocol apply:
 
-- Single answer per action (use `dns_response` for multiple)
+- Single answer per action (use `send_dns_response` for multiple)
 - Limited record type support
 - No DNSSEC
 - No recursive resolution
