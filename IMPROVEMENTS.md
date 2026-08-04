@@ -45,6 +45,8 @@ Delete an entry once its context is no longer useful.
 | 36 — registry `resolve()` unadopted | `a158da2f` | `start_server` now answers `Protocol 'ARP' exists but is not compiled into this build (rebuild with --features arp)` and `Unknown protocol: 'htpp'. Did you mean 'HTTP'?` |
 | 18 (rest) — gate ANDed the wrong capability | `aa713be3` | Both sites (`:72`, `:417`) now test `PrivilegeRequirement::is_met_by()` alone; a failed `spawn()` also drops its registration instead of leaving a zombie `Error` row |
 | — test targets broken under narrow features | `57a4c42f` | `server_stop_releases_port_test` (stale arity after `ec79eda5`) and `examples` (empty feature-gated vec, E0282) failed to *compile* with `--features telnet`, silently disabling every test in those targets |
+| — proxy/tunneling family | `2cf3d4f2`, `ec4231ab`, `a3e101a9`, `a0d8a6cb`, `32a30f83` | Suite went **21 failures → 5**. Proxy's certificate cache returned a regenerated certificate paired with the *cached* key, so every repeat MITM connection to a host failed with `KeyMismatch`; `certificate_mode: "load_from_file"` read the operator's key, **ignored the certificate file entirely** and minted a different CA, so clients trusting the real one rejected everything while the config looked correct; absolute-form request targets were forwarded verbatim, which `curl --proxy` caught and our tests never did. SOCKS5 ended three paths with no reply at all. TLS had the `d70bb5b5` defect again — hex documented, never decoded. TURN demoted to `Incomplete`: it cannot relay a byte, as no relay socket is ever bound |
+| 56 (part) — STUN's actions were invisible | `a0d8a6cb` | STUN's event never called `.with_actions(...)`, so every response was rejected as unknown; five E2E tests failed. Its shipped static example also used three nonexistent fields and a 6-byte transaction id |
 | 7 + 41 — action failures were invisible | `5deee649`, `0069d90c` | Static handlers naming a nonexistent action are now rejected at `start_server` with the valid list; execution failures are recorded as `FAILED: <name>` in the access log with the error and original action, and logged at `error!`. Batch semantics are continue-and-report, not abort — aborting would suppress the valid actions after a bad one |
 | 18 (part) — raw-socket gate never fired | `c9a65c80` | `has_raw_socket_capability()` used `pcap::Device::list()`, a `getifaddrs` wrapper that succeeds for any user, so it always returned true and the pre-flight never ran. Now probes a real `SOCK_RAW` socket plus `/dev/bpf*`. `is_running_as_root()` also fixed — it stat'd `/root` and compared `$USER`, so `sudo -E` and most containers fooled it |
 | — raw-socket family started but did nothing | `1e977cbe`, `b58b5788`, `21b09483`, `4204bbbc` | ARP, DataLink and ICMP opened their privileged handle in a fire-and-forget `spawn_blocking` and returned `Ok` unconditionally, so an unprivileged start sat in `Running` capturing nothing forever. Now report readiness. Also fixed IGMP's `from_raw_fd`-before-check unsoundness, a checksum underflow, a 100%-CPU spin on recv error, and a `"lo"` default that does not exist on macOS |
@@ -784,6 +786,23 @@ via BPF/AF_PACKET (ARP, DataLink, IS-IS). These genuinely differ — a macOS use
 group has `/dev/bpf*` without being root. `c9a65c80` probes both and grants the flag if either
 succeeds, which is permissive in the right direction but still cannot refuse an ICMP server for
 a capture-only user. Splitting the flag would let each protocol declare what it actually needs.
+
+### 57. Proxy TLS interception: what it actually does with keys **[verified]**
+
+Recorded because "MITM proxy" invites the question and the answer was not written down
+anywhere. **No private key is written to disk, and there is no fixed or hardcoded key.** The CA
+key pair is generated in memory at server start (`rcgen::KeyPair::generate`) and dropped when
+the server stops; per-domain leaf keys are memory-only too. Intercepted plaintext reaches
+`netget.log` only at TRACE, like every other protocol.
+
+The one disk write is the new `ca_export_path` startup parameter, and it writes the CA
+**certificate** — the public half — at `0666 & ~umask`, normally `0644`, which is right for
+something meant to be distributed. The private half is not written by any code path and is not
+reachable from any action. So interception cannot happen silently: without an explicit trust
+grant the client aborts with unknown-issuer.
+
+Worth revisiting only if CA persistence is ever added — at that point the key file's mode and
+location become a real decision rather than a non-issue.
 
 ---
 
