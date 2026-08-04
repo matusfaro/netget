@@ -349,7 +349,7 @@ mod dhcp_client_tests {
 
         // Verify client initiated DHCP activity
         assert!(
-            client.output_contains("DHCP") || client.output_contains("dhcp"),
+            client.output_contains("DHCP").await || client.output_contains("dhcp").await,
             "Client should show DHCP activity"
         );
 

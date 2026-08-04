@@ -89,26 +89,18 @@ mod rip_client_e2e_tests {
 
         // Initialize test dependencies
         let app_state = Arc::new(AppState::new());
-        let llm_client = OllamaClient::new(
-            "http://localhost:11434".to_string(),
-            "qwen3-coder:30b".to_string(),
-            Some("ollama-lock".to_string()),
-        );
+        let llm_client = OllamaClient::new("http://localhost:11434".to_string());
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
         // Create client instance
-        let client_id = ClientId::new(1);
-        let client = ClientInstance {
-            id: client_id,
-            protocol_name: "RIP".to_string(),
-            remote_addr: format!("127.0.0.1:{}", rip_port),
-            instruction: "Query RIP router for routing table using RIPv2".to_string(),
-            memory: String::new(),
-            status: ClientStatus::Connecting,
-            startup_params: None,
-        };
+        let client = ClientInstance::new(
+            ClientId::new(0), // overwritten by add_client with the real allocated id
+            format!("127.0.0.1:{}", rip_port),
+            "RIP".to_string(),
+            "Query RIP router for routing table using RIPv2".to_string(),
+        );
 
-        app_state.add_client(client).await;
+        let client_id = app_state.add_client(client).await;
 
         // Start client connection
         use netget::cli::client_startup::start_client_by_id;

@@ -2,8 +2,10 @@
 
 #[cfg(all(test, feature = "socket_file", unix))]
 mod tests {
+    use netget::llm::actions::protocol_trait::Protocol;
     use netget::llm::ollama_client::OllamaClient;
     use netget::state::app_state::AppState;
+    use netget::state::{ClientId, ClientInstance};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;
@@ -42,22 +44,19 @@ mod tests {
 
         // Create app state and LLM client
         let app_state = Arc::new(AppState::new());
-        let llm_client = OllamaClient::new(
-            "http://localhost:11434".to_string(),
-            "qwen3-coder:30b".to_string(),
-        );
+        let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
-        let (status_tx, mut status_rx) = mpsc::unbounded_channel();
+        let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
         // Create a client
-        let client_id = app_state
-            .add_client(
-                "SocketFile".to_string(),
-                socket_path.clone(),
-                "Test client".to_string(),
-                None,
-            )
-            .await;
+        let client_id = ClientId::new(1);
+        let client = ClientInstance::new(
+            client_id,
+            socket_path.clone(),
+            "SocketFile".to_string(),
+            "Test client".to_string(),
+        );
+        app_state.add_client(client).await;
 
         // Connect using the socket file client
         let protocol = netget::client::socket_file::SocketFileClientProtocol::new();

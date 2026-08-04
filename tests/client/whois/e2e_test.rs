@@ -12,6 +12,9 @@ mod whois_client_tests {
     /// Test WHOIS client query to IANA root server
     /// LLM calls: 2 (client connection + response processing)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real whois.iana.org and requires --use-ollama.
+              // Under default strict-mock CI mode the LLM call 500s immediately and this
+              // assertion never passes. Follows the precedent set by tests/client/npm.
     async fn test_whois_query_example_com() -> E2EResult<()> {
         // Connect to IANA WHOIS server and query example.com
         let client_config = NetGetConfig::new(
@@ -33,7 +36,9 @@ mod whois_client_tests {
         // Verify response received (WHOIS server sends "refer:" or domain info)
         let output = client.get_output().await;
         assert!(
-            output.contains("refer") || output.contains("domain") || output.contains("whois"),
+            output.iter().any(|l| l.contains("refer"))
+                || output.iter().any(|l| l.contains("domain"))
+                || output.iter().any(|l| l.contains("whois")),
             "Client should receive WHOIS response. Output: {:?}",
             output
         );
@@ -49,6 +54,8 @@ mod whois_client_tests {
     /// Test WHOIS client query to .com registry
     /// LLM calls: 2 (client connection + response processing)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real whois.verisign-grs.com and requires
+              // --use-ollama. See test_whois_query_example_com for details.
     async fn test_whois_query_verisign() -> E2EResult<()> {
         // Connect to Verisign WHOIS server (authoritative for .com/.net)
         let client_config = NetGetConfig::new(
@@ -66,9 +73,9 @@ mod whois_client_tests {
         // Verify response contains domain information
         let output = client.get_output().await;
         assert!(
-            output.contains("Domain Name")
-                || output.contains("Registrar")
-                || output.contains("EXAMPLE.COM"),
+            output.iter().any(|l| l.contains("Domain Name"))
+                || output.iter().any(|l| l.contains("Registrar"))
+                || output.iter().any(|l| l.contains("EXAMPLE.COM")),
             "Client should receive domain information. Output: {:?}",
             output
         );
@@ -84,6 +91,8 @@ mod whois_client_tests {
     /// Test WHOIS client handles disconnection
     /// LLM calls: 2 (client connection + response)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real whois.iana.org and requires --use-ollama.
+              // See test_whois_query_example_com for details.
     async fn test_whois_auto_disconnect() -> E2EResult<()> {
         // WHOIS servers close the connection after sending response
         let client_config =
@@ -97,9 +106,9 @@ mod whois_client_tests {
         // Verify client shows disconnection (WHOIS is one-shot)
         let output = client.get_output().await;
         assert!(
-            output.contains("disconnected")
-                || output.contains("closed")
-                || output.contains("complete"),
+            output.iter().any(|l| l.contains("disconnected"))
+                || output.iter().any(|l| l.contains("closed"))
+                || output.iter().any(|l| l.contains("complete")),
             "Client should show disconnection after response. Output: {:?}",
             output
         );

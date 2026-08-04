@@ -11,6 +11,9 @@ mod pypi_client_tests {
     /// Test PyPI client fetching package information
     /// LLM calls: 1 (client connection and package query)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real pypi.org and requires --use-ollama.
+              // Under default strict-mock CI mode the LLM call 500s immediately and this
+              // assertion never passes. Follows the precedent set by tests/client/npm.
     async fn test_pypi_get_package_info() -> E2EResult<()> {
         // Start PyPI client that queries package info
         let client_config = NetGetConfig::new(
@@ -25,7 +28,9 @@ mod pypi_client_tests {
         // Verify client output shows PyPI protocol or package info
         let output = client.get_output().await;
         assert!(
-            output.contains("PyPI") || output.contains("requests") || output.contains("package"),
+            output.iter().any(|l| l.contains("PyPI"))
+                || output.iter().any(|l| l.contains("requests"))
+                || output.iter().any(|l| l.contains("package")),
             "Client should show PyPI protocol or package information. Output: {:?}",
             output
         );
@@ -41,6 +46,8 @@ mod pypi_client_tests {
     /// Test PyPI client listing package files
     /// LLM calls: 1 (client connection and file list query)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real pypi.org and requires --use-ollama.
+              // See test_pypi_get_package_info for details.
     async fn test_pypi_list_package_files() -> E2EResult<()> {
         // Start PyPI client that lists available files
         let client_config = NetGetConfig::new(
@@ -58,10 +65,10 @@ mod pypi_client_tests {
         // Verify output mentions files or wheels
         let output = client.get_output().await;
         assert!(
-            output.contains("whl")
-                || output.contains("tar.gz")
-                || output.contains("file")
-                || output.contains("wheel"),
+            output.iter().any(|l| l.contains("whl"))
+                || output.iter().any(|l| l.contains("tar.gz"))
+                || output.iter().any(|l| l.contains("file"))
+                || output.iter().any(|l| l.contains("wheel")),
             "Client should show package files information. Output: {:?}",
             output
         );
@@ -77,6 +84,8 @@ mod pypi_client_tests {
     /// Test PyPI client handling non-existent package
     /// LLM calls: 1 (client connection and query)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real pypi.org and requires --use-ollama.
+              // See test_pypi_get_package_info for details.
     async fn test_pypi_nonexistent_package() -> E2EResult<()> {
         // Start PyPI client that queries a non-existent package
         let client_config = NetGetConfig::new(
@@ -91,10 +100,10 @@ mod pypi_client_tests {
         // Verify client handled error gracefully
         let output = client.get_output().await;
         assert!(
-            output.contains("ERROR")
-                || output.contains("not found")
-                || output.contains("404")
-                || output.contains("failed"),
+            output.iter().any(|l| l.contains("ERROR"))
+                || output.iter().any(|l| l.contains("not found"))
+                || output.iter().any(|l| l.contains("404"))
+                || output.iter().any(|l| l.contains("failed")),
             "Client should show error for non-existent package. Output: {:?}",
             output
         );
@@ -110,6 +119,8 @@ mod pypi_client_tests {
     /// Test PyPI client with LLM-controlled package exploration
     /// LLM calls: 1 (client connection and exploration)
     #[tokio::test]
+    #[ignore] // No .with_mock() configured: hits real pypi.org and requires --use-ollama.
+              // See test_pypi_get_package_info for details.
     async fn test_pypi_llm_controlled_exploration() -> E2EResult<()> {
         // Client that explores package ecosystem based on LLM instruction
         let client_config = NetGetConfig::new(
@@ -127,7 +138,9 @@ mod pypi_client_tests {
         // Verify output shows exploration
         let output = client.get_output().await;
         assert!(
-            output.contains("django") || output.contains("package") || output.contains("info"),
+            output.iter().any(|l| l.contains("django"))
+                || output.iter().any(|l| l.contains("package"))
+                || output.iter().any(|l| l.contains("info")),
             "Client should show package exploration. Output: {:?}",
             output
         );

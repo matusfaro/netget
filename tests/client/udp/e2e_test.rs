@@ -23,7 +23,7 @@ mod udp_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -77,7 +77,7 @@ mod udp_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -123,7 +123,7 @@ mod udp_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -142,7 +142,9 @@ mod udp_client_tests {
         // Verify client received response (check for "datagram" or "received" in output)
         let output = client.get_output().await;
         assert!(
-            output.contains("datagram") || output.contains("received") || output.contains("PONG"),
+            output.iter().any(|l| l.contains("datagram"))
+                || output.iter().any(|l| l.contains("received"))
+                || output.iter().any(|l| l.contains("PONG")),
             "Client should show received datagram. Output: {:?}",
             output
         );
@@ -176,7 +178,7 @@ mod udp_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
         let mut server1 = start_netget_server(server1_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -190,7 +192,7 @@ mod udp_client_tests {
                 .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
                 .expect_calls(1)
                 .and()
-        })
+        });
         let mut server2 = start_netget_server(server2_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;

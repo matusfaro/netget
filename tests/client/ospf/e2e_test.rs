@@ -51,7 +51,7 @@ mod ospf_client_tests {
         // Verify client output shows OSPF initialization
         let output = client.get_output().await;
         assert!(
-            output.contains("OSPF") || output.contains("ospf"),
+            output.iter().any(|l| l.contains("OSPF")) || output.iter().any(|l| l.contains("ospf")),
             "Client should mention OSPF in output. Output: {:?}",
             output
         );
@@ -88,7 +88,9 @@ mod ospf_client_tests {
         // Verify client shows OSPF activity
         let output = client.get_output().await;
         assert!(
-            output.contains("Hello") || output.contains("OSPF") || output.contains("connected"),
+            output.iter().any(|l| l.contains("Hello"))
+                || output.iter().any(|l| l.contains("OSPF"))
+                || output.iter().any(|l| l.contains("connected")),
             "Client should show OSPF Hello or connection. Output: {:?}",
             output
         );
@@ -135,7 +137,8 @@ mod ospf_client_tests {
         // Verify server received Hello
         let server_output = server.get_output().await;
         assert!(
-            server_output.contains("Hello") || server_output.contains("neighbor"),
+            server_output.iter().any(|l| l.contains("Hello"))
+                || server_output.iter().any(|l| l.contains("neighbor")),
             "Server should receive Hello. Output: {:?}",
             server_output
         );
@@ -143,7 +146,8 @@ mod ospf_client_tests {
         // Verify client received response
         let client_output = client.get_output().await;
         assert!(
-            client_output.contains("Hello") || client_output.contains("received"),
+            client_output.iter().any(|l| l.contains("Hello"))
+                || client_output.iter().any(|l| l.contains("received")),
             "Client should receive Hello response. Output: {:?}",
             client_output
         );

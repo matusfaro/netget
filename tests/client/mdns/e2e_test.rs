@@ -45,7 +45,9 @@ mod mdns_client_tests {
         // Verify client output shows initialization
         let output = client.get_output().await;
         assert!(
-            output.contains("mDNS") || output.contains("initialized") || output.contains("ready"),
+            output.iter().any(|l| l.contains("mDNS"))
+                || output.iter().any(|l| l.contains("initialized"))
+                || output.iter().any(|l| l.contains("ready")),
             "Client should show mDNS initialization. Output: {:?}",
             output
         );
@@ -112,7 +114,9 @@ mod mdns_client_tests {
         // 1. Client initialized successfully
         // 2. Client attempted to browse for services (even if none found)
         assert!(
-            output.contains("mDNS") || output.contains("browse") || output.contains("service"),
+            output.iter().any(|l| l.contains("mDNS"))
+                || output.iter().any(|l| l.contains("browse"))
+                || output.iter().any(|l| l.contains("service")),
             "Client should show mDNS service discovery activity. Output: {:?}",
             output
         );
@@ -174,7 +178,9 @@ mod mdns_client_tests {
 
         // Verify client attempted hostname resolution
         assert!(
-            output.contains("resolve") || output.contains("localhost") || output.contains("mDNS"),
+            output.iter().any(|l| l.contains("resolve"))
+                || output.iter().any(|l| l.contains("localhost"))
+                || output.iter().any(|l| l.contains("mDNS")),
             "Client should show hostname resolution activity. Output: {:?}",
             output
         );

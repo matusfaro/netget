@@ -10,7 +10,7 @@
 //! **Note:** These tests are currently minimal and require a running S3-compatible
 //! service for full E2E validation. See CLAUDE.md for test setup instructions.
 
-#[cfg(all(test, feature = "s3-client"))]
+#[cfg(all(test, feature = "s3"))]
 mod s3_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
@@ -101,7 +101,7 @@ mod s3_client_tests {
         // Verify operations in output
         let output = client.get_output().await;
         assert!(
-            output.contains("test-bucket") || output.contains("test.txt"),
+            output.iter().any(|l| l.contains("test-bucket")) || output.iter().any(|l| l.contains("test.txt")),
             "Client output should mention bucket or object. Output: {:?}",
             output
         );

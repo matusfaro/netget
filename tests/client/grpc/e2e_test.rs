@@ -126,7 +126,10 @@ mod grpc_client_tests {
         // Verify client output shows gRPC connection or result
         let output = client.get_output().await;
         assert!(
-            output.contains("gRPC") || output.contains("Calculator") || output.contains("result") || output.contains("8"),
+            output.iter().any(|l| l.contains("gRPC"))
+                || output.iter().any(|l| l.contains("Calculator"))
+                || output.iter().any(|l| l.contains("result"))
+                || output.iter().any(|l| l.contains("8")),
             "Client should show gRPC protocol, service name, result field, or sum (8). Output: {:?}",
             output
         );
@@ -179,10 +182,10 @@ mod grpc_client_tests {
         // Verify client shows error or connection failure
         let output = client.get_output().await;
         assert!(
-            output.contains("ERROR")
-                || output.contains("error")
-                || output.contains("failed")
-                || output.contains("Error"),
+            output.iter().any(|l| l.contains("ERROR"))
+                || output.iter().any(|l| l.contains("error"))
+                || output.iter().any(|l| l.contains("failed"))
+                || output.iter().any(|l| l.contains("Error")),
             "Client should show connection error. Output: {:?}",
             output
         );

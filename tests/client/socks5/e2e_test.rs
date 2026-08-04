@@ -13,7 +13,7 @@
 use netget::llm::OllamaClient;
 use netget::protocol::CLIENT_REGISTRY;
 use netget::state::app_state::AppState;
-use netget::state::ClientStatus;
+use netget::state::{ClientId, ClientInstance, ClientStatus};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -111,9 +111,10 @@ async fn start_socks5_proxy_no_auth() -> u16 {
                             .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
                             .await;
 
-                        // Relay data bidirectionally
-                        let (mut client_read, mut client_write) = socket.split();
-                        let (mut target_read, mut target_write) = target.split();
+                        // Relay data bidirectionally (owned halves so they satisfy the
+                        // 'static bound required by tokio::spawn)
+                        let (mut client_read, mut client_write) = tokio::io::split(socket);
+                        let (mut target_read, mut target_write) = tokio::io::split(target);
 
                         let c2t = tokio::spawn(async move {
                             let _ = tokio::io::copy(&mut client_read, &mut target_write).await;
@@ -153,10 +154,7 @@ async fn test_socks5_client_no_auth_basic() {
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     // Get SOCKS5 client protocol
     let protocol = CLIENT_REGISTRY
@@ -164,27 +162,29 @@ async fn test_socks5_client_no_auth_basic() {
         .expect("SOCKS5 protocol not found");
 
     // Create client instance
-    let client_id = app_state
-        .create_client(
-            "SOCKS5".to_string(),
-            format!("127.0.0.1:{}", proxy_port),
-            "Connect through SOCKS5 proxy to echo server and send 'HELLO'".to_string(),
-            Some(serde_json::json!({
-                "target_addr": format!("127.0.0.1:{}", echo_port)
-            })),
-        )
-        .await;
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        format!("127.0.0.1:{}", proxy_port),
+        "SOCKS5".to_string(),
+        "Connect through SOCKS5 proxy to echo server and send 'HELLO'".to_string(),
+    );
+    client.startup_params = Some(serde_json::json!({
+        "target_addr": format!("127.0.0.1:{}", echo_port)
+    }));
+    let client_id = app_state.add_client(client).await;
 
     // Build connect context
+    let startup_params_json = serde_json::json!({
+        "target_addr": format!("127.0.0.1:{}", echo_port)
+    });
+    let schema = protocol.get_startup_parameters();
     let connect_ctx = netget::protocol::ConnectContext {
         remote_addr: format!("127.0.0.1:{}", proxy_port),
         llm_client: llm_client.clone(),
         state: app_state.clone(),
         status_tx: status_tx.clone(),
         client_id,
-        startup_params: Some(serde_json::json!({
-            "target_addr": format!("127.0.0.1:{}", echo_port)
-        })),
+        startup_params: Some(netget::protocol::StartupParams::new(startup_params_json, schema)),
     };
 
     // Connect through SOCKS5
@@ -217,35 +217,34 @@ async fn test_socks5_client_connection_failure() {
     let app_state = Arc::new(AppState::new());
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     let protocol = CLIENT_REGISTRY
         .get("SOCKS5")
         .expect("SOCKS5 protocol not found");
 
-    let client_id = app_state
-        .create_client(
-            "SOCKS5".to_string(),
-            "127.0.0.1:9999".to_string(), // Non-existent proxy
-            "Attempt to connect through non-existent proxy".to_string(),
-            Some(serde_json::json!({
-                "target_addr": "example.com:80"
-            })),
-        )
-        .await;
+    let mut client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "127.0.0.1:9999".to_string(), // Non-existent proxy
+        "SOCKS5".to_string(),
+        "Attempt to connect through non-existent proxy".to_string(),
+    );
+    client.startup_params = Some(serde_json::json!({
+        "target_addr": "example.com:80"
+    }));
+    let client_id = app_state.add_client(client).await;
 
+    let schema = protocol.get_startup_parameters();
     let connect_ctx = netget::protocol::ConnectContext {
         remote_addr: "127.0.0.1:9999".to_string(),
         llm_client: llm_client.clone(),
         state: app_state.clone(),
         status_tx: status_tx.clone(),
         client_id,
-        startup_params: Some(serde_json::json!({
-            "target_addr": "example.com:80"
-        })),
+        startup_params: Some(netget::protocol::StartupParams::new(
+            serde_json::json!({ "target_addr": "example.com:80" }),
+            schema,
+        )),
     };
 
     // Attempt to connect
@@ -268,23 +267,20 @@ async fn test_socks5_client_missing_target_addr() {
     let app_state = Arc::new(AppState::new());
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen3-coder:30b".to_string(),
-    );
+    let llm_client = OllamaClient::new("http://localhost:11434".to_string());
 
     let protocol = CLIENT_REGISTRY
         .get("SOCKS5")
         .expect("SOCKS5 protocol not found");
 
-    let client_id = app_state
-        .create_client(
-            "SOCKS5".to_string(),
-            "127.0.0.1:1080".to_string(),
-            "Missing target_addr parameter".to_string(),
-            None, // Missing startup params
-        )
-        .await;
+    let client = ClientInstance::new(
+        ClientId::new(0), // overwritten by add_client with the real allocated id
+        "127.0.0.1:1080".to_string(),
+        "SOCKS5".to_string(),
+        "Missing target_addr parameter".to_string(),
+    );
+    // client.startup_params is None by default (missing startup params)
+    let client_id = app_state.add_client(client).await;
 
     let connect_ctx = netget::protocol::ConnectContext {
         remote_addr: "127.0.0.1:1080".to_string(),

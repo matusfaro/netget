@@ -81,7 +81,9 @@ mod mcp_client_tests {
         // Verify the client shows MCP activity
         let output = client.get_output().await;
         assert!(
-            output.contains("MCP") || output.contains("tool") || output.contains("calculate"),
+            output.iter().any(|l| l.contains("MCP"))
+                || output.iter().any(|l| l.contains("tool"))
+                || output.iter().any(|l| l.contains("calculate")),
             "Client should show MCP tool activity. Output: {:?}",
             output
         );

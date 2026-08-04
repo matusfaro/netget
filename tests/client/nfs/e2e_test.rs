@@ -110,7 +110,7 @@ mod nfs_client_tests {
 
         // Verify client wrote the file
         assert!(
-            client.output_contains("NFS") || client.output_contains("mounted"),
+            client.output_contains("NFS").await || client.output_contains("mounted").await,
             "Client should show NFS activity. Output: {:?}",
             client.get_output().await
         );

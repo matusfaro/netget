@@ -55,7 +55,7 @@ mod ssh_client_tests {
         // Verify client shows authentication success
         let output = client.get_output().await;
         assert!(
-            output.contains("authenticated") || output.contains("connected"),
+            output.iter().any(|l| l.contains("authenticated")) || output.iter().any(|l| l.contains("connected")),
             "Client should show authentication success. Output: {:?}",
             output
         );
@@ -89,7 +89,9 @@ mod ssh_client_tests {
         // Verify client executed command and received output
         let output = client.get_output().await;
         assert!(
-            output.contains("uname") || output.contains("Linux") || output.contains("Darwin"),
+            output.iter().any(|l| l.contains("uname"))
+                || output.iter().any(|l| l.contains("Linux"))
+                || output.iter().any(|l| l.contains("Darwin")),
             "Client should show command execution. Output: {:?}",
             output
         );
@@ -126,7 +128,7 @@ mod ssh_client_tests {
         // Verify client executed all commands
         let output = client.get_output().await;
         assert!(
-            output.contains("DONE") || output.contains(&user),
+            output.iter().any(|l| l.contains("DONE")) || output.iter().any(|l| l.contains(&user)),
             "Client should show all commands executed. Output: {:?}",
             output
         );
@@ -159,7 +161,9 @@ mod ssh_client_tests {
         // Verify client shows authentication failure
         let output = client.get_output().await;
         assert!(
-            output.contains("failed") || output.contains("error") || output.contains("denied"),
+            output.iter().any(|l| l.contains("failed"))
+                || output.iter().any(|l| l.contains("error"))
+                || output.iter().any(|l| l.contains("denied")),
             "Client should show authentication failure. Output: {:?}",
             output
         );
@@ -193,7 +197,7 @@ mod ssh_client_tests {
         // Verify client shows disconnection
         let output = client.get_output().await;
         assert!(
-            output.contains("disconnect") || output.contains("CONNECTED"),
+            output.iter().any(|l| l.contains("disconnect")) || output.iter().any(|l| l.contains("CONNECTED")),
             "Client should show connection and disconnection. Output: {:?}",
             output
         );

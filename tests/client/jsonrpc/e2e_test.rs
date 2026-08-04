@@ -89,7 +89,7 @@ mod jsonrpc_client_tests {
                 .and()
                 // Mock 3: Client receives response (jsonrpc_response_received event)
                 .on_event("jsonrpc_response_received")
-                .and_event_data_contains("result", 8)
+                .and_event_data_contains("result", "8")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"

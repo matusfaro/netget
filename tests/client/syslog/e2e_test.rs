@@ -36,7 +36,7 @@ mod syslog_client_tests {
 
         // Verify client output shows connection
         assert!(
-            client.output_contains("connected").await || client.output_contains("Syslog"),
+            client.output_contains("connected").await || client.output_contains("Syslog").await,
             "Client should show syslog message. Output: {:?}",
             client.get_output().await
         );
@@ -63,13 +63,10 @@ mod syslog_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Now start a Syslog client that sends to this server via TCP
-        let client_config = NetGetConfig::new_with_params(
-            format!(
-                "Send syslog messages to 127.0.0.1:{} using TCP protocol. Send a message with facility 'daemon' and severity 'error'.",
-                server.port
-            ),
-            r#"{"protocol": "tcp"}"#,
-        );
+        let client_config = NetGetConfig::new(format!(
+            "Send syslog messages to 127.0.0.1:{} using TCP protocol (not UDP). Send a message with facility 'daemon' and severity 'error'.",
+            server.port
+        ));
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -78,7 +75,7 @@ mod syslog_client_tests {
 
         // Verify client output shows connection
         assert!(
-            client.output_contains("connected").await || client.output_contains("Syslog"),
+            client.output_contains("connected").await || client.output_contains("Syslog").await,
             "Client should show syslog connection. Output: {:?}",
             client.get_output().await
         );

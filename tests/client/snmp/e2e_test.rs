@@ -109,17 +109,11 @@ mod snmp_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client using GETBULK (v2c only)
-        let client_config = NetGetConfig::with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via SNMP. \
-                Use GETBULK to retrieve interface table starting at 1.3.6.1.2.1.2.2.1 with max_repetitions=3.",
-                server.port
-            ),
-            serde_json::json!({
-                "version": "v2c",
-                "community": "public"
-            }),
-        );
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via SNMP using SNMPv2c with community 'public'. \
+            Use GETBULK to retrieve interface table starting at 1.3.6.1.2.1.2.2.1 with max_repetitions=3.",
+            server.port
+        ));
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -157,18 +151,12 @@ mod snmp_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client that sends SET request
-        let client_config = NetGetConfig::with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via SNMP. \
-                SET OID 1.3.6.1.2.1.1.5.0 to 'new-hostname'. \
-                Then verify by reading it back with GET.",
-                server.port
-            ),
-            serde_json::json!({
-                "community": "private",
-                "version": "v2c"
-            }),
-        );
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via SNMP using SNMPv2c with community 'private'. \
+            SET OID 1.3.6.1.2.1.1.5.0 to 'new-hostname'. \
+            Then verify by reading it back with GET.",
+            server.port
+        ));
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -203,16 +191,11 @@ mod snmp_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client with matching community string
-        let client_config = NetGetConfig::with_startup_params(
-            format!(
-                "Connect to 127.0.0.1:{} via SNMP. Query OID 1.3.6.1.2.1.1.1.0.",
-                server.port
-            ),
-            serde_json::json!({
-                "community": "secret123",
-                "version": "v2c"
-            }),
-        );
+        let client_config = NetGetConfig::new(format!(
+            "Connect to 127.0.0.1:{} via SNMP using SNMPv2c with community 'secret123'. \
+            Query OID 1.3.6.1.2.1.1.1.0.",
+            server.port
+        ));
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -240,12 +223,9 @@ mod snmp_client_tests {
     async fn test_snmp_client_timeout() -> E2EResult<()> {
         // No server - test client timeout behavior
         // Client with short timeout
-        let client_config = NetGetConfig::with_startup_params(
-            "Connect to 127.0.0.1:9999 via SNMP. Query OID 1.3.6.1.2.1.1.1.0.",
-            serde_json::json!({
-                "timeout_ms": 1000,
-                "retries": 1
-            }),
+        let client_config = NetGetConfig::new(
+            "Connect to 127.0.0.1:9999 via SNMP with a 1000ms timeout and 1 retry. \
+            Query OID 1.3.6.1.2.1.1.1.0.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -255,7 +235,7 @@ mod snmp_client_tests {
         // Verify client handles timeout
         let output = client.get_output().await;
         assert!(
-            output.contains("timeout") || output.contains("error"),
+            output.iter().any(|l| l.contains("timeout")) || output.iter().any(|l| l.contains("error")),
             "Client should show timeout or error. Output: {:?}",
             output
         );
