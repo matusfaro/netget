@@ -20,20 +20,26 @@ impl AmqpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for AmqpProtocol {
+    /// No actions: the server has no code path that would execute one.
+    /// See `metadata()` and `src/server/amqp/CLAUDE.md`.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![] // Placeholder - AMQP actions not yet implemented
+        vec![]
     }
 
+    /// No actions: `AmqpServer` never calls the LLM, so no sync action could ever
+    /// be requested, and `execute_action` rejects everything.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![] // Placeholder
+        vec![]
     }
 
     fn protocol_name(&self) -> &'static str {
         "AMQP"
     }
 
+    /// No events: the frame reader logs frames and discards them without ever
+    /// constructing an `Event`, so nothing would fire a script or static handler.
     fn get_event_types(&self) -> Vec<crate::protocol::EventType> {
-        vec![] // Placeholder
+        vec![]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -48,66 +54,51 @@ impl Protocol for AmqpProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Custom AMQP 0.9.1 wire protocol")
-            .llm_control("Queue/exchange declarations, message routing")
-            .e2e_testing("lapin AMQP client")
-            .notes("Simplified RabbitMQ-compatible broker")
+            .state(DevelopmentState::Incomplete)
+            .implementation("Stub AMQP 0.9.1 framing; no method encoder or decoder")
+            .llm_control("None: no events are emitted and no actions exist")
+            .e2e_testing("Connection setup only; no lapin client completes a handshake")
+            .notes(
+                "NOT FUNCTIONAL. The broker accepts TCP, checks the 8-byte AMQP protocol \
+                 header and replies with a Connection.Start frame whose declared payload \
+                 length (20) does not match the 31 bytes actually written, and whose body is \
+                 not valid AMQP method encoding, so every conforming client fails the \
+                 handshake immediately. Subsequent frames are read, logged and discarded: \
+                 Connection.Tune, Connection.Open, Channel.Open, Queue.Declare, Basic.Publish \
+                 and Basic.Consume are all unimplemented. No queue, exchange, binding or \
+                 message exists. The LLM client handle is accepted and never used, so \
+                 instructions, script handlers and static handlers have no effect. Hidden \
+                 from the LLM until a real method codec exists.",
+            )
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "AMQP 0.9.1 broker for message queuing"
+        "AMQP 0.9.1 broker (incomplete: handshake stub only, no message queuing)"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Start AMQP broker on port 5672 and create queues for task distribution"
+        "Not usable yet: the AMQP broker cannot complete a client handshake"
     }
 
     fn group_name(&self) -> &'static str {
         "Application"
     }
+    /// All three modes are identical because none of them works: there is no event
+    /// to match on and no action to run. The earlier examples advertised an
+    /// `accept_connection` action that has never existed in this protocol.
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
-        StartupExamples::new(
-            // LLM-driven example
-            json!({
-                "type": "open_server",
-                "port": 5672,
-                "base_stack": "amqp",
-                "instruction": "AMQP broker accepting connections, create queues on demand"
-            }),
-            // Script-based example (placeholder as AMQP is not fully implemented)
-            json!({
-                "type": "open_server",
-                "port": 5672,
-                "base_stack": "amqp",
-                "event_handlers": [{
-                    "event_pattern": "amqp_connection",
-                    "handler": {
-                        "type": "script",
-                        "language": "python",
-                        "code": "# AMQP placeholder - accept connections\nrespond([{'type': 'accept_connection'}])"
-                    }
-                }]
-            }),
-            // Static mode
-            json!({
-                "type": "open_server",
-                "port": 5672,
-                "base_stack": "amqp",
-                "event_handlers": [{
-                    "event_pattern": "amqp_connection",
-                    "handler": {
-                        "type": "static",
-                        "actions": [{
-                            "type": "accept_connection"
-                        }]
-                    }
-                }]
-            }),
-        )
+        let unusable = json!({
+            "type": "open_server",
+            "port": 5672,
+            "base_stack": "amqp",
+            "instruction": "NOT FUNCTIONAL: the AMQP broker cannot complete a client handshake \
+                            and emits no events, so instructions, scripts and static handlers \
+                            all have no effect. Do not start this protocol."
+        });
+        StartupExamples::new(unusable.clone(), unusable.clone(), unusable)
     }
 }
 
@@ -130,6 +121,8 @@ impl Server for AmqpProtocol {
         })
     }
 
+    /// Always an error: the protocol declares no actions, so reaching here means a
+    /// caller invented one.
     fn execute_action(&self, action: Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -137,7 +130,8 @@ impl Server for AmqpProtocol {
             .unwrap_or("unknown");
 
         Err(anyhow::anyhow!(
-            "AMQP action execution not yet implemented: {}",
+            "AMQP has no actions ('{}' does not exist). The AMQP server is incomplete: it \
+             cannot complete a client handshake and never calls the LLM.",
             action_type
         ))
     }

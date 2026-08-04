@@ -1,10 +1,31 @@
-//! AMQP server implementation
+//! AMQP 0.9.1 server — INCOMPLETE, not usable as a broker
 //!
-//! Basic AMQP 0.9.1 broker that accepts connections and handles messaging.
-//! This is a simplified implementation focused on LLM integration.
+//! `DevelopmentState::Incomplete` (see `actions.rs`), so it is hidden from the LLM.
+//! What it actually does, end to end:
 //!
-//! The LLM controls all queues, exchanges, and message routing.
-//! No persistent storage - all state is maintained in memory and by the LLM.
+//! 1. accepts TCP and reads the 8-byte `AMQP\0\0\x09\x01` protocol header;
+//! 2. writes [`create_connection_start_frame`], which is malformed — the frame header
+//!    declares a 20-byte payload while 31 bytes are written, and the payload is not
+//!    valid AMQP method encoding (version-major/minor must be one byte each, and
+//!    server-properties must be a field table). A conforming client reads 20 bytes and
+//!    then finds `0x00` where the `0xCE` frame-end marker must be, and aborts;
+//! 3. reads further frames, logs their type and discards them. Connection.StartOk,
+//!    Connection.Tune, Connection.Open, Channel.Open, Queue.Declare, Exchange.Declare,
+//!    Basic.Publish and Basic.Consume are all unimplemented — there is no method
+//!    decoder or encoder anywhere in this module;
+//! 4. echoes heartbeats.
+//!
+//! There is no LLM integration: the `OllamaClient` argument is accepted and dropped,
+//! no `Event` is ever constructed, and `call_llm` is never called. That also means
+//! script and static event handlers configured for this server never run.
+//!
+//! Consistent with the project rule, no queue, exchange, binding or message is stored
+//! here — but that is not a design achievement in this case, because nothing is
+//! implemented at all.
+//!
+//! Finishing this protocol means writing an AMQP 0.9.1 method codec (class/method ids
+//! plus the field-table encoding) and then surfacing Queue.Declare / Basic.Publish /
+//! Basic.Consume as events with matching actions, so the model answers them.
 
 pub mod actions;
 
@@ -12,7 +33,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_error, console_info, console_trace};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -20,7 +41,13 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
+
+/// Largest AMQP frame payload accepted from a client, in bytes.
+///
+/// The wire format carries a 32-bit size, so without this cap a single peer could
+/// make the broker allocate 4 GiB per frame. RabbitMQ's default frame_max is 128 KiB.
+const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// AMQP server/broker
 pub struct AmqpServer;
@@ -39,6 +66,17 @@ impl AmqpServer {
         let local_addr = listener.local_addr()?;
 
         console_info!(status_tx, "AMQP broker listening on {}", local_addr);
+        warn!(
+            "AMQP server on {} is INCOMPLETE: its Connection.Start frame is malformed, so no \
+             client can complete a handshake, and it never calls the LLM (instructions, script \
+             handlers and static handlers have no effect)",
+            local_addr
+        );
+        console_warn!(
+            status_tx,
+            "AMQP is INCOMPLETE: no client can complete the handshake and the LLM is never \
+             consulted. Nothing you instruct this server to do will happen."
+        );
 
         // Shared state for connected clients
         let clients: Arc<Mutex<HashMap<String, Arc<Mutex<TcpStream>>>>> =
@@ -122,9 +160,7 @@ async fn handle_amqp_connection(
         status_changed_at: now,
         protocol_info: conn_info,
     };
-    state
-        .add_connection_to_server(server_id, conn_state)
-        .await;
+    state.add_connection_to_server(server_id, conn_state).await;
 
     console_info!(
         status_tx,
@@ -142,19 +178,11 @@ async fn handle_amqp_connection(
         .context("Failed to read AMQP protocol header")?;
 
     if &header[0..4] != b"AMQP" {
-        console_error!(
-            status_tx,
-            "Invalid AMQP protocol header from {}",
-            peer_addr
-        );
+        console_error!(status_tx, "Invalid AMQP protocol header from {}", peer_addr);
         return Err(anyhow::anyhow!("Invalid AMQP protocol header"));
     }
 
-    console_trace!(
-        status_tx,
-        "AMQP protocol header received: {:?}",
-        header
-    );
+    console_trace!(status_tx, "AMQP protocol header received: {:?}", header);
 
     // Send Connection.Start
     // This is a simplified implementation - real AMQP would send proper frames
@@ -180,8 +208,12 @@ async fn handle_amqp_connection(
                 Ok(_) => {
                     let frame_type = frame_header[0];
                     let channel = u16::from_be_bytes([frame_header[1], frame_header[2]]);
-                    let size =
-                        u32::from_be_bytes([frame_header[3], frame_header[4], frame_header[5], frame_header[6]]);
+                    let size = u32::from_be_bytes([
+                        frame_header[3],
+                        frame_header[4],
+                        frame_header[5],
+                        frame_header[6],
+                    ]);
 
                     console_trace!(
                         status_tx,
@@ -190,6 +222,18 @@ async fn handle_amqp_connection(
                         channel,
                         size
                     );
+
+                    // The 32-bit size is attacker-controlled: allocating it verbatim
+                    // let one peer ask for up to 4 GiB per frame.
+                    if size as usize > MAX_FRAME_SIZE {
+                        console_error!(
+                            status_tx,
+                            "AMQP frame of {} bytes exceeds the {} byte limit; closing connection",
+                            size,
+                            MAX_FRAME_SIZE
+                        );
+                        break;
+                    }
 
                     // Read frame payload
                     let mut payload = vec![0u8; size as usize];
@@ -257,13 +301,17 @@ async fn handle_amqp_connection(
     Ok(())
 }
 
-/// Create AMQP Connection.Start frame
+/// Create the AMQP Connection.Start frame.
+///
+/// BROKEN, deliberately left as-is rather than half-fixed: the header below declares
+/// a 20-byte payload while 31 payload bytes follow, and the payload is not valid
+/// method encoding either (AMQP 0.9.1 §4.2.5: version-major and version-minor are one
+/// octet each, server-properties is a field table, mechanisms and locales are long
+/// strings). Correcting the length alone would still not produce a frame any client
+/// accepts, so this stays a documented stub until a real method encoder is written.
 fn create_connection_start_frame() -> Vec<u8> {
-    // Simplified Connection.Start frame
-    // Frame type (1 = method), channel (0), size, payload, frame end (0xCE)
-    // This is a minimal implementation - production would use proper frame encoding
     vec![
-        1,    // Frame type: Method
+        1, // Frame type: Method
         0, 0, // Channel 0
         0, 0, 0, 20, // Payload size (20 bytes)
         // Payload: Connection.Start (class 10, method 10)
@@ -280,9 +328,9 @@ fn create_connection_start_frame() -> Vec<u8> {
 /// Create AMQP heartbeat frame
 fn create_heartbeat_frame() -> Vec<u8> {
     vec![
-        8,    // Frame type: Heartbeat
+        8, // Frame type: Heartbeat
         0, 0, // Channel 0
-        0, 0, 0, 0, // Payload size 0
+        0, 0, 0, 0,    // Payload size 0
         0xCE, // Frame end
     ]
 }

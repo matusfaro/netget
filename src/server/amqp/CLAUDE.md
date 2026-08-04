@@ -1,120 +1,91 @@
 # AMQP Server Implementation
 
-## Overview
+## Status: INCOMPLETE — hidden from the LLM
 
-Simplified AMQP 0.9.1 broker implementation with LLM control. Provides basic message queuing capabilities compatible with RabbitMQ protocol.
+`DevelopmentState::Incomplete` (`src/server/amqp/actions.rs`), so `is_available_to_llm()`
+returns false and the model is never offered this protocol. It was previously
+`Experimental`, which put a broker in the model's menu that could not answer a single
+AMQP method.
 
-## Library Choices
+**This is not a broker.** It accepts TCP, fails the handshake, and discards everything
+after that.
 
-**No external AMQP server library** - Custom wire protocol implementation
-- **Rationale**: No mature Rust AMQP 0.9.1 server library exists
-- **Approach**: Manual frame parsing and basic protocol handling
-- **Tokio**: Async runtime for TCP connections and frame I/O
+## What the code actually does
 
-## Architecture
+`src/server/amqp/mod.rs`:
 
-### Wire Protocol
-- **AMQP 0.9.1 framing**: Type + Channel + Size + Payload + End marker (0xCE)
-- **Frame types**: Method (1), Content Header (2), Content Body (3), Heartbeat (8)
-- **Connection flow**: Protocol header → Connection.Start → Client response → Channel operations
+1. `spawn_with_llm_actions` binds the port (bind failure propagates with `?`) and
+   registers the accept-loop `JoinHandle` exactly once via `register_server_task`.
+2. Per connection: reads the 8-byte `AMQP\0\0\x09\x01` protocol header and rejects
+   anything not starting with `AMQP`.
+3. Writes `create_connection_start_frame()` — **malformed**. The frame header declares
+   a 20-byte payload; 31 payload bytes follow. A conforming client reads 20 bytes and
+   then requires the `0xCE` frame-end marker, but finds `0x49` (`'I'`, from the middle
+   of `"PLAIN"`), and aborts with a framing error. The payload is not valid method
+   encoding either: AMQP 0.9.1 §4.2.5 gives version-major and version-minor one octet
+   each (the code writes five bytes), and server-properties must be a field table.
+4. Reads subsequent frames in a spawned task, logs `type`/`channel`/`size`, and drops
+   the payload. Method frames (type 1) are logged as "Received AMQP method frame" and
+   nothing else happens.
+5. Heartbeat frames (type 8) are echoed back. That is the only correct behaviour in
+   the module.
 
-### LLM Integration Points
+## What does not exist
 
-**Connection Events**:
-- Client connects (protocol header received)
-- Authentication completed
-- Channel opened/closed
-- Client disconnects
+- No method decoder or encoder. Connection.StartOk, Connection.Tune(Ok),
+  Connection.Open(Ok), Channel.Open(Ok), Exchange.Declare, Queue.Declare, Queue.Bind,
+  Basic.Publish, Basic.Consume, Basic.Get, Basic.Ack/Nack/Reject: none are parsed or
+  produced.
+- No field-table codec, which every one of the above depends on.
+- No content header (type 2) or content body (type 3) handling — the two frame types
+  that carry an actual message are logged and dropped.
+- No queues, exchanges, bindings, consumers or deliveries. There is nothing to route.
+- No TLS, no SASL beyond advertising the string `PLAIN`, no transactions, no publisher
+  confirms, no QoS/prefetch, no clustering.
 
-**Method Handlers** (LLM decides responses):
-- **Queue operations**: Declare, Bind, Purge, Delete
-- **Exchange operations**: Declare, Delete, Bind
-- **Publishing**: Basic.Publish (LLM routes message)
-- **Consuming**: Basic.Consume, Basic.Get (LLM generates messages)
-- **Acknowledgments**: Basic.Ack, Basic.Nack, Basic.Reject
+## No LLM integration
 
-### State Management
+`spawn_with_llm_actions` takes the `OllamaClient` as `_llm_client` and drops it. No
+`Event` is ever constructed and `call_llm` is never called, so:
 
-**No Persistent Storage** - Following project philosophy:
-- **Queues**: LLM tracks queue declarations in memory
-- **Exchanges**: LLM tracks exchange types and bindings
-- **Messages**: LLM generates message content on demand
-- **Routing**: LLM decides message routing based on exchange type and routing key
+- the server `instruction` has no effect on any byte on the wire;
+- `event_handlers` — script or static — never fire, because handler dispatch happens
+  inside `call_llm`;
+- `get_sync_actions()`, `get_async_actions()` and `get_event_types()` all return empty
+  vectors, and `execute_action` returns an error for every input.
 
-Similar to MySQL protocol: No actual database, LLM answers all queries from memory/knowledge.
+Correlation identifiers (channel number, delivery tag, consumer tag) are therefore not
+propagated anywhere: no reply is ever generated that could carry them. The frame
+reader does parse the channel number out of the header, but only to log it.
 
-### Dual Logging
+## Storage
 
-All operations logged via:
-- **Tracing macros**: `info!`, `debug!`, `trace!` → `netget.log`
-- **status_tx channel**: → TUI for real-time display
+None — no queue, exchange or message is held in Rust, which satisfies the project rule
+by accident rather than by design, since no message ever gets far enough to be stored.
 
-## Limitations
+## Fixed while auditing
 
-1. **Simplified Protocol**: Only core AMQP 0.9.1 methods implemented
-2. **No Transactions**: No tx.select/commit/rollback support
-3. **No Publisher Confirms**: Publish confirmations not implemented
-4. **Basic Auth**: Only PLAIN authentication supported
-5. **No Clustering**: Single-instance broker only
-6. **No Persistence**: All state in memory (LLM tracks)
-7. **Limited QoS**: No prefetch or flow control
-8. **No SSL/TLS**: Plain TCP only
+Frame payloads were allocated straight from the wire-supplied 32-bit size
+(`vec![0u8; size as usize]`), letting one peer request a 4 GiB allocation per frame.
+Frames are now capped at `MAX_FRAME_SIZE` (1 MiB, versus RabbitMQ's 128 KiB default)
+and the connection is closed when a larger one is announced.
 
-## Example LLM Interactions
+## Route to Experimental
 
-**Queue Declaration**:
-```
-User: Create a durable queue named "tasks"
-LLM Action: {
-  "type": "declare_queue",
-  "queue_name": "tasks",
-  "durable": true,
-  "exclusive": false,
-  "auto_delete": false
-}
-```
-
-**Message Publishing**:
-```
-User: Publish "Hello, World!" to exchange "logs" with routing key "info"
-LLM Action: {
-  "type": "publish_message",
-  "exchange_name": "logs",
-  "routing_key": "info",
-  "message_body": "Hello, World!",
-  "properties": {"delivery_mode": 2}
-}
-```
-
-**Message Consumption**:
-```
-Event: {
-  "type": "basic_consume",
-  "queue_name": "tasks",
-  "consumer_tag": "consumer-1"
-}
-LLM Action: {
-  "type": "consume_message",
-  "queue_name": "tasks",
-  "consumer_tag": "consumer-1"
-  // LLM generates message content
-}
-```
-
-## Testing Approach
-
-See `tests/server/amqp/CLAUDE.md` for testing strategy.
-
-## Future Enhancements
-
-1. **Full Method Coverage**: Implement remaining AMQP methods
-2. **Exchange Types**: Complete fanout, topic, headers routing
-3. **TLS Support**: Add SSL/TLS encryption
-4. **Authentication**: Add more auth mechanisms (EXTERNAL, SCRAM)
-5. **Management API**: Add RabbitMQ-style management interface
-6. **Plugins**: Support RabbitMQ plugin-like extensions
+1. Write an AMQP 0.9.1 method codec: class/method ids, short/long strings, and the
+   field-table encoding. This is the whole job; everything else is small.
+2. Complete the connection handshake: Connection.Start/StartOk → Tune/TuneOk →
+   Open/OpenOk → Channel.Open/OpenOk. Verify with `lapin` — the client used by
+   `tests/server/amqp/e2e_test.rs`, which today only checks that a TCP connection can
+   be opened.
+3. Surface the decision points as events (`amqp_queue_declare`, `amqp_basic_publish`,
+   `amqp_basic_consume`) with matching actions, echoing channel number, delivery tag
+   and consumer tag so a `{{event.*}}` static handler can reply without a model call.
+4. Keep the "no storage" rule: the model decides what a queue contains and what a
+   consumer receives.
 
 ## References
 
 - [AMQP 0.9.1 Specification](https://www.rabbitmq.com/resources/specs/amqp0-9-1.pdf)
-- [RabbitMQ Protocol Tutorial](https://www.rabbitmq.com/tutorials/amqp-concepts.html)
+- [AMQP 0.9.1 protocol reference](https://www.rabbitmq.com/amqp-0-9-1-reference.html)
+- Testing notes: `tests/server/amqp/CLAUDE.md`
