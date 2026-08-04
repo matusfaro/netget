@@ -5,6 +5,13 @@
 mDNS/DNS-SD (Multicast DNS / DNS Service Discovery) server for zero-configuration network service advertisement.
 Implements RFC 6762 (mDNS) and RFC 6763 (DNS-SD) using the mdns-sd library.
 
+**Status**: Experimental - honestly so. The LLM's only control point is a single
+startup event; there is no query handling and no runtime reconfiguration.
+**Port**: announces on 224.0.0.251:5353. No listening socket of its own is
+bound, and 5353 is unprivileged, so `PrivilegeRequirement::None` is correct.
+**Tests**: `tests/server/mdns/test.rs` (note: `test.rs`, not `e2e_test.rs`),
+four mock-driven tests that browse for the advertised services.
+
 ## Library Choices
 
 - **mdns-sd** v0.11+ - Full mDNS/DNS-SD implementation
@@ -28,11 +35,32 @@ mDNS is **advertisement-only** in NetGet:
 
 ### LLM Integration
 
-- **Single event type**: `MDNS_SERVER_STARTUP_EVENT`
-- Triggered once when mDNS server initializes
+- **Single event type**: `MDNS_SERVER_STARTUP_EVENT` (`mdns_server_startup`)
+- Triggered once when mDNS server initializes, and only if no `startup_params`
+  were supplied - passing `service_type` or `services` registers the services
+  directly and skips the model call entirely
+- The call goes through `call_llm`, so a configured script or static handler for
+  `mdns_server_startup` runs in-process with no model call
 - LLM returns one or more `register_mdns_service` actions
-- **Manual action processing** - Actions processed in `spawn_with_llm_actions()` directly
-- Actions not executed via standard `ProtocolActions::execute_action()` flow
+- **Manual action processing** - actions are read out of
+  `execution_result.raw_actions` in `spawn_with_llm_actions()` and registered
+  against the live `ServiceDaemon` there
+- `MdnsProtocol::execute_action` therefore does **not** register anything. It
+  returns `ActionResult::NoAction` for `register_mdns_service`, because outside
+  the startup pass (e.g. if the action is issued as a user-triggered async
+  action later) there is no daemon handle to register against. Registering a
+  service after startup is not supported.
+
+### Startup Parameters
+
+Supplied via `open_server`'s `startup_params`; when present the LLM is not
+consulted at all.
+
+- `service_type` / `service_name` / `port` / `properties` - register one service
+- `services` - array of `{service_type, service_name, port, properties}` objects
+- `port` defaults to the server's own port, or 8080 when that is 0. It is the
+  port published in the SRV record - i.e. the port discovering clients will
+  connect to - and is unrelated to mDNS itself, which always uses 5353.
 
 ### Service Registration Flow
 
@@ -50,30 +78,41 @@ mDNS is **advertisement-only** in NetGet:
 
 ### Local IP Detection
 
-Uses heuristic to find local IP:
+Uses a heuristic to find the local IP:
 
 ```rust
 fn get_local_ip() -> Option<String> {
-    // Bind UDP socket and "connect" to 8.8.8.8:80 (no packets sent)
-    // Socket reports local IP that would route to destination
-    // Fallback to 127.0.0.1 if detection fails
+    // Bind a UDP socket and "connect" to 192.0.2.1:80 (RFC 5737 TEST-NET-1).
+    // connect() on UDP only does a routing-table lookup - no packets are sent
+    // and the destination is never contacted - so the socket then reports the
+    // local IP the default route would use.
+    // Fallback to 127.0.0.1 if detection fails.
 }
 ```
+
+The destination is a documentation address rather than a real host so that the
+lookup carries no dependency on, or traffic implication for, a third party.
 
 ## Connection Management
 
 - **No connections** - mDNS is multicast-based
 - No TCP/UDP listener
-- `ServiceDaemon` runs in background tokio task
-- Daemon kept alive with infinite sleep loop
-- Dummy address returned: `224.0.0.251:5353` (multicast group)
+- `ServiceDaemon` runs in a background tokio task, parked on
+  `std::future::pending()`
+- The task's `JoinHandle` is registered with `AppState::register_server_task`,
+  so `stop_server` can abort it
+- Address returned to the caller: `224.0.0.251:5353` (the multicast group), not
+  a bound socket
 
 ## State Management
 
 - **No state** - Service registrations managed by mdns-sd library
 - No tracking in `AppState`
 - Services automatically re-announced periodically per RFC 6762
-- Daemon cleanup handled by Drop trait
+- Daemon shutdown: `mdns_sd::ServiceDaemon` has **no** `Drop` impl, so dropping
+  it leaves the background thread announcing. The task therefore holds a
+  `DaemonGuard` whose `Drop` calls `ServiceDaemon::shutdown()`; that runs when
+  the task is aborted, which is what actually stops the announcements.
 
 ## Service Types
 
@@ -99,8 +138,12 @@ Optional key-value pairs advertised with service:
 
 ## Limitations
 
-- **Advertisement only** - No mDNS query handling
-- **No dynamic updates** - Services registered at startup only
+- **Advertisement only** - No mDNS query handling reaches the LLM. Incoming
+  queries for the advertised services are answered by mdns-sd internally; there
+  is no `mdns_query` event, so instructions like "respond differently to
+  queries from X" cannot be honoured.
+- **No dynamic updates** - Services registered at startup only.
+  `register_mdns_service` issued after startup is a no-op (see LLM Integration).
 - **No service unregistration** - Services advertised until shutdown
 - **No conflict resolution visibility** - Handled by library
 - **No IPv6 support** - IPv4 only (could be added)

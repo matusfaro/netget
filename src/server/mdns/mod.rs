@@ -21,6 +21,11 @@ use crate::console_info;
 #[cfg(feature = "mdns")]
 use actions::MDNS_SERVER_STARTUP_EVENT;
 
+/// Port advertised in the SRV record when neither the service definition nor
+/// the server's own listen address names one.
+#[cfg(feature = "mdns")]
+const DEFAULT_ADVERTISED_PORT: u16 = 8080;
+
 /// mDNS server that advertises services based on LLM instructions
 pub struct MdnsServer;
 
@@ -28,14 +33,22 @@ pub struct MdnsServer;
 impl MdnsServer {
     /// Spawn mDNS server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
-        _listen_addr: SocketAddr,
+        listen_addr: SocketAddr,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
-        use mdns_sd::{ServiceDaemon, ServiceInfo};
+        use mdns_sd::ServiceDaemon;
+
+        // mDNS itself does not bind a listening socket, so the server's own
+        // port is only meaningful as the default port to advertise for the
+        // service being announced.
+        let default_port = match listen_addr.port() {
+            0 => DEFAULT_ADVERTISED_PORT,
+            p => p,
+        };
 
         info!("mDNS server (action-based) starting");
         let _ = status_tx.send("[INFO] mDNS server starting".to_string());
@@ -76,8 +89,17 @@ impl MdnsServer {
                             })
                             .unwrap_or_default();
 
+                        // The advertised port is what discovering clients will
+                        // actually connect to; publishing 0 makes the SRV
+                        // record useless.
+                        let port = service_obj
+                            .get("port")
+                            .and_then(|v| v.as_u64())
+                            .and_then(|p| u16::try_from(p).ok())
+                            .unwrap_or(default_port);
+
                         // Don't fail server startup if registration fails
-                        let _ = register_service(&mdns, service_type, service_name, 0, &properties, &status_tx);
+                        let _ = register_service(&mdns, service_type, service_name, port, &properties, &status_tx);
                     }
                 }
             }
@@ -95,8 +117,13 @@ impl MdnsServer {
                     })
                     .unwrap_or_default();
 
+                let port = params
+                    .get_optional_u64("port")
+                    .and_then(|p| u16::try_from(p).ok())
+                    .unwrap_or(default_port);
+
                 // Don't fail server startup if registration fails
-                let _ = register_service(&mdns, &service_type, &service_name, 0, &properties, &status_tx);
+                let _ = register_service(&mdns, &service_type, &service_name, port, &properties, &status_tx);
             }
         }
 
@@ -135,8 +162,13 @@ impl MdnsServer {
                             .get("instance_name")
                             .and_then(|v| v.as_str())
                             .unwrap_or("MyService");
-                        let port =
-                            action.get("port").and_then(|v| v.as_u64()).unwrap_or(8080) as u16;
+                        // `as u16` would silently wrap an out-of-range port
+                        // (e.g. 70000 -> 4464) into a wrong SRV record.
+                        let port = action
+                            .get("port")
+                            .and_then(|v| v.as_u64())
+                            .and_then(|p| u16::try_from(p).ok())
+                            .unwrap_or(default_port);
 
                         let properties = action
                             .get("properties")
@@ -148,66 +180,56 @@ impl MdnsServer {
                             })
                             .unwrap_or_default();
 
-                        // Get local IP (simplified - use first non-loopback interface)
-                        let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-                        let host_name = format!("{}.local.", instance_name.replace(" ", "-"));
-
-                        // Create ServiceInfo
-                        match ServiceInfo::new(
+                        // Failures are logged by register_service; one bad
+                        // service must not abort the remaining registrations.
+                        let _ = register_service(
+                            &mdns,
                             service_type,
                             instance_name,
-                            &host_name,
-                            &local_ip,
                             port,
-                            &properties[..],
-                        ) {
-                            Ok(service_info) => {
-                                // Register service
-                                match mdns.register(service_info) {
-                                    Ok(_) => {
-                                        info!(
-                                            "mDNS registered service: {} ({}:{})",
-                                            instance_name, local_ip, port
-                                        );
-                                        let _ = status_tx.send(format!(
-                                            "[INFO] → mDNS registered service: {} ({}:{})",
-                                            instance_name, local_ip, port
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to register mDNS service: {}", e);
-                                        let _ = status_tx.send(format!(
-                                            "[ERROR] ✗ Failed to register mDNS service: {}",
-                                            e
-                                        ));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to create ServiceInfo: {}", e);
-                                let _ = status_tx
-                                    .send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
-                            }
-                        }
+                            &properties,
+                            &status_tx,
+                        );
                     }
                 }
             }
         }
         } // Close if !used_startup_params
 
-        // Keep daemon running
-        tokio::spawn(async move {
-            // Store daemon to keep it alive
-            let _daemon = mdns;
-
-            // Keep running indefinitely
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-            }
+        // Keep the daemon alive for the lifetime of the server task.
+        //
+        // `ServiceDaemon` has no `Drop` impl, so simply dropping it leaves the
+        // background thread running and the services still being announced on
+        // the multicast group. `DaemonGuard` calls `shutdown()` from its own
+        // `Drop`, which runs when the task is aborted by `stop_server`.
+        let handle = tokio::spawn(async move {
+            let _guard = DaemonGuard(mdns);
+            std::future::pending::<()>().await;
         });
 
-        // Return a dummy address since mDNS doesn't bind to a specific port
-        Ok("224.0.0.251:5353".parse().unwrap())
+        // Register the task so stop_server can abort it and stop advertising.
+        app_state.register_server_task(server_id, handle).await;
+
+        // mDNS does not bind a listening socket of its own; report the
+        // well-known IPv4 multicast group it announces on.
+        Ok(SocketAddr::from((
+            std::net::Ipv4Addr::new(224, 0, 0, 251),
+            5353,
+        )))
+    }
+}
+
+/// Shuts the mDNS daemon down when the owning task is dropped or aborted.
+#[cfg(feature = "mdns")]
+struct DaemonGuard(mdns_sd::ServiceDaemon);
+
+#[cfg(feature = "mdns")]
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        match self.0.shutdown() {
+            Ok(_) => info!("mDNS daemon shutdown requested"),
+            Err(e) => error!("Failed to shut down mDNS daemon: {}", e),
+        }
     }
 }
 
@@ -215,10 +237,12 @@ impl MdnsServer {
 fn get_local_ip() -> Option<String> {
     use std::net::UdpSocket;
 
-    // Try to get local IP by connecting to a public DNS server
-    // This doesn't actually send any packets, just determines the local IP
+    // Determine which local address the default route would use. `connect` on
+    // a UDP socket only performs a routing-table lookup - no packets are sent
+    // and the peer is never contacted - so the destination is a documentation
+    // address (RFC 5737 TEST-NET-1) rather than a real third-party host.
     if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
+        if socket.connect("192.0.2.1:80").is_ok() {
             if let Ok(addr) = socket.local_addr() {
                 return Some(addr.ip().to_string());
             }

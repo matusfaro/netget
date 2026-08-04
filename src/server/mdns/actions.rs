@@ -41,6 +41,13 @@ impl Protocol for MdnsProtocol {
                 example: json!("My Web Server"),
             },
             ParameterDefinition {
+                name: "port".to_string(),
+                type_hint: "number".to_string(),
+                description: "Port advertised in the SRV record - the port clients will connect to. Defaults to the server's own port, or 8080 if that is 0".to_string(),
+                required: false,
+                example: json!(8080),
+            },
+            ParameterDefinition {
                 name: "properties".to_string(),
                 type_hint: "object".to_string(),
                 description: "TXT record properties (key-value pairs)".to_string(),
@@ -50,10 +57,10 @@ impl Protocol for MdnsProtocol {
             ParameterDefinition {
                 name: "services".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of service definitions (each with service_type, service_name, properties)"
+                description: "Array of service definitions (each with service_type, service_name, port, properties)"
                     .to_string(),
                 required: false,
-                example: json!([{"service_type": "_http._tcp.local.", "service_name": "Web", "properties": {"path": "/"}}]),
+                example: json!([{"service_type": "_http._tcp.local.", "service_name": "Web", "port": 8080, "properties": {"path": "/"}}]),
             },
         ]
     }
@@ -77,14 +84,19 @@ impl Protocol for MdnsProtocol {
         vec!["mdns", "bonjour", "dns-sd", "zeroconf"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("hickory-proto for multicast DNS")
-            .llm_control("Service announcements + responses")
-            .e2e_testing("mdns-sd or avahi")
-            .notes("Multicast service discovery")
+            // Announces on 224.0.0.251:5353 - an unprivileged port, and joining
+            // a multicast group needs no elevated privileges.
+            .privilege_requirement(PrivilegeRequirement::None)
+            .implementation("mdns-sd ServiceDaemon (not hickory-proto); binds no listener of its own")
+            .llm_control("Service registration at startup only - no query handling, no runtime updates")
+            .e2e_testing("tests/server/mdns/test.rs - mdns-sd browser, mock-driven")
+            .notes("Multicast service discovery; advertisement-only, incoming mDNS queries are handled by the library, not by the LLM")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -171,11 +183,18 @@ impl Server for MdnsProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
+            // Registration is performed by MdnsServer::spawn_with_llm_actions,
+            // which reads `register_mdns_service` out of the raw action list at
+            // startup. Reaching this arm means the action was produced outside
+            // that startup pass (e.g. as a user-triggered async action), where
+            // there is no daemon handle to register against - so it is a no-op,
+            // not a registration.
             "register_mdns_service" => {
-                // This action is handled in mdns.rs during server startup
-                debug!("mDNS service registration action received");
-                // Return empty since this action doesn't produce protocol output
-                Ok(ActionResult::Output(Vec::new()))
+                debug!(
+                    "register_mdns_service outside server startup is a no-op \
+                     (services can only be registered when the mDNS server starts)"
+                );
+                Ok(ActionResult::NoAction)
             }
             _ => Err(anyhow::anyhow!("Unknown mDNS action: {}", action_type)),
         }
@@ -187,7 +206,7 @@ impl Server for MdnsProtocol {
 fn register_mdns_service_action() -> ActionDefinition {
     ActionDefinition {
         name: "register_mdns_service".to_string(),
-        description: "Register an mDNS/DNS-SD service for network discovery".to_string(),
+        description: "Register an mDNS/DNS-SD service for network discovery. Only takes effect in response to the mdns_server_startup event - services cannot be added, changed or removed once the server is running.".to_string(),
         parameters: vec![
             Parameter {
                 name: "service_type".to_string(),
