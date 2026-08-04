@@ -1,7 +1,44 @@
-//! Kafka broker server implementation
+//! Kafka broker — INCOMPLETE, no LLM integration and no working handshake
 //!
-//! Implements a simplified Kafka broker that integrates with LLM for message routing and topic management.
-//! Uses kafka-protocol crate for wire format parsing/serialization.
+//! `DevelopmentState::Incomplete` (see `actions.rs`), so it is hidden from the LLM.
+//! Three independent reasons, any one of which is disqualifying:
+//!
+//! 1. **No client can negotiate.** `handle_api_versions` returns
+//!    `ApiVersionsResponse::default()`, whose `api_keys` list is empty. ApiVersions is
+//!    the first request every Kafka client sends; an empty list means "this broker
+//!    supports nothing" and the client gives up. `tests/server/kafka/e2e_test.rs`
+//!    records the symptom — rdkafka crashes against this server, so the tests fall
+//!    back to asserting that a TCP connect succeeds.
+//!
+//! 2. **The API version is ignored everywhere.** Every `decode`/`encode` call below
+//!    passes a hardcoded version 0. Request header v0 does not carry `client_id`
+//!    (`kafka-protocol` gates it on `version >= 1`), so for the header v1/v2 that real
+//!    clients send, the cursor is left inside the `client_id` string and every body
+//!    field after it — topic names, partition indices, offsets — is garbage. Responses
+//!    are likewise encoded at v0 whatever the client asked for.
+//!
+//! 3. **The LLM is never called.** `handle_metadata`, `handle_produce`, `handle_fetch`
+//!    and `handle_offset_commit` all take `_llm_client`, `_app_state`, `_server_id` and
+//!    `_protocol` and use none of them. Every response is computed by the hardcoded
+//!    Rust below. Consequently all nine actions in `actions.rs` are dead code, none of
+//!    the four declared event types is ever constructed, and — because handler
+//!    dispatch lives inside `call_llm` — script and static `event_handlers` never fire.
+//!
+//! It also violates the project's no-storage rule outright: `topics` and
+//! `consumer_offsets` are a real in-Rust broker database, written from unauthenticated
+//! network input and never evicted. That is deliberately left in place rather than
+//! half-removed, because ripping it out without the LLM path would leave a server that
+//! answers nothing at all. Removing it is step 2 of the work described in CLAUDE.md.
+//!
+//! What *was* fixed here is the crash and denial-of-service surface, which was live
+//! regardless of the maturity label: see `MIN_REQUEST_BYTES`, `MAX_REQUEST_BYTES`,
+//! `MAX_PARTITIONS` and `MAX_TRACE_HEX_BYTES`.
+//!
+//! Correlation: `correlation_id` is the one thing this module gets right — it is
+//! parsed from the request header and echoed into every response header. It is not
+//! exposed to any handler, because no event is emitted.
+//!
+//! Uses the kafka-protocol crate for wire format parsing/serialization.
 
 pub mod actions;
 
@@ -28,6 +65,22 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
+
+/// Smallest useful Kafka request: api_key (i16) + api_version (i16) + correlation_id (i32).
+const MIN_REQUEST_BYTES: i32 = 8;
+
+/// Largest request accepted from a client. Real brokers cap this with
+/// `socket.request.max.bytes` (default 100 MiB); without a cap the wire-supplied
+/// size is an allocation primitive for any unauthenticated peer.
+const MAX_REQUEST_BYTES: usize = 100 * 1024 * 1024;
+
+/// Cap on how much of a request is hex-dumped at TRACE level.
+const MAX_TRACE_HEX_BYTES: usize = 4096;
+
+/// Upper bound on partitions the broker will materialise for one topic. The
+/// partition index arrives on the wire as an i32 and was used directly to size a
+/// Vec, so -1 (`usize::MAX` after the cast) looped until the allocator aborted.
+const MAX_PARTITIONS: i32 = 1024;
 
 /// Kafka broker server state
 pub struct KafkaServer {
@@ -69,23 +122,36 @@ impl KafkaServer {
         // Extract startup parameters with defaults
         let cluster_id = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_string("cluster_id"))
+            .map(|p| p.get_optional_string("cluster_id"))
+            .transpose()?
+            .flatten()
             .unwrap_or_else(|| "netget-kafka-1".to_string());
         let broker_id = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_i64("broker_id"))
+            .map(|p| p.get_optional_i64("broker_id"))
+            .transpose()?
+            .flatten()
             .unwrap_or(0) as i32;
         let auto_create_topics = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_bool("auto_create_topics"))
+            .map(|p| p.get_optional_bool("auto_create_topics"))
+            .transpose()?
+            .flatten()
             .unwrap_or(true);
+        // Clamped, not cast: this value comes from LLM or MCP-client JSON, and
+        // `vec![Vec::new(); n as usize]` aborts the process on a negative n.
         let default_partitions = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_i64("default_partitions"))
-            .unwrap_or(1) as i32;
+            .map(|p| p.get_optional_i64("default_partitions"))
+            .transpose()?
+            .flatten()
+            .unwrap_or(1)
+            .clamp(1, MAX_PARTITIONS as i64) as i32;
         let log_retention_hours = startup_params
             .as_ref()
-            .and_then(|p| p.get_optional_i64("log_retention_hours"))
+            .map(|p| p.get_optional_i64("log_retention_hours"))
+            .transpose()?
+            .flatten()
             .unwrap_or(168);
 
         let listener = TcpListener::bind(listen_addr).await?;
@@ -98,6 +164,17 @@ impl KafkaServer {
             "[INFO] Kafka broker listening on {} (cluster={}, broker_id={})",
             local_addr, cluster_id, broker_id
         ));
+        warn!(
+            "Kafka server on {} is INCOMPLETE: ApiVersions advertises no supported APIs, every \
+             request is decoded at hardcoded version 0, and the LLM is never called",
+            local_addr
+        );
+        let _ = status_tx.send(
+            "[WARN] Kafka is INCOMPLETE: no real client completes the ApiVersions handshake, and \
+             the LLM is never consulted — instructions, script handlers and static handlers have \
+             no effect. Responses come from hardcoded Rust."
+                .to_string(),
+        );
 
         let server = Arc::new(KafkaServer {
             cluster_id,
@@ -151,26 +228,43 @@ impl KafkaServer {
                         let _ = status_clone.send("__UPDATE_UI__".to_string());
 
                         tokio::spawn(async move {
-                            if let Err(e) = Self::handle_connection(
+                            let result = Self::handle_connection(
                                 stream,
                                 peer_addr,
                                 local_addr,
                                 connection_id,
                                 server_clone,
                                 llm_clone,
-                                state_clone,
-                                status_clone,
+                                state_clone.clone(),
+                                status_clone.clone(),
                                 server_id,
                                 protocol_clone,
                             )
-                            .await
-                            {
+                            .await;
+
+                            if let Err(e) = result {
                                 error!("Kafka connection error: {}", e);
                             }
+
+                            // Connections used to be added and never removed, so the
+                            // TUI accumulated Active entries for dead sockets.
+                            state_clone
+                                .update_connection_status(
+                                    server_id,
+                                    connection_id,
+                                    crate::state::server::ConnectionStatus::Closed,
+                                )
+                                .await;
+                            let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Kafka accept error: {}", e);
+                        // Without a break this spun a hot loop on a persistent
+                        // error (EMFILE), saturating a core and flooding the
+                        // unbounded status channel.
+                        error!("Kafka accept error: {}", e);
+                        console_error!(status_tx, "Kafka accept loop stopping: {}", e);
+                        break;
                     }
                 }
             }
@@ -199,18 +293,46 @@ impl KafkaServer {
         let mut buffer = vec![0u8; 8192]; // Kafka messages can be large
 
         loop {
-            // Read message size (4 bytes, big-endian)
-            let n = stream.read(&mut buffer[..4]).await?;
-            if n == 0 {
-                console_debug!(status_tx, "Kafka client {} disconnected", peer_addr);
-                break;
+            // Read the size prefix with read_exact. A plain read() may return 1-3
+            // bytes, and the old code parsed all four regardless, mixing in stale
+            // bytes from the previous message.
+            let mut size_prefix = [0u8; 4];
+            match stream.read_exact(&mut size_prefix).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    console_debug!(status_tx, "Kafka client {} disconnected", peer_addr);
+                    break;
+                }
+                Err(e) => return Err(e.into()),
             }
 
-            let message_size =
-                i32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+            // Validate the declared size before it reaches any allocator. This is
+            // unauthenticated input: `i32 as usize` sign-extends, so a prefix of
+            // 0x80000000 became ~1.8e19 and aborted the process on Vec::resize,
+            // while 0x7fffffff zeroed 2 GiB per connection. Sizes below the 8-byte
+            // request header are equally unusable.
+            let declared = i32::from_be_bytes(size_prefix);
+            if declared < MIN_REQUEST_BYTES || declared as i64 > MAX_REQUEST_BYTES as i64 {
+                warn!(
+                    "Kafka client {} declared an invalid request size of {} bytes; closing",
+                    peer_addr, declared
+                );
+                console_error!(
+                    status_tx,
+                    "Kafka client {} declared an invalid request size of {} bytes (allowed {}..={}); closing connection",
+                    peer_addr,
+                    declared,
+                    MIN_REQUEST_BYTES,
+                    MAX_REQUEST_BYTES
+                );
+                break;
+            }
+            let message_size = declared as usize;
 
-            // Read full message
-            buffer.resize(message_size, 0);
+            // Grow only: the buffer must never shrink below the size prefix.
+            if buffer.len() < message_size {
+                buffer.resize(message_size, 0);
+            }
             stream.read_exact(&mut buffer[..message_size]).await?;
 
             console_debug!(
@@ -220,12 +342,23 @@ impl KafkaServer {
                 peer_addr
             );
 
-            // TRACE: Log hex dump of raw message
-            console_trace!(
-                status_tx,
-                "Kafka raw message (hex): {}",
-                hex::encode(&buffer[..message_size])
-            );
+            // TRACE: hex dump, capped — hex::encode doubles the payload, so a
+            // maximum-size request would otherwise build a 200 MiB String.
+            if message_size <= MAX_TRACE_HEX_BYTES {
+                console_trace!(
+                    status_tx,
+                    "Kafka raw message (hex): {}",
+                    hex::encode(&buffer[..message_size])
+                );
+            } else {
+                console_trace!(
+                    status_tx,
+                    "Kafka raw message: {} bytes (too large to hex dump; first {} bytes) {}",
+                    message_size,
+                    MAX_TRACE_HEX_BYTES,
+                    hex::encode(&buffer[..MAX_TRACE_HEX_BYTES])
+                );
+            }
 
             // Parse request header
             let mut cursor = std::io::Cursor::new(&buffer[..message_size]);
@@ -534,14 +667,41 @@ impl KafkaServer {
             for partition_data in &topic_data.partition_data {
                 let partition_idx = partition_data.index;
 
+                // The index is unvalidated wire input. -1 cast to usize is
+                // usize::MAX, which made the loop below push Vec::new() until the
+                // allocator aborted the process; 2_000_000_000 is a legal i32 that
+                // asks for ~48 GB. Refuse anything outside the supported range with
+                // UNKNOWN_TOPIC_OR_PARTITION (3).
+                if partition_idx < 0 || partition_idx > MAX_PARTITIONS {
+                    warn!(
+                        "Kafka produce for '{}' names out-of-range partition {}",
+                        topic_name, partition_idx
+                    );
+                    console_error!(
+                        status_tx,
+                        "Kafka produce for '{}' names out-of-range partition {} (0..={}); rejected",
+                        topic_name,
+                        partition_idx,
+                        MAX_PARTITIONS
+                    );
+                    partition_responses.push(
+                        PartitionProduceResponse::default()
+                            .with_index(partition_idx)
+                            .with_error_code(3)
+                            .with_base_offset(-1),
+                    );
+                    continue;
+                }
+
                 // Auto-create topic if needed
+                let default_partitions = server.default_partitions;
                 let partitions = topics_lock.entry(topic_name.clone()).or_insert_with(|| {
                     info!(
                         "Auto-creating topic '{}' with {} partition(s)",
-                        topic_name, server.default_partitions
+                        topic_name, default_partitions
                     );
                     let _ = status_tx.send(format!("[INFO] Auto-creating topic '{}'", topic_name));
-                    vec![Vec::new(); server.default_partitions as usize]
+                    vec![Vec::new(); default_partitions as usize]
                 });
 
                 // Ensure partition exists

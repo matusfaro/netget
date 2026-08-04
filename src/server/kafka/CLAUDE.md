@@ -1,421 +1,172 @@
 # Kafka Protocol Implementation
 
-## Overview
+## Status: INCOMPLETE — hidden from the LLM
 
-Apache Kafka broker implementing core message broker functionality. The LLM can control message routing, topic
-management, and consumer coordination through structured actions.
+`DevelopmentState::Incomplete` (`src/server/kafka/actions.rs`), so `is_available_to_llm()`
+returns false. It was previously `Experimental` with `llm_control("Message routing, topic
+management, consumer offsets")` — a claim with no code behind it.
 
-**Status**: Alpha
-**Specification**: Apache Kafka Wire Protocol
-**Port**: 9092 (TCP)
-**Version Support**: Kafka 4.1.0 protocol (via kafka-protocol crate)
+**No real Kafka client can use this broker, and the LLM controls none of it.**
 
-## Library Choices
+## Why it is Incomplete
 
-- **kafka-protocol** (v0.13) - Code-generated Kafka protocol parsing and serialization
-    - Parses all Kafka API request/response messages
-    - Handles protocol versioning automatically
-    - Covers entire Kafka API surface (produce, fetch, metadata, offsets, etc.)
-    - Generated from official Kafka schema definitions
+### 1. No client gets past the first request
 
-**Rationale**: There is no mature Kafka server implementation in Rust. The kafka-protocol crate provides wire format
-handling, allowing us to focus on broker logic and LLM integration. Manual server implementation is required, but the
-library eliminates binary protocol complexity.
+`handle_api_versions` (`mod.rs`) returns `ApiVersionsResponse::default()`, whose
+`api_keys` list is empty. ApiVersions is the first thing every Kafka client sends; an
+empty list means "supports nothing", and the client aborts. `tests/server/kafka/e2e_test.rs`
+documents the symptom in its header comment: rdkafka crashes against this server, so all
+three tests assert only that `TcpStream::connect` succeeds — they would pass against `nc -l`.
 
-## Architecture Decisions
+### 2. The API version is ignored everywhere
 
-### 1. Manual Server Implementation
+Every `decode`/`encode` call passes a hardcoded `0`:
 
-No existing Rust Kafka server library exists, so we implement broker logic from scratch:
+- `RequestHeader::decode(&mut cursor, 0)` — five call sites
+- `MetadataRequest`/`ProduceRequest`/`FetchRequest`/`OffsetCommitRequest::decode(..., 0)`
+- every response `encode(&mut buf, 0)`
 
-- Topic storage: HashMap<topic_name, Vec<partition_records>>
-- In-memory storage (no disk persistence for MVP)
-- Single-node broker (no replication)
-- Simplified state management
+`header.request_api_version` is never read. Request header **v0 does not carry
+`client_id`** (`kafka-protocol` gates it on `version >= 1`), but every real client sends
+v1 or v2. So the cursor is left sitting on the `client_id` length prefix and each request
+body is parsed starting inside that string: topic names, partition indices and offsets are
+all garbage. Responses are encoded at v0 no matter what the client negotiated, so a client
+that asked for, say, Metadata v12 (flexible encoding, tagged fields, topic UUIDs) receives
+a v0 body and desynchronises.
 
-### 2. Action-Based LLM Control
+Knock-on effect: `MetadataResponse::encode` gates `cluster_id` on `version >= 2` and
+`controller_id` on `version >= 1`, so the `cluster_id` startup parameter never reaches the
+wire at all.
 
-The LLM controls broker behavior through semantic actions:
+### 3. The LLM is never called
 
-- **Sync Actions** (respond to network events): produce_response, fetch_response, metadata_response,
-  offset_commit_response, error_response
-- **Async Actions** (user-triggered): publish_message, create_topic, delete_topic, set_retention
+`handle_metadata`, `handle_produce`, `handle_fetch` and `handle_offset_commit` all take
+`_llm_client`, `_app_state`, `_server_id` and `_protocol` and use none of them. There is no
+`call_llm`, no `Event::new`, and no read of `ExecutionResult::protocol_results` anywhere in
+the module. Therefore:
 
-### 3. Core API Support (MVP Scope)
+- the server `instruction` has no effect on any byte on the wire;
+- **`event_handlers` are silently inert** — script and static dispatch happens inside
+  `call_llm`, which is never reached. A user configures a handler, gets no error, and gets
+  hardcoded behaviour. `get_startup_examples` still advertises exactly this;
+- all nine declared actions (`produce_response`, `fetch_response`, `metadata_response`,
+  `offset_commit_response`, `error_response`, `publish_message`, `create_topic`,
+  `delete_topic`, `set_retention`) are dead: `execute_action` builds an
+  `ActionResult::Custom` that nothing consumes, so **every documented field of every action
+  is ignored**. The action `log_template` is still rendered on success, so the TUI prints
+  `-> Kafka produce OK offset=42` while the client receives an offset computed elsewhere;
+- all four declared event types (`kafka_produce_request`, `kafka_fetch_request`,
+  `kafka_metadata_request`, `kafka_offset_commit_request`) are never constructed. Their
+  documented parameters, including `first_value_preview` (`required: true`), cannot be
+  produced.
 
-Implemented Kafka APIs:
+### 4. It stores broker state in Rust
 
-- **ApiVersions** - Client capability negotiation (no LLM, auto-response)
-- **Metadata** - Topic/partition/broker discovery (LLM-controlled)
-- **Produce** - Accept records from producers (LLM-controlled)
-- **Fetch** - Serve records to consumers (LLM-controlled)
-- **OffsetCommit** - Track consumer positions (LLM-controlled)
+Against the project's no-storage rule:
 
-Not implemented (future):
-
-- Consumer group coordination (JoinGroup, SyncGroup, Heartbeat, LeaveGroup)
-- Transactions (InitProducerId, AddPartitionsToTxn, EndTxn, etc.)
-- Admin APIs (CreateTopics, DeleteTopics, AlterConfigs, etc.)
-- Log compaction, retention enforcement
-- Inter-broker replication
-
-### 4. Connection Management
-
-- TCP-based, connection-oriented protocol
-- Each connection tracked in ServerInstance
-- ProtocolConnectionInfo::Kafka with recent_requests list
-- Multiple concurrent client connections supported
-- No persistent session state (stateless request-response per API call)
-
-### 5. Wire Protocol Handling
-
-Kafka wire protocol structure:
-
-```
-[4 bytes: message_size] [message_bytes]
-message_bytes = [request_header] [request_body]
+```rust
+topics: Arc<RwLock<HashMap<String, Vec<Vec<KafkaRecord>>>>>,
+consumer_offsets: Arc<RwLock<HashMap<String, HashMap<String, HashMap<i32, i64>>>>>,
 ```
 
-Flow:
-
-1. Read 4-byte size prefix (big-endian i32)
-2. Read message_size bytes
-3. Parse RequestHeader (API key, version, correlation ID, client ID)
-4. Dispatch based on API key
-5. Call LLM for decision (for Produce/Fetch/Metadata/OffsetCommit)
-6. Execute LLM action
-7. Build response message with ResponseHeader
-8. Send [4 bytes: response_size] [response_bytes]
-
-### 6. Dual Logging
-
-- **TRACE**: Full hex dumps of Kafka wire protocol messages (request + response)
-- **DEBUG**: Request summaries ("Kafka request: API=Produce, correlation_id=123")
-- **INFO**: High-level events (client connected, topic created, message produced)
-- **ERROR**: Protocol errors, unsupported APIs, LLM failures
-- All logs go to both netget.log and TUI Status panel
-
-## LLM Integration
-
-### Event Types
-
-#### `kafka_produce_request`
-
-Triggered when producer sends records to topic.
-
-Event parameters:
-
-- `topic` (string) - Topic name
-- `partition` (number) - Partition number
-- `record_count` (number) - Number of records in batch
-- `first_key` (string, optional) - Key of first record
-- `first_value_preview` (string) - Preview of first record value
-
-#### `kafka_fetch_request`
-
-Triggered when consumer requests records from topic.
-
-Event parameters:
-
-- `topic` (string) - Topic name
-- `partition` (number) - Partition number
-- `fetch_offset` (number) - Offset to fetch from
-- `max_bytes` (number) - Maximum bytes to return
-
-#### `kafka_metadata_request`
-
-Triggered when client requests cluster/topic metadata.
-
-Event parameters:
-
-- `requested_topics` (array of strings) - Topics client wants metadata for (empty = all topics)
-
-#### `kafka_offset_commit_request`
-
-Triggered when consumer commits offsets.
-
-Event parameters:
-
-- `group_id` (string) - Consumer group ID
-- `topic` (string) - Topic name
-- `partition` (number) - Partition number
-- `offset` (number) - Committed offset
-
-### Sync Actions
-
-#### `produce_response`
-
-Respond to produce request with assigned offset.
-
-Parameters:
-
-- `topic` (required) - Topic name
-- `partition` (required) - Partition number
-- `offset` (required) - Assigned offset for the record
-- `error_code` (optional, default 0) - Kafka error code (0 = success)
-
-Example:
-
-```json
-{
-  "type": "produce_response",
-  "topic": "orders",
-  "partition": 0,
-  "offset": 42,
-  "error_code": 0
-}
-```
-
-#### `fetch_response`
-
-Respond to fetch request with records.
-
-Parameters:
-
-- `topic` (required) - Topic name
-- `partition` (required) - Partition number
-- `records` (required) - Array of records [{offset, key, value}]
-
-Example:
-
-```json
-{
-  "type": "fetch_response",
-  "topic": "orders",
-  "partition": 0,
-  "records": [
-    {"offset": 40, "key": "order123", "value": "{\"item\": \"laptop\"}"},
-    {"offset": 41, "key": "order124", "value": "{\"item\": \"mouse\"}"}
-  ]
-}
-```
-
-#### `metadata_response`
-
-Respond with cluster and topic metadata.
-
-Parameters:
-
-- `brokers` (required) - Array of broker info [{id, host, port}]
-- `topics` (required) - Array of topics [{name, partitions: [{partition, leader, replicas}]}]
-
-Example:
-
-```json
-{
-  "type": "metadata_response",
-  "brokers": [{"id": 0, "host": "localhost", "port": 9092}],
-  "topics": [
-    {
-      "name": "orders",
-      "partitions": [{"partition": 0, "leader": 0, "replicas": [0]}]
-    }
-  ]
-}
-```
-
-#### `offset_commit_response`
-
-Acknowledge offset commit.
-
-Parameters:
-
-- `topic` (required) - Topic name
-- `partition` (required) - Partition number
-- `error_code` (optional, default 0) - Kafka error code (0 = success)
-
-#### `error_response`
-
-Respond with error.
-
-Parameters:
-
-- `error_code` (required) - Kafka error code (3 = Unknown topic, 6 = Invalid partition, etc.)
-- `error_message` (optional) - Human-readable error
-
-### Async Actions
-
-#### `publish_message`
-
-LLM publishes message to topic.
-
-Parameters:
-
-- `topic` (required) - Topic name
-- `key` (optional) - Message key
-- `value` (required) - Message value
-- `partition` (optional) - Target partition
-
-#### `create_topic`
-
-Create new topic.
-
-Parameters:
-
-- `topic` (required) - Topic name
-- `partitions` (optional, default 1) - Partition count
-- `replication_factor` (optional, default 1) - Replication factor
-
-#### `delete_topic`
-
-Delete topic.
-
-Parameters:
-
-- `topic` (required) - Topic name
-
-#### `set_retention`
-
-Set retention policy.
-
-Parameters:
-
-- `topic` (required) - Topic name
-- `retention_hours` (required) - Retention time in hours
+Topics are auto-created on produce, records are pushed and never evicted, and consumer
+group offsets accumulate — all keyed by unauthenticated network input. `log_retention_hours`
+and `auto_create_topics` are both parsed, stored as `_`-prefixed fields, and never read:
+setting `auto_create_topics: false` does nothing, because topics are created
+unconditionally.
+
+This is left in place rather than half-removed: deleting it without the LLM path would
+leave a broker that answers nothing at all. It is step 2 of the work below.
+
+## Correlation identifiers
+
+`correlation_id` is the one thing this module gets right. It is read from the request
+header and echoed into every response header — metadata, produce, fetch, offset-commit and
+the error path. It is not exposed to any handler, because no event is emitted.
+
+`api_key` is used for dispatch and correctly not echoed (Kafka responses do not carry it).
+`api_version` is the broken one — see above.
+
+## Crash and DoS defects fixed while auditing
+
+These were live regardless of the maturity label, since the port can still be opened
+explicitly:
+
+- **Remote panic from four bytes.** A size prefix of `00 00 00 00` made
+  `buffer.resize(0, 0)` shrink the read buffer permanently; the next loop iteration
+  indexed `buffer[..4]` and panicked with "range end index 4 out of range for slice of
+  length 0". Sizes 1-3 did the same. The panic sat inside a detached `tokio::spawn`, so it
+  was swallowed while the connection stayed `Active` and the server stayed `Running`.
+  Fixed: the prefix is read into a fixed `[u8; 4]` with `read_exact`, and the buffer only
+  ever grows.
+- **Remote OOM / process abort.** `i32::from_be_bytes(...) as usize` sign-extends, so a
+  prefix of `80 00 00 00` became ~1.8e19 and aborted on `Vec::resize`; `7F FF FF FF`
+  zeroed 2 GiB per connection. Fixed: sizes are validated against `MIN_REQUEST_BYTES`
+  (8, the header minimum) and `MAX_REQUEST_BYTES` (100 MiB, matching Kafka's
+  `socket.request.max.bytes`) before any allocation.
+- **Unbounded loop on a wire-supplied partition index.** `while partitions.len() <=
+  partition_idx as usize` with `partition_idx = -1` (`usize::MAX` after the cast) pushed
+  `Vec::new()` until the allocator aborted; `2_000_000_000` is a legal i32 asking for
+  ~48 GB. Fixed: indices outside `0..=MAX_PARTITIONS` (1024) are rejected with error code
+  3 (UNKNOWN_TOPIC_OR_PARTITION).
+- **Panic from a startup parameter.** `default_partitions` comes from LLM or MCP JSON and
+  reached `vec![Vec::new(); n as usize]`; `-1` aborted the process. Fixed: clamped to
+  `1..=MAX_PARTITIONS`.
+- **TRACE hex amplification.** `hex::encode` doubles the payload, so a maximum-size
+  request built a 200 MiB `String` on an unbounded status channel. Fixed: capped at
+  `MAX_TRACE_HEX_BYTES` (4 KiB).
+- **Short read on the size prefix.** `read` (not `read_exact`) can return 1-3 bytes; all
+  four were parsed anyway, mixing in stale bytes. Fixed.
+- **Hot accept loop.** An accept error logged and continued with no backoff or break, so a
+  persistent EMFILE saturated a core and flooded the unbounded status channel. Fixed: the
+  loop breaks.
+- **Connections never removed.** Entries were added to server state and never marked
+  closed, so the TUI accumulated `Active` connections for dead sockets. Fixed in the accept
+  loop's spawn wrapper.
+
+## Known defects still open
+
+- Unsupported APIs get `create_error_response`, which writes a bare `i16` error code as
+  the entire response body. That is not a valid body for any Kafka API — most begin with
+  `throttle_time_ms` (i32) — so the client misparses it. The `encode` error is also
+  discarded with `let _ =`.
+- A record batch that fails to parse is replaced by an **empty placeholder record** and the
+  producer is told `error_code(0)` — success. This path is hit by *any* compressed batch
+  (`decode_with_custom_compression` is passed `None`, so gzip/snappy/lz4/zstd all fail) and
+  by any CRC mismatch. It should return `CORRUPT_MESSAGE` (2).
+- Per-connection byte and packet counters are never updated, so connection stats read zero.
+
+## Route to Experimental
+
+1. Decode the request header at the version implied by `(api_key, api_version)`, pass
+   `header.request_api_version` to every body decode and response encode, and populate
+   `ApiVersionsResponse.api_keys` with the ranges actually supported. Verify with a real
+   rdkafka client, not a TCP connect.
+2. Delete `topics` and `consumer_offsets` and the hardcoded response logic. Emit the four
+   already-declared events via `call_llm` and consume `ActionResult::Custom` in `mod.rs`
+   for the nine already-declared actions. This one change fixes LLM integration, action
+   liveness and the storage violation together.
+3. Fix `create_error_response` to emit a valid body per API, and return a real error code
+   for unparseable record batches.
+4. Rewrite `tests/server/kafka/e2e_test.rs` to exercise Kafka bytes and to call
+   `server.verify_mocks().await?`, which it currently never does.
 
 ## Startup Parameters
 
-Configurable via `open_server` action:
+Parsed by `spawn_with_llm_actions`:
 
-- `cluster_id` (string, default: "netget-kafka-1") - Cluster identifier
-- `broker_id` (number, default: 0) - Broker ID
-- `auto_create_topics` (boolean, default: true) - Auto-create topics on first produce
-- `default_partitions` (number, default: 1) - Partition count for auto-created topics
-- `log_retention_hours` (number, default: 168) - Log retention time
-
-Example:
-
-```json
-{
-  "type": "open_server",
-  "stack": "kafka",
-  "port": 9092,
-  "params": {
-    "cluster_id": "netget-kafka-1",
-    "broker_id": 0,
-    "auto_create_topics": true,
-    "default_partitions": 3,
-    "log_retention_hours": 72
-  }
-}
-```
-
-## Known Limitations
-
-### 1. No Replication
-
-- Single-node broker only
-- No inter-broker communication
-- Replication factor always 1
-
-### 2. In-Memory Storage
-
-- All messages stored in memory
-- No WAL (write-ahead log)
-- No segment files
-- Data lost on server restart
-
-### 3. No Consumer Groups
-
-- No group coordinator
-- No partition rebalancing
-- Offset commits tracked but not enforced
-
-### 4. No Transactions
-
-- No exactly-once semantics
-- No transactional producers
-- No isolation levels
-
-### 5. Limited API Support
-
-- Core APIs only (ApiVersions, Metadata, Produce, Fetch, OffsetCommit)
-- Missing: Admin APIs, Coordinator APIs, Transaction APIs
-
-### 6. No Authentication/Authorization
-
-- No SASL/SCRAM
-- No ACLs
-- Open to all clients
-
-### 7. Simplified Record Format
-
-- Basic record structure (offset, key, value, timestamp)
-- No headers
-- No compression
-- No batch CRC validation
-
-## Example Prompts
-
-### Basic Kafka Broker
-
-```
-listen on port 9092 via kafka
-Create a topic called 'orders' with 1 partition.
-Accept all produce requests and assign sequential offsets.
-When consumers fetch, return the last 10 messages.
-```
-
-### Smart Message Routing
-
-```
-start a kafka broker on port 9092
-Auto-create topics as needed.
-For messages to 'transactions' topic containing "fraud", also publish to 'alerts' topic.
-Track consumer offsets for group 'analytics'.
-```
-
-### Testing/Honeypot Broker
-
-```
-listen on port 9092 as kafka broker
-Log all produce requests with full message content.
-Accept all messages but don't store them.
-Track which topics clients try to use.
-```
-
-### Multi-Topic Broker
-
-```
-run kafka broker on port 9092
-Create topics: 'events', 'metrics', 'logs'
-Store last 1000 messages per topic in memory.
-Count messages per topic and show stats every 100 messages.
-```
-
-## Performance Characteristics
-
-### Latency
-
-- **With Scripting**: Sub-100ms per request (script handles protocol)
-- **Without Scripting**: 2-5 seconds per request (one LLM call)
-- kafka-protocol parsing: ~100-500 microseconds per message
-- kafka-protocol serialization: ~100-500 microseconds per message
-
-### Throughput
-
-- **With Scripting**: Hundreds of requests/sec (CPU-bound)
-- **Without Scripting**: Limited by LLM (~0.2-0.5 requests/sec)
-- Concurrent connections processed in parallel
-- Ollama lock serializes LLM calls
-
-### Scripting Compatibility
-
-Kafka protocol has moderate scripting potential:
-
-- Repetitive produce/fetch patterns are scriptable
-- Metadata responses can be cached
-- Complex routing logic better suited for LLM
-
-When scripting enabled:
-
-- Server startup generates script (1 LLM call)
-- Simple operations handled by script (0 LLM calls)
-- Complex decisions still use LLM
+- `cluster_id` (string, default `"netget-kafka-1"`) — stored; never reaches the wire,
+  because `MetadataResponse` v0 does not encode it
+- `broker_id` (number, default 0) — used in metadata responses
+- `auto_create_topics` (boolean, default true) — **parsed and never read**; topics are
+  auto-created unconditionally
+- `default_partitions` (number, default 1) — used, now clamped to `1..=1024`
+- `log_retention_hours` (number, default 168) — **parsed and never read**; no retention
+  logic exists
 
 ## References
 
 - [Apache Kafka Protocol Guide](https://kafka.apache.org/protocol)
-- [Kafka Wire Protocol Documentation](https://kafka.apache.org/24/protocol.html)
-- [kafka-protocol Rust Crate](https://docs.rs/kafka-protocol/)
+- [kafka-protocol Rust Crate](https://docs.rs/kafka-protocol/) — `Cargo.toml` pins 0.14
 - [Kafka Error Codes](https://kafka.apache.org/protocol.html#protocol_error_codes)
+- Testing notes: `tests/server/kafka/CLAUDE.md`

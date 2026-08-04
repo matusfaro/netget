@@ -61,7 +61,9 @@ pub static PRODUCE_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     .with_log_template(
         LogTemplate::new()
             .with_info("Kafka produce {topic}")
-            .with_debug("Kafka produce topic={topic}, partition={partition}, records={record_count}")
+            .with_debug(
+                "Kafka produce topic={topic}, partition={partition}, records={record_count}",
+            )
             .with_trace("Kafka produce: {json_pretty(.)}"),
     )
 });
@@ -385,7 +387,9 @@ fn produce_response_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> Kafka produce OK offset={offset}")
-                .with_debug("Kafka produce_response: topic={topic}, partition={partition}, offset={offset}"),
+                .with_debug(
+                    "Kafka produce_response: topic={topic}, partition={partition}, offset={offset}",
+                ),
         ),
     }
 }
@@ -579,6 +583,14 @@ impl Protocol for KafkaProtocol {
             },
         ]
     }
+    /// DEAD CODE, kept as the design for the eventual implementation.
+    ///
+    /// `execute_action` returns an `ActionResult::Custom` for each of these, but
+    /// `src/server/kafka/mod.rs` never inspects `protocol_results`, so no field of any
+    /// of them reaches the wire. Worse, the executor still renders each action's
+    /// `log_template` on success, so the TUI reports e.g. "Kafka publish to orders"
+    /// for something that never happened. Hidden from the LLM by
+    /// `DevelopmentState::Incomplete`.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             publish_message_action(),
@@ -587,6 +599,8 @@ impl Protocol for KafkaProtocol {
             set_retention_action(),
         ]
     }
+    /// DEAD CODE — see [`KafkaProtocol::get_async_actions`]. The broker computes
+    /// every produce/fetch/metadata/offset-commit response in hardcoded Rust.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             produce_response_action(),
@@ -599,6 +613,9 @@ impl Protocol for KafkaProtocol {
     fn protocol_name(&self) -> &'static str {
         "KAFKA"
     }
+    /// DEAD CODE: none of these is ever constructed. `src/server/kafka/mod.rs`
+    /// contains no `Event::new` call, so no handler — script, static or LLM — can be
+    /// triggered by a Kafka request.
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
             PRODUCE_REQUEST_EVENT.clone(),
@@ -617,18 +634,30 @@ impl Protocol for KafkaProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("kafka-protocol v0.13 wire format, manual broker logic")
-            .llm_control("Message routing, topic management, consumer offsets")
-            .e2e_testing("kafka-client / rdkafka")
-            .notes("Core APIs only, in-memory storage, no replication")
+            .state(DevelopmentState::Incomplete)
+            .implementation("kafka-protocol v0.14 wire format, hardcoded broker logic in Rust")
+            .llm_control("None: the LLM is never called and every action below is dead code")
+            .e2e_testing("None: tests assert only that a TCP connection can be opened")
+            .notes(
+                "NOT FUNCTIONAL. ApiVersions replies with an empty supported-API list, so no \
+                 real Kafka client gets past the first request (rdkafka crashes against it). \
+                 Every request and response is decoded and encoded at hardcoded version 0, so \
+                 the client_id present in the v1/v2 headers real clients send is never \
+                 consumed and all body fields after it are misparsed. handle_produce, \
+                 handle_fetch, handle_metadata and handle_offset_commit take the LLM client \
+                 and discard it: all responses come from hardcoded Rust over an in-Rust topic \
+                 and offset store, which also violates the project's no-storage rule. The nine \
+                 actions and four event types declared here are never executed or emitted, so \
+                 instructions, script handlers and static handlers all have no effect. Hidden \
+                 from the LLM until produce/fetch round-trip through the model.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "Apache Kafka broker for distributed message streaming"
+        "Apache Kafka broker (incomplete: no client handshake, no LLM control)"
     }
     fn example_prompt(&self) -> &'static str {
-        "Start a Kafka broker on port 9092 with topics 'orders' and 'events'. Accept all produce requests and return the last 10 messages on fetch."
+        "Not usable yet: the Kafka broker cannot negotiate with a real client"
     }
     fn group_name(&self) -> &'static str {
         "Database"
