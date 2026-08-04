@@ -326,16 +326,16 @@ Get detailed protocol documentation. After you fetch documentation, you will be 
 
 ## Available Protocols
 
-**Server protocols**: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, CouchDB, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP2, HTTP3, ICMP, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MSSQL, Maven, Mercurial, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TFTP, TLS, TURN, Telnet, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WebRTC, WebRTC Signaling, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
+**Server protocols**: HTTP, Proxy, SSH, TCP
 
-**Client protocols**: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, CouchDB, DC, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP Proxy, HTTP2, HTTP3, ICMP, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kafka, Kubernetes, LDAP, MCP, MQTT, MSSQL, Maven, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, OpenAPI, OpenIDConnect, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SAML, SIP, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TLS, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
+**Client protocols**: HTTP, SSH, TCP
 
 Parameters:
 - `protocols` (array, required): Array of protocol names to get documentation for. Maximum 5 protocols per call. Returns both server and client docs if available for each protocol.
 
 Example:
 ```json
-{"type":"read_documentation","protocols":["AMQP","ARP","BGP","BLUETOOTH_BLE","BLUETOOTH_BLE_BATTERY","BLUETOOTH_BLE_BEACON","BLUETOOTH_BLE_CYCLING","BLUETOOTH_BLE_DATA_STREAM","BLUETOOTH_BLE_ENVIRONMENTAL","BLUETOOTH_BLE_FILE_TRANSFER","BLUETOOTH_BLE_GAMEPAD","BLUETOOTH_BLE_HEART_RATE","BLUETOOTH_BLE_KEYBOARD","BLUETOOTH_BLE_MOUSE","BLUETOOTH_BLE_PRESENTER","BLUETOOTH_BLE_PROXIMITY","BLUETOOTH_BLE_REMOTE","BLUETOOTH_BLE_RUNNING","BLUETOOTH_BLE_THERMOMETER","BLUETOOTH_BLE_WEIGHT_SCALE","BOOTP","BitTorrent DHT","BitTorrent Peer Wire","BitTorrent Tracker","Bitcoin","Bitcoin P2P","Bluetooth (BLE)","Cassandra","CouchDB","DC","DHCP","DNS","DNS-over-HTTPS","DataLink","DoH","DoT","DynamoDB","Elasticsearch","FTP","Git","HTTP","HTTP Proxy","HTTP2","HTTP3","ICMP","IGMP","IMAP","IPP","IPSec/IKEv2","IRC","IS-IS","ISIS","JSON-RPC","KAFKA","Kubernetes","LDAP","MCP","MQTT","MSSQL","Maven","Mercurial","MongoDB","MySQL","NFS","NNTP","NPM","NTP","OAuth2","OSPF","Ollama","OpenAI","OpenAPI","OpenID","OpenIDConnect","OpenVPN","POP3","PostgreSQL","Proxy","PyPI","RIP","RSS","Redis","S3","SAML","SIP","SMB","SMTP","SNMP","SOCKET_FILE","SOCKS5","SQS","SSH","SSH Agent","STUN","SVN","SamlIdp","SamlSp","SocketFile","Syslog","TCP","TFTP","TLS","TURN","Telnet","Tor","Tor Relay","Torrent-DHT","Torrent-Peer","Torrent-Tracker","UDP","USB","USB-Keyboard","USB-MassStorage","USB-Mouse","USB-Serial","VNC","WHOIS","WebDAV","WebRTC","WebRTC Signaling","WireGuard","XML-RPC","XMPP","ZooKeeper","etcd","gRPC","mDNS","nfc","usb-fido2"]}
+{"type":"read_documentation","protocols":["HTTP","Proxy","SSH","TCP"]}
 ```
 
 ## 17. list_tasks
@@ -845,9 +845,9 @@ No servers currently running.
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Privileged ports (<1024)**: <normalized: host-dependent, see normalize_capabilities>
 
-- **Raw socket access**: ✓ Available
+- **Raw socket access**: <normalized: host-dependent, see normalize_capabilities>
 
 
 Trigger: User input: "start a DNS server on port 53"

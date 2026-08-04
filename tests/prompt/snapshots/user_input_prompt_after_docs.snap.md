@@ -148,7 +148,7 @@ Parameters:
 - `interface` (string): Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Common interface names: "lo" or "lo0" (loopback), "eth0" or "en0" (Ethernet), "wlan0" (WiFi). NOTE: Only specify if the protocol specifically requires it (e.g., DataLink). Most port-based protocols (TCP, HTTP, DNS) don't use this. If you need to discover available interfaces, you can try common names like "lo" for loopback or use the system's default interface by omitting this parameter.
 - `host` (string): Optional: Host address to bind (IPv4, IPv6, or hostname). Examples: "127.0.0.1" (loopback), "0.0.0.0" (all interfaces), "::". Protocols will use sensible defaults if omitted.
 - `port` (number): Optional: Port number to listen on. Use 0 to automatically find an available port. Required for port-based protocols (TCP, HTTP, DNS). Raw protocols (ICMP, ARP) don't use this.
-- `protocol` (string, required): Protocol to use. ALWAYS prefer high-level protocols when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level protocols (tcp, udp) for custom protocols without a specific high-level match. Available: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, CouchDB, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP2, HTTP3, ICMP, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MSSQL, Maven, Mercurial, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TFTP, TLS, TURN, Telnet, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WebRTC, WebRTC Signaling, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
+- `protocol` (string, required): Protocol to use. ALWAYS prefer high-level protocols when user keywords match: if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). Only use low-level protocols (tcp, udp) for custom protocols without a specific high-level match. Available: HTTP, Proxy, SSH, TCP
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
 - `instruction` (string, required): Detailed instructions for handling network events. Use this field for custom requirements that don't have dedicated parameters (e.g., 'with 30 second timeout', 'log all requests to file', 'rate limit to 10 requests per second', etc.)
@@ -392,16 +392,16 @@ Get detailed protocol documentation. After you fetch documentation, you will be 
 
 ## Available Protocols
 
-**Server protocols**: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, CouchDB, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP2, HTTP3, ICMP, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, MSSQL, Maven, Mercurial, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TFTP, TLS, TURN, Telnet, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WebRTC, WebRTC Signaling, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
+**Server protocols**: HTTP, Proxy, SSH, TCP
 
-**Client protocols**: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, CouchDB, DC, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, DynamoDB, Elasticsearch, FTP, Git, HTTP, HTTP Proxy, HTTP2, HTTP3, ICMP, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kafka, Kubernetes, LDAP, MCP, MQTT, MSSQL, Maven, MongoDB, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, OpenAPI, OpenIDConnect, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SAML, SIP, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TLS, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
+**Client protocols**: HTTP, SSH, TCP
 
 Parameters:
 - `protocols` (array, required): Array of protocol names to get documentation for. Maximum 5 protocols per call. Returns both server and client docs if available for each protocol.
 
 Example:
 ```json
-{"type":"read_documentation","protocols":["AMQP","ARP","BGP","BLUETOOTH_BLE","BLUETOOTH_BLE_BATTERY","BLUETOOTH_BLE_BEACON","BLUETOOTH_BLE_CYCLING","BLUETOOTH_BLE_DATA_STREAM","BLUETOOTH_BLE_ENVIRONMENTAL","BLUETOOTH_BLE_FILE_TRANSFER","BLUETOOTH_BLE_GAMEPAD","BLUETOOTH_BLE_HEART_RATE","BLUETOOTH_BLE_KEYBOARD","BLUETOOTH_BLE_MOUSE","BLUETOOTH_BLE_PRESENTER","BLUETOOTH_BLE_PROXIMITY","BLUETOOTH_BLE_REMOTE","BLUETOOTH_BLE_RUNNING","BLUETOOTH_BLE_THERMOMETER","BLUETOOTH_BLE_WEIGHT_SCALE","BOOTP","BitTorrent DHT","BitTorrent Peer Wire","BitTorrent Tracker","Bitcoin","Bitcoin P2P","Bluetooth (BLE)","Cassandra","CouchDB","DC","DHCP","DNS","DNS-over-HTTPS","DataLink","DoH","DoT","DynamoDB","Elasticsearch","FTP","Git","HTTP","HTTP Proxy","HTTP2","HTTP3","ICMP","IGMP","IMAP","IPP","IPSec/IKEv2","IRC","IS-IS","ISIS","JSON-RPC","KAFKA","Kubernetes","LDAP","MCP","MQTT","MSSQL","Maven","Mercurial","MongoDB","MySQL","NFS","NNTP","NPM","NTP","OAuth2","OSPF","Ollama","OpenAI","OpenAPI","OpenID","OpenIDConnect","OpenVPN","POP3","PostgreSQL","Proxy","PyPI","RIP","RSS","Redis","S3","SAML","SIP","SMB","SMTP","SNMP","SOCKET_FILE","SOCKS5","SQS","SSH","SSH Agent","STUN","SVN","SamlIdp","SamlSp","SocketFile","Syslog","TCP","TFTP","TLS","TURN","Telnet","Tor","Tor Relay","Torrent-DHT","Torrent-Peer","Torrent-Tracker","UDP","USB","USB-Keyboard","USB-MassStorage","USB-Mouse","USB-Serial","VNC","WHOIS","WebDAV","WebRTC","WebRTC Signaling","WireGuard","XML-RPC","XMPP","ZooKeeper","etcd","gRPC","mDNS","nfc","usb-fido2"]}
+{"type":"read_documentation","protocols":["HTTP","Proxy","SSH","TCP"]}
 ```
 
 ## 19. list_tasks
@@ -440,158 +440,13 @@ Example:
 
 ## Available Base Stacks
 
-### AI & API
-JSON-RPC (jsonrpc, json-rpc, json rpc, rpc)
-MCP (mcp, model-context-protocol, model context protocol)
-OAuth2 (oauth2, oauth, oauth 2.0, via oauth2, authorization server)
-Ollama (ollama, llm, ai)
-OpenAI (openai)
-OpenAPI (openapi, rest, rest api, api, swagger)
-XML-RPC (xmlrpc, xml-rpc, xml rpc)
-gRPC (grpc, grpcserver, protobuf)
-
-### Application
-AMQP (amqp, rabbitmq, broker, messaging, queue)
-DC (dc, direct connect, dc++, nmdc, via dc)
-FTP (ftp, file transfer, ftp server)
-IMAP (imap)
-IRC (irc, chat)
-LDAP (ldap, directory server)
-MQTT (mqtt, mosquitto, iot messaging)
-Maven (maven, maven repository, maven repo, via maven)
-NNTP (nntp, usenet, news, newsgroup)
-POP3 (pop3, pop3 server, via pop3, post office protocol)
-PyPI (pypi, python repository, python package index, pip server, via pypi)
-SMTP (smtp, mail, email)
-Telnet (telnet)
-XMPP (xmpp, jabber, messaging)
-mDNS (mdns, bonjour, dns-sd, zeroconf)
-
-### Authentication
-OpenID (openid, oidc, openid connect, sso, authentication)
-SamlIdp (saml idp, saml identity provider, identity provider, idp, saml-idp)
-SamlSp (saml sp, saml service provider, service provider, sp, saml-sp)
-
-### Blockchain
-Bitcoin P2P (bitcoin, btc, p2p, blockchain)
-
 ### Core
-ARP (arp, address resolution)
-BOOTP (bootp, bootstrap)
-DHCP (dhcp)
-DNS (dns)
-DataLink (datalink, data link, layer 2, layer2, l2, ethernet, pcap)
-DoH (doh, dns-over-https, dns over https)
-DoT (dot, dns-over-tls, dns over tls)
 HTTP (http, http server, http stack, via http, hyper)
-HTTP2 (http2, http/2, http 2, http2 server, http/2 server, via http2, via http/2)
-HTTP3 (http3)
-ICMP (icmp, ping, echo, traceroute)
-NTP (ntp, time)
-SNMP (snmp, snmp agent)
-SOCKET_FILE (socket_file, unix_socket, ipc)
 SSH (ssh)
-Syslog (syslog)
 TCP (tcp, raw, ftp, custom)
-TFTP (tftp, file, transfer, pxe, boot)
-TLS (tls, ssl, secure, encrypted)
-UDP (udp)
-WHOIS (whois)
-
-### Database
-Cassandra (cassandra, cql)
-CouchDB (couchdb, nosql, document-database)
-DynamoDB (dynamo)
-Elasticsearch (elasticsearch, opensearch)
-KAFKA (kafka, kafka broker, via kafka)
-MSSQL (mssql, sql server, tds)
-MongoDB (mongodb, mongo)
-MySQL (mysql)
-PostgreSQL (postgres, psql)
-Redis (redis)
-SQS (sqs, queue, message queue)
-ZooKeeper (zookeeper, zk)
-etcd (etcd, etcd3, etcdv3, etcd server)
-
-### Experimental
-ISIS (isis, is-is)
-
-### Infrastructure
-SVN (svn, subversion)
-
-### Network
-BLUETOOTH_BLE (bluetooth, ble, gatt, peripheral, bluetooth_ble)
-BLUETOOTH_BLE_BATTERY (bluetooth, battery, bluetooth_ble_battery)
-BLUETOOTH_BLE_BEACON (bluetooth, beacon, ibeacon, eddystone, bluetooth_ble_beacon)
-BLUETOOTH_BLE_CYCLING (bluetooth, cycling, bike, fitness)
-BLUETOOTH_BLE_DATA_STREAM (bluetooth, stream, data, sensor)
-BLUETOOTH_BLE_ENVIRONMENTAL (bluetooth, environmental)
-BLUETOOTH_BLE_FILE_TRANSFER (bluetooth, file_transfer)
-BLUETOOTH_BLE_GAMEPAD (bluetooth, gamepad)
-BLUETOOTH_BLE_HEART_RATE (bluetooth, heart, rate, bluetooth_ble_heart_rate)
-BLUETOOTH_BLE_KEYBOARD (bluetooth, keyboard, hid, bluetooth_ble_keyboard)
-BLUETOOTH_BLE_MOUSE (bluetooth, mouse, hid, bluetooth_ble_mouse)
-BLUETOOTH_BLE_PRESENTER (bluetooth, presenter)
-BLUETOOTH_BLE_PROXIMITY (bluetooth, proximity)
-BLUETOOTH_BLE_REMOTE (bluetooth, remote, media, bluetooth_ble_remote)
-BLUETOOTH_BLE_RUNNING (bluetooth, running, jogging, fitness)
-BLUETOOTH_BLE_THERMOMETER (bluetooth, thermometer, temperature)
-BLUETOOTH_BLE_WEIGHT_SCALE (bluetooth, weight, scale, health)
-IGMP (igmp, multicast)
-RIP (rip)
-
-### Network Services
-Tor Relay (tor_relay, tor-relay, onion router, guard, exit, middle, circuit)
-VNC (vnc, rfb, remote desktop, framebuffer)
-
-### P2P
-Torrent-DHT (torrent-dht, dht, kademlia)
-Torrent-Peer (torrent-peer, peer, seeder)
-Torrent-Tracker (torrent-tracker, tracker, bittorrent-tracker)
-
-### Package Management
-NPM (npm)
 
 ### Proxy & Network
 Proxy (proxy, mitm)
-SIP (sip, voip, session initiation)
-SOCKS5 (socks, socks5)
-STUN (stun)
-TURN (turn)
-
-### Real-time
-WebRTC (webrtc, webrtc server, data channel, peer to peer, p2p)
-WebRTC Signaling (webrtc signaling, signaling server, sdp relay, websocket signaling)
-
-### Security
-SSH Agent (ssh-agent, agent, key-agent, ssh keys)
-
-### USB
-usb-fido2 (fido2, u2f, webauthn, security key, yubikey)
-
-### USB Devices
-USB-Keyboard (usb, keyboard, hid, input, typing)
-USB-MassStorage (usb, storage, disk, msc, scsi, flash)
-USB-Mouse (usb, mouse, hid, pointer, cursor)
-USB-Serial (usb, serial, cdc, acm, uart, tty)
-
-### VPN & Routing
-IPSec/IKEv2 (ipsec, ikev2, ike)
-OSPF (ospf, open shortest path first)
-OpenVPN (openvpn)
-WireGuard (wireguard, wg)
-
-### Web
-RSS (rss, rss server, feed, syndication, via rss)
-
-### Web & File
-Git (git, git server, via git)
-IPP (ipp, printer, print)
-Mercurial (mercurial, hg, hg server, via mercurial, via hg)
-NFS (nfs, file server)
-S3 (s3, object storage, minio)
-SMB (smb, cifs)
-WebDAV (webdav, dav)
 
 
 
@@ -1069,9 +924,9 @@ No servers currently running.
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Privileged ports (<1024)**: <normalized: host-dependent, see normalize_capabilities>
 
-- **Raw socket access**: ✓ Available
+- **Raw socket access**: <normalized: host-dependent, see normalize_capabilities>
 
 
 Trigger: User input: "start an HTTP server on port 8080"

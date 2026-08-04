@@ -450,9 +450,9 @@ requests_intercepted: 5
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Privileged ports (<1024)**: <normalized: host-dependent, see normalize_capabilities>
 
-- **Raw socket access**: ✓ Available
+- **Raw socket access**: <normalized: host-dependent, see normalize_capabilities>
 
 
 Trigger: Event: Intercepted HTTP request:
