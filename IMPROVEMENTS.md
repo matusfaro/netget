@@ -41,6 +41,9 @@ Delete an entry once its context is no longer useful.
 | 45 — mock harness misrouted the docs step | `98c54d4e` | Context extraction classified the *startup* call as an `http_request` event, because the documentation retry embeds `### Event: <id>` headings. Now classified on the prompt template rather than wording. **`--test server` 5/24 → 18/24, `server::tcp` 0/10 → 10/10, `server::dns` 0/4 → 4/4, `--test examples` 13/34 → 34/34, `--test client` 5/9 → 12/13** |
 | — tests phoning external endpoints | `da4c86f5` | The DoT and Git client tests connect to `dns.google:853`, `1.1.1.1:853` and `github.com`. Harmless while orphaned; wiring them in made the calls live, violating the localhost-only policy |
 | 51 — remaining HTTP test failures | `2528629` | 7/10 → 10/10 in `tests/server/http/`; mocks keyed on `uri` where the event emits `path`, and a `write_file` action HTTP does not have, replaced with the real `append_to_log` |
+| 7 + 41 — action failures were invisible | `5deee649`, `0069d90c` | Static handlers naming a nonexistent action are now rejected at `start_server` with the valid list; execution failures are recorded as `FAILED: <name>` in the access log with the error and original action, and logged at `error!`. Batch semantics are continue-and-report, not abort — aborting would suppress the valid actions after a bad one |
+| 18 (part) — raw-socket gate never fired | `c9a65c80` | `has_raw_socket_capability()` used `pcap::Device::list()`, a `getifaddrs` wrapper that succeeds for any user, so it always returned true and the pre-flight never ran. Now probes a real `SOCK_RAW` socket plus `/dev/bpf*`. `is_running_as_root()` also fixed — it stat'd `/root` and compared `$USER`, so `sudo -E` and most containers fooled it |
+| — raw-socket family started but did nothing | `1e977cbe`, `b58b5788`, `21b09483`, `4204bbbc` | ARP, DataLink and ICMP opened their privileged handle in a fire-and-forget `spawn_blocking` and returned `Ok` unconditionally, so an unprivileged start sat in `Running` capturing nothing forever. Now report readiness. Also fixed IGMP's `from_raw_fd`-before-check unsoundness, a checksum underflow, a 100%-CPU spin on recv error, and a `"lo"` default that does not exist on macOS |
 | — HTTP family defects | `3c414406`, `f2d4cf3e`, `e9eec1cb`, `e32cf485` | 204 responses were served as empty 200; a model status of 999 or a CRLF header panicked the connection task; HTTP/2's `request_filter` was accepted and silently ignored because the hyper path is dead code; HTTP/3 documented as the QUIC transport it actually is |
 
 ### Independent verification after landing
@@ -686,6 +689,48 @@ mismatch. The agent applied the exact string fix I specified, watched the tests 
 and traced it to this gap rather than accepting the premise — the right call. The tests now
 assert on task *execution*, which does fire reliably, and the missing status line is left for
 whoever owns `server_startup.rs`.
+
+### 53. Test-suite state at HEAD **[verified]**
+
+Measured in a clean worktree with `--features tcp,http,dns,udp,redis,mcp-stdio --no-fail-fast`,
+so this is the committed tree, not the working tree.
+
+`tests/server.rs` is **31 passed, 0 failed** — the protocol E2E suite is green for that feature
+set, against 5/24 at session start. `--lib` 23/23, `examples` 34/34, `mcp_stdio` 9/9,
+`static_handler_interpolation` 30/30, `truncate` 13/13, `prompt` and `prompt_snapshots` green.
+
+Remaining failures, all attributed:
+
+- **`ollama_model_test`: 20 of 25 fail.** This is a *model-evaluation* framework — it drives a
+  real Ollama at `OLLAMA_BASE_URL` with `qwen2.5-coder:7b` and grades the model's answers. It
+  is neither `#[ignore]`d nor feature-gated, so it fails for anyone without that exact setup,
+  and would fail in CI. It should be `#[ignore]`d or moved behind the project's existing
+  `--use-ollama` opt-in.
+- **`logging_unit_test::test_append_to_log_action_definition`.** Asserts the action description
+  contains the literal `"log file"`; the description was reworded to "append logs to a file" in
+  `e75043df` (2025-12-29). Confirmed pre-existing — `e75043df` is an ancestor of this session's
+  starting commit. Either assert on behavior or fix the string.
+- **`scripting_executor_test`: 2 Perl cases.** This machine's Homebrew Perl lacks the `JSON`
+  CPAN module (`perl -e 'use JSON'` fails standalone). Environmental, not a code defect, but the
+  test should detect and skip rather than fail.
+- **`client`: 5 of 21.** Includes the DNS client runaway (item 49), being fixed separately.
+
+### 54. ARP and DataLink still cannot ship on Linux **[verified]**
+
+`748fccca` added `arp` to `dist-darwin` and `icmp` to `dist`, which fixed macOS. But `arp` and
+`datalink` remain absent from `dist` itself, so the Linux release binaries still cannot start
+them at all — the same "Unknown protocol" dead end, just on a different platform. They need
+libpcap at link time, which is the original reason for the exclusion; the options are bundling
+it, dynamically loading it, or documenting the gap in the release notes rather than leaving
+users to discover it.
+
+### 55. `SystemCapabilities` conflates two capabilities **[static]**
+
+One `has_raw_socket_access` flag covers both raw IP sockets (ICMP, IGMP, OSPF) and L2 capture
+via BPF/AF_PACKET (ARP, DataLink, IS-IS). These genuinely differ — a macOS user in the ChmodBPF
+group has `/dev/bpf*` without being root. `c9a65c80` probes both and grants the flag if either
+succeeds, which is permissive in the right direction but still cannot refuse an ICMP server for
+a capture-only user. Splitting the flag would let each protocol declare what it actually needs.
 
 ---
 
