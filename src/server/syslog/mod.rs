@@ -77,14 +77,10 @@ impl SyslogServer {
                         let message_str = String::from_utf8_lossy(&data);
                         console_trace!(status_tx, "Syslog message: {}", message_str);
 
-                        // Parse the syslog message
-                        let parsed = match Self::parse_syslog_message(&data) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                console_error!(status_tx, "Failed to parse syslog message: {}", e);
-                                continue;
-                            }
-                        };
+                        // Parse the syslog message. syslog_loose is lenient: an unparseable
+                        // datagram still yields a message with default facility/severity, so
+                        // this does not drop traffic.
+                        let parsed = Self::parse_syslog_message(&data);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -98,11 +94,17 @@ impl SyslogServer {
                                 &SYSLOG_MESSAGE_EVENT,
                                 serde_json::json!({
                                     "facility": parsed.facility,
+                                    "facility_code": parsed.facility_code,
                                     "severity": parsed.severity,
+                                    "severity_code": parsed.severity_code,
+                                    "priority": parsed.priority,
                                     "timestamp": parsed.timestamp,
                                     "hostname": parsed.hostname,
                                     "appname": parsed.appname,
-                                    "message": parsed.message
+                                    "procid": parsed.procid,
+                                    "message": parsed.message,
+                                    "source_ip": peer_addr.ip().to_string(),
+                                    "raw_message": parsed.raw
                                 }),
                             );
 
@@ -164,30 +166,35 @@ impl SyslogServer {
         Ok(local_addr)
     }
 
-    /// Parse syslog message and extract relevant information
-    pub fn parse_syslog_message(data: &[u8]) -> Result<ParsedSyslogInfo> {
-        use syslog_loose::{parse_message, ProcId, Variant};
+    /// Parse a syslog datagram into the fields exposed to the LLM.
+    ///
+    /// `syslog_loose` is deliberately lenient and never fails: a datagram that matches
+    /// neither RFC 3164 nor RFC 5424 comes back as a message with no priority, in which
+    /// case we fall back to the RFC 5424 default priority 13 (user.notice).
+    ///
+    /// The facility/severity strings are the library's canonical short names
+    /// (`kern`, `user`, … / `emerg`, `alert`, `crit`, `err`, `warning`, `notice`,
+    /// `info`, `debug`), *not* the `{:?}` form (`LOG_KERN`, `SEV_ERR`), so that an
+    /// event handler can compare them against the names used in the event docs.
+    pub fn parse_syslog_message(data: &[u8]) -> ParsedSyslogInfo {
+        use syslog_loose::{parse_message, ProcId, SyslogFacility, SyslogSeverity, Variant};
 
         // Convert bytes to string
         let message_str = String::from_utf8_lossy(data);
 
         // Parse using syslog_loose (handles both RFC 3164 and RFC 5424)
-        // Try RFC 5424 first, then fall back to RFC 3164
         let parsed = parse_message(&message_str, Variant::Either);
 
-        // Extract facility and severity strings
-        let facility = match parsed.facility {
-            Some(f) => format!("{:?}", f).to_lowercase(),
-            None => "user".to_string(),
-        };
-        let severity = match parsed.severity {
-            Some(s) => format!("{:?}", s).to_lowercase(),
-            None => "notice".to_string(),
-        };
+        // Facility/severity, with the RFC 5424 default (user.notice) when the datagram
+        // carried no `<pri>` header.
+        let facility = parsed.facility.unwrap_or(SyslogFacility::LOG_USER);
+        let severity = parsed.severity.unwrap_or(SyslogSeverity::SEV_NOTICE);
+        let facility_code = facility as u8;
+        let severity_code = severity as u8;
 
         // Format timestamp
         let timestamp = match &parsed.timestamp {
-            Some(ts) => format!("{:?}", ts),
+            Some(ts) => ts.to_rfc3339(),
             None => "unknown".to_string(),
         };
 
@@ -197,40 +204,54 @@ impl SyslogServer {
             .map(|s| s.to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Extract app name (try structured data first, then process for RFC 3164)
+        // Extract app name (tag for RFC 3164, APP-NAME for RFC 5424)
         let appname = match &parsed.appname {
             Some(name) => name.to_string(),
             None => "unknown".to_string(),
         };
 
         // Extract process ID if available
-        let _procid = match &parsed.procid {
+        let procid = match &parsed.procid {
             Some(ProcId::PID(pid)) => Some(format!("{}", pid)),
             Some(ProcId::Name(name)) => Some(name.to_string()),
             None => None,
         };
 
-        // Extract message text
-        let message_text = parsed.msg.to_string();
-
-        Ok(ParsedSyslogInfo {
-            facility,
-            severity,
+        ParsedSyslogInfo {
+            facility: facility.as_str().to_string(),
+            facility_code,
+            severity: severity.as_str().to_string(),
+            severity_code,
+            priority: (facility_code as u16) * 8 + severity_code as u16,
             timestamp,
             hostname,
             appname,
-            message: message_text,
-        })
+            procid,
+            message: parsed.msg.to_string(),
+            raw: message_str.to_string(),
+        }
     }
 }
 
 /// Parsed syslog message information
 #[derive(Debug)]
 pub struct ParsedSyslogInfo {
+    /// Canonical facility name (`kern`, `user`, `auth`, `local0`, …)
     pub facility: String,
+    /// Numeric facility, 0-23
+    pub facility_code: u8,
+    /// Canonical severity name (`emerg`, `alert`, `crit`, `err`, `warning`, `notice`, `info`, `debug`)
     pub severity: String,
-    pub timestamp: String,
+    /// Numeric severity, 0 (most severe) - 7 (least severe)
+    pub severity_code: u8,
+    /// PRI value as it appears on the wire: facility * 8 + severity
+    pub priority: u16,
     pub hostname: String,
     pub appname: String,
+    pub procid: Option<String>,
+    pub timestamp: String,
+    /// Message text with the syslog header stripped
     pub message: String,
+    /// The complete datagram as received, header included
+    pub raw: String,
 }

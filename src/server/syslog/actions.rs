@@ -45,14 +45,17 @@ impl Protocol for SyslogProtocol {
         vec!["syslog"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(514))
             .implementation("syslog_loose v0.22 for parsing RFC 3164/5424 messages")
-            .llm_control("Message filtering, storage, forwarding, alerting")
+            .llm_control("Message filtering, forwarding, alerting")
             .e2e_testing("logger command (Linux/macOS built-in)")
-            .notes("RFC 3164 and RFC 5424 support, UDP transport")
+            .notes("RFC 3164 and RFC 5424 over UDP. Receive-only: nothing is ever sent back to the sender. No E2E test coverage")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -147,39 +150,60 @@ impl Server for SyslogProtocol {
 }
 
 impl SyslogProtocol {
-    /// Execute forward_syslog async action
+    /// Execute forward_syslog: relay the message to another syslog collector over UDP.
+    ///
+    /// The datagram is sent from an ephemeral local port, so the receiving collector sees
+    /// NetGet as the source (syslog has no relay/forwarded-for field in RFC 3164; a real
+    /// relay would rewrite the hostname, which the LLM can do in `message`).
     fn execute_forward_syslog(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _target = action
-            .get("target")
-            .and_then(|v| v.as_str())
-            .context("Missing 'target' parameter")?;
+        use std::net::{ToSocketAddrs, UdpSocket};
+
+        let target = action.get("target").and_then(|v| v.as_str()).context(
+            "Missing 'target' parameter (expected \"IP:port\", e.g. \"192.168.1.100:514\")",
+        )?;
 
         let message = action
             .get("message")
             .and_then(|v| v.as_str())
             .context("Missing 'message' parameter")?;
 
-        // Return the message to be forwarded
-        // The caller will handle the actual UDP send
-        Ok(ActionResult::Output(message.as_bytes().to_vec()))
+        let addr = target
+            .to_socket_addrs()
+            .with_context(|| {
+                format!("Invalid 'target' {target:?}: expected \"HOST:PORT\", e.g. \"192.168.1.100:514\"")
+            })?
+            .next()
+            .with_context(|| format!("'target' {target:?} did not resolve to any address"))?;
+
+        let bind_addr = if addr.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
+        let socket = UdpSocket::bind(bind_addr)
+            .with_context(|| format!("Failed to open a local UDP socket to forward to {addr}"))?;
+        let sent = socket
+            .send_to(message.as_bytes(), addr)
+            .with_context(|| format!("Failed to forward syslog message to {addr}"))?;
+
+        tracing::debug!("Syslog forwarded {} bytes to {}", sent, addr);
+
+        // Syslog is one-way: nothing is written back to the original sender.
+        Ok(ActionResult::NoAction)
     }
 
-    /// Execute store_syslog_message sync action
+    /// Execute store_syslog_message: record the message in the server's access log.
+    ///
+    /// NetGet protocols do not implement storage (see CLAUDE.md). The durable record is
+    /// the access log entry written for every handled event, which already contains this
+    /// action verbatim and is readable via the `list_access_logs` / `get_access_log`
+    /// MCP tools. This executor therefore only validates and echoes the message.
     fn execute_store_syslog_message(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .context("Missing 'message' parameter")?;
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
-        // Return confirmation
-        let response = json!({
-            "stored": true,
-            "message": message
-        });
+        tracing::debug!("Syslog message retained in access log: {}", message);
 
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&response).context("Failed to serialize response")?,
-        ))
+        Ok(ActionResult::NoAction)
     }
 }
 
@@ -187,18 +211,18 @@ impl SyslogProtocol {
 fn forward_syslog_action() -> ActionDefinition {
     ActionDefinition {
         name: "forward_syslog".to_string(),
-        description: "Forward syslog message to another syslog server (async action)".to_string(),
+        description: "Relay a syslog message to another syslog collector over UDP. The message is sent exactly as given, so include the '<PRI>' header if the receiver expects a well-formed syslog line - the 'raw_message' field of the syslog_message event is the original datagram and can be forwarded unchanged.".to_string(),
         parameters: vec![
             Parameter {
                 name: "target".to_string(),
                 type_hint: "string".to_string(),
-                description: "Target syslog server in format 'IP:port'".to_string(),
+                description: "Destination collector as 'HOST:PORT', e.g. '192.168.1.100:514'. Port is mandatory".to_string(),
                 required: true,
             },
             Parameter {
                 name: "message".to_string(),
                 type_hint: "string".to_string(),
-                description: "Syslog message to forward (raw format)".to_string(),
+                description: "Exact text of the datagram to send. Pass the event's 'raw_message' to relay it untouched, or build a new syslog line such as '<34>Oct 11 22:14:15 host app: text'".to_string(),
                 required: true,
             },
         ],
@@ -219,11 +243,11 @@ fn forward_syslog_action() -> ActionDefinition {
 fn store_syslog_message_action() -> ActionDefinition {
     ActionDefinition {
         name: "store_syslog_message".to_string(),
-        description: "Store syslog message for later analysis".to_string(),
+        description: "Keep this log line: the action and its message are written to the server's access log, which is readable later with the list_access_logs / get_access_log tools. NetGet does not write syslog messages to a database or to disk, and nothing is sent back to the client. Use forward_syslog if the message must reach another collector.".to_string(),
         parameters: vec![Parameter {
             name: "message".to_string(),
             type_hint: "string".to_string(),
-            description: "Syslog message to store".to_string(),
+            description: "Text to record. Usually the event's 'raw_message' (the original datagram) or its 'message' field, optionally annotated with your own note".to_string(),
             required: true,
         }],
         example: json!({
@@ -260,49 +284,96 @@ fn ignore_syslog_message_action() -> ActionDefinition {
 // ============================================================================
 
 pub static SYSLOG_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("syslog_message", "Syslog client sent a log message", json!({"type": "placeholder", "event_id": "syslog_message"}))
+    EventType::new(
+        "syslog_message",
+        "Syslog client sent a log message. Syslog is one-way: no response is ever sent back to the client, so the only useful actions are recording, forwarding or dropping the message",
+        json!({"type": "store_syslog_message", "message": "<34>Oct 11 22:14:15 mymachine su: 'su root' failed"}),
+    )
     .with_parameters(vec![
         Parameter {
             name: "facility".to_string(),
             type_hint: "string".to_string(),
-            description: "Syslog facility (kernel, user, mail, daemon, etc.)".to_string(),
+            description: "Facility name, exactly one of: kern, user, mail, daemon, auth, syslog, lpr, news, uucp, cron, authpriv, ftp, ntp, audit, alert, clockd, local0-local7. Defaults to 'user' when the datagram carried no <PRI> header".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "facility_code".to_string(),
+            type_hint: "number".to_string(),
+            description: "Numeric facility, 0 (kern) to 23 (local7)".to_string(),
             required: true,
         },
         Parameter {
             name: "severity".to_string(),
             type_hint: "string".to_string(),
-            description: "Syslog severity (emergency, alert, critical, error, warning, notice, info, debug)".to_string(),
+            description: "Severity name, exactly one of: emerg, alert, crit, err, warning, notice, info, debug. Defaults to 'notice' when the datagram carried no <PRI> header".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "severity_code".to_string(),
+            type_hint: "number".to_string(),
+            description: "Numeric severity, 0 = emerg (most severe) to 7 = debug (least severe). Compare against this rather than the name when filtering by importance, e.g. severity_code <= 3 means error or worse".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "priority".to_string(),
+            type_hint: "number".to_string(),
+            description: "The wire PRI value, facility_code * 8 + severity_code".to_string(),
             required: true,
         },
         Parameter {
             name: "timestamp".to_string(),
             type_hint: "string".to_string(),
-            description: "Message timestamp".to_string(),
+            description: "Timestamp reported by the sender in RFC 3339 form, or 'unknown' if the message had none. This is the client's clock, not the server's".to_string(),
             required: false,
         },
         Parameter {
             name: "hostname".to_string(),
             type_hint: "string".to_string(),
-            description: "Hostname/source of the message".to_string(),
+            description: "Hostname claimed by the sender, or 'unknown'. Unauthenticated and easily forged - use 'source_ip' for the address the datagram actually came from".to_string(),
             required: false,
         },
         Parameter {
             name: "appname".to_string(),
             type_hint: "string".to_string(),
-            description: "Application name".to_string(),
+            description: "Application/tag name (APP-NAME in RFC 5424, the tag before ':' in RFC 3164), or 'unknown'".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "procid".to_string(),
+            type_hint: "string".to_string(),
+            description: "Process id or name if the sender included one, otherwise null".to_string(),
             required: false,
         },
         Parameter {
             name: "message".to_string(),
             type_hint: "string".to_string(),
-            description: "The actual log message".to_string(),
+            description: "Log text with the syslog header (priority, timestamp, hostname, tag) stripped off".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "source_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "IP address the datagram was received from".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "raw_message".to_string(),
+            type_hint: "string".to_string(),
+            description: "The complete datagram as received, header included. Forward or store this to preserve the message byte-for-byte".to_string(),
             required: true,
         },
     ])
     .with_actions(vec![
         store_syslog_message_action(),
         ignore_syslog_message_action(),
+        forward_syslog_action(),
     ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("syslog {facility}.{severity} from {hostname}")
+            .with_debug("syslog {facility}.{severity} from {hostname} ({source_ip}) app={appname}: {message}")
+            .with_trace("syslog: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_syslog_event_types() -> Vec<EventType> {

@@ -9,6 +9,10 @@ transport for message reception.
 **Status**: Experimental (Network Monitoring Protocol)
 **RFC**: RFC 3164 (BSD syslog), RFC 5424 (Syslog Protocol)
 **Port**: 514 (standard syslog), 601 (alternative)
+**Privilege**: declares `PrivilegeRequirement::PrivilegedPort(514)`, so `server_startup` preflights the
+capability before binding. Any port above 1023 needs no privilege.
+**Test coverage**: none. There is no `tests/server/syslog/` suite, so nothing in CI or the local
+suite exercises this protocol.
 
 ## Library Choices
 
@@ -47,9 +51,10 @@ Single integration point:
 
 **Syslog Messages**:
 
-- LLM receives `syslog_message` event with facility, severity, timestamp, hostname, appname, message
+- LLM receives `syslog_message` event with facility, facility_code, severity, severity_code, priority,
+  timestamp, hostname, appname, procid, message, source_ip and raw_message
 - Returns actions: `store_syslog_message`, `forward_syslog`, `ignore_syslog_message`
-- Server performs actions (store in memory, forward to another server, drop, etc.)
+- Server performs the action (records it in the access log, relays it over UDP, or drops it)
 
 **No Response to Client**:
 
@@ -61,25 +66,34 @@ Single integration point:
 
 LLM receives structured message data, not raw format:
 
-**Facility** (source of message):
+**Facility** (source of message) — the event carries the exact strings below in `facility`, and the
+matching 0-23 number in `facility_code`:
 
-- kernel, user, mail, daemon, auth, syslog, lpr, news, uucp, cron, authpriv, ftp
-- local0-local7 (custom applications)
+- kern (0), user (1), mail (2), daemon (3), auth (4), syslog (5), lpr (6), news (7), uucp (8),
+  cron (9), authpriv (10), ftp (11), ntp (12), audit (13), alert (14), clockd (15)
+- local0 (16) - local7 (23), for custom applications
 
-**Severity** (importance level):
+**Severity** (importance level) — `severity` holds the name, `severity_code` the number:
 
-- emergency (0) - system unusable
+- emerg (0) - system unusable
 - alert (1) - immediate action required
-- critical (2) - critical condition
-- error (3) - error condition
+- crit (2) - critical condition
+- err (3) - error condition
 - warning (4) - warning condition
 - notice (5) - normal but significant
 - info (6) - informational
 - debug (7) - debug messages
 
-**Priority Encoding**: `Priority = Facility * 8 + Severity`
+These are `syslog_loose`'s canonical short names, not its `Debug` spelling: the event says `err`,
+never `SEV_ERR` or `error`. Filters that need ordering should compare `severity_code`
+(`severity_code <= 3` = error or worse) rather than matching names.
 
-- Example: `<34>` = user.critical (1 * 8 + 2 = 10... wait, 34 / 8 = 4 remainder 2, so auth.critical)
+**Priority Encoding**: `Priority = Facility * 8 + Severity`, exposed as `priority`
+
+- Example: `<34>` → 34 / 8 = 4 remainder 2, i.e. facility 4 (auth), severity 2 (crit)
+
+A datagram with no `<PRI>` header at all still produces an event: facility and severity fall back to
+the RFC 5424 default of user.notice (priority 13).
 
 **Message Components**:
 
@@ -126,7 +140,8 @@ All operations use **dual logging**:
 - **DEBUG**: Message summary (facility, severity, hostname, peer address)
 - **TRACE**: Full message text
 - **INFO**: LLM messages and high-level events
-- **ERROR**: Parse failures, LLM errors
+- **ERROR**: socket receive errors, LLM errors. Note there is no parse-failure path: `parse_message`
+  is infallible, so every datagram produces an event
 - All logs go to both `netget.log` (via tracing) and TUI Status panel (via status_tx)
 
 ## LLM Integration
@@ -251,28 +266,30 @@ common.
 
 ### 2. No Message Storage
 
-- `store_syslog_message` action defined but doesn't persist to disk
-- Messages only processed by LLM, not saved
-- Would require database or file storage implementation
+- `store_syslog_message` does not write to a database or to disk, by design: protocols must not
+  implement storage (see the root CLAUDE.md)
+- What it does do is make the message part of the server's access log entry for the event, readable
+  afterwards with `list_access_logs` / `get_access_log`
+- The action description says exactly this, so a model is not told it has a datastore it lacks
 
-**Workaround**: LLM can log messages to netget.log via `show_message` action. For persistent storage, forward to real
-syslog server (rsyslog, syslog-ng).
+**Workaround**: for durable storage, `forward_syslog` to a real collector (rsyslog, syslog-ng), or
+have the LLM open a SQLite database via the generic `create_database` / `execute_sql` actions.
 
-### 3. No Message Forwarding (Yet)
+### 3. Message Forwarding
 
-- `forward_syslog` action defined but not fully implemented
-- Would require LLM-initiated UDP send to target server
-- Would need configuration of forwarding targets
-
-**Future Enhancement**: Allow LLM to forward messages to central syslog server for aggregation.
+- `forward_syslog` is implemented: the executor resolves `target` ("HOST:PORT"), opens an ephemeral
+  UDP socket and sends `message` verbatim
+- A bad target or a failed send returns an error to the action pipeline instead of silently
+  succeeding
+- The datagram's source address is NetGet, not the original sender; syslog has no forwarded-for
+  field, so relay-style rewriting (replacing the hostname) is up to the LLM's `message`
+- No retry, no TCP fallback, no delivery confirmation - it is plain UDP
 
 ### 4. No Structured Data Parsing
 
-- RFC 5424 structured data `[key=value]` not extracted
-- Treated as part of message text
-- LLM must parse from message string if needed
-
-**Workaround**: syslog_loose provides raw structured data, could be enhanced to extract and pass to LLM.
+- RFC 5424 structured data `[key=value]` is parsed by syslog_loose but not forwarded into the event
+- The LLM can still recover it from `raw_message`, which is the untouched datagram
+- `msgid` is likewise parsed and dropped
 
 ### 5. No Rate Limiting
 
