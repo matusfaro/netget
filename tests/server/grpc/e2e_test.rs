@@ -326,26 +326,25 @@ When you receive GetUser requests, respond with a User message containing the re
     );
 
     // Start the server with mocks
-    let server_config = NetGetConfig::new_no_scripts(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup with inline proto text
-                .on_instruction_containing("gRPC server")
-                .and_instruction_containing("protobuf schema")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "gRPC",
-                        "instruction": "Respond to GetUser with id, name Bob, email bob@test.com",
-                        "startup_params": {
-                            "proto_schema": proto_text
-                        }
+    let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup with inline proto text
+            .on_instruction_containing("gRPC server")
+            .and_instruction_containing("protobuf schema")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "gRPC",
+                    "instruction": "Respond to GetUser with id, name Bob, email bob@test.com",
+                    "startup_params": {
+                        "proto_schema": proto_text
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);

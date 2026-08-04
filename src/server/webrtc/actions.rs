@@ -203,11 +203,11 @@ impl Protocol for WebRtcProtocol {
                     "peer_id": "peer-abc123",
                     "sdp_offer": "{\"type\":\"offer\",\"sdp\":\"...\"}"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC accept offer peer={peer_id}")
-                    .with_debug("WebRTC accept_offer: peer_id={peer_id}"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC accept offer peer={peer_id}")
+                        .with_debug("WebRTC accept_offer: peer_id={peer_id}"),
+                ),
             },
             ActionDefinition {
                 name: "send_to_peer".to_string(),
@@ -231,11 +231,11 @@ impl Protocol for WebRtcProtocol {
                     "peer_id": "peer-abc123",
                     "message": "Hello from NetGet server!"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC send to {peer_id}")
-                    .with_debug("WebRTC send_to_peer: peer_id={peer_id}"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC send to {peer_id}")
+                        .with_debug("WebRTC send_to_peer: peer_id={peer_id}"),
+                ),
             },
             ActionDefinition {
                 name: "close_peer".to_string(),
@@ -250,11 +250,11 @@ impl Protocol for WebRtcProtocol {
                     "type": "close_peer",
                     "peer_id": "peer-abc123"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC close peer {peer_id}")
-                    .with_debug("WebRTC close_peer: peer_id={peer_id}"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC close peer {peer_id}")
+                        .with_debug("WebRTC close_peer: peer_id={peer_id}"),
+                ),
             },
             ActionDefinition {
                 name: "list_peers".to_string(),
@@ -263,11 +263,11 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "list_peers"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC list peers")
-                    .with_debug("WebRTC list_peers"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC list peers")
+                        .with_debug("WebRTC list_peers"),
+                ),
             },
         ]
     }
@@ -287,11 +287,11 @@ impl Protocol for WebRtcProtocol {
                     "type": "send_message",
                     "message": "Reply message"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC message")
-                    .with_debug("WebRTC send_message"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC message")
+                        .with_debug("WebRTC send_message"),
+                ),
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -300,11 +300,11 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC disconnect")
-                    .with_debug("WebRTC disconnect"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC disconnect")
+                        .with_debug("WebRTC disconnect"),
+                ),
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -313,11 +313,11 @@ impl Protocol for WebRtcProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> WebRTC wait")
-                    .with_debug("WebRTC wait_for_more"),
-            ),
+                log_template: Some(
+                    LogTemplate::new()
+                        .with_info("-> WebRTC wait")
+                        .with_debug("WebRTC wait_for_more"),
+                ),
             },
         ]
     }
@@ -328,10 +328,26 @@ impl Protocol for WebRtcProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webrtc_peer_connected", "Triggered when a WebRTC peer's data channel opens", json!({"type": "placeholder", "event_id": "webrtc_peer_connected"})),
-            EventType::new("webrtc_message_received", "Triggered when a message is received from a peer", json!({"type": "placeholder", "event_id": "webrtc_message_received"})),
-            EventType::new("webrtc_offer_received", "Triggered when an SDP offer is received (manual mode)", json!({"type": "placeholder", "event_id": "webrtc_offer_received"})),
-            EventType::new("webrtc_peer_disconnected", "Triggered when a peer connection closes", json!({"type": "placeholder", "event_id": "webrtc_peer_disconnected"})),
+            EventType::new(
+                "webrtc_peer_connected",
+                "Triggered when a WebRTC peer's data channel opens",
+                json!({"type": "placeholder", "event_id": "webrtc_peer_connected"}),
+            ),
+            EventType::new(
+                "webrtc_message_received",
+                "Triggered when a message is received from a peer",
+                json!({"type": "placeholder", "event_id": "webrtc_message_received"}),
+            ),
+            EventType::new(
+                "webrtc_offer_received",
+                "Triggered when an SDP offer is received (manual mode)",
+                json!({"type": "placeholder", "event_id": "webrtc_offer_received"}),
+            ),
+            EventType::new(
+                "webrtc_peer_disconnected",
+                "Triggered when a peer connection closes",
+                json!({"type": "placeholder", "event_id": "webrtc_peer_disconnected"}),
+            ),
         ]
     }
 

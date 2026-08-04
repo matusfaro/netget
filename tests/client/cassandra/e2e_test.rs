@@ -59,41 +59,41 @@ mod cassandra_client_tests {
             "Connect to 127.0.0.1:{} via Cassandra. Execute 'SELECT * FROM system.local' query.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("Cassandra")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "Cassandra",
-                            "instruction": "Execute SELECT * FROM system.local query"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected
-                    .on_event("cassandra_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "execute_cassandra_query",
-                            "query": "SELECT * FROM system.local"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Response received
-                    .on_event("cassandra_response_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("Cassandra")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "Cassandra",
+                        "instruction": "Execute SELECT * FROM system.local query"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("cassandra_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "execute_cassandra_query",
+                        "query": "SELECT * FROM system.local"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Response received
+                .on_event("cassandra_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 

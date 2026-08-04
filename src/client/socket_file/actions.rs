@@ -19,7 +19,7 @@ pub static SOCKET_FILE_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::n
         json!({
             "type": "send_socket_file_data",
             "data_hex": "48656c6c6f"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "socket_path".to_string(),
@@ -37,7 +37,7 @@ pub static SOCKET_FILE_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
         json!({
             "type": "send_socket_file_data",
             "data_hex": "48656c6c6f"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -81,7 +81,7 @@ impl Protocol for SocketFileClientProtocol {
                     "type": "send_socket_file_data",
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -90,7 +90,7 @@ impl Protocol for SocketFileClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -109,7 +109,7 @@ impl Protocol for SocketFileClientProtocol {
                     "type": "send_socket_file_data",
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -118,7 +118,7 @@ impl Protocol for SocketFileClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -127,8 +127,16 @@ impl Protocol for SocketFileClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("socket_file_connected", "Triggered when Socket File client connects to Unix domain socket", json!({"type": "placeholder", "event_id": "socket_file_connected"})),
-            EventType::new("socket_file_data_received", "Triggered when Socket File client receives data from Unix domain socket", json!({"type": "placeholder", "event_id": "socket_file_data_received"})),
+            EventType::new(
+                "socket_file_connected",
+                "Triggered when Socket File client connects to Unix domain socket",
+                json!({"type": "placeholder", "event_id": "socket_file_connected"}),
+            ),
+            EventType::new(
+                "socket_file_data_received",
+                "Triggered when Socket File client receives data from Unix domain socket",
+                json!({"type": "placeholder", "event_id": "socket_file_data_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -13,7 +13,12 @@ use std::sync::LazyLock;
 
 /// DHT response event
 pub static DHT_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dht_response", "Received response from DHT node", json!({"type": "placeholder", "event_id": "dht_response"})).with_parameters(vec![
+    EventType::new(
+        "dht_response",
+        "Received response from DHT node",
+        json!({"type": "placeholder", "event_id": "dht_response"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "message_type".to_string(),
             type_hint: "string".to_string(),
@@ -83,7 +88,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "node_id": "abcdefghij0123456789",
                     "transaction_id": "aa"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "dht_find_node".to_string(),
@@ -115,7 +120,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "target": "mnopqrstuv0123456789",
                     "transaction_id": "aa"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "dht_get_peers".to_string(),
@@ -147,7 +152,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "info_hash": "0123456789abcdefghij",
                     "transaction_id": "aa"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "dht_announce_peer".to_string(),
@@ -179,7 +184,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     "info_hash": "0123456789abcdefghij",
                     "transaction_id": "aa"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -188,7 +193,7 @@ impl Protocol for TorrentDhtClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -199,7 +204,11 @@ impl Protocol for TorrentDhtClientProtocol {
         "BitTorrent DHT"
     }
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new("dht_response", "Received response from DHT node", json!({"type": "placeholder", "event_id": "dht_response"}))]
+        vec![EventType::new(
+            "dht_response",
+            "Received response from DHT node",
+            json!({"type": "placeholder", "event_id": "dht_response"}),
+        )]
     }
     fn stack_name(&self) -> &'static str {
         "ETH>IP>UDP>BitTorrent-DHT"

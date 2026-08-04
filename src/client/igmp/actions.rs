@@ -22,7 +22,7 @@ pub static IGMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "type": "join_multicast_group",
             "multicast_addr": "239.1.2.3",
             "interface_addr": "0.0.0.0"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "local_addr".to_string(),
@@ -39,30 +39,28 @@ pub static IGMP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(
         "Multicast data received from group",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
-    .with_parameters(
-        vec![
-            Parameter {
-                name: "data_hex".to_string(),
-                type_hint: "string".to_string(),
-                description: "The multicast data received (as hex string)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data_length".to_string(),
-                type_hint: "number".to_string(),
-                description: "Length of data in bytes".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "source_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Source address of the multicast sender".to_string(),
-                required: true,
-            },
-        ],
-    )
+    .with_parameters(vec![
+        Parameter {
+            name: "data_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "The multicast data received (as hex string)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_length".to_string(),
+            type_hint: "number".to_string(),
+            description: "Length of data in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "source_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Source address of the multicast sender".to_string(),
+            required: true,
+        },
+    ])
 });
 
 /// IGMP client protocol action handler
@@ -102,7 +100,7 @@ impl Protocol for IgmpClientProtocol {
                     "multicast_addr": "239.1.2.3",
                     "interface_addr": "0.0.0.0"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "leave_multicast_group".to_string(),
@@ -128,7 +126,7 @@ impl Protocol for IgmpClientProtocol {
                     "multicast_addr": "239.1.2.3",
                     "interface_addr": "0.0.0.0"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_multicast".to_string(),
@@ -159,7 +157,7 @@ impl Protocol for IgmpClientProtocol {
                     "port": 5000,
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }

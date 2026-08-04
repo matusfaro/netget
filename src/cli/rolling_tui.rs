@@ -61,7 +61,9 @@ pub async fn run_rolling_tui(
     let configured_model = args.model.clone().or(settings.lock().await.model.clone());
 
     // Resolve the base URL for model selection and banner generation
-    let base_url = args.openai_url.as_deref()
+    let base_url = args
+        .openai_url
+        .as_deref()
         .or(args.ollama_url.as_deref())
         .unwrap_or("http://localhost:11434");
 
@@ -70,12 +72,10 @@ pub async fn run_rolling_tui(
     let (selected_model, model_messages) = if is_openai {
         // OpenAI mode: model was already validated as required in create_llm_client
         let model = configured_model.clone().unwrap_or_default();
-        let messages = vec![
-            format!("✓  Using OpenAI-compatible backend: {}", base_url),
-        ];
+        let messages = vec![format!("✓  Using OpenAI-compatible backend: {}", base_url)];
         (model, messages)
     } else {
-    match crate::llm::select_or_validate_model(configured_model.clone(), true, base_url).await {
+        match crate::llm::select_or_validate_model(configured_model.clone(), true, base_url).await {
             Ok(Some(model)) => {
                 info!("✓  Using model: {}", model);
                 let messages = if let Some(ref config_model) = configured_model {
@@ -91,8 +91,12 @@ pub async fn run_rolling_tui(
                     }
                 } else {
                     vec![
-                        format!("⚠  No model configured, auto-selected: {} (largest/most recent)", model),
-                        "   To set a different model, use: /model or edit ~/.netget settings".to_string(),
+                        format!(
+                            "⚠  No model configured, auto-selected: {} (largest/most recent)",
+                            model
+                        ),
+                        "   To set a different model, use: /model or edit ~/.netget settings"
+                            .to_string(),
                     ]
                 };
                 (model, messages)
@@ -103,7 +107,8 @@ pub async fn run_rolling_tui(
                 let messages = vec![
                     "✗  Ollama is not available or no models found.".to_string(),
                     "   Please ensure Ollama is running: https://ollama.ai".to_string(),
-                    "   Use `/model` to list and select a model once Ollama is running.".to_string(),
+                    "   Use `/model` to list and select a model once Ollama is running."
+                        .to_string(),
                 ];
                 ("".to_string(), messages)
             }
@@ -454,7 +459,11 @@ fn print_welcome_messages(footer: &mut StickyFooter, palette: &ColorPalette) -> 
     ];
 
     // Find the longest line to determine box width
-    let max_width = title_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let max_width = title_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
     let box_width = max_width + 4; // +4 for "│ " and " │"
     let left_margin = "  "; // 2 spaces left margin
 
@@ -463,11 +472,7 @@ fn print_welcome_messages(footer: &mut StickyFooter, palette: &ColorPalette) -> 
     let last_scroll_line = scroll_height.saturating_sub(1);
 
     // Blank line above the box
-    execute!(
-        stdout,
-        cursor::MoveTo(0, last_scroll_line),
-        Print("\n")
-    )?;
+    execute!(stdout, cursor::MoveTo(0, last_scroll_line), Print("\n"))?;
 
     // Top border (green) with left margin
     let top_border = format!("{}┌{}┐", left_margin, "─".repeat(box_width - 2));
@@ -513,11 +518,7 @@ fn print_welcome_messages(footer: &mut StickyFooter, palette: &ColorPalette) -> 
     )?;
 
     // Blank line below the box
-    execute!(
-        stdout,
-        cursor::MoveTo(0, last_scroll_line),
-        Print("\n")
-    )?;
+    execute!(stdout, cursor::MoveTo(0, last_scroll_line), Print("\n"))?;
 
     stdout.flush()?;
 
@@ -750,7 +751,8 @@ async fn build_task_actions(
         TaskScope::Global => {
             // Global tasks run in the user-input context, with open_server/open_client enabled.
             let scripting_env = state.get_scripting_env().await;
-            let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, true, true);
+            let mut actions =
+                get_user_input_common_actions(selected_mode, &scripting_env, true, true);
             actions.extend(get_all_tool_actions(web_search_mode));
             actions
         }
@@ -1696,7 +1698,15 @@ async fn handle_key_event(
                     UserCommand::StartSimple { protocol } => {
                         // Start a simple protocol server
                         let llm = event_handler.get_llm_client();
-                        handle_start_simple(&protocol, state, footer, &palette, &llm, status_tx.clone()).await?;
+                        handle_start_simple(
+                            &protocol,
+                            state,
+                            footer,
+                            &palette,
+                            &llm,
+                            status_tx.clone(),
+                        )
+                        .await?;
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
@@ -1704,14 +1714,33 @@ async fn handle_key_event(
                         let llm = event_handler.get_llm_client();
                         let backend_type = llm.backend_type();
                         let backend_url = llm.backend_url();
-                        let current_model = state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
-                        print_output_line(&format!("LLM Backend: {}", backend_type), footer, &palette)?;
+                        let current_model = state
+                            .get_ollama_model()
+                            .await
+                            .unwrap_or_else(|| "None".to_string());
+                        print_output_line(
+                            &format!("LLM Backend: {}", backend_type),
+                            footer,
+                            &palette,
+                        )?;
                         print_output_line(&format!("  URL: {}", backend_url), footer, &palette)?;
-                        print_output_line(&format!("  Model: {}", current_model), footer, &palette)?;
+                        print_output_line(
+                            &format!("  Model: {}", current_model),
+                            footer,
+                            &palette,
+                        )?;
                         print_output_line("", footer, &palette)?;
                         print_output_line("To switch backend:", footer, &palette)?;
-                        print_output_line("  /backend ollama [url]              - Switch to Ollama", footer, &palette)?;
-                        print_output_line("  /backend openai <url> [api-key]    - Switch to OpenAI-compatible", footer, &palette)?;
+                        print_output_line(
+                            "  /backend ollama [url]              - Switch to Ollama",
+                            footer,
+                            &palette,
+                        )?;
+                        print_output_line(
+                            "  /backend openai <url> [api-key]    - Switch to OpenAI-compatible",
+                            footer,
+                            &palette,
+                        )?;
                         footer.render(&mut stdout())?;
                     }
                     UserCommand::SetBackend { args: backend_args } => {
@@ -1723,11 +1752,19 @@ async fn handle_key_event(
                                     .with_app_state(state.clone());
                                 event_handler.set_llm_client(new_client.clone());
                                 state.set_llm_client(new_client).await;
-                                print_output_line(&format!("✓ Switched to Ollama backend: {}", url), footer, &palette)?;
+                                print_output_line(
+                                    &format!("✓ Switched to Ollama backend: {}", url),
+                                    footer,
+                                    &palette,
+                                )?;
                             }
                             Some("openai") => {
                                 if parts.len() < 2 {
-                                    print_output_line("✗ Usage: /backend openai <url> [api-key]", footer, &palette)?;
+                                    print_output_line(
+                                        "✗ Usage: /backend openai <url> [api-key]",
+                                        footer,
+                                        &palette,
+                                    )?;
                                 } else {
                                     let url = parts[1];
                                     let api_key = if parts.len() >= 3 {
@@ -1740,11 +1777,19 @@ async fn handle_key_event(
                                     if api_key.is_empty() {
                                         print_output_line("✗ API key required. Use third argument or set NETGET_API_KEY/OPENAI_API_KEY env var.", footer, &palette)?;
                                     } else {
-                                        let new_client = crate::llm::OllamaClient::new_openai(url, &api_key)
-                                            .with_app_state(state.clone());
+                                        let new_client =
+                                            crate::llm::OllamaClient::new_openai(url, &api_key)
+                                                .with_app_state(state.clone());
                                         event_handler.set_llm_client(new_client.clone());
                                         state.set_llm_client(new_client).await;
-                                        print_output_line(&format!("✓ Switched to OpenAI-compatible backend: {}", url), footer, &palette)?;
+                                        print_output_line(
+                                            &format!(
+                                                "✓ Switched to OpenAI-compatible backend: {}",
+                                                url
+                                            ),
+                                            footer,
+                                            &palette,
+                                        )?;
                                     }
                                 }
                             }
@@ -2414,7 +2459,11 @@ async fn handle_status_command(
             app.toggle_usage_stats();
             if app.show_usage_stats {
                 print_output_line("Usage stats section enabled.", footer, palette)?;
-                print_output_line("The usage panel is now visible in the footer.", footer, palette)?;
+                print_output_line(
+                    "The usage panel is now visible in the footer.",
+                    footer,
+                    palette,
+                )?;
 
                 // Get current stats and update footer immediately
                 let system_stats = stats_monitor.get_stats().await;
@@ -2868,7 +2917,11 @@ async fn handle_sqlite(
                     print_output_line(
                         &format!(
                             "  {} - {} ({}) - {} table(s), {} queries",
-                            db.id, db.name, db.owner, db.tables.len(), db.query_count
+                            db.id,
+                            db.name,
+                            db.owner,
+                            db.tables.len(),
+                            db.query_count
                         ),
                         footer,
                         palette,
@@ -2930,11 +2983,7 @@ async fn handle_sqlite(
                     }
                 }
                 Err(e) => {
-                    print_output_line(
-                        &format!("[ERROR] Query failed: {}", e),
-                        footer,
-                        palette,
-                    )?;
+                    print_output_line(&format!("[ERROR] Query failed: {}", e), footer, palette)?;
                 }
             }
         }

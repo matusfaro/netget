@@ -21,40 +21,44 @@ pub static DOT_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     let dns_protocol = DnsProtocol::new();
     let dns_actions = dns_protocol.get_sync_actions();
 
-    EventType::new("dot_query", "Client sent DNS query over TLS", json!({"type": "placeholder", "event_id": "dot_query"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "query_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "DNS query ID from the request packet".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "domain".to_string(),
-                type_hint: "string".to_string(),
-                description: "Domain name being queried".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "query_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "DNS query type (A, AAAA, MX, TXT, CNAME, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "peer_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client IP address and port".to_string(),
-                required: true,
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("DoT {query_type} {domain}")
-                .with_debug("DoT query from {peer_addr}: {query_type} {domain}")
-                .with_trace("DoT: {json_pretty(.)}"),
-        )
-        .with_actions(dns_actions)
+    EventType::new(
+        "dot_query",
+        "Client sent DNS query over TLS",
+        json!({"type": "placeholder", "event_id": "dot_query"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "query_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "DNS query ID from the request packet".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "domain".to_string(),
+            type_hint: "string".to_string(),
+            description: "Domain name being queried".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "query_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "DNS query type (A, AAAA, MX, TXT, CNAME, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client IP address and port".to_string(),
+            required: true,
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("DoT {query_type} {domain}")
+            .with_debug("DoT query from {peer_addr}: {query_type} {domain}")
+            .with_trace("DoT: {json_pretty(.)}"),
+    )
+    .with_actions(dns_actions)
 });
 
 /// DoT protocol action handler

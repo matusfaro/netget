@@ -281,7 +281,10 @@ async fn handle_mqtt_connection(
         }
     };
 
-    debug!("MQTT connection {} closing: {}", connection_id, close_reason);
+    debug!(
+        "MQTT connection {} closing: {}",
+        connection_id, close_reason
+    );
     console_info!(
         status_tx,
         "MQTT client {} disconnected ({})",

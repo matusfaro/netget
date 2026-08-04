@@ -458,28 +458,23 @@ impl Socks5Server {
         // here used to drop the connection without any reply at all, so clients
         // (curl included) sat waiting for the CONNECT response until they timed
         // out instead of reporting the real error.
-        let mut target_stream = match Self::connect_to_target(
-            &target_addr,
-            connection_id,
-            &status_tx,
-        )
-        .await
-        {
-            Ok(stream) => stream,
-            Err(e) => {
-                let reply = socks5_reply_for_connect_error(&e);
-                warn!(
-                    "SOCKS5 {} failed to connect to {}: {} (reply 0x{:02x})",
-                    connection_id, target_addr, e, reply
-                );
-                let _ = status_tx.send(format!(
-                    "✗ SOCKS5 {} connect to {} failed: {}",
-                    connection_id, target_addr, e
-                ));
-                Self::send_connect_reply(&mut client_stream, reply, &target_addr).await?;
-                return Ok(());
-            }
-        };
+        let mut target_stream =
+            match Self::connect_to_target(&target_addr, connection_id, &status_tx).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    let reply = socks5_reply_for_connect_error(&e);
+                    warn!(
+                        "SOCKS5 {} failed to connect to {}: {} (reply 0x{:02x})",
+                        connection_id, target_addr, e, reply
+                    );
+                    let _ = status_tx.send(format!(
+                        "✗ SOCKS5 {} connect to {} failed: {}",
+                        connection_id, target_addr, e
+                    ));
+                    Self::send_connect_reply(&mut client_stream, reply, &target_addr).await?;
+                    return Ok(());
+                }
+            };
 
         info!(
             "SOCKS5 {} connected to target {}",
@@ -872,19 +867,25 @@ impl Socks5Server {
                 ));
                 let _ = stream.write_all(&[0x01, 0x01]).await;
                 let _ = stream.flush().await;
-                bail!("Authentication decision failed for user {}: {}", username, e);
+                bail!(
+                    "Authentication decision failed for user {}: {}",
+                    username,
+                    e
+                );
             }
         };
 
         // Same reasoning as the CONNECT decision: match on the action the model
         // emitted rather than on ActionResult::NoAction, which several unrelated
         // actions also return.
-        let allowed_action = execution_result.raw_actions.iter().any(|action| {
-            action.get("type").and_then(|v| v.as_str()) == Some("allow_socks5_auth")
-        });
-        let denied_action = execution_result.raw_actions.iter().any(|action| {
-            action.get("type").and_then(|v| v.as_str()) == Some("deny_socks5_auth")
-        });
+        let allowed_action = execution_result
+            .raw_actions
+            .iter()
+            .any(|action| action.get("type").and_then(|v| v.as_str()) == Some("allow_socks5_auth"));
+        let denied_action = execution_result
+            .raw_actions
+            .iter()
+            .any(|action| action.get("type").and_then(|v| v.as_str()) == Some("deny_socks5_auth"));
         let auth_allowed = allowed_action && !denied_action;
 
         // Send auth response: [VER(1), STATUS]

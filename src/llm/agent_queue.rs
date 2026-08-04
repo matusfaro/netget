@@ -110,7 +110,13 @@ impl LlmRequestQueue {
                 tools,
                 claimed: false,
             };
-            inner.entries.insert(id, Entry { request, responder: tx });
+            inner.entries.insert(
+                id,
+                Entry {
+                    request,
+                    responder: tx,
+                },
+            );
             inner.order.push_back(id);
             id
         };

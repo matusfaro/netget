@@ -42,11 +42,7 @@ fn test_http_easy_with_user_instruction() {
     )
     .expect("Failed to generate prompt");
 
-    snapshot_util::assert_snapshot(
-        "http_easy_with_user_instruction",
-        SNAPSHOT_DIR,
-        &prompt,
-    );
+    snapshot_util::assert_snapshot("http_easy_with_user_instruction", SNAPSHOT_DIR, &prompt);
 }
 
 #[test]
@@ -97,10 +93,7 @@ fn test_http_easy_multiple_headers() {
             ("Host".to_string(), "api.example.com".to_string()),
             ("User-Agent".to_string(), "MyApp/1.0".to_string()),
             ("Accept".to_string(), "application/json".to_string()),
-            (
-                "Accept-Encoding".to_string(),
-                "gzip, deflate".to_string(),
-            ),
+            ("Accept-Encoding".to_string(), "gzip, deflate".to_string()),
             ("Accept-Language".to_string(), "en-US,en;q=0.9".to_string()),
             ("Cache-Control".to_string(), "no-cache".to_string()),
             ("Connection".to_string(), "keep-alive".to_string()),

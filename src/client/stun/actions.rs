@@ -101,7 +101,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "send_binding_request"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -110,7 +110,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -125,7 +125,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "send_binding_request"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -134,7 +134,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -145,8 +145,16 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("stun_connected", "Triggered when STUN client is initialized", json!({"type": "placeholder", "event_id": "stun_connected"})),
-            EventType::new("stun_binding_response", "Triggered when STUN client receives binding response", json!({"type": "placeholder", "event_id": "stun_binding_response"})),
+            EventType::new(
+                "stun_connected",
+                "Triggered when STUN client is initialized",
+                json!({"type": "placeholder", "event_id": "stun_connected"}),
+            ),
+            EventType::new(
+                "stun_binding_response",
+                "Triggered when STUN client receives binding response",
+                json!({"type": "placeholder", "event_id": "stun_binding_response"}),
+            ),
         ]
     }
 

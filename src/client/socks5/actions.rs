@@ -19,7 +19,7 @@ pub static SOCKS5_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
         json!({
             "type": "send_socks5_data",
             "data_hex": "48656c6c6f"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -45,7 +45,7 @@ pub static SOCKS5_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::ne
         json!({
             "type": "send_socks5_data",
             "data_hex": "48656c6c6f"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -115,7 +115,7 @@ impl Protocol for Socks5ClientProtocol {
                     "type": "send_socks5_data",
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -124,7 +124,7 @@ impl Protocol for Socks5ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -143,7 +143,7 @@ impl Protocol for Socks5ClientProtocol {
                     "type": "send_socks5_data",
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -152,7 +152,7 @@ impl Protocol for Socks5ClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -161,8 +161,16 @@ impl Protocol for Socks5ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("socks5_connected", "Triggered when SOCKS5 client connects through proxy to target", json!({"type": "placeholder", "event_id": "socks5_connected"})),
-            EventType::new("socks5_data_received", "Triggered when SOCKS5 client receives data from target server", json!({"type": "placeholder", "event_id": "socks5_data_received"})),
+            EventType::new(
+                "socks5_connected",
+                "Triggered when SOCKS5 client connects through proxy to target",
+                json!({"type": "placeholder", "event_id": "socks5_connected"}),
+            ),
+            EventType::new(
+                "socks5_data_received",
+                "Triggered when SOCKS5 client receives data from target server",
+                json!({"type": "placeholder", "event_id": "socks5_data_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

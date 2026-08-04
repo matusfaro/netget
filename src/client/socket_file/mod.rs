@@ -11,8 +11,8 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
-use crate::client::socket_file::actions::SOCKET_FILE_CLIENT_DATA_RECEIVED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
+use crate::client::socket_file::actions::SOCKET_FILE_CLIENT_DATA_RECEIVED_EVENT;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

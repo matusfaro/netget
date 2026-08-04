@@ -375,7 +375,9 @@ fn send_maven_metadata_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> Maven metadata {group_id}:{artifact_id}")
-                .with_debug("Maven send_maven_metadata: {group_id}:{artifact_id} versions={versions_len}"),
+                .with_debug(
+                    "Maven send_maven_metadata: {group_id}:{artifact_id} versions={versions_len}",
+                ),
         ),
     }
 }

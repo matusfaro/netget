@@ -12,10 +12,10 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, trace};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::snmp::actions::{
     SNMP_CLIENT_CONNECTED_EVENT, SNMP_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

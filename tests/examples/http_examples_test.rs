@@ -296,7 +296,10 @@ async fn example_test_http_startup_llm_mode() -> E2EResult<()> {
     let port = server.port;
 
     assert!(port > 0, "Server should have started on a port");
-    println!("✓ HTTP server started successfully on port {} using LLM mode", port);
+    println!(
+        "✓ HTTP server started successfully on port {} using LLM mode",
+        port
+    );
 
     // Verify by making a request
     let client = reqwest::Client::new();
@@ -354,7 +357,10 @@ async fn example_test_http_startup_static_mode() -> E2EResult<()> {
     let port = server.port;
 
     assert!(port > 0, "Server should have started on a port");
-    println!("✓ HTTP server started successfully on port {} using static mode", port);
+    println!(
+        "✓ HTTP server started successfully on port {} using static mode",
+        port
+    );
 
     // Verify static response
     let client = reqwest::Client::new();

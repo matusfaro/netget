@@ -111,7 +111,7 @@ If you are unsure about pack format, provide minimal pack data and we will test 
 
     let server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -135,12 +135,9 @@ If you are unsure about pack format, provide minimal pack data and we will test 
     let clone_result = timeout(
         Duration::from_secs(30),
         tokio::task::spawn_blocking(move || {
-            run_git_command(
-                &["clone", &clone_url, &clone_path_str],
-                None,
-            )
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-        })
+            run_git_command(&["clone", &clone_url, &clone_path_str], None)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))
+        }),
     )
     .await;
 
@@ -163,7 +160,7 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 tokio::task::spawn_blocking(move || {
                     run_git_command(&["status"], Some(&status_clone_path))
                         .map_err(|e| anyhow::anyhow!(e.to_string()))
-                })
+                }),
             )
             .await;
 
@@ -267,7 +264,7 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
 
     let server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -347,39 +344,38 @@ When client requests info/refs for any other repository name:
 - Return error with 404 status code
 - Message: "Repository not found""#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("git")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "Git",
-                        "instruction": "Git server with only 'existing-repo' repository"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Git request for non-existent repo
-                .on_prompt_containing("Git client is requesting references")
-                .and_prompt_containing("nonexistent")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "git_error",
-                        "message": "Repository not found",
-                        "code": 404
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("git")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Git",
+                    "instruction": "Git server with only 'existing-repo' repository"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Git request for non-existent repo
+            .on_prompt_containing("Git client is requesting references")
+            .and_prompt_containing("nonexistent")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "git_error",
+                    "message": "Repository not found",
+                    "code": 404
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -493,7 +489,7 @@ When client requests info/refs for 'backend', return backend branches."#;
 
     let server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -608,7 +604,7 @@ Script should return:
 
     let server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;

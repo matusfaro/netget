@@ -19,33 +19,32 @@ async fn test_mssql_simple_query() -> E2EResult<()> {
     let prompt = "Open MSSQL on port {AVAILABLE_PORT}. For all queries, use mssql_ok_response rows_affected=1.";
 
     // Start the server
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open MSSQL")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MSSQL",
-                        "instruction": "Handle MSSQL queries with appropriate responses"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: SELECT 1 query
-                .on_event("mssql_query")
-                .and_event_data_contains("query", "SELECT 1")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mssql_ok_response",
-                        "rows_affected": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open MSSQL")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MSSQL",
+                    "instruction": "Handle MSSQL queries with appropriate responses"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: SELECT 1 query
+            .on_event("mssql_query")
+            .and_event_data_contains("query", "SELECT 1")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mssql_ok_response",
+                    "rows_affected": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -98,25 +97,21 @@ async fn test_mssql_simple_query() -> E2EResult<()> {
 
     // Execute simple query
     println!("Executing SELECT 1...");
-    let query_result = match tokio::time::timeout(
-        Duration::from_secs(10),
-        client.query("SELECT 1", &[]),
-    )
-    .await
-    {
-        Ok(Ok(stream)) => {
-            println!("✓ Query executed successfully");
-            stream
-        }
-        Ok(Err(e)) => {
-            println!("✗ Query error: {}", e);
-            return Err(e.into());
-        }
-        Err(_) => {
-            println!("✗ Query timeout");
-            return Err("Query timeout".into());
-        }
-    };
+    let query_result =
+        match tokio::time::timeout(Duration::from_secs(10), client.query("SELECT 1", &[])).await {
+            Ok(Ok(stream)) => {
+                println!("✓ Query executed successfully");
+                stream
+            }
+            Ok(Err(e)) => {
+                println!("✗ Query error: {}", e);
+                return Err(e.into());
+            }
+            Err(_) => {
+                println!("✗ Query timeout");
+                return Err("Query timeout".into());
+            }
+        };
 
     // Consume the result stream (but don't validate contents since we're using mssql_ok_response)
     let _rows: Vec<_> = query_result.into_results().await?;
@@ -135,33 +130,32 @@ async fn test_mssql_multi_row_query() -> E2EResult<()> {
 
     let prompt = "Open MSSQL on port {AVAILABLE_PORT}. For all queries, use mssql_ok_response rows_affected=3.";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open MSSQL")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MSSQL",
-                        "instruction": "Handle MSSQL queries with multi-row response"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: SELECT * FROM users query
-                .on_event("mssql_query")
-                .and_event_data_contains("query", "SELECT * FROM users")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mssql_ok_response",
-                        "rows_affected": 3
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open MSSQL")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MSSQL",
+                    "instruction": "Handle MSSQL queries with multi-row response"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: SELECT * FROM users query
+            .on_event("mssql_query")
+            .and_event_data_contains("query", "SELECT * FROM users")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mssql_ok_response",
+                    "rows_affected": 3
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -216,33 +210,32 @@ async fn test_mssql_create_table() -> E2EResult<()> {
     let prompt = "Open MSSQL on port {AVAILABLE_PORT}. For CREATE/INSERT/UPDATE queries, \
         use mssql_ok_response rows_affected=1. For SELECT queries use mssql_ok_response rows_affected=0.";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open MSSQL")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MSSQL",
-                        "instruction": "Handle MSSQL DDL queries"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: CREATE TABLE query
-                .on_event("mssql_query")
-                .and_event_data_contains("query", "CREATE TABLE")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mssql_ok_response",
-                        "rows_affected": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open MSSQL")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MSSQL",
+                    "instruction": "Handle MSSQL DDL queries"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: CREATE TABLE query
+            .on_event("mssql_query")
+            .and_event_data_contains("query", "CREATE TABLE")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mssql_ok_response",
+                    "rows_affected": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -265,7 +258,10 @@ async fn test_mssql_create_table() -> E2EResult<()> {
 
     match result {
         Ok(total) => {
-            println!("✓ CREATE TABLE executed successfully, rows affected: {:?}", total);
+            println!(
+                "✓ CREATE TABLE executed successfully, rows affected: {:?}",
+                total
+            );
         }
         Err(e) => {
             println!("CREATE TABLE returned: {}", e);

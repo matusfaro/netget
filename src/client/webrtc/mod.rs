@@ -29,11 +29,11 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::webrtc::actions::{
     WEBRTC_CLIENT_CHANNEL_OPENED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
     WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

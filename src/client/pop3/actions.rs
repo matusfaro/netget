@@ -11,13 +11,17 @@ use std::sync::LazyLock;
 
 /// Event: POP3 client connected to server
 pub static POP3_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("pop3_connected", "POP3 client connected to server", json!({"type": "placeholder", "event_id": "pop3_connected"}))
-        .with_parameters(vec![Parameter {
-            name: "pop3_server".to_string(),
-            type_hint: "string".to_string(),
-            description: "POP3 server hostname".to_string(),
-            required: true,
-        }])
+    EventType::new(
+        "pop3_connected",
+        "POP3 client connected to server",
+        json!({"type": "placeholder", "event_id": "pop3_connected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "pop3_server".to_string(),
+        type_hint: "string".to_string(),
+        description: "POP3 server hostname".to_string(),
+        required: true,
+    }])
 });
 
 /// Event: POP3 response received from server
@@ -87,7 +91,7 @@ impl Protocol for Pop3ClientProtocol {
                     "type": "modify_pop3_instruction",
                     "instruction": "Retrieve all messages from the mailbox"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -96,7 +100,7 @@ impl Protocol for Pop3ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -147,8 +151,16 @@ impl Protocol for Pop3ClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("pop3_connected", "Triggered when POP3 client connects to server", json!({"type": "placeholder", "event_id": "pop3_connected"})),
-            EventType::new("pop3_response_received", "Triggered when POP3 client receives a response from server", json!({"type": "placeholder", "event_id": "pop3_response_received"})),
+            EventType::new(
+                "pop3_connected",
+                "Triggered when POP3 client connects to server",
+                json!({"type": "placeholder", "event_id": "pop3_connected"}),
+            ),
+            EventType::new(
+                "pop3_response_received",
+                "Triggered when POP3 client receives a response from server",
+                json!({"type": "placeholder", "event_id": "pop3_response_received"}),
+            ),
         ]
     }
 

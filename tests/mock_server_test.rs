@@ -25,20 +25,18 @@ mod tests {
         println!("\n🧪 Testing mock Ollama server - verifying basic TCP server starts");
 
         // Simplified test: just verify server starts with mock LLM
-        let config = NetGetConfig::new("listen on port 0 via tcp")
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("listen on port 0")
-                    .and_instruction_containing("tcp")
-                    .respond_with_actions(json!([{
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "TCP",
-                        "instruction": "TCP echo server"
-                    }]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new("listen on port 0 via tcp").with_mock(|mock| {
+            mock.on_instruction_containing("listen on port 0")
+                .and_instruction_containing("tcp")
+                .respond_with_actions(json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TCP",
+                    "instruction": "TCP echo server"
+                }]))
+                .expect_calls(1)
+                .and()
+        });
 
         // Start NetGet with mocks
         let server = helpers::netget::start_netget(config).await?;

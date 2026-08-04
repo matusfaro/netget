@@ -137,11 +137,20 @@ type ProtocolGroups = std::collections::HashMap<
 pub struct ServerTaskDefinition {
     pub task_id: String,
     pub recurring: bool,
-    #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
+    #[serde(
+        default,
+        deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible"
+    )]
     pub delay_secs: Option<u64>,
-    #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
+    #[serde(
+        default,
+        deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible"
+    )]
     pub interval_secs: Option<u64>,
-    #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
+    #[serde(
+        default,
+        deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible"
+    )]
     pub max_executions: Option<u64>,
     pub instruction: String,
     #[serde(default)]
@@ -168,7 +177,11 @@ pub enum CommonAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         host: Option<String>,
         /// Port to bind (for socket-based protocols like TCP, HTTP, DNS)
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "flexible_deserializers::deserialize_option_u16_flexible")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "flexible_deserializers::deserialize_option_u16_flexible"
+        )]
         port: Option<u16>,
 
         protocol: String,
@@ -195,7 +208,7 @@ pub enum CommonAction {
     /// Close a specific server
     CloseServer {
         #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
-        server_id: u32
+        server_id: u32,
     },
 
     /// Close all servers
@@ -226,7 +239,7 @@ pub enum CommonAction {
     /// Close a specific client
     CloseClient {
         #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
-        client_id: u32
+        client_id: u32,
     },
 
     /// Close all clients
@@ -235,20 +248,20 @@ pub enum CommonAction {
     /// Close a specific connection by its unified ID
     CloseConnectionById {
         #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
-        connection_id: u32
+        connection_id: u32,
     },
 
     /// Reconnect a disconnected client
     ReconnectClient {
         #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
-        client_id: u32
+        client_id: u32,
     },
 
     /// Update the client instruction
     UpdateClientInstruction {
         #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
         client_id: u32,
-        instruction: String
+        instruction: String,
     },
 
     /// Update the server instruction (combines with existing)
@@ -273,17 +286,32 @@ pub enum CommonAction {
     ScheduleTask {
         task_id: String,
         recurring: bool,
-        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
+        #[serde(
+            default,
+            deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible"
+        )]
         delay_secs: Option<u64>,
-        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
+        #[serde(
+            default,
+            deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible"
+        )]
         interval_secs: Option<u64>,
-        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
+        #[serde(
+            default,
+            deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible"
+        )]
         max_executions: Option<u64>,
-        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u32_flexible")]
+        #[serde(
+            default,
+            deserialize_with = "flexible_deserializers::deserialize_option_u32_flexible"
+        )]
         server_id: Option<u32>,
         #[serde(default)]
         connection_id: Option<String>,
-        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u32_flexible")]
+        #[serde(
+            default,
+            deserialize_with = "flexible_deserializers::deserialize_option_u32_flexible"
+        )]
         client_id: Option<u32>,
         instruction: String,
         #[serde(default)]
@@ -335,7 +363,10 @@ impl CommonAction {
         let mut value_mut = value.clone();
         if let Some(obj) = value_mut.as_object_mut() {
             // BACKWARD COMPATIBILITY: Rename base_stack to protocol (if protocol doesn't exist)
-            if matches!(obj.get("type").and_then(|v| v.as_str()), Some("open_server") | Some("open_client")) {
+            if matches!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("open_server") | Some("open_client")
+            ) {
                 if let Some(base_stack) = obj.remove("base_stack") {
                     // Only set protocol if it doesn't already exist
                     if !obj.contains_key("protocol") {
@@ -346,10 +377,14 @@ impl CommonAction {
 
             // BACKWARD COMPATIBILITY: Convert old script_inline/script_handles format to new event_handlers format
             // Check if this is an open_server or open_client action with old script fields
-            if matches!(obj.get("type").and_then(|v| v.as_str()), Some("open_server") | Some("open_client")) {
-                if let (Some(script_inline), Some(script_handles)) =
-                    (obj.get("script_inline").and_then(|v| v.as_str()),
-                     obj.get("script_handles").and_then(|v| v.as_array())) {
+            if matches!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("open_server") | Some("open_client")
+            ) {
+                if let (Some(script_inline), Some(script_handles)) = (
+                    obj.get("script_inline").and_then(|v| v.as_str()),
+                    obj.get("script_handles").and_then(|v| v.as_array()),
+                ) {
                     // Convert to new event_handlers format
                     let mut event_handlers = Vec::new();
 
@@ -369,7 +404,10 @@ impl CommonAction {
 
                     // Add event_handlers field if we created any
                     if !event_handlers.is_empty() {
-                        obj.insert("event_handlers".to_string(), serde_json::json!(event_handlers));
+                        obj.insert(
+                            "event_handlers".to_string(),
+                            serde_json::json!(event_handlers),
+                        );
                     }
 
                     // Remove old fields

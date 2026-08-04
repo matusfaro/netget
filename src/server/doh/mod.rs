@@ -68,12 +68,7 @@ impl DohServer {
         let task_registrar = app_state.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = Self::run(
-                listener,
-                tls_config,
-                llm_client,
-                app_state,
-                server_id,
-                status_tx,
+                listener, tls_config, llm_client, app_state, server_id, status_tx,
             )
             .await
             {

@@ -11,33 +11,30 @@ async fn test_gamepad_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE gamepad. Create the Human Interface Device Service (UUID: 00001812-0000-1000-8000-00805f9b34fb) for gamepad with buttons and analog sticks. Advertise as 'NetGet-Gamepad'.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Act as a BLE gamepad")
-                    .and_instruction_containing("Human Interface Device")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BLUETOOTH_BLE_GAMEPAD",
-                            "instruction": "Create gamepad HID service",
-                            "startup_params": {
-                                "device_name": "NetGet-Gamepad"
-                            }
-                                
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("Act as a BLE gamepad")
+            .and_instruction_containing("Human Interface Device")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BLUETOOTH_BLE_GAMEPAD",
+                    "instruction": "Create gamepad HID service",
+                    "startup_params": {
+                        "device_name": "NetGet-Gamepad"
+                    }
+
+                }
+            ]))
+            .expect_calls(1)
+            .and()
             // Mock 2: Server started event - service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+            .on_event("bluetooth_ble_started")
+            .respond_with_actions(serde_json::json!([]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     println!("✓ Gamepad service started");
     tokio::time::sleep(Duration::from_secs(2)).await;

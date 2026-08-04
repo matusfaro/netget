@@ -17,35 +17,34 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all bind requests with success=true.";
 
-        let server_config = NetGetConfig::new_no_scripts(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("LDAP server")
-                    .and_instruction_containing("port 0")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "LDAP",
-                            "instruction": "Accept all bind requests with success=true"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Bind request
-                    .on_event("ldap_bind")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "ldap_bind_response",
-                            "message_id": 1,
-                            "success": true,
-                            "message": "Bind successful"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("LDAP server")
+                .and_instruction_containing("port 0")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "LDAP",
+                        "instruction": "Accept all bind requests with success=true"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Bind request
+                .on_event("ldap_bind")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ldap_bind_response",
+                        "message_id": 1,
+                        "success": true,
+                        "message": "Bind successful"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(server_config).await?;
 
@@ -394,34 +393,33 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept bind as admin/admin123. Accept all add operations.";
 
-        let server_config = NetGetConfig::new_no_scripts(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("LDAP server")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "LDAP",
-                            "instruction": "Accept bind as admin/admin123. Accept all add operations"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Bind request
-                    .on_event("ldap_bind")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "ldap_bind_response",
-                            "message_id": 1,
-                            "success": true,
-                            "message": "Bind successful"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("LDAP server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "LDAP",
+                        "instruction": "Accept bind as admin/admin123. Accept all add operations"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Bind request
+                .on_event("ldap_bind")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ldap_bind_response",
+                        "message_id": 1,
+                        "success": true,
+                        "message": "Bind successful"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(server_config).await?;
 
@@ -481,34 +479,33 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all binds. Accept all modify operations.";
 
-        let server_config = NetGetConfig::new_no_scripts(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("LDAP server")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "LDAP",
-                            "instruction": "Accept all binds. Accept all modify operations"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Bind request
-                    .on_event("ldap_bind")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "ldap_bind_response",
-                            "message_id": 1,
-                            "success": true,
-                            "message": "Bind successful"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("LDAP server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "LDAP",
+                        "instruction": "Accept all binds. Accept all modify operations"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Bind request
+                .on_event("ldap_bind")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ldap_bind_response",
+                        "message_id": 1,
+                        "success": true,
+                        "message": "Bind successful"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(server_config).await?;
 
@@ -564,34 +561,33 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all binds. Accept all delete operations.";
 
-        let server_config = NetGetConfig::new_no_scripts(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("LDAP server")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "LDAP",
-                            "instruction": "Accept all binds. Accept all delete operations"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Bind request
-                    .on_event("ldap_bind")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "ldap_bind_response",
-                            "message_id": 1,
-                            "success": true,
-                            "message": "Bind successful"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("LDAP server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "LDAP",
+                        "instruction": "Accept all binds. Accept all delete operations"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Bind request
+                .on_event("ldap_bind")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ldap_bind_response",
+                        "message_id": 1,
+                        "success": true,
+                        "message": "Bind successful"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(server_config).await?;
 

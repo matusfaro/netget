@@ -29,22 +29,21 @@ When consumers fetch from 'test-topic', return the stored messages.
 Log all requests at DEBUG level.
 "#;
 
-    let config = NetGetConfig::new(prompt.to_string())
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "KAFKA",
-                        "instruction": "Kafka broker - handle all Kafka protocol requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt.to_string()).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "KAFKA",
+                    "instruction": "Kafka broker - handle all Kafka protocol requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config)
         .await
@@ -60,7 +59,10 @@ Log all requests at DEBUG level.
     let result = TcpStream::connect(&addr).await;
     assert!(result.is_ok(), "Should be able to connect to Kafka broker");
 
-    println!("✓ Kafka broker started and accepting connections on port {}", port);
+    println!(
+        "✓ Kafka broker started and accepting connections on port {}",
+        port
+    );
 
     // Give server time to process
     sleep(Duration::from_millis(500)).await;
@@ -108,7 +110,10 @@ Log all produce and fetch requests at DEBUG level.
     let result = TcpStream::connect(&addr).await;
     assert!(result.is_ok(), "Should be able to connect to Kafka broker");
 
-    println!("✓ Kafka broker started with produce/fetch configuration on port {}", port);
+    println!(
+        "✓ Kafka broker started with produce/fetch configuration on port {}",
+        port
+    );
 
     // Give server time to process
     sleep(Duration::from_millis(500)).await;
@@ -159,7 +164,10 @@ Log all metadata requests at DEBUG level.
     let result = TcpStream::connect(&addr).await;
     assert!(result.is_ok(), "Should be able to connect to Kafka broker");
 
-    println!("✓ Kafka broker started with metadata configuration on port {}", port);
+    println!(
+        "✓ Kafka broker started with metadata configuration on port {}",
+        port
+    );
 
     // Give server time to process
     sleep(Duration::from_millis(500)).await;

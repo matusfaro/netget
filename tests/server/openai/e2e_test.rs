@@ -17,33 +17,32 @@ async fn test_openai_list_models() -> E2EResult<()> {
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. This is an OpenAI-compatible API server \
         that wraps Ollama. When clients request GET /v1/models, list available Ollama models.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open OpenAI server
-                .on_instruction_containing("Open OpenAI")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OpenAI",
-                        "instruction": "Handle OpenAI API requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: OpenAI request event for GET /v1/models
-                .on_event("openai_request")
-                .and_event_data_contains("path", "/v1/models")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "openai_models_response",
-                        "models": ["qwen2.5-coder:0.5b", "qwen3-coder:30b"]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open OpenAI server
+            .on_instruction_containing("Open OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OpenAI",
+                    "instruction": "Handle OpenAI API requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: OpenAI request event for GET /v1/models
+            .on_event("openai_request")
+            .and_event_data_contains("path", "/v1/models")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "openai_models_response",
+                    "models": ["qwen2.5-coder:0.5b", "qwen3-coder:30b"]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -128,34 +127,33 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
         that wraps Ollama. When clients send POST /v1/chat/completions requests, \
         use Ollama to generate responses and return them in OpenAI format.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open OpenAI server
-                .on_instruction_containing("Open OpenAI")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OpenAI",
-                        "instruction": "Handle OpenAI chat completions"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: OpenAI request event for POST /v1/chat/completions
-                .on_event("openai_request")
-                .and_event_data_contains("path", "/v1/chat/completions")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "openai_chat_response",
-                        "content": "Hello from NetGet",
-                        "model": "qwen2.5-coder:0.5b"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open OpenAI server
+            .on_instruction_containing("Open OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OpenAI",
+                    "instruction": "Handle OpenAI chat completions"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: OpenAI request event for POST /v1/chat/completions
+            .on_event("openai_request")
+            .and_event_data_contains("path", "/v1/chat/completions")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "openai_chat_response",
+                    "content": "Hello from NetGet",
+                    "model": "qwen2.5-coder:0.5b"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -303,35 +301,34 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
 
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. Return 404 errors for unknown endpoints.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open OpenAI server
-                .on_instruction_containing("Open OpenAI")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OpenAI",
-                        "instruction": "Handle OpenAI API with 404 for unknown"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: OpenAI request event for invalid endpoint
-                .on_event("openai_request")
-                .and_event_data_contains("path", "/v1/invalid")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "openai_error_response",
-                        "message": "Not Found",
-                        "error_type": "invalid_request_error",
-                        "status": 404
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open OpenAI server
+            .on_instruction_containing("Open OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OpenAI",
+                    "instruction": "Handle OpenAI API with 404 for unknown"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: OpenAI request event for invalid endpoint
+            .on_event("openai_request")
+            .and_event_data_contains("path", "/v1/invalid")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "openai_error_response",
+                    "message": "Not Found",
+                    "error_type": "invalid_request_error",
+                    "status": 404
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -397,45 +394,44 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
         that wraps Ollama. When clients request models, list available Ollama models. \
         When clients request chat completions, use Ollama to generate responses.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open OpenAI server
-                .on_instruction_containing("Open OpenAI")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OpenAI",
-                        "instruction": "Handle OpenAI API with models and chat"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: OpenAI request event for GET /v1/models
-                .on_event("openai_request")
-                .and_event_data_contains("path", "/v1/models")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "openai_models_response",
-                        "models": ["qwen2.5-coder:0.5b"]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: OpenAI request event for POST /v1/chat/completions
-                .on_event("openai_request")
-                .and_event_data_contains("path", "/v1/chat/completions")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "openai_chat_response",
-                        "content": "Test response from NetGet OpenAI",
-                        "model": "qwen2.5-coder:0.5b"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open OpenAI server
+            .on_instruction_containing("Open OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OpenAI",
+                    "instruction": "Handle OpenAI API with models and chat"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: OpenAI request event for GET /v1/models
+            .on_event("openai_request")
+            .and_event_data_contains("path", "/v1/models")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "openai_models_response",
+                    "models": ["qwen2.5-coder:0.5b"]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: OpenAI request event for POST /v1/chat/completions
+            .on_event("openai_request")
+            .and_event_data_contains("path", "/v1/chat/completions")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "openai_chat_response",
+                    "content": "Test response from NetGet OpenAI",
+                    "model": "qwen2.5-coder:0.5b"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

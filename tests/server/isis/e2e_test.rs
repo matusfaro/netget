@@ -12,7 +12,7 @@
 
 #[cfg(all(test, feature = "isis"))]
 mod e2e_isis {
-    use crate::helpers::{start_netget_server, NetGetConfig, E2EResult};
+    use crate::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use std::time::Duration;
 
     /// Test IS-IS server startup with interface configuration
@@ -24,30 +24,29 @@ mod e2e_isis {
 
         let prompt = "Start an IS-IS router on interface lo0 with system-id 0000.0000.0001 in area 49.0001 at level-2.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock: Server startup (user command)
-                    .on_instruction_containing("IS-IS router")
-                    .and_instruction_containing("system-id")
-                    .and_instruction_containing("area")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock: Server startup (user command)
+                .on_instruction_containing("IS-IS router")
+                .and_instruction_containing("system-id")
+                .and_instruction_containing("area")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "interface": "lo0",
+                        "protocol": "IS-IS",
+                        "instruction": "IS-IS router with system-id 0000.0000.0001 in area 49.0001",
+                        "startup_params": {
                             "interface": "lo0",
-                            "protocol": "IS-IS",
-                            "instruction": "IS-IS router with system-id 0000.0000.0001 in area 49.0001",
-                            "startup_params": {
-                                "interface": "lo0",
-                                "system_id": "0000.0000.0001",
-                                "area_id": "49.0001",
-                                "level": "level-2"
-                            }
+                            "system_id": "0000.0000.0001",
+                            "area_id": "49.0001",
+                            "level": "level-2"
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut instance = start_netget_server(config).await?;
 
@@ -82,42 +81,41 @@ mod e2e_isis {
                       When you receive a Hello PDU from a neighbor, respond with your own Hello PDU using the \
                       send_isis_hello action.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("IS-IS router")
-                    .and_instruction_containing("veth0")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("IS-IS router")
+                .and_instruction_containing("veth0")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "interface": "veth0",
+                        "protocol": "IS-IS",
+                        "instruction": "IS-IS router responding to Hello PDUs",
+                        "startup_params": {
                             "interface": "veth0",
-                            "protocol": "IS-IS",
-                            "instruction": "IS-IS router responding to Hello PDUs",
-                            "startup_params": {
-                                "interface": "veth0",
-                                "system_id": "0000.0000.0001",
-                                "area_id": "49.0001",
-                                "level": "level-2"
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: ISIS Hello received event
-                    .on_event("isis_hello")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_isis_hello",
-                            "pdu_type": "lan_hello_l2",
                             "system_id": "0000.0000.0001",
                             "area_id": "49.0001",
-                            "holding_time": 30
+                            "level": "level-2"
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: ISIS Hello received event
+                .on_event("isis_hello")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_isis_hello",
+                        "pdu_type": "lan_hello_l2",
+                        "system_id": "0000.0000.0001",
+                        "area_id": "49.0001",
+                        "holding_time": 30
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut instance = start_netget_server(config).await?;
 
@@ -152,41 +150,40 @@ mod e2e_isis {
         let prompt = "Start an IS-IS router on interface veth0 with system-id 0000.0000.0001 in area 49.0001. \
                       Respond to all Hello PDUs with your own Hello PDU to establish adjacencies.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("IS-IS router")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("IS-IS router")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "interface": "veth0",
+                        "protocol": "IS-IS",
+                        "instruction": "IS-IS router for neighbor discovery",
+                        "startup_params": {
                             "interface": "veth0",
-                            "protocol": "IS-IS",
-                            "instruction": "IS-IS router for neighbor discovery",
-                            "startup_params": {
-                                "interface": "veth0",
-                                "system_id": "0000.0000.0001",
-                                "area_id": "49.0001",
-                                "level": "level-2"
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2-4: Three Hello PDUs from different neighbors
-                    .on_event("isis_hello")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_isis_hello",
-                            "pdu_type": "lan_hello_l2",
                             "system_id": "0000.0000.0001",
                             "area_id": "49.0001",
-                            "holding_time": 30
+                            "level": "level-2"
                         }
-                    ]))
-                    .expect_calls(3)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Three Hello PDUs from different neighbors
+                .on_event("isis_hello")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_isis_hello",
+                        "pdu_type": "lan_hello_l2",
+                        "system_id": "0000.0000.0001",
+                        "area_id": "49.0001",
+                        "holding_time": 30
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+        });
 
         let mut instance = start_netget_server(config).await?;
 
@@ -217,42 +214,29 @@ mod e2e_isis {
 
         let sample_ethernet = vec![
             // Dest MAC: 01:80:C2:00:00:15 (All L2 IS multicast)
-            0x01, 0x80, 0xC2, 0x00, 0x00, 0x15,
-            // Src MAC: 00:00:00:00:00:01
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            // Length: 0x0030 (48 bytes payload)
+            0x01, 0x80, 0xC2, 0x00, 0x00, 0x15, // Src MAC: 00:00:00:00:00:01
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // Length: 0x0030 (48 bytes payload)
             0x00, 0x30,
         ];
 
         let sample_llc_snap = vec![
             // DSAP: 0xFE (ISO CLNS)
-            0xFE,
-            // SSAP: 0xFE
-            0xFE,
-            // Control: 0x03 (Unnumbered Information)
-            0x03,
-            // OUI: 0x000000
-            0x00, 0x00, 0x00,
-            // PID: 0xFEFE (IS-IS)
+            0xFE, // SSAP: 0xFE
+            0xFE, // Control: 0x03 (Unnumbered Information)
+            0x03, // OUI: 0x000000
+            0x00, 0x00, 0x00, // PID: 0xFEFE (IS-IS)
             0xFE, 0xFE,
         ];
 
         let sample_isis = vec![
             // Intradomain Routing Protocol Discriminator: 0x83
-            0x83,
-            // Length Indicator: 27
-            0x1B,
-            // Version/Protocol ID: 1
-            0x01,
-            // ID Length: 0 (means 6 bytes)
-            0x00,
-            // PDU Type: 16 (L2 LAN Hello)
-            0x10,
-            // Version: 1
-            0x01,
-            // Reserved: 0
-            0x00,
-            // Max Area Addresses: 0
+            0x83, // Length Indicator: 27
+            0x1B, // Version/Protocol ID: 1
+            0x01, // ID Length: 0 (means 6 bytes)
+            0x00, // PDU Type: 16 (L2 LAN Hello)
+            0x10, // Version: 1
+            0x01, // Reserved: 0
+            0x00, // Max Area Addresses: 0
             0x00,
         ];
 

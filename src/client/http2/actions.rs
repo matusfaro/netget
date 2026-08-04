@@ -20,7 +20,7 @@ pub static HTTP2_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             "type": "send_http2_request",
             "method": "GET",
             "path": "/api/status"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "base_url".to_string(),
@@ -40,7 +40,7 @@ pub static HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
             "method": "POST",
             "path": "/api/data",
             "body": "{\"key\": \"value\"}"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -133,7 +133,7 @@ impl Protocol for Http2ClientProtocol {
                         "Accept": "application/json"
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -142,7 +142,7 @@ impl Protocol for Http2ClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -190,8 +190,16 @@ impl Protocol for Http2ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("http2_connected", "Triggered when HTTP/2 client is initialized", json!({"type": "placeholder", "event_id": "http2_connected"})),
-            EventType::new("http2_response_received", "Triggered when HTTP/2 client receives a response", json!({"type": "placeholder", "event_id": "http2_response_received"})),
+            EventType::new(
+                "http2_connected",
+                "Triggered when HTTP/2 client is initialized",
+                json!({"type": "placeholder", "event_id": "http2_connected"}),
+            ),
+            EventType::new(
+                "http2_response_received",
+                "Triggered when HTTP/2 client receives a response",
+                json!({"type": "placeholder", "event_id": "http2_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -41,7 +41,7 @@ impl Default for InferenceConfig {
             temperature: 0.7,
             top_p: 0.9,
             n_gpu_layers: u32::MAX, // Auto-detect and use all available GPU layers
-            n_threads: 0,            // Auto-detect optimal thread count
+            n_threads: 0,           // Auto-detect optimal thread count
         }
     }
 }
@@ -112,7 +112,8 @@ impl EmbeddedLLMBackend {
 
         // Initialize llama.cpp backend (must be done once globally)
         // This is safe to call multiple times - llama.cpp handles initialization internally
-        let backend = Arc::new(LlamaBackend::init().context("Failed to initialize llama.cpp backend")?);
+        let backend =
+            Arc::new(LlamaBackend::init().context("Failed to initialize llama.cpp backend")?);
 
         // Load model (blocking operation, run in spawn_blocking)
         let model_path_clone = path.to_path_buf();
@@ -167,11 +168,10 @@ impl EmbeddedLLMBackend {
         let config = self.config.clone();
 
         // Run inference in blocking task (CPU/GPU-intensive)
-        let response = tokio::task::spawn_blocking(move || {
-            Self::run_inference_sync(&model, &prompt, &config)
-        })
-        .await
-        .context("Inference task panicked")??;
+        let response =
+            tokio::task::spawn_blocking(move || Self::run_inference_sync(&model, &prompt, &config))
+                .await
+                .context("Inference task panicked")??;
 
         Ok(response)
     }
@@ -183,11 +183,10 @@ impl EmbeddedLLMBackend {
         config: &InferenceConfig,
     ) -> Result<String> {
         // Create context params
-        let n_ctx = NonZeroU32::new(config.context_size)
-            .context("Context size must be non-zero")?;
+        let n_ctx =
+            NonZeroU32::new(config.context_size).context("Context size must be non-zero")?;
 
-        let mut ctx_params = LlamaContextParams::default()
-            .with_n_ctx(Some(n_ctx));
+        let mut ctx_params = LlamaContextParams::default().with_n_ctx(Some(n_ctx));
 
         if config.n_threads > 0 {
             ctx_params = ctx_params.with_n_threads(config.n_threads as i32);
@@ -227,8 +226,7 @@ impl EmbeddedLLMBackend {
         }
 
         // Decode prompt
-        ctx.decode(&mut batch)
-            .context("Failed to decode prompt")?;
+        ctx.decode(&mut batch).context("Failed to decode prompt")?;
 
         // Generate tokens
         let mut generated_text = String::new();
@@ -259,17 +257,13 @@ impl EmbeddedLLMBackend {
             batch.add(new_token_id, n_cur as i32, &[0], true)?;
 
             // Decode
-            ctx.decode(&mut batch)
-                .context("Failed to decode batch")?;
+            ctx.decode(&mut batch).context("Failed to decode batch")?;
 
             n_cur += 1;
             n_decode += 1;
         }
 
-        debug!(
-            "Generation complete: {} tokens generated",
-            n_decode
-        );
+        debug!("Generation complete: {} tokens generated", n_decode);
 
         Ok(generated_text.trim().to_string())
     }
@@ -319,10 +313,7 @@ mod tests {
             .await
             .expect("Failed to load model");
 
-        let response = backend
-            .generate("Hello")
-            .await
-            .expect("Generation failed");
+        let response = backend.generate("Hello").await.expect("Generation failed");
 
         assert!(!response.is_empty());
     }

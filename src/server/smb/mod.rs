@@ -114,8 +114,7 @@ impl SmbServer {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
                         info!("SMB connection accepted from {}", peer_addr);
-                        let _ =
-                            status_tx.send(format!("→ SMB connection from {}", peer_addr));
+                        let _ = status_tx.send(format!("→ SMB connection from {}", peer_addr));
 
                         // Spawn per-connection handler
                         let llm_client = llm_client.clone();
@@ -265,7 +264,8 @@ impl SmbServer {
                         &state,
                         &status_tx,
                     )
-                    .await {
+                    .await
+                    {
                         Ok(r) => r,
                         Err(e) => {
                             error!("handle_smb2_command error for 0x{:04x}: {}", command, e);
@@ -382,7 +382,10 @@ impl SmbServer {
                 // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
                 let mut body_buf = [0u8; 24];
                 if let Err(e) = _stream.read_exact(&mut body_buf).await {
-                    warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
+                    warn!(
+                        "Error reading SESSION_SETUP body: {} - continuing anyway",
+                        e
+                    );
                 }
                 let bytes_read = body_buf.len();
 
@@ -408,10 +411,14 @@ impl SmbServer {
                     }),
                     status_tx,
                 )
-                .await {
+                .await
+                {
                     Ok(actions) => actions,
                     Err(e) => {
-                        warn!("LLM error during SMB authentication for user {}: {}", username, e);
+                        warn!(
+                            "LLM error during SMB authentication for user {}: {}",
+                            username, e
+                        );
                         let _ = status_tx.send(format!("[WARN] LLM error: {} - denying auth", e));
 
                         // Send AUTH_DENIED response instead of closing connection

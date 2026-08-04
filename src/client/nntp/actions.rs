@@ -19,7 +19,7 @@ pub static NNTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "nntp_group",
             "group_name": "comp.lang.rust"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -44,7 +44,7 @@ pub static NNTP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
         "Response received from NNTP server",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -95,7 +95,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_group",
                     "group_name": "comp.lang.rust"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_article".to_string(),
@@ -112,7 +112,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_article",
                     "article_id": "123"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_head".to_string(),
@@ -127,7 +127,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_head",
                     "article_id": "123"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_body".to_string(),
@@ -142,7 +142,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_body",
                     "article_id": "123"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_list".to_string(),
@@ -157,7 +157,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_list",
                     "keyword": "ACTIVE"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_xover".to_string(),
@@ -172,7 +172,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_xover",
                     "range": "1-100"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_post".to_string(),
@@ -201,7 +201,7 @@ impl Protocol for NntpClientProtocol {
                     },
                     "body": "This is a test post."
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_stat".to_string(),
@@ -217,7 +217,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_stat",
                     "article_id": "123"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nntp_quit".to_string(),
@@ -226,7 +226,7 @@ impl Protocol for NntpClientProtocol {
                 example: json!({
                     "type": "nntp_quit"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -245,7 +245,7 @@ impl Protocol for NntpClientProtocol {
                     "type": "nntp_group",
                     "group_name": "comp.lang.rust"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -254,7 +254,7 @@ impl Protocol for NntpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -263,8 +263,16 @@ impl Protocol for NntpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("nntp_connected", "Triggered when NNTP client connects to server", json!({"type": "placeholder", "event_id": "nntp_connected"})),
-            EventType::new("nntp_response_received", "Triggered when NNTP client receives a response", json!({"type": "placeholder", "event_id": "nntp_response_received"})),
+            EventType::new(
+                "nntp_connected",
+                "Triggered when NNTP client connects to server",
+                json!({"type": "placeholder", "event_id": "nntp_connected"}),
+            ),
+            EventType::new(
+                "nntp_response_received",
+                "Triggered when NNTP client receives a response",
+                json!({"type": "placeholder", "event_id": "nntp_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -105,8 +105,8 @@ async fn test_peer_handshake_and_bitfield() -> E2EResult<()> {
 
     // Send bitfield message (simulate we have no pieces)
     let bitfield_msg = vec![
-        0, 0, 0, 2, // length = 2
-        5,  // id = bitfield
+        0, 0, 0, 2,    // length = 2
+        5,    // id = bitfield
         0x00, // bitfield = 00000000 (no pieces)
     ];
     stream.write_all(&bitfield_msg).await?;
@@ -115,8 +115,7 @@ async fn test_peer_handshake_and_bitfield() -> E2EResult<()> {
     // Read messages from peer (expecting bitfield and unchoke)
     for i in 0..2 {
         let mut len_buf = [0u8; 4];
-        match tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut len_buf)).await
-        {
+        match tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut len_buf)).await {
             Ok(Ok(_)) => {
                 let length = u32::from_be_bytes(len_buf) as usize;
 
@@ -288,7 +287,10 @@ async fn test_peer_piece_request() -> E2EResult<()> {
         if length > 0 && length < 1000 {
             let mut msg = vec![0u8; length];
             stream.read_exact(&mut msg).await.ok();
-            println!("Received response to interested: id={}", msg.get(0).unwrap_or(&255));
+            println!(
+                "Received response to interested: id={}",
+                msg.get(0).unwrap_or(&255)
+            );
         }
     }
 
@@ -321,7 +323,12 @@ async fn test_peer_piece_request() -> E2EResult<()> {
     let begin = u32::from_be_bytes([message[5], message[6], message[7], message[8]]);
     let block = &message[9..];
 
-    println!("Received piece: index={}, begin={}, block size={}", index, begin, block.len());
+    println!(
+        "Received piece: index={}, begin={}, block size={}",
+        index,
+        begin,
+        block.len()
+    );
     println!("Block data: {}", String::from_utf8_lossy(block));
 
     assert_eq!(index, 0, "Piece index should be 0");

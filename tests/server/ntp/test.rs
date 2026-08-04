@@ -83,7 +83,8 @@ async fn test_ntp_basic_query() -> E2EResult<()> {
             socket.send_to(&request, &address).await?;
 
             let mut buffer = vec![0u8; 48];
-            match tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await {
+            match tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await
+            {
                 Ok(Ok((n, _))) => {
                     println!("  Received {} bytes NTP response", n);
                     println!("  ✓ NTP server responded");
@@ -172,7 +173,8 @@ async fn test_ntp_time_sync() -> E2EResult<()> {
             socket.send_to(&request, &address).await?;
 
             let mut buffer = vec![0u8; 48];
-            match tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await {
+            match tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await
+            {
                 Ok(Ok((n, _))) => {
                     println!("  Received {} bytes", n);
                     println!("  ✓ NTP server responded");

@@ -227,7 +227,7 @@ async fn test_socks5_client_connection_failure() {
         .expect("SOCKS5 protocol not found");
 
     let mut client = ClientInstance::new(
-        ClientId::new(0), // overwritten by add_client with the real allocated id
+        ClientId::new(0),             // overwritten by add_client with the real allocated id
         "127.0.0.1:9999".to_string(), // Non-existent proxy
         "SOCKS5".to_string(),
         "Attempt to connect through non-existent proxy".to_string(),

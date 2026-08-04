@@ -45,7 +45,8 @@ mod http_proxy_client_tests {
         // Verify client output shows connection and tunnel establishment
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("connected")) || output.iter().any(|l| l.contains("proxy")),
+            output.iter().any(|l| l.contains("connected"))
+                || output.iter().any(|l| l.contains("proxy")),
             "Client should show proxy connection. Output: {:?}",
             output
         );
@@ -127,7 +128,8 @@ mod http_proxy_client_tests {
         // Verify client connected
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("connected")) || output.iter().any(|l| l.contains("tunnel")),
+            output.iter().any(|l| l.contains("connected"))
+                || output.iter().any(|l| l.contains("tunnel")),
             "Client should show connection/tunnel status. Output: {:?}",
             output
         );

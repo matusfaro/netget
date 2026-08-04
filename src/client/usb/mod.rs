@@ -11,11 +11,11 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::usb::actions::{
     USB_BULK_DATA_RECEIVED_EVENT, USB_CONTROL_RESPONSE_EVENT, USB_DEVICE_OPENED_EVENT,
     USB_INTERRUPT_DATA_RECEIVED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

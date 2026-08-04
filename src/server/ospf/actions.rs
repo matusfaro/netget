@@ -472,53 +472,75 @@ impl OspfProtocol {
 
 // Event types for OSPF
 pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ospf_hello", "OSPF Hello packet received from neighbor", json!({"type": "placeholder", "event_id": "ospf_hello"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OSPF Hello from {neighbor_id}")
-                .with_debug("OSPF Hello: neighbor={neighbor_id} area={area_id} priority={router_priority}")
-                .with_trace("OSPF Hello: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ospf_hello",
+        "OSPF Hello packet received from neighbor",
+        json!({"type": "placeholder", "event_id": "ospf_hello"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OSPF Hello from {neighbor_id}")
+            .with_debug(
+                "OSPF Hello: neighbor={neighbor_id} area={area_id} priority={router_priority}",
+            )
+            .with_trace("OSPF Hello: {json_pretty(.)}"),
+    )
 });
 
 pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ospf_database_description", "OSPF Database Description packet received", json!({"type": "placeholder", "event_id": "ospf_database_description"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OSPF DD from {neighbor_id}")
-                .with_debug("OSPF Database Description: neighbor={neighbor_id}")
-                .with_trace("OSPF DD: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ospf_database_description",
+        "OSPF Database Description packet received",
+        json!({"type": "placeholder", "event_id": "ospf_database_description"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OSPF DD from {neighbor_id}")
+            .with_debug("OSPF Database Description: neighbor={neighbor_id}")
+            .with_trace("OSPF DD: {json_pretty(.)}"),
+    )
 });
 
 pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ospf_link_state_request", "OSPF Link State Request packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_request"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OSPF LSR from {neighbor_id}")
-                .with_debug("OSPF Link State Request: neighbor={neighbor_id}")
-                .with_trace("OSPF LSR: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ospf_link_state_request",
+        "OSPF Link State Request packet received",
+        json!({"type": "placeholder", "event_id": "ospf_link_state_request"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OSPF LSR from {neighbor_id}")
+            .with_debug("OSPF Link State Request: neighbor={neighbor_id}")
+            .with_trace("OSPF LSR: {json_pretty(.)}"),
+    )
 });
 
 pub static OSPF_LINK_STATE_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ospf_link_state_update", "OSPF Link State Update packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_update"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OSPF LSU from {neighbor_id}")
-                .with_debug("OSPF Link State Update: neighbor={neighbor_id}")
-                .with_trace("OSPF LSU: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ospf_link_state_update",
+        "OSPF Link State Update packet received",
+        json!({"type": "placeholder", "event_id": "ospf_link_state_update"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OSPF LSU from {neighbor_id}")
+            .with_debug("OSPF Link State Update: neighbor={neighbor_id}")
+            .with_trace("OSPF LSU: {json_pretty(.)}"),
+    )
 });
 
 pub static OSPF_LINK_STATE_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ospf_link_state_ack", "OSPF Link State Acknowledgment packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_ack"}))
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OSPF LSAck from {neighbor_id}")
-                .with_debug("OSPF Link State Acknowledgment: neighbor={neighbor_id}")
-                .with_trace("OSPF LSAck: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "ospf_link_state_ack",
+        "OSPF Link State Acknowledgment packet received",
+        json!({"type": "placeholder", "event_id": "ospf_link_state_ack"}),
+    )
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OSPF LSAck from {neighbor_id}")
+            .with_debug("OSPF Link State Acknowledgment: neighbor={neighbor_id}")
+            .with_trace("OSPF LSAck: {json_pretty(.)}"),
+    )
 });
 
 // Implement Protocol trait (common functionality)

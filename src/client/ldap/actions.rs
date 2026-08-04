@@ -51,7 +51,12 @@ pub static LDAP_CLIENT_BIND_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(
 
 /// LDAP client search results event
 pub static LDAP_CLIENT_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_search_results", "LDAP search results received", json!({"type": "wait_for_more"})).with_parameters(vec![
+    EventType::new(
+        "ldap_search_results",
+        "LDAP search results received",
+        json!({"type": "wait_for_more"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "entries".to_string(),
             type_hint: "array".to_string(),
@@ -276,10 +281,26 @@ impl Protocol for LdapClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ldap_connected", "Triggered when LDAP client connects to server", json!({"type": "wait_for_more"})),
-            EventType::new("ldap_bind_response", "Triggered when LDAP bind response is received", json!({"type": "wait_for_more"})),
-            EventType::new("ldap_search_results", "Triggered when LDAP search results are received", json!({"type": "wait_for_more"})),
-            EventType::new("ldap_modify_response", "Triggered when LDAP modify response is received", json!({"type": "wait_for_more"})),
+            EventType::new(
+                "ldap_connected",
+                "Triggered when LDAP client connects to server",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "ldap_bind_response",
+                "Triggered when LDAP bind response is received",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "ldap_search_results",
+                "Triggered when LDAP search results are received",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "ldap_modify_response",
+                "Triggered when LDAP modify response is received",
+                json!({"type": "wait_for_more"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

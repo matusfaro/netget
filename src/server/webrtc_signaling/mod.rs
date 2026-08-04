@@ -18,9 +18,7 @@ use crate::server::connection::ConnectionId;
 use crate::server::WebRtcSignalingProtocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use actions::{
-    WEBRTC_SIGNALING_PEER_CONNECTED_EVENT, WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT,
-};
+use actions::{WEBRTC_SIGNALING_PEER_CONNECTED_EVENT, WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT};
 
 /// Unique identifier for a signaling peer
 pub type PeerId = String;
@@ -78,10 +76,7 @@ pub enum SignalingMessage {
 struct PeerConnection {
     #[allow(dead_code)]
     peer_id: PeerId,
-    ws_tx: futures::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<TcpStream>,
-        Message,
-    >,
+    ws_tx: futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
     #[allow(dead_code)]
     remote_addr: SocketAddr,
     #[allow(dead_code)]
@@ -105,10 +100,7 @@ impl WebRtcSignalingServerData {
     pub async fn register_peer(
         &self,
         peer_id: PeerId,
-        ws_tx: futures::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<TcpStream>,
-            Message,
-        >,
+        ws_tx: futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
         remote_addr: SocketAddr,
         connection_id: ConnectionId,
     ) -> Result<()> {
@@ -148,10 +140,7 @@ impl WebRtcSignalingServerData {
 
         let msg_json = serde_json::to_string(&message)?;
         let mut peer_conn_lock = peer_conn.lock().await;
-        peer_conn_lock
-            .ws_tx
-            .send(Message::Text(msg_json))
-            .await?;
+        peer_conn_lock.ws_tx.send(Message::Text(msg_json)).await?;
 
         trace!("Forwarded message to peer {}: {:?}", to, message);
         Ok(())
@@ -302,8 +291,8 @@ impl WebRtcSignalingServer {
 
                                     // Add connection to server
                                     use crate::state::server::{
-                                        ConnectionState as ServerConnectionState,
-                                        ConnectionStatus, ProtocolConnectionInfo,
+                                        ConnectionState as ServerConnectionState, ConnectionStatus,
+                                        ProtocolConnectionInfo,
                                     };
                                     let now = std::time::Instant::now();
                                     let conn_state = ServerConnectionState {
@@ -392,7 +381,11 @@ impl WebRtcSignalingServer {
                                 warn!("Failed to forward answer from {} to {}: {}", from, to, e);
                             }
                         }
-                        SignalingMessage::IceCandidate { from, to, candidate } => {
+                        SignalingMessage::IceCandidate {
+                            from,
+                            to,
+                            candidate,
+                        } => {
                             // Forward ICE candidate
                             if let Err(e) = server_data
                                 .forward_message(

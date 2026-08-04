@@ -108,11 +108,12 @@ mod e2e_imap_client {
         println!("  [TEST] Connected to IMAP server");
 
         // Attempt login - handle tuple error type with timeout
-        let mut session = match timeout(Duration::from_secs(30), client.login("alice", "secret123")).await {
-            Ok(Ok(session)) => session,
-            Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
-            Err(_) => return Err("Login timeout after 30s".into()),
-        };
+        let mut session =
+            match timeout(Duration::from_secs(30), client.login("alice", "secret123")).await {
+                Ok(Ok(session)) => session,
+                Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
+                Err(_) => return Err("Login timeout after 30s".into()),
+            };
         println!("  [TEST] ✓ Login successful");
 
         // Logout with timeout
@@ -181,9 +182,12 @@ mod e2e_imap_client {
         println!("  [TEST] Connected to IMAP server");
 
         // Attempt login with wrong password with timeout - should return Err tuple
-        let result = timeout(Duration::from_secs(30), client.login("alice", "wrongpassword"))
-            .await
-            .map_err(|_| "Login timeout after 30s")?;
+        let result = timeout(
+            Duration::from_secs(30),
+            client.login("alice", "wrongpassword"),
+        )
+        .await
+        .map_err(|_| "Login timeout after 30s")?;
 
         // Should fail
         match result {
@@ -262,7 +266,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -290,7 +299,9 @@ mod e2e_imap_client {
         );
         println!("  [TEST] ✓ LIST command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -335,7 +346,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -355,7 +371,9 @@ mod e2e_imap_client {
         assert!(mailbox.exists > 0, "Should have messages in INBOX");
         println!("  [TEST] ✓ SELECT command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -409,7 +427,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -444,7 +467,9 @@ mod e2e_imap_client {
         }
         println!("  [TEST] ✓ FETCH command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -496,7 +521,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -510,9 +540,12 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ Selected INBOX");
 
         // Search for messages from alice
-        let message_ids = timeout(Duration::from_secs(30), session.search("FROM alice@example.com"))
-            .await
-            .map_err(|_| "Search timeout")??;
+        let message_ids = timeout(
+            Duration::from_secs(30),
+            session.search("FROM alice@example.com"),
+        )
+        .await
+        .map_err(|_| "Search timeout")??;
         println!("  [TEST] Search found {} message(s)", message_ids.len());
         println!("  [TEST]   Message IDs: {:?}", message_ids);
 
@@ -523,7 +556,9 @@ mod e2e_imap_client {
         );
         println!("  [TEST] ✓ SEARCH command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -576,7 +611,12 @@ mod e2e_imap_client {
         let client = connect_imap_client(server.port).await?;
         println!("  [TEST] Connected to IMAP server");
 
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -596,7 +636,9 @@ mod e2e_imap_client {
         );
         println!("  [TEST] ✓ CAPABILITY command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -648,7 +690,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -666,7 +713,9 @@ mod e2e_imap_client {
         assert!(mailbox.exists > 0, "Should have messages in INBOX");
         println!("  [TEST] ✓ EXAMINE command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -711,7 +760,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -719,9 +773,12 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ Logged in");
 
         // Get status of Sent mailbox without selecting it
-        let status = timeout(Duration::from_secs(30), session.status("Sent", "(MESSAGES UNSEEN)"))
-            .await
-            .map_err(|_| "Status timeout")??;
+        let status = timeout(
+            Duration::from_secs(30),
+            session.status("Sent", "(MESSAGES UNSEEN)"),
+        )
+        .await
+        .map_err(|_| "Status timeout")??;
         println!("  [TEST] STATUS for 'Sent' mailbox:");
         println!("  [TEST]   EXISTS: {}", status.exists);
         println!("  [TEST]   UNSEEN: {:?}", status.unseen);
@@ -733,7 +790,9 @@ mod e2e_imap_client {
         );
         println!("  [TEST] ✓ STATUS command successful");
 
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
@@ -789,7 +848,12 @@ mod e2e_imap_client {
         for i in 0..3 {
             let client = connect_imap_client(port).await?;
 
-            let mut session = match timeout(Duration::from_secs(30), client.login(&format!("user{}", i), "password")).await {
+            let mut session = match timeout(
+                Duration::from_secs(30),
+                client.login(&format!("user{}", i), "password"),
+            )
+            .await
+            {
                 Ok(Ok(s)) => s,
                 Ok(Err((err, _))) => return Err(format!("Login failed: {}", err).into()),
                 Err(_) => return Err("Login timeout".into()),
@@ -852,7 +916,12 @@ mod e2e_imap_client {
 
         // Connect and login
         let client = connect_imap_client(server.port).await?;
-        let mut session = match timeout(Duration::from_secs(30), client.login("testuser", "testpass")).await {
+        let mut session = match timeout(
+            Duration::from_secs(30),
+            client.login("testuser", "testpass"),
+        )
+        .await
+        {
             Ok(Ok(session)) => session,
             Ok(Err((err, _client))) => return Err(format!("Login failed: {}", err).into()),
             Err(_) => return Err("Login timeout".into()),
@@ -860,15 +929,21 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ Logged in");
 
         // Send NOOP (no operation - keeps connection alive)
-        timeout(Duration::from_secs(30), session.noop()).await.map_err(|_| "NOOP timeout")??;
+        timeout(Duration::from_secs(30), session.noop())
+            .await
+            .map_err(|_| "NOOP timeout")??;
         println!("  [TEST] ✓ NOOP command successful");
 
         // Send another NOOP
-        timeout(Duration::from_secs(30), session.noop()).await.map_err(|_| "NOOP timeout")??;
+        timeout(Duration::from_secs(30), session.noop())
+            .await
+            .map_err(|_| "NOOP timeout")??;
         println!("  [TEST] ✓ Second NOOP successful");
 
         // Logout
-        timeout(Duration::from_secs(30), session.logout()).await.map_err(|_| "Logout timeout")??;
+        timeout(Duration::from_secs(30), session.logout())
+            .await
+            .map_err(|_| "Logout timeout")??;
         println!("  [TEST] ✓ LOGOUT successful");
 
         server.stop().await?;

@@ -68,7 +68,10 @@ pub fn execute_http_response_action(action: serde_json::Value) -> Result<ActionR
         None | Some(serde_json::Value::Null) => String::new(),
         Some(serde_json::Value::String(s)) => s.clone(),
         Some(other) => {
-            debug!("HTTP response body was not a string; serializing {} to JSON text", other);
+            debug!(
+                "HTTP response body was not a string; serializing {} to JSON text",
+                other
+            );
             other.to_string()
         }
     };

@@ -628,7 +628,11 @@ impl OllamaClient {
                 (api_response.response, usage)
             }
 
-            LlmBackend::OpenAI { client, base_url, api_key } => {
+            LlmBackend::OpenAI {
+                client,
+                base_url,
+                api_key,
+            } => {
                 let mut body = serde_json::json!({
                     "model": model,
                     "messages": [{ "role": "user", "content": prompt }],
@@ -643,7 +647,8 @@ impl OllamaClient {
 
                 let http_response = tokio::time::timeout(
                     std::time::Duration::from_secs(120),
-                    client.post(&url)
+                    client
+                        .post(&url)
                         .header("Authorization", format!("Bearer {}", api_key))
                         .header("Content-Type", "application/json")
                         .json(&body)
@@ -654,19 +659,32 @@ impl OllamaClient {
                 .context("OpenAI API request failed")?;
 
                 let status = http_response.status();
-                let response_body: serde_json::Value = http_response.json().await
+                let response_body: serde_json::Value = http_response
+                    .json()
+                    .await
                     .context("Failed to parse OpenAI API response")?;
 
                 if !status.is_success() {
-                    let error_msg = response_body.get("error")
+                    let error_msg = response_body
+                        .get("error")
                         .and_then(|e| e.get("message"))
                         .and_then(|m| m.as_str())
                         .unwrap_or("Unknown error");
 
                     match status.as_u16() {
-                        401 => anyhow::bail!("✗  Authentication failed. Check your API key.\n   Error: {}", error_msg),
-                        404 => anyhow::bail!("✗  Model '{}' not found.\n   Error: {}", model, error_msg),
-                        429 => anyhow::bail!("✗  Rate limited by API provider.\n   Error: {}", error_msg),
+                        401 => anyhow::bail!(
+                            "✗  Authentication failed. Check your API key.\n   Error: {}",
+                            error_msg
+                        ),
+                        404 => anyhow::bail!(
+                            "✗  Model '{}' not found.\n   Error: {}",
+                            model,
+                            error_msg
+                        ),
+                        429 => anyhow::bail!(
+                            "✗  Rate limited by API provider.\n   Error: {}",
+                            error_msg
+                        ),
                         _ => anyhow::bail!("✗  OpenAI API error ({}): {}", status, error_msg),
                     }
                 }
@@ -677,8 +695,12 @@ impl OllamaClient {
                     .to_string();
 
                 let usage = TokenUsage {
-                    prompt_tokens: response_body["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
-                    completion_tokens: response_body["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+                    prompt_tokens: response_body["usage"]["prompt_tokens"]
+                        .as_u64()
+                        .unwrap_or(0),
+                    completion_tokens: response_body["usage"]["completion_tokens"]
+                        .as_u64()
+                        .unwrap_or(0),
                     total_tokens: response_body["usage"]["total_tokens"].as_u64().unwrap_or(0),
                 };
 
@@ -714,7 +736,9 @@ impl OllamaClient {
 
         // Record tokens in app state if available (for /usage command)
         if let Some(ref state) = self.app_state {
-            state.record_llm_tokens(token_usage.prompt_tokens, token_usage.completion_tokens).await;
+            state
+                .record_llm_tokens(token_usage.prompt_tokens, token_usage.completion_tokens)
+                .await;
         }
 
         // DEBUG: Summary with token info
@@ -739,8 +763,7 @@ impl OllamaClient {
         if response_text.is_empty() || response_text.trim().is_empty() {
             let error_msg = format!(
                 "Model '{}' returned empty response (used {} completion tokens).",
-                model,
-                token_usage.completion_tokens
+                model, token_usage.completion_tokens
             );
             error!("{}", error_msg);
             if let Some(ref tx) = self.status_tx {
@@ -821,9 +844,7 @@ impl OllamaClient {
         );
 
         let chat_response = match &self.backend {
-            LlmBackend::Ollama(ollama) => {
-                self.chat_with_tools_ollama(ollama, request).await?
-            }
+            LlmBackend::Ollama(ollama) => self.chat_with_tools_ollama(ollama, request).await?,
             LlmBackend::OpenAI {
                 client,
                 base_url,
@@ -1001,9 +1022,7 @@ impl OllamaClient {
             .context("Failed to parse Ollama chat API response")?;
 
         if !status.is_success() {
-            let error_msg = response_body["error"]
-                .as_str()
-                .unwrap_or("Unknown error");
+            let error_msg = response_body["error"].as_str().unwrap_or("Unknown error");
             anyhow::bail!("Ollama chat API error ({}): {}", status, error_msg);
         }
 
@@ -1148,9 +1167,7 @@ impl OllamaClient {
             completion_tokens: response_body["usage"]["completion_tokens"]
                 .as_u64()
                 .unwrap_or(0),
-            total_tokens: response_body["usage"]["total_tokens"]
-                .as_u64()
-                .unwrap_or(0),
+            total_tokens: response_body["usage"]["total_tokens"].as_u64().unwrap_or(0),
         };
 
         Ok(ChatResponse {
@@ -1185,15 +1202,25 @@ impl OllamaClient {
 
         for attempt in 1..=max_retries + 1 {
             debug!("Generate attempt {}/{}", attempt, max_retries + 1);
-            trace!("Retry loop: attempt={}, prompt_len={}", attempt, current_prompt.len());
+            trace!(
+                "Retry loop: attempt={}, prompt_len={}",
+                attempt,
+                current_prompt.len()
+            );
 
             // Generate response
             let generate_response = self.generate(model, &current_prompt).await?;
 
             // Extract XML references BEFORE validating JSON format
             // This allows LLM to use <script001> tags without causing "trailing characters" errors
-            let (json_only, _refs) = crate::llm::reference_parser::extract_references(&generate_response.text)
-                .unwrap_or_else(|_| (generate_response.text.clone(), std::collections::HashMap::new()));
+            let (json_only, _refs) =
+                crate::llm::reference_parser::extract_references(&generate_response.text)
+                    .unwrap_or_else(|_| {
+                        (
+                            generate_response.text.clone(),
+                            std::collections::HashMap::new(),
+                        )
+                    });
 
             // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
             // LLMs sometimes wrap JSON in markdown formatting which causes parse errors
@@ -1217,7 +1244,11 @@ impl OllamaClient {
                             "Malformed response (after XML extraction and markdown stripping): {}",
                             crate::utils::truncate_for_log(&json_cleaned, 500)
                         );
-                        trace!("Will retry with corrective feedback (attempt {}/{})", attempt, max_retries + 1);
+                        trace!(
+                            "Will retry with corrective feedback (attempt {}/{})",
+                            attempt,
+                            max_retries + 1
+                        );
 
                         // Build retry prompt with correction
                         current_prompt = format!(
@@ -1227,7 +1258,11 @@ impl OllamaClient {
                             expected_format
                         );
 
-                        info!("Retrying with corrective feedback (attempt {}/{})", attempt + 1, max_retries + 1);
+                        info!(
+                            "Retrying with corrective feedback (attempt {}/{})",
+                            attempt + 1,
+                            max_retries + 1
+                        );
                         // Continue to next loop iteration with updated prompt
                     } else {
                         // No more retries
@@ -1457,9 +1492,14 @@ impl OllamaClient {
                     .map_err(|e| anyhow::anyhow!("Failed to list models: {}", e))?;
                 Ok(models.into_iter().map(|m| m.name).collect())
             }
-            LlmBackend::OpenAI { client, base_url, api_key } => {
+            LlmBackend::OpenAI {
+                client,
+                base_url,
+                api_key,
+            } => {
                 let url = format!("{}/v1/models", base_url);
-                let response = client.get(&url)
+                let response = client
+                    .get(&url)
                     .header("Authorization", format!("Bearer {}", api_key))
                     .timeout(std::time::Duration::from_secs(5))
                     .send()
@@ -1470,10 +1510,13 @@ impl OllamaClient {
                     anyhow::bail!("OpenAI API returned error status: {}", response.status());
                 }
 
-                let body: serde_json::Value = response.json().await
+                let body: serde_json::Value = response
+                    .json()
+                    .await
                     .context("Failed to parse model list response")?;
 
-                let models = body["data"].as_array()
+                let models = body["data"]
+                    .as_array()
                     .unwrap_or(&vec![])
                     .iter()
                     .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))

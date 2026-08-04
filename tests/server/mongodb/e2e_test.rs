@@ -73,8 +73,8 @@ async fn test_mongodb_find_with_mocks() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_mongodb_insert_with_mocks() -> E2EResult<()> {
-    let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")
@@ -121,8 +121,8 @@ async fn test_mongodb_insert_with_mocks() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_mongodb_update_with_mocks() -> E2EResult<()> {
-    let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")
@@ -169,8 +169,8 @@ async fn test_mongodb_update_with_mocks() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_mongodb_delete_with_mocks() -> E2EResult<()> {
-    let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")
@@ -214,8 +214,8 @@ async fn test_mongodb_delete_with_mocks() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_mongodb_error_with_mocks() -> E2EResult<()> {
-    let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")

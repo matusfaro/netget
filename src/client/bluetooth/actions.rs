@@ -66,34 +66,37 @@ pub static BLUETOOTH_SERVICES_DISCOVERED_EVENT: LazyLock<EventType> = LazyLock::
 
 /// Bluetooth client data read event
 pub static BLUETOOTH_DATA_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bluetooth_data_read", "Data read from BLE characteristic", json!({"type": "placeholder", "event_id": "bluetooth_data_read"})).with_parameters(
-        vec![
-            Parameter {
-                name: "service_uuid".to_string(),
-                type_hint: "string".to_string(),
-                description: "UUID of the service".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "characteristic_uuid".to_string(),
-                type_hint: "string".to_string(),
-                description: "UUID of the characteristic".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "value".to_string(),
-                type_hint: "string".to_string(),
-                description: "Human-readable value (if applicable)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "value_hex".to_string(),
-                type_hint: "string".to_string(),
-                description: "Hex-encoded raw bytes".to_string(),
-                required: true,
-            },
-        ],
+    EventType::new(
+        "bluetooth_data_read",
+        "Data read from BLE characteristic",
+        json!({"type": "placeholder", "event_id": "bluetooth_data_read"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "service_uuid".to_string(),
+            type_hint: "string".to_string(),
+            description: "UUID of the service".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "characteristic_uuid".to_string(),
+            type_hint: "string".to_string(),
+            description: "UUID of the characteristic".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "value".to_string(),
+            type_hint: "string".to_string(),
+            description: "Human-readable value (if applicable)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "value_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded raw bytes".to_string(),
+            required: true,
+        },
+    ])
 });
 
 /// Bluetooth client notification received event
@@ -133,14 +136,17 @@ pub static BLUETOOTH_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
 
 /// Bluetooth client disconnected event
 pub static BLUETOOTH_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bluetooth_disconnected", "Disconnected from BLE device", json!({"type": "placeholder", "event_id": "bluetooth_disconnected"})).with_parameters(vec![
-        Parameter {
-            name: "device_address".to_string(),
-            type_hint: "string".to_string(),
-            description: "MAC address of disconnected device".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "bluetooth_disconnected",
+        "Disconnected from BLE device",
+        json!({"type": "placeholder", "event_id": "bluetooth_disconnected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "device_address".to_string(),
+        type_hint: "string".to_string(),
+        description: "MAC address of disconnected device".to_string(),
+        required: true,
+    }])
 });
 
 /// Bluetooth client protocol action handler
@@ -169,7 +175,7 @@ impl Protocol for BluetoothClientProtocol {
                     "type": "scan_devices",
                     "duration_secs": 5
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "connect_device".to_string(),
@@ -193,7 +199,7 @@ impl Protocol for BluetoothClientProtocol {
                     "type": "connect_device",
                     "device_address": "AA:BB:CC:DD:EE:FF"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "discover_services".to_string(),
@@ -203,7 +209,7 @@ impl Protocol for BluetoothClientProtocol {
                 example: json!({
                     "type": "discover_services"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -212,7 +218,7 @@ impl Protocol for BluetoothClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -243,7 +249,7 @@ impl Protocol for BluetoothClientProtocol {
                     "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
                     "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "write_characteristic".to_string(),
@@ -282,7 +288,7 @@ impl Protocol for BluetoothClientProtocol {
                     "value_hex": "01",
                     "with_response": true
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "subscribe_notifications".to_string(),
@@ -306,7 +312,7 @@ impl Protocol for BluetoothClientProtocol {
                     "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
                     "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "unsubscribe_notifications".to_string(),
@@ -330,7 +336,7 @@ impl Protocol for BluetoothClientProtocol {
                     "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
                     "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -341,12 +347,36 @@ impl Protocol for BluetoothClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("bluetooth_scan_complete", "Triggered when BLE scan completes", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
-            EventType::new("bluetooth_connected", "Triggered when connected to BLE device", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
-            EventType::new("bluetooth_services_discovered", "Triggered when GATT services are discovered", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
-            EventType::new("bluetooth_data_read", "Triggered when data is read from characteristic", json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true})),
-            EventType::new("bluetooth_notification_received", "Triggered when notification is received", json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true})),
-            EventType::new("bluetooth_disconnected", "Triggered when disconnected from device", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
+            EventType::new(
+                "bluetooth_scan_complete",
+                "Triggered when BLE scan completes",
+                json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
+            ),
+            EventType::new(
+                "bluetooth_connected",
+                "Triggered when connected to BLE device",
+                json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
+            ),
+            EventType::new(
+                "bluetooth_services_discovered",
+                "Triggered when GATT services are discovered",
+                json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
+            ),
+            EventType::new(
+                "bluetooth_data_read",
+                "Triggered when data is read from characteristic",
+                json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true}),
+            ),
+            EventType::new(
+                "bluetooth_notification_received",
+                "Triggered when notification is received",
+                json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true}),
+            ),
+            EventType::new(
+                "bluetooth_disconnected",
+                "Triggered when disconnected from device",
+                json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
+            ),
         ]
     }
 

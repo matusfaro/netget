@@ -103,7 +103,7 @@ impl Protocol for PostgresqlClientProtocol {
                     "type": "execute_query",
                     "query": "SELECT * FROM users WHERE id = 1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "begin_transaction".to_string(),
@@ -112,7 +112,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "begin_transaction"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "commit_transaction".to_string(),
@@ -121,7 +121,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "commit_transaction"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "rollback_transaction".to_string(),
@@ -130,7 +130,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "rollback_transaction"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -139,7 +139,7 @@ impl Protocol for PostgresqlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -165,8 +165,16 @@ impl Protocol for PostgresqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("postgresql_connected", "Triggered when PostgreSQL client connects to server", json!({"type": "placeholder", "event_id": "postgresql_connected"})),
-            EventType::new("postgresql_query_result", "Triggered when PostgreSQL client receives query results", json!({"type": "placeholder", "event_id": "postgresql_query_result"})),
+            EventType::new(
+                "postgresql_connected",
+                "Triggered when PostgreSQL client connects to server",
+                json!({"type": "placeholder", "event_id": "postgresql_connected"}),
+            ),
+            EventType::new(
+                "postgresql_query_result",
+                "Triggered when PostgreSQL client receives query results",
+                json!({"type": "placeholder", "event_id": "postgresql_query_result"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

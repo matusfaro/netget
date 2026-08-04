@@ -31,6 +31,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::console_error;
 #[cfg(feature = "mcp")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "mcp")]
@@ -45,7 +46,6 @@ use crate::server::McpProtocol;
 use crate::state::app_state::AppState;
 #[cfg(feature = "mcp")]
 use crate::state::server::{ConnectionStatus, ProtocolConnectionInfo, ServerId};
-use crate::console_error;
 #[cfg(feature = "mcp")]
 use actions::{
     MCP_INITIALIZE_EVENT, MCP_PROMPTS_GET_EVENT, MCP_PROMPTS_LIST_EVENT, MCP_RESOURCES_LIST_EVENT,

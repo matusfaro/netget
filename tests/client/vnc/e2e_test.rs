@@ -54,12 +54,12 @@ mod vnc_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -104,12 +104,12 @@ mod vnc_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -157,12 +157,12 @@ mod vnc_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -210,12 +210,12 @@ mod vnc_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

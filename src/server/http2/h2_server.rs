@@ -46,7 +46,10 @@ impl H2Server {
             "HTTP/2 (h2c with push)"
         };
         info!("{} server listening on {}", protocol_name, local_addr);
-        let _ = status_tx.send(format!("[INFO] {} server listening on {}", protocol_name, local_addr));
+        let _ = status_tx.send(format!(
+            "[INFO] {} server listening on {}",
+            protocol_name, local_addr
+        ));
 
         let protocol = Arc::new(Http2Protocol::new());
 
@@ -280,7 +283,10 @@ fn build_h2_response_head(
     }
 
     builder.body(()).unwrap_or_else(|e| {
-        error!("{}: failed to build response ({}), sending bare 500", context, e);
+        error!(
+            "{}: failed to build response ({}), sending bare 500",
+            context, e
+        );
         let mut fallback = Response::new(());
         *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         fallback
@@ -303,7 +309,9 @@ pub async fn handle_h2_request(
     // Extract request metadata
     let method = request.method().to_string();
     // For HTTP/2, only use the path+query portion (not scheme/host)
-    let uri = request.uri().path_and_query()
+    let uri = request
+        .uri()
+        .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or(request.uri().path())
         .to_string();

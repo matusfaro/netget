@@ -200,7 +200,9 @@ fn send_http_response_action() -> ActionDefinition {
             Parameter {
                 name: "status".to_string(),
                 type_hint: "number".to_string(),
-                description: "HTTP status code as a number between 100 and 599 (e.g. 200, 404, 500).".to_string(),
+                description:
+                    "HTTP status code as a number between 100 and 599 (e.g. 200, 404, 500)."
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -287,7 +289,9 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "query".to_string(),
             type_hint: "object".to_string(),
-            description: "Parsed query parameters as key-value pairs (e.g., {\"x\": \"5\", \"y\": \"3\"})".to_string(),
+            description:
+                "Parsed query parameters as key-value pairs (e.g., {\"x\": \"5\", \"y\": \"3\"})"
+                    .to_string(),
             required: false,
         },
         Parameter {
@@ -299,10 +303,11 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "body".to_string(),
             type_hint: "string".to_string(),
-            description: "Request body decoded as UTF-8 text (empty string when there is no body). \
+            description:
+                "Request body decoded as UTF-8 text (empty string when there is no body). \
                 Bytes that are not valid UTF-8 are replaced with U+FFFD, so when body_is_binary is \
                 true this field is lossy and must not be treated as the exact request payload."
-                .to_string(),
+                    .to_string(),
             required: false,
         },
         Parameter {
@@ -339,7 +344,9 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     }))
     .with_log_template(
         LogTemplate::new()
-            .with_info("{client_ip} {method} {path} -> {status} ({response_bytes}B, {duration_ms}ms)")
+            .with_info(
+                "{client_ip} {method} {path} -> {status} ({response_bytes}B, {duration_ms}ms)",
+            )
             .with_debug("HTTP {method} {path} from {client_ip}:{client_port}")
             .with_trace("HTTP request: {json_pretty(.)}"),
     )

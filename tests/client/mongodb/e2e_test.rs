@@ -8,8 +8,8 @@ use tokio::time::{sleep, Duration};
 #[tokio::test]
 async fn test_mongodb_client_with_server_mocks() -> E2EResult<()> {
     // Start MongoDB server (mocked)
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")
@@ -93,8 +93,8 @@ async fn test_mongodb_client_with_server_mocks() -> E2EResult<()> {
 #[tokio::test]
 async fn test_mongodb_client_insert_workflow_with_mocks() -> E2EResult<()> {
     // Start MongoDB server (mocked)
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")
@@ -175,8 +175,8 @@ async fn test_mongodb_client_insert_workflow_with_mocks() -> E2EResult<()> {
 #[tokio::test]
 async fn test_mongodb_client_update_workflow_with_mocks() -> E2EResult<()> {
     // Start MongoDB server (mocked)
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")
@@ -259,8 +259,8 @@ async fn test_mongodb_client_update_workflow_with_mocks() -> E2EResult<()> {
 #[tokio::test]
 async fn test_mongodb_client_delete_workflow_with_mocks() -> E2EResult<()> {
     // Start MongoDB server (mocked)
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
-        .with_mock(|mock| {
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB").with_mock(|mock| {
             mock
                 // Mock initial instruction to start the server
                 .on_instruction_containing("MongoDB")

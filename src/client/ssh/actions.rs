@@ -19,7 +19,7 @@ pub static SSH_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "execute_command",
             "command": "pwd"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -45,7 +45,7 @@ pub static SSH_CLIENT_OUTPUT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
         json!({
             "type": "execute_command",
             "command": "pwd"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -95,7 +95,7 @@ impl Protocol for SshClientProtocol {
                     "type": "execute_command",
                     "command": "ls -la"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -104,7 +104,7 @@ impl Protocol for SshClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -123,7 +123,7 @@ impl Protocol for SshClientProtocol {
                     "type": "execute_command",
                     "command": "pwd"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -132,7 +132,7 @@ impl Protocol for SshClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -141,8 +141,16 @@ impl Protocol for SshClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ssh_connected", "Triggered when SSH client authenticates successfully", json!({"type": "placeholder", "event_id": "ssh_connected"})),
-            EventType::new("ssh_output_received", "Triggered when SSH command output is received", json!({"type": "placeholder", "event_id": "ssh_output_received"})),
+            EventType::new(
+                "ssh_connected",
+                "Triggered when SSH client authenticates successfully",
+                json!({"type": "placeholder", "event_id": "ssh_connected"}),
+            ),
+            EventType::new(
+                "ssh_output_received",
+                "Triggered when SSH command output is received",
+                json!({"type": "placeholder", "event_id": "ssh_output_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

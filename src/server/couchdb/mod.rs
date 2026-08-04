@@ -312,8 +312,7 @@ async fn handle_couchdb_request_with_llm(
                             }
 
                             if let Some(www_auth) = www_authenticate {
-                                builder =
-                                    header_or_skip(builder, "WWW-Authenticate", www_auth);
+                                builder = header_or_skip(builder, "WWW-Authenticate", www_auth);
                             }
 
                             return Ok(builder
@@ -365,7 +364,10 @@ async fn handle_couchdb_request_with_llm(
 /// model sees; this is the belt-and-braces path.
 fn couchdb_response_builder(status: u16) -> hyper::http::response::Builder {
     let status = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
-        error!("Invalid CouchDB status code {}, sending 500 instead", status);
+        error!(
+            "Invalid CouchDB status code {}, sending 500 instead",
+            status
+        );
         hyper::StatusCode::INTERNAL_SERVER_ERROR
     });
 

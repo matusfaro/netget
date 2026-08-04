@@ -196,10 +196,9 @@ impl JsonRpcProtocol {
     fn execute_jsonrpc_error(&self, action: serde_json::Value) -> Result<ActionResult> {
         // Kept as i64: the spec says "integer", and `as i32` silently wrapped, so
         // a model emitting 4294967296 produced code 0.
-        let code = action
-            .get("code")
-            .and_then(|v| v.as_i64())
-            .context("Missing or non-integer 'code' field (JSON-RPC error codes are integers, e.g. -32601)")?;
+        let code = action.get("code").and_then(|v| v.as_i64()).context(
+            "Missing or non-integer 'code' field (JSON-RPC error codes are integers, e.g. -32601)",
+        )?;
 
         let message = action
             .get("message")
@@ -239,7 +238,6 @@ impl JsonRpcProtocol {
             data: response,
         })
     }
-
 }
 
 /// Action definition: Send JSON-RPC success response

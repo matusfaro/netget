@@ -135,8 +135,7 @@ mod mysql_client_tests {
             "Listen on port {} via MySQL. Accept connections to 'testdb' database.",
         )
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("MySQL")
+            mock.on_instruction_containing("MySQL")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -216,33 +215,32 @@ mod mysql_client_tests {
         // Start a MySQL server
         let server_config =
             NetGetConfig::new("Listen on port {} via MySQL. Accept transaction commands.")
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("MySQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "MySQL",
-                            "instruction": "Accept transaction commands"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("mysql_connection_received")
-                    .respond_with_actions(serde_json::json!([{"type": "accept_connection"}]))
-                    .expect_at_least(0)
-                    .and()
-                    .on_event("mysql_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "mysql_ok_response",
-                            "affected_rows": 0
-                        }
-                    ]))
-                    .expect_at_least(0)
-                    .and()
-            });
+                .with_mock(|mock| {
+                    mock.on_instruction_containing("MySQL")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "MySQL",
+                                "instruction": "Accept transaction commands"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        .on_event("mysql_connection_received")
+                        .respond_with_actions(serde_json::json!([{"type": "accept_connection"}]))
+                        .expect_at_least(0)
+                        .and()
+                        .on_event("mysql_query")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "mysql_ok_response",
+                                "affected_rows": 0
+                            }
+                        ]))
+                        .expect_at_least(0)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 

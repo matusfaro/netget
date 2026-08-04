@@ -639,48 +639,68 @@ impl ServerRegistry {
         // More specific protocols checked first to avoid substring collisions
 
         // Priority 1: Check mDNS before DNS (avoid substring match)
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "mDNS") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "mDNS")
+        {
             return Some(stack);
         }
 
         // Priority 2: Check IMAP before SMTP (more specific for mail/email)
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "IMAP") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "IMAP")
+        {
             return Some(stack);
         }
 
         // Priority 2.5: Check SMTP before general loop (avoid hash order collisions)
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "SMTP") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "SMTP")
+        {
             return Some(stack);
         }
 
         // Priority 2.7: Check SNMP before SSH-Agent (avoid "agent" substring match)
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "SNMP") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "SNMP")
+        {
             return Some(stack);
         }
 
         // Priority 3: Check PostgreSQL before MySQL (avoid "sql" substring)
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "PostgreSQL") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "PostgreSQL")
+        {
             return Some(stack);
         }
 
         // Priority 4: Check XML-RPC and JSON-RPC before HTTP (avoid "http" substring in stack names)
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "XmlRPC") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "XmlRPC")
+        {
             return Some(stack);
         }
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "JsonRPC") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "JsonRPC")
+        {
             return Some(stack);
         }
 
         // Priority 5: Check Proxy before HTTP (avoid "http" substring in "http proxy")
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "Proxy") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "Proxy")
+        {
             return Some(stack);
         }
 
         // Priority 6: Check Tor protocols before TCP fallback
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "TorDirectory") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "TorDirectory")
+        {
             return Some(stack);
         }
-        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "TorRelay") {
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "TorRelay")
+        {
             return Some(stack);
         }
 

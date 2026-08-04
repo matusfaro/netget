@@ -16,10 +16,10 @@ use mongodb::{
     Client as MongoClient, Database,
 };
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mongodb::actions::{
     MONGODB_CLIENT_CONNECTED_EVENT, MONGODB_CLIENT_RESULT_RECEIVED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

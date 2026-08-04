@@ -130,7 +130,7 @@ impl Protocol for DotClientProtocol {
                     "query_type": "A",
                     "recursive": true
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -139,7 +139,7 @@ impl Protocol for DotClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -173,7 +173,7 @@ impl Protocol for DotClientProtocol {
                     "domain": "example.org",
                     "query_type": "AAAA"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -182,7 +182,7 @@ impl Protocol for DotClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -191,8 +191,16 @@ impl Protocol for DotClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("dot_connected", "Triggered when DoT client connects to server", json!({"type": "placeholder", "event_id": "dot_connected"})),
-            EventType::new("dot_response_received", "Triggered when DoT client receives a DNS response", json!({"type": "placeholder", "event_id": "dot_response_received"})),
+            EventType::new(
+                "dot_connected",
+                "Triggered when DoT client connects to server",
+                json!({"type": "placeholder", "event_id": "dot_connected"}),
+            ),
+            EventType::new(
+                "dot_response_received",
+                "Triggered when DoT client receives a DNS response",
+                json!({"type": "placeholder", "event_id": "dot_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

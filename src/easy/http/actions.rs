@@ -46,7 +46,8 @@ impl Easy for HttpEasyProtocol {
     ) -> Result<JsonValue> {
         let port = port.unwrap_or_else(|| self.default_port().unwrap());
         let instruction = user_instruction.unwrap_or_else(|| {
-            "You are a helpful HTTP server. Respond to requests with useful information.".to_string()
+            "You are a helpful HTTP server. Respond to requests with useful information."
+                .to_string()
         });
 
         // Generate open_server action for HTTP protocol
@@ -74,18 +75,26 @@ impl Easy for HttpEasyProtocol {
             }
 
             // Extract request details from event data
-            let method = event.data.get("method")
+            let method = event
+                .data
+                .get("method")
                 .and_then(|v| v.as_str())
                 .unwrap_or("GET");
-            let uri = event.data.get("uri")
+            let uri = event
+                .data
+                .get("uri")
                 .and_then(|v| v.as_str())
                 .unwrap_or("/");
-            let body = event.data.get("body")
+            let body = event
+                .data
+                .get("body")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
             // Convert headers object to array for template
-            let headers_array: Vec<serde_json::Value> = event.data.get("headers")
+            let headers_array: Vec<serde_json::Value> = event
+                .data
+                .get("headers")
                 .and_then(|v| v.as_object())
                 .map(|obj| {
                     obj.iter()
@@ -134,7 +143,9 @@ impl Easy for HttpEasyProtocol {
                 .context("Failed to render HTTP-easy prompt template")?;
 
             // Get model name from app_state
-            let model = app_state.get_ollama_model().await
+            let model = app_state
+                .get_ollama_model()
+                .await
                 .unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
 
             // Call LLM expecting Markdown response
@@ -180,11 +191,15 @@ fn markdown_to_html(markdown: &str) -> String {
     html.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
     html.push_str("<style>\n");
     html.push_str("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; ");
-    html.push_str("max-width: 800px; margin: 2em auto; padding: 0 1em; line-height: 1.6; color: #333; }\n");
+    html.push_str(
+        "max-width: 800px; margin: 2em auto; padding: 0 1em; line-height: 1.6; color: #333; }\n",
+    );
     html.push_str("h1, h2, h3 { color: #111; margin-top: 1.5em; }\n");
     html.push_str("h1 { border-bottom: 2px solid #eee; padding-bottom: 0.3em; }\n");
     html.push_str("code { background: #f4f4f4; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }\n");
-    html.push_str("pre { background: #f4f4f4; padding: 1em; border-radius: 5px; overflow-x: auto; }\n");
+    html.push_str(
+        "pre { background: #f4f4f4; padding: 1em; border-radius: 5px; overflow-x: auto; }\n",
+    );
     html.push_str("pre code { background: none; padding: 0; }\n");
     html.push_str("blockquote { border-left: 4px solid #ddd; padding-left: 1em; margin-left: 0; color: #666; }\n");
     html.push_str("ul, ol { padding-left: 2em; }\n");
@@ -288,15 +303,21 @@ fn process_inline_markdown(text: &str) -> String {
     let mut result = html_escape(text);
 
     // Bold: **text** or __text__
-    result = result.replace("**", "<strong>").replace("</strong><strong>", "</strong>");
-    result = result.replace("__", "<strong>").replace("</strong><strong>", "</strong>");
+    result = result
+        .replace("**", "<strong>")
+        .replace("</strong><strong>", "</strong>");
+    result = result
+        .replace("__", "<strong>")
+        .replace("</strong><strong>", "</strong>");
 
     // Italic: *text* or _text_
     result = result.replace("*", "<em>").replace("</em><em>", "</em>");
     result = result.replace("_", "<em>").replace("</em><em>", "</em>");
 
     // Inline code: `code`
-    result = result.replace("`", "<code>").replace("</code><code>", "</code>");
+    result = result
+        .replace("`", "<code>")
+        .replace("</code><code>", "</code>");
 
     result
 }

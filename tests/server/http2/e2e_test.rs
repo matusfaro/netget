@@ -347,7 +347,7 @@ Set Content-Type: application/json."#;
     // Start the server with mocks
     // IMPORTANT: Allow 3 concurrent LLM requests for multiplexing test
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
-        .with_llm_max_concurrent(3)  // Allow 3 concurrent requests
+        .with_llm_max_concurrent(3) // Allow 3 concurrent requests
         .with_mock(|mock| {
             mock
                 // Mock 1: Three concurrent GET /data requests (MUST come first - more specific)
@@ -362,7 +362,7 @@ Set Content-Type: application/json."#;
                         "body": "{\"data\": \"test\", \"timestamp\": \"2025-01-01T00:00:00Z\"}"
                     }
                 ]))
-                .expect_calls(3)  // Expecting 3 concurrent requests
+                .expect_calls(3) // Expecting 3 concurrent requests
                 .and()
                 // Mock 2: Server startup (catch-all for user input, MUST come last)
                 .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))

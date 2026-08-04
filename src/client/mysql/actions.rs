@@ -19,7 +19,7 @@ pub static MYSQL_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         json!({
             "type": "execute_query",
             "query": "SELECT * FROM users LIMIT 10"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -36,7 +36,7 @@ pub static MYSQL_CLIENT_RESULT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
         "Query result received from MySQL server",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -81,7 +81,7 @@ impl Protocol for MysqlClientProtocol {
                     "type": "execute_query",
                     "query": "SELECT * FROM users WHERE id = 1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "begin_transaction".to_string(),
@@ -90,7 +90,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "begin_transaction"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "commit_transaction".to_string(),
@@ -99,7 +99,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "commit_transaction"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "rollback_transaction".to_string(),
@@ -108,7 +108,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "rollback_transaction"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -117,7 +117,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -136,7 +136,7 @@ impl Protocol for MysqlClientProtocol {
                     "type": "execute_query",
                     "query": "INSERT INTO logs (message) VALUES ('processed')"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -145,7 +145,7 @@ impl Protocol for MysqlClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -154,8 +154,16 @@ impl Protocol for MysqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mysql_connected", "Triggered when MySQL client connects to server", json!({"type": "placeholder", "event_id": "mysql_connected"})),
-            EventType::new("mysql_result_received", "Triggered when MySQL client receives a query result", json!({"type": "placeholder", "event_id": "mysql_result_received"})),
+            EventType::new(
+                "mysql_connected",
+                "Triggered when MySQL client connects to server",
+                json!({"type": "placeholder", "event_id": "mysql_connected"}),
+            ),
+            EventType::new(
+                "mysql_result_received",
+                "Triggered when MySQL client receives a query result",
+                json!({"type": "placeholder", "event_id": "mysql_result_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

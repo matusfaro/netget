@@ -340,9 +340,7 @@ pub async fn render_protocol_docs(protocol: &str, state: &AppState) -> Option<St
 
         let sync_actions = client.get_sync_actions();
         if !sync_actions.is_empty() {
-            out.push_str(
-                "### Response actions\n\nAction objects a client handler may return.\n\n",
-            );
+            out.push_str("### Response actions\n\nAction objects a client handler may return.\n\n");
             for action in &sync_actions {
                 render_action(&mut out, action);
             }

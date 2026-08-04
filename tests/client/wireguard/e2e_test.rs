@@ -62,36 +62,36 @@ mod tests {
             "Connect to WireGuard VPN at 127.0.0.1:{} with client address 10.20.30.2/32",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("WireGuard")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "wireguard",
-                            "instruction": "Connect to VPN",
-                            "startup_params": {
-                                "server_endpoint": format!("127.0.0.1:{}", server.port),
-                                "client_address": "10.20.30.2/32",
-                                "server_public_key": "placeholder_key"
-                            }
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("WireGuard")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "wireguard",
+                        "instruction": "Connect to VPN",
+                        "startup_params": {
+                            "server_endpoint": format!("127.0.0.1:{}", server.port),
+                            "client_address": "10.20.30.2/32",
+                            "server_public_key": "placeholder_key"
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Connection established (wireguard_connected event)
-                    .on_event("wireguard_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection established (wireguard_connected event)
+                .on_event("wireguard_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
 
@@ -99,7 +99,10 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         // Verify client shows WireGuard protocol
-        assert_eq!(client.protocol, "wireguard", "Client should be wireguard protocol");
+        assert_eq!(
+            client.protocol, "wireguard",
+            "Client should be wireguard protocol"
+        );
 
         println!("✅ WireGuard client connected successfully");
 
@@ -129,34 +132,33 @@ mod tests {
             "Connect to WireGuard VPN at 127.0.0.1:{} with address 10.20.30.3/32",
             fake_port
         ))
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("WireGuard")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", fake_port),
-                            "protocol": "wireguard",
-                            "instruction": "Connect to VPN",
-                            "startup_params": {
-                                "server_endpoint": format!("127.0.0.1:{}", fake_port),
-                                "client_address": "10.20.30.3/32",
-                                "server_public_key": "placeholder_key"
-                            }
+        .with_mock(|mock| {
+            mock.on_instruction_containing("Connect to")
+                .and_instruction_containing("WireGuard")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", fake_port),
+                        "protocol": "wireguard",
+                        "instruction": "Connect to VPN",
+                        "startup_params": {
+                            "server_endpoint": format!("127.0.0.1:{}", fake_port),
+                            "client_address": "10.20.30.3/32",
+                            "server_public_key": "placeholder_key"
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("wireguard_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("wireguard_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -164,7 +166,9 @@ mod tests {
         // Verify output contains connection information
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|s| s.contains("wireguard")) || output.iter().any(|s| s.contains("VPN")) || output.iter().any(|s| s.contains("connected")),
+            output.iter().any(|s| s.contains("wireguard"))
+                || output.iter().any(|s| s.contains("VPN"))
+                || output.iter().any(|s| s.contains("connected")),
             "Client output should show connection info. Output: {:?}",
             output
         );
@@ -191,42 +195,41 @@ mod tests {
             "Connect to WireGuard VPN at 127.0.0.1:{} then disconnect after connecting",
             fake_port
         ))
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("WireGuard")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", fake_port),
-                            "protocol": "wireguard",
-                            "instruction": "Connect then disconnect",
-                            "startup_params": {
-                                "server_endpoint": format!("127.0.0.1:{}", fake_port),
-                                "client_address": "10.20.30.4/32",
-                                "server_public_key": "placeholder_key"
-                            }
+        .with_mock(|mock| {
+            mock.on_instruction_containing("Connect to")
+                .and_instruction_containing("WireGuard")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", fake_port),
+                        "protocol": "wireguard",
+                        "instruction": "Connect then disconnect",
+                        "startup_params": {
+                            "server_endpoint": format!("127.0.0.1:{}", fake_port),
+                            "client_address": "10.20.30.4/32",
+                            "server_public_key": "placeholder_key"
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("wireguard_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "disconnect"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("wireguard_disconnected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("wireguard_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "disconnect"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("wireguard_disconnected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
         tokio::time::sleep(Duration::from_secs(4)).await;
@@ -234,7 +237,8 @@ mod tests {
         // Verify disconnect occurred
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|s| s.contains("disconnect")) || output.iter().any(|s| s.contains("closed")),
+            output.iter().any(|s| s.contains("disconnect"))
+                || output.iter().any(|s| s.contains("closed")),
             "Client should show disconnection. Output: {:?}",
             output
         );

@@ -280,7 +280,8 @@ pub struct Args {
 impl Args {
     /// Resolve the API key from --api-key flag, NETGET_API_KEY, or OPENAI_API_KEY env vars
     pub fn resolve_api_key(&self) -> Option<String> {
-        self.api_key.clone()
+        self.api_key
+            .clone()
             .or_else(|| std::env::var("NETGET_API_KEY").ok())
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
     }

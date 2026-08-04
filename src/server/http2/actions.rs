@@ -241,7 +241,9 @@ fn send_http2_response_action() -> ActionDefinition {
             Parameter {
                 name: "status".to_string(),
                 type_hint: "number".to_string(),
-                description: "HTTP status code as a number between 100 and 599 (e.g. 200, 404, 500).".to_string(),
+                description:
+                    "HTTP status code as a number between 100 and 599 (e.g. 200, 404, 500)."
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -347,49 +349,53 @@ pub static PUSH_RESOURCE_ACTION: LazyLock<ActionDefinition> =
 
 /// HTTP/2 request event - triggered when client sends an HTTP/2 request
 pub static HTTP2_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("http2_request", "HTTP/2 request received from client", json!({"type": "placeholder", "event_id": "http2_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTP method (GET, POST, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "uri".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request URI".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "version".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTP version (HTTP/2.0)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "headers".to_string(),
-                type_hint: "object".to_string(),
-                description: "Request headers as key-value pairs".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "body".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request body".to_string(),
-                required: false,
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{method} {uri}")
-                .with_debug("HTTP/2 {method} {uri} v{version}")
-                .with_trace("HTTP/2: {json_pretty(.)}"),
-        )
-        .with_actions(vec![
-            SEND_HTTP2_RESPONSE_ACTION.clone(),
-            PUSH_RESOURCE_ACTION.clone(),
-        ])
+    EventType::new(
+        "http2_request",
+        "HTTP/2 request received from client",
+        json!({"type": "placeholder", "event_id": "http2_request"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (GET, POST, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "uri".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request URI".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "version".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP version (HTTP/2.0)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "headers".to_string(),
+            type_hint: "object".to_string(),
+            description: "Request headers as key-value pairs".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request body".to_string(),
+            required: false,
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{method} {uri}")
+            .with_debug("HTTP/2 {method} {uri} v{version}")
+            .with_trace("HTTP/2: {json_pretty(.)}"),
+    )
+    .with_actions(vec![
+        SEND_HTTP2_RESPONSE_ACTION.clone(),
+        PUSH_RESOURCE_ACTION.clone(),
+    ])
 });
 
 /// Get HTTP/2 event types

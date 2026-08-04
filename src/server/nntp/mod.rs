@@ -9,13 +9,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::console_error;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::NntpProtocol;
 use crate::state::app_state::AppState;
-use crate::console_error;
 use actions::NNTP_COMMAND_RECEIVED_EVENT;
 
 /// NNTP server that forwards commands to LLM

@@ -12,9 +12,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mcp::actions::{MCP_CLIENT_CONNECTED_EVENT, MCP_CLIENT_RESPONSE_RECEIVED_EVENT};
 use crate::console_error;
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;

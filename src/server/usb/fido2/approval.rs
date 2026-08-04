@@ -239,7 +239,6 @@ impl ApprovalManager {
     }
 }
 
-
 // Implement Clone for ApprovalManager
 #[cfg(feature = "usb-fido2")]
 impl Clone for ApprovalManager {

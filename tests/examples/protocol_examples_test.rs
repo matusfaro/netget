@@ -76,10 +76,7 @@ fn test_all_startup_examples_structure() {
         for error in &errors {
             println!("  ✗ {}", error);
         }
-        panic!(
-            "Found {} invalid startup examples",
-            errors.len()
-        );
+        panic!("Found {} invalid startup examples", errors.len());
     }
 
     println!("\n✓ All startup examples have valid structure");
@@ -160,10 +157,7 @@ fn test_all_response_examples_structure() {
         for error in &errors {
             println!("  ✗ {}", error);
         }
-        panic!(
-            "Found {} invalid response examples",
-            errors.len()
-        );
+        panic!("Found {} invalid response examples", errors.len());
     }
 
     println!("\n✓ All response examples have valid structure");
@@ -267,7 +261,9 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
                     .and()
                     // Add a catch-all for any events (just acknowledge them)
                     .on_event("*")
-                    .respond_with_actions(json!({"type": "show_message", "message": "Event received"}))
+                    .respond_with_actions(
+                        json!({"type": "show_message", "message": "Event received"}),
+                    )
                     .and()
             });
 
@@ -308,7 +304,10 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
     // but fail if more than 20% fail
     let failure_threshold = all_protocols.len() / 5;
     if failed > failure_threshold {
-        let failed_list: Vec<String> = errors.iter().map(|(name, err)| format!("{}: {}", name, err)).collect();
+        let failed_list: Vec<String> = errors
+            .iter()
+            .map(|(name, err)| format!("{}: {}", name, err))
+            .collect();
         panic!(
             "Too many LLM mode startup failures: {}/{} (threshold: {})\n\nFailed protocols:\n  - {}",
             failed,
@@ -388,7 +387,10 @@ async fn test_all_protocols_static_mode_startup() -> E2EResult<()> {
 
     let failure_threshold = all_protocols.len() / 5;
     if failed > failure_threshold {
-        let failed_list: Vec<String> = errors.iter().map(|(name, err)| format!("{}: {}", name, err)).collect();
+        let failed_list: Vec<String> = errors
+            .iter()
+            .map(|(name, err)| format!("{}: {}", name, err))
+            .collect();
         panic!(
             "Too many static mode startup failures: {}/{} (threshold: {})\n\nFailed protocols:\n  - {}",
             failed,
@@ -420,7 +422,10 @@ async fn test_tcp_actual_examples() -> E2EResult<()> {
 
     // Get ACTUAL startup example from protocol
     let startup_examples = protocol.get_startup_examples();
-    println!("LLM mode example: {}", serde_json::to_string_pretty(&startup_examples.llm_mode)?);
+    println!(
+        "LLM mode example: {}",
+        serde_json::to_string_pretty(&startup_examples.llm_mode)?
+    );
 
     // Get ACTUAL response examples from protocol
     let event_types = protocol.get_event_types();
@@ -433,14 +438,10 @@ async fn test_tcp_actual_examples() -> E2EResult<()> {
     }
 
     // Find the tcp_connection_opened event
-    let conn_opened_event = event_types
-        .iter()
-        .find(|e| e.id == "tcp_connection_opened");
+    let conn_opened_event = event_types.iter().find(|e| e.id == "tcp_connection_opened");
 
     // Find the tcp_data_received event
-    let data_received_event = event_types
-        .iter()
-        .find(|e| e.id == "tcp_data_received");
+    let data_received_event = event_types.iter().find(|e| e.id == "tcp_data_received");
 
     // Build mock using ACTUAL examples from protocol (with port 0 for dynamic allocation)
     let llm_mode_with_port_0 = with_port_zero(&startup_examples.llm_mode);
@@ -534,7 +535,10 @@ async fn test_http_actual_examples() -> E2EResult<()> {
 
     // Get ACTUAL startup example from protocol
     let startup_examples = protocol.get_startup_examples();
-    println!("LLM mode example: {}", serde_json::to_string_pretty(&startup_examples.llm_mode)?);
+    println!(
+        "LLM mode example: {}",
+        serde_json::to_string_pretty(&startup_examples.llm_mode)?
+    );
 
     // Get ACTUAL response examples from protocol
     let event_types = protocol.get_event_types();
@@ -615,7 +619,10 @@ async fn test_dns_actual_examples() -> E2EResult<()> {
 
     // Get ACTUAL startup example from protocol
     let startup_examples = protocol.get_startup_examples();
-    println!("LLM mode example: {}", serde_json::to_string_pretty(&startup_examples.llm_mode)?);
+    println!(
+        "LLM mode example: {}",
+        serde_json::to_string_pretty(&startup_examples.llm_mode)?
+    );
 
     // Get ACTUAL response examples from protocol
     let event_types = protocol.get_event_types();
@@ -831,9 +838,7 @@ async fn test_tcp_alternative_examples() -> E2EResult<()> {
     }
 
     // Test the wait_for_more alternative (if exists)
-    let data_received_event = event_types
-        .iter()
-        .find(|e| e.id == "tcp_data_received");
+    let data_received_event = event_types.iter().find(|e| e.id == "tcp_data_received");
 
     if let Some(event) = data_received_event {
         if !event.alternative_examples.is_empty() {

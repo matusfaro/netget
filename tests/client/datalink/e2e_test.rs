@@ -14,38 +14,37 @@ mod datalink_client_tests {
     #[tokio::test]
     async fn test_datalink_client_inject_frame_with_mocks() -> E2EResult<()> {
         // Start a DataLink client that injects an ARP frame
-        let client_config = NetGetConfig::new(
-            "Connect to lo0 via DataLink. Inject an ARP request for 10.0.0.2"
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup (user command)
-                // Note: Use .on_any() for initial user command since instruction field is empty before client is created
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "lo0",
-                        "protocol": "DataLink",
-                        "startup_params": {
-                            "interface": "lo0",
-                            "promiscuous": false
-                        },
-                        "instruction": "Inject ARP request for 10.0.0.2"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Frame injected event
-                .on_event("datalink_frame_injected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let client_config =
+            NetGetConfig::new("Connect to lo0 via DataLink. Inject an ARP request for 10.0.0.2")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Client startup (user command)
+                        // Note: Use .on_any() for initial user command since instruction field is empty before client is created
+                        .on_any()
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_client",
+                                "remote_addr": "lo0",
+                                "protocol": "DataLink",
+                                "startup_params": {
+                                    "interface": "lo0",
+                                    "promiscuous": false
+                                },
+                                "instruction": "Inject ARP request for 10.0.0.2"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Frame injected event
+                        .on_event("datalink_frame_injected")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "wait_for_more"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let client = start_netget_client(client_config).await?;
 
@@ -77,7 +76,7 @@ mod datalink_client_tests {
     async fn test_datalink_client_promiscuous_capture_with_mocks() -> E2EResult<()> {
         // Start a DataLink client in promiscuous mode
         let client_config = NetGetConfig::new(
-            "Connect to lo0 via DataLink with promiscuous mode. Monitor all frames."
+            "Connect to lo0 via DataLink with promiscuous mode. Monitor all frames.",
         )
         .with_mock(|mock| {
             mock
@@ -195,38 +194,37 @@ mod datalink_client_tests {
     #[tokio::test]
     async fn test_datalink_client_disconnect_with_mocks() -> E2EResult<()> {
         // Start a DataLink client and disconnect gracefully
-        let client_config = NetGetConfig::new(
-            "Connect to lo0 via DataLink. Inject one frame then disconnect."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                // Note: Use .on_any() for initial user command since instruction field is empty before client is created
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "lo0",
-                        "protocol": "DataLink",
-                        "startup_params": {
-                            "interface": "lo0",
-                            "promiscuous": false
-                        },
-                        "instruction": "Inject one frame then disconnect"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Frame injected, then disconnect
-                .on_event("datalink_frame_injected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "disconnect"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let client_config =
+            NetGetConfig::new("Connect to lo0 via DataLink. Inject one frame then disconnect.")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Client startup
+                        // Note: Use .on_any() for initial user command since instruction field is empty before client is created
+                        .on_any()
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_client",
+                                "remote_addr": "lo0",
+                                "protocol": "DataLink",
+                                "startup_params": {
+                                    "interface": "lo0",
+                                    "promiscuous": false
+                                },
+                                "instruction": "Inject one frame then disconnect"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Frame injected, then disconnect
+                        .on_event("datalink_frame_injected")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "disconnect"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let client = start_netget_client(client_config).await?;
 

@@ -101,7 +101,8 @@ mod s3_client_tests {
         // Verify operations in output
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("test-bucket")) || output.iter().any(|l| l.contains("test.txt")),
+            output.iter().any(|l| l.contains("test-bucket"))
+                || output.iter().any(|l| l.contains("test.txt")),
             "Client output should mention bucket or object. Output: {:?}",
             output
         );

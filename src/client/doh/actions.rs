@@ -112,7 +112,7 @@ impl Protocol for DohClientProtocol {
                     "record_type": "A",
                     "use_get": false
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -121,7 +121,7 @@ impl Protocol for DohClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -149,7 +149,7 @@ impl Protocol for DohClientProtocol {
                     "domain": "mail.example.com",
                     "record_type": "A"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -158,7 +158,7 @@ impl Protocol for DohClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -167,8 +167,16 @@ impl Protocol for DohClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("doh_connected", "Triggered when DoH client connects to server", json!({"type": "placeholder", "event_id": "doh_connected"})),
-            EventType::new("doh_response_received", "Triggered when DoH client receives a DNS response", json!({"type": "placeholder", "event_id": "doh_response_received"})),
+            EventType::new(
+                "doh_connected",
+                "Triggered when DoH client connects to server",
+                json!({"type": "placeholder", "event_id": "doh_connected"}),
+            ),
+            EventType::new(
+                "doh_response_received",
+                "Triggered when DoH client receives a DNS response",
+                json!({"type": "placeholder", "event_id": "doh_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

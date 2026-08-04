@@ -310,7 +310,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                 example: json!({
                     "type": "fetch_userinfo"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "refresh_token".to_string(),
@@ -319,7 +319,7 @@ impl Protocol for OpenIdConnectClientProtocol {
                 example: json!({
                     "type": "refresh_token"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -328,9 +328,21 @@ impl Protocol for OpenIdConnectClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("oidc_discovered", "Triggered when OIDC provider configuration is discovered", json!({"type": "placeholder", "event_id": "oidc_discovered"})),
-            EventType::new("oidc_token_received", "Triggered when OAuth/OIDC tokens are received", json!({"type": "placeholder", "event_id": "oidc_token_received"})),
-            EventType::new("oidc_userinfo_received", "Triggered when UserInfo data is received", json!({"type": "placeholder", "event_id": "oidc_userinfo_received"})),
+            EventType::new(
+                "oidc_discovered",
+                "Triggered when OIDC provider configuration is discovered",
+                json!({"type": "placeholder", "event_id": "oidc_discovered"}),
+            ),
+            EventType::new(
+                "oidc_token_received",
+                "Triggered when OAuth/OIDC tokens are received",
+                json!({"type": "placeholder", "event_id": "oidc_token_received"}),
+            ),
+            EventType::new(
+                "oidc_userinfo_received",
+                "Triggered when UserInfo data is received",
+                json!({"type": "placeholder", "event_id": "oidc_userinfo_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

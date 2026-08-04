@@ -642,7 +642,9 @@ fn send_iq_error_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> XMPP IQ error id={id}: {condition}")
-                .with_debug("XMPP send_iq_error: id={id}, type={error_type}, condition={condition}"),
+                .with_debug(
+                    "XMPP send_iq_error: id={id}, type={error_type}, condition={condition}",
+                ),
         ),
     }
 }
@@ -741,32 +743,36 @@ fn close_stream_action() -> ActionDefinition {
 
 // Event types
 pub static XMPP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("xmpp_data_received", "XML data received from XMPP client", json!({"type": "placeholder", "event_id": "xmpp_data_received"}))
-        .with_parameters(vec![Parameter {
-            name: "xml_data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Raw XML data received".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            send_stream_header_action(),
-            send_stream_features_action(),
-            send_message_action(),
-            send_presence_action(),
-            send_iq_result_action(),
-            send_iq_error_action(),
-            send_auth_success_action(),
-            send_auth_failure_action(),
-            send_raw_xml_action(),
-            wait_for_more_action(),
-            close_stream_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("XMPP data received")
-                .with_debug("XMPP XML: {xml_data}")
-                .with_trace("XMPP: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "xmpp_data_received",
+        "XML data received from XMPP client",
+        json!({"type": "placeholder", "event_id": "xmpp_data_received"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "xml_data".to_string(),
+        type_hint: "string".to_string(),
+        description: "Raw XML data received".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        send_stream_header_action(),
+        send_stream_features_action(),
+        send_message_action(),
+        send_presence_action(),
+        send_iq_result_action(),
+        send_iq_error_action(),
+        send_auth_success_action(),
+        send_auth_failure_action(),
+        send_raw_xml_action(),
+        wait_for_more_action(),
+        close_stream_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("XMPP data received")
+            .with_debug("XMPP XML: {xml_data}")
+            .with_trace("XMPP: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_xmpp_event_types() -> Vec<EventType> {

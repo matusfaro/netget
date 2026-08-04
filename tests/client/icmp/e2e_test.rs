@@ -81,9 +81,7 @@ async fn test_icmp_client_actions() -> anyhow::Result<()> {
     let sync_actions = protocol.get_sync_actions();
 
     // Verify expected actions exist
-    let action_types: Vec<&str> = sync_actions.iter()
-        .map(|a| a.name.as_str())
-        .collect();
+    let action_types: Vec<&str> = sync_actions.iter().map(|a| a.name.as_str()).collect();
 
     assert!(action_types.contains(&"send_echo_request"));
     // Note: send_timestamp_request removed - pnet doesn't support timestamp packets

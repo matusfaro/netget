@@ -29,9 +29,9 @@ async fn test_amqp_broker_starts() -> E2EResult<()> {
                     }
                 ]))
                 // NOTE: // NOTE: .expect_calls() disabled
-                    // .expect_calls() disabled - call counts don't work across process boundary
+                // .expect_calls() disabled - call counts don't work across process boundary
                 // // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                // .expect_calls(1)
                 .and()
         });
 
@@ -106,53 +106,57 @@ async fn test_amqp_keyword_detection() -> E2EResult<()> {
 /// 3. Connection.Start frame is sent
 #[tokio::test]
 async fn test_amqp_basic_connect() -> E2EResult<()> {
-    let config =
-        NetGetConfig::new("Start an AMQP broker on port 0. Accept all client connections and send Connection.Start.")
-            .with_log_level("debug")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("Start an AMQP broker")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "AMQP",
-                            "instruction": "Accept all client connections and send Connection.Start"
-                        }
-                    ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connection received
-                    .on_event("amqp_connection_received")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "send_amqp_frame",
-                            "channel": 0,
-                            "method_name": "Connection.Start",
-                            "arguments": {
-                                "version_major": 0,
-                                "version_minor": 9,
-                                "server_properties": {
-                                    "product": "NetGet-AMQP",
-                                    "version": "0.1.0",
-                                    "platform": "Rust"
-                                },
-                                "mechanisms": "PLAIN",
-                                "locales": "en_US"
-                            }
-                        }
-                    ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
-                    .and()
-            });
+    let config = NetGetConfig::new(
+        "Start an AMQP broker on port 0. Accept all client connections and send Connection.Start.",
+    )
+    .with_log_level("debug")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("Start an AMQP broker")
+            .respond_with_actions(json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "AMQP",
+                    "instruction": "Accept all client connections and send Connection.Start"
+                }
+            ]))
+            // NOTE: .expect_calls() disabled
+            // .expect_calls(1)
+            .and()
+            // Mock 2: Client connection received
+            .on_event("amqp_connection_received")
+            .respond_with_actions(json!([
+                {
+                    "type": "send_amqp_frame",
+                    "channel": 0,
+                    "method_name": "Connection.Start",
+                    "arguments": {
+                        "version_major": 0,
+                        "version_minor": 9,
+                        "server_properties": {
+                            "product": "NetGet-AMQP",
+                            "version": "0.1.0",
+                            "platform": "Rust"
+                        },
+                        "mechanisms": "PLAIN",
+                        "locales": "en_US"
+                    }
+                }
+            ]))
+            // NOTE: .expect_calls() disabled
+            // .expect_calls(1)
+            .and()
+    });
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    println!("Connecting lapin client to AMQP broker on port {}", test_state.port);
+    println!(
+        "Connecting lapin client to AMQP broker on port {}",
+        test_state.port
+    );
 
     // Create AMQP client connection
     let conn_result = tokio::time::timeout(
@@ -171,7 +175,10 @@ async fn test_amqp_basic_connect() -> E2EResult<()> {
             println!("✓ Connection.Start received and processed");
         }
         Ok(Err(e)) => {
-            println!("⚠ Connection failed (expected for simplified broker): {}", e);
+            println!(
+                "⚠ Connection failed (expected for simplified broker): {}",
+                e
+            );
             println!("✓ AMQP protocol header was accepted (connection attempt started)");
         }
         Err(_) => {
@@ -258,7 +265,10 @@ async fn test_amqp_protocol_header() -> E2EResult<()> {
             println!("⚠ Connection closed by broker (may be expected)");
         }
         Ok(Err(e)) => {
-            println!("⚠ Read error: {} (may be expected for simplified broker)", e);
+            println!(
+                "⚠ Read error: {} (may be expected for simplified broker)",
+                e
+            );
         }
         Err(_) => {
             println!("⚠ Timeout reading response (may be expected)");

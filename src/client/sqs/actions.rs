@@ -19,7 +19,7 @@ pub static SQS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_message",
             "message_body": "Processed successfully"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "queue_url".to_string(),
@@ -31,26 +31,32 @@ pub static SQS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SQS message received event
 pub static SQS_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sqs_message_received", "Messages received from SQS queue", json!({"type": "placeholder", "event_id": "sqs_message_received"})).with_parameters(
-        vec![Parameter {
-            name: "messages".to_string(),
-            type_hint: "array".to_string(),
-            description: "Array of received messages".to_string(),
-            required: true,
-        }],
+    EventType::new(
+        "sqs_message_received",
+        "Messages received from SQS queue",
+        json!({"type": "placeholder", "event_id": "sqs_message_received"}),
     )
+    .with_parameters(vec![Parameter {
+        name: "messages".to_string(),
+        type_hint: "array".to_string(),
+        description: "Array of received messages".to_string(),
+        required: true,
+    }])
 });
 
 /// SQS message sent event
 pub static SQS_MESSAGE_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sqs_message_sent", "Message successfully sent to SQS queue", json!({"type": "placeholder", "event_id": "sqs_message_sent"})).with_parameters(
-        vec![Parameter {
-            name: "message_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "ID of the sent message".to_string(),
-            required: true,
-        }],
+    EventType::new(
+        "sqs_message_sent",
+        "Message successfully sent to SQS queue",
+        json!({"type": "placeholder", "event_id": "sqs_message_sent"}),
     )
+    .with_parameters(vec![Parameter {
+        name: "message_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "ID of the sent message".to_string(),
+        required: true,
+    }])
 });
 
 /// SQS client protocol action handler
@@ -124,7 +130,7 @@ impl Protocol for SqsClientProtocol {
                         "source": "netget"
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "receive_messages".to_string(),
@@ -155,7 +161,7 @@ impl Protocol for SqsClientProtocol {
                     "max_messages": 5,
                     "wait_time_seconds": 10
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "delete_message".to_string(),
@@ -170,7 +176,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "delete_message",
                     "receipt_handle": "AQEBwJnKyrHigUMZj6rY..."
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "purge_queue".to_string(),
@@ -179,7 +185,7 @@ impl Protocol for SqsClientProtocol {
                 example: json!({
                     "type": "purge_queue"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_queue_attributes".to_string(),
@@ -194,7 +200,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "get_queue_attributes",
                     "attribute_names": ["ApproximateNumberOfMessages", "QueueArn"]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -203,7 +209,7 @@ impl Protocol for SqsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -223,7 +229,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "send_message",
                     "message_body": "Processed successfully"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "delete_message".to_string(),
@@ -238,7 +244,7 @@ impl Protocol for SqsClientProtocol {
                     "type": "delete_message",
                     "receipt_handle": "AQEBwJnKyrHigUMZj6rY..."
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -247,9 +253,21 @@ impl Protocol for SqsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("sqs_connected", "Triggered when SQS client connects to queue", json!({"type": "placeholder", "event_id": "sqs_connected"})),
-            EventType::new("sqs_message_received", "Triggered when messages are received from queue", json!({"type": "placeholder", "event_id": "sqs_message_received"})),
-            EventType::new("sqs_message_sent", "Triggered when message is successfully sent", json!({"type": "placeholder", "event_id": "sqs_message_sent"})),
+            EventType::new(
+                "sqs_connected",
+                "Triggered when SQS client connects to queue",
+                json!({"type": "placeholder", "event_id": "sqs_connected"}),
+            ),
+            EventType::new(
+                "sqs_message_received",
+                "Triggered when messages are received from queue",
+                json!({"type": "placeholder", "event_id": "sqs_message_received"}),
+            ),
+            EventType::new(
+                "sqs_message_sent",
+                "Triggered when message is successfully sent",
+                json!({"type": "placeholder", "event_id": "sqs_message_sent"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

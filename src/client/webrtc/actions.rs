@@ -274,7 +274,7 @@ impl Protocol for WebRtcClientProtocol {
                     "type": "send_message",
                     "message": "Reply message"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -283,7 +283,7 @@ impl Protocol for WebRtcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -292,7 +292,7 @@ impl Protocol for WebRtcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -303,10 +303,26 @@ impl Protocol for WebRtcClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webrtc_connected", "Triggered when WebRTC data channel opens (deprecated)", json!({"type": "placeholder", "event_id": "webrtc_connected"})),
-            EventType::new("webrtc_channel_opened", "Triggered when a WebRTC data channel opens", json!({"type": "placeholder", "event_id": "webrtc_channel_opened"})),
-            EventType::new("webrtc_message_received", "Triggered when a message is received", json!({"type": "placeholder", "event_id": "webrtc_message_received"})),
-            EventType::new("webrtc_signaling_connected", "Triggered when connected to signaling server (WebSocket mode)", json!({"type": "placeholder", "event_id": "webrtc_signaling_connected"})),
+            EventType::new(
+                "webrtc_connected",
+                "Triggered when WebRTC data channel opens (deprecated)",
+                json!({"type": "placeholder", "event_id": "webrtc_connected"}),
+            ),
+            EventType::new(
+                "webrtc_channel_opened",
+                "Triggered when a WebRTC data channel opens",
+                json!({"type": "placeholder", "event_id": "webrtc_channel_opened"}),
+            ),
+            EventType::new(
+                "webrtc_message_received",
+                "Triggered when a message is received",
+                json!({"type": "placeholder", "event_id": "webrtc_message_received"}),
+            ),
+            EventType::new(
+                "webrtc_signaling_connected",
+                "Triggered when connected to signaling server (WebSocket mode)",
+                json!({"type": "placeholder", "event_id": "webrtc_signaling_connected"}),
+            ),
         ]
     }
 
@@ -331,12 +347,8 @@ impl Protocol for WebRtcClientProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("webrtc-rs for data channels with WebSocket signaling support")
-            .llm_control(
-                "Full control over data channels, signaling, and binary/text messaging",
-            )
-            .e2e_testing(
-                "Manual SDP exchange or WebSocket signaling with local/remote peers",
-            )
+            .llm_control("Full control over data channels, signaling, and binary/text messaging")
+            .e2e_testing("Manual SDP exchange or WebSocket signaling with local/remote peers")
             .build()
     }
 

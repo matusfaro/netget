@@ -78,35 +78,34 @@ async fn test_xmlrpc_simple_method() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'add' that takes two integers and returns their sum.";
 
     // Start the server
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("xmlrpc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "XML-RPC",
-                        "instruction": "Implement add method"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Method call received (xmlrpc_method_call event)
-                .on_event("xmlrpc_method_call")
-                .and_event_data_contains("method_name", "add")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "xmlrpc_success_response",
-                        "value_type": "int",
-                        "value": 8
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("xmlrpc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "XML-RPC",
+                    "instruction": "Implement add method"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Method call received (xmlrpc_method_call event)
+            .on_event("xmlrpc_method_call")
+            .and_event_data_contains("method_name", "add")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "xmlrpc_success_response",
+                    "value_type": "int",
+                    "value": 8
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!(
@@ -165,32 +164,30 @@ async fn test_xmlrpc_introspection_list_methods() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement these methods: add, subtract, multiply. Also support system.listMethods introspection.";
 
     // Start the server
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("xmlrpc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "XML-RPC",
-                        "instruction": "Implement add, subtract, multiply methods with introspection"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                .on_event("xmlrpc_method_call")
-                .and_event_data_contains("method_name", "system.listMethods")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "xmlrpc_list_methods_response",
-                        "methods": ["add", "subtract", "multiply", "system.listMethods"]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("listen on port")
+            .and_instruction_containing("xmlrpc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "XML-RPC",
+                    "instruction": "Implement add, subtract, multiply methods with introspection"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("xmlrpc_method_call")
+            .and_event_data_contains("method_name", "system.listMethods")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "xmlrpc_list_methods_response",
+                    "methods": ["add", "subtract", "multiply", "system.listMethods"]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -232,33 +229,31 @@ async fn test_xmlrpc_fault_response() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'greet'. For unknown methods, return fault code -32601 with message 'Method not found'.";
 
     // Start the server
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("xmlrpc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "XML-RPC",
-                        "instruction": "Implement greet method, fault for unknown"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                .on_event("xmlrpc_method_call")
-                .and_event_data_contains("method_name", "nonExistentMethod")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "xmlrpc_fault_response",
-                        "fault_code": -32601,
-                        "fault_string": "Method not found"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("listen on port")
+            .and_instruction_containing("xmlrpc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "XML-RPC",
+                    "instruction": "Implement greet method, fault for unknown"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("xmlrpc_method_call")
+            .and_event_data_contains("method_name", "nonExistentMethod")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "xmlrpc_fault_response",
+                    "fault_code": -32601,
+                    "fault_string": "Method not found"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

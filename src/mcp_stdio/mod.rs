@@ -54,7 +54,11 @@ pub async fn run_mcp_http(args: &Args, settings: Settings, port: u16) -> Result<
     let shared_state = tools::NetGetMcpService::create_shared_state(args, settings).await?;
 
     let service = StreamableHttpService::new(
-        move || Ok(tools::NetGetMcpService::new_with_shared_state(shared_state.clone())),
+        move || {
+            Ok(tools::NetGetMcpService::new_with_shared_state(
+                shared_state.clone(),
+            ))
+        },
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );

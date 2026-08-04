@@ -13,15 +13,18 @@ use std::sync::LazyLock;
 
 /// Beacon started event
 pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("beacon_started", "BLE beacon advertising started", json!({"type": "placeholder", "event_id": "beacon_started"})).with_parameters(vec![
-        Parameter {
-            name: "beacon_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "Type of beacon (ibeacon, eddystone-uid, eddystone-url, eddystone-tlm)"
-                .to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "beacon_started",
+        "BLE beacon advertising started",
+        json!({"type": "placeholder", "event_id": "beacon_started"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "beacon_type".to_string(),
+        type_hint: "string".to_string(),
+        description: "Type of beacon (ibeacon, eddystone-uid, eddystone-url, eddystone-tlm)"
+            .to_string(),
+        required: true,
+    }])
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE beacon started: {beacon_type}")
@@ -32,7 +35,12 @@ pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Beacon stopped event
 pub static BEACON_STOPPED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("beacon_stopped", "BLE beacon advertising stopped", json!({"type": "placeholder", "event_id": "beacon_stopped"})).with_parameters(vec![])
+    EventType::new(
+        "beacon_stopped",
+        "BLE beacon advertising stopped",
+        json!({"type": "placeholder", "event_id": "beacon_stopped"}),
+    )
+    .with_parameters(vec![])
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE beacon stopped")
@@ -285,7 +293,9 @@ fn advertise_eddystone_uid_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> BLE Eddystone-UID: {namespace}/{instance}")
-                .with_debug("BLE advertise_eddystone_uid: namespace={namespace}, instance={instance}"),
+                .with_debug(
+                    "BLE advertise_eddystone_uid: namespace={namespace}, instance={instance}",
+                ),
         ),
     }
 }

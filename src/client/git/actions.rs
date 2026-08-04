@@ -18,7 +18,7 @@ pub static GIT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Git client initialized and ready for operations",
         json!({
             "type": "git_status"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "repository_path".to_string(),
@@ -36,7 +36,7 @@ pub static GIT_OPERATION_COMPLETED_EVENT: LazyLock<EventType> = LazyLock::new(||
         json!({
             "type": "git_log",
             "max_count": 5
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -61,24 +61,22 @@ pub static GIT_OPERATION_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Git operation encountered an error",
         json!({
             "type": "git_status"
-        })
+        }),
     )
-    .with_parameters(
-        vec![
-            Parameter {
-                name: "operation".to_string(),
-                type_hint: "string".to_string(),
-                description: "Type of operation that failed".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "error".to_string(),
-                type_hint: "string".to_string(),
-                description: "Error message".to_string(),
-                required: true,
-            },
-        ],
-    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "Type of operation that failed".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "error".to_string(),
+            type_hint: "string".to_string(),
+            description: "Error message".to_string(),
+            required: true,
+        },
+    ])
 });
 
 /// Git client protocol action handler
@@ -393,9 +391,21 @@ impl Protocol for GitClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("git_connected", "Triggered when Git client is initialized", json!({"type": "placeholder", "event_id": "git_connected"})),
-            EventType::new("git_operation_completed", "Triggered when a Git operation completes successfully", json!({"type": "placeholder", "event_id": "git_operation_completed"})),
-            EventType::new("git_operation_error", "Triggered when a Git operation fails", json!({"type": "placeholder", "event_id": "git_operation_error"})),
+            EventType::new(
+                "git_connected",
+                "Triggered when Git client is initialized",
+                json!({"type": "placeholder", "event_id": "git_connected"}),
+            ),
+            EventType::new(
+                "git_operation_completed",
+                "Triggered when a Git operation completes successfully",
+                json!({"type": "placeholder", "event_id": "git_operation_completed"}),
+            ),
+            EventType::new(
+                "git_operation_error",
+                "Triggered when a Git operation fails",
+                json!({"type": "placeholder", "event_id": "git_operation_error"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

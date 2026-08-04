@@ -431,7 +431,10 @@ impl Http3Server {
         let all_data = {
             let mut streams_lock = streams.lock().await;
             let Some(stream_data) = streams_lock.get_mut(&stream_id) else {
-                debug!("Stream {} closed before its data could be processed", stream_id);
+                debug!(
+                    "Stream {} closed before its data could be processed",
+                    stream_id
+                );
                 return;
             };
             stream_data.state = StreamState::Processing;

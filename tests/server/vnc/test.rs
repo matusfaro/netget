@@ -210,21 +210,19 @@ async fn test_vnc_handshake() -> E2EResult<()> {
         "listen on port {AVAILABLE_PORT} via vnc. Accept all connections without authentication. \
         Use 800x600 framebuffer.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "VNC",
-                        "instruction": "VNC server 800x600 framebuffer"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("vnc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "VNC",
+                    "instruction": "VNC server 800x600 framebuffer"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the server
     let mut server = helpers::start_netget_server(config).await?;
@@ -245,7 +243,6 @@ async fn test_vnc_handshake() -> E2EResult<()> {
     assert_eq!(height, 600, "Expected 600 height");
     println!("✓ VNC connection initialized");
 
-
     // Verify mocks
     server.verify_mocks().await?;
     server.stop().await?;
@@ -264,21 +261,19 @@ async fn test_vnc_framebuffer_update() -> E2EResult<()> {
         Use 640x480 framebuffer. When client requests framebuffer update, \
         send a test pattern.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "VNC",
-                        "instruction": "VNC server 640x480 framebuffer with test pattern"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("vnc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "VNC",
+                    "instruction": "VNC server 640x480 framebuffer with test pattern"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the server
     let mut server = helpers::start_netget_server(config).await?;
@@ -327,7 +322,6 @@ async fn test_vnc_framebuffer_update() -> E2EResult<()> {
         }
     }
 
-
     // Verify mocks
     server.verify_mocks().await?;
     server.stop().await?;
@@ -345,21 +339,19 @@ async fn test_vnc_input_events() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via vnc. Accept all connections. \
         Log keyboard and mouse events from the client.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "VNC",
-                        "instruction": "VNC server with input logging"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("vnc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "VNC",
+                    "instruction": "VNC server with input logging"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the server
     let mut server = helpers::start_netget_server(config).await?;
@@ -414,7 +406,6 @@ async fn test_vnc_input_events() -> E2EResult<()> {
     } else {
         println!("Note: Server did not log pointer events (may not be implemented yet)");
     }
-
 
     // Verify mocks
     server.verify_mocks().await?;

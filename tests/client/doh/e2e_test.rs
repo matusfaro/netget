@@ -13,38 +13,37 @@ mod doh_client_tests {
     #[tokio::test]
     async fn test_doh_client_local_server_a_query() -> E2EResult<()> {
         // Start a local DoH server with mocks
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("DoH")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DoH",
-                        "instruction": "DoH server for client testing"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server receives query for example.com
-                .on_event("doh_query")
-                .and_event_data_contains("domain", "example.com")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_a_response",
-                        "domain": "example.com",
-                        "ip": "93.184.216.34",
-                        "ttl": 300
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries.")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_instruction_containing("Listen")
+                        .and_instruction_containing("DoH")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "DoH",
+                                "instruction": "DoH server for client testing"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server receives query for example.com
+                        .on_event("doh_query")
+                        .and_event_data_contains("domain", "example.com")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "send_dns_a_response",
+                                "domain": "example.com",
+                                "ip": "93.184.216.34",
+                                "ttl": 300
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -124,39 +123,38 @@ mod doh_client_tests {
     #[tokio::test]
     async fn test_doh_client_local_server_aaaa_query() -> E2EResult<()> {
         // Start a local DoH server with mocks
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("DoH")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DoH",
-                        "instruction": "DoH server for AAAA testing"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server receives AAAA query
-                .on_event("doh_query")
-                .and_event_data_contains("domain", "example.com")
-                .and_event_data_contains("query_type", "AAAA")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_aaaa_response",
-                        "domain": "example.com",
-                        "ip": "2001:db8::1",
-                        "ttl": 300
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries.")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_instruction_containing("Listen")
+                        .and_instruction_containing("DoH")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "DoH",
+                                "instruction": "DoH server for AAAA testing"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server receives AAAA query
+                        .on_event("doh_query")
+                        .and_event_data_contains("domain", "example.com")
+                        .and_event_data_contains("query_type", "AAAA")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "send_dns_aaaa_response",
+                                "domain": "example.com",
+                                "ip": "2001:db8::1",
+                                "ttl": 300
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -235,51 +233,50 @@ mod doh_client_tests {
     #[tokio::test]
     async fn test_doh_client_multiple_queries() -> E2EResult<()> {
         // Start a local DoH server with mocks
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("DoH")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DoH",
-                        "instruction": "DoH server for multi-query testing"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server receives first query (example.com)
-                .on_event("doh_query")
-                .and_event_data_contains("domain", "example.com")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_a_response",
-                        "domain": "example.com",
-                        "ip": "93.184.216.34",
-                        "ttl": 300
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Server receives second query (example.org)
-                .on_event("doh_query")
-                .and_event_data_contains("domain", "example.org")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_a_response",
-                        "domain": "example.org",
-                        "ip": "93.184.216.35",
-                        "ttl": 300
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries.")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_instruction_containing("Listen")
+                        .and_instruction_containing("DoH")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "DoH",
+                                "instruction": "DoH server for multi-query testing"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server receives first query (example.com)
+                        .on_event("doh_query")
+                        .and_event_data_contains("domain", "example.com")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "send_dns_a_response",
+                                "domain": "example.com",
+                                "ip": "93.184.216.34",
+                                "ttl": 300
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 3: Server receives second query (example.org)
+                        .on_event("doh_query")
+                        .and_event_data_contains("domain", "example.org")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "send_dns_a_response",
+                                "domain": "example.org",
+                                "ip": "93.184.216.35",
+                                "ttl": 300
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -370,40 +367,39 @@ mod doh_client_tests {
     #[tokio::test]
     async fn test_doh_client_mx_record_query() -> E2EResult<()> {
         // Start a local DoH server with mocks
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("DoH")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DoH",
-                        "instruction": "DoH server for MX record testing"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server receives MX query
-                .on_event("doh_query")
-                .and_event_data_contains("domain", "example.com")
-                .and_event_data_contains("query_type", "MX")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_mx_response",
-                        "domain": "example.com",
-                        "mail_server": "mail.example.com",
-                        "priority": 10,
-                        "ttl": 300
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries.")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_instruction_containing("Listen")
+                        .and_instruction_containing("DoH")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "DoH",
+                                "instruction": "DoH server for MX record testing"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server receives MX query
+                        .on_event("doh_query")
+                        .and_event_data_contains("domain", "example.com")
+                        .and_event_data_contains("query_type", "MX")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "send_dns_mx_response",
+                                "domain": "example.com",
+                                "mail_server": "mail.example.com",
+                                "priority": 10,
+                                "ttl": 300
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 

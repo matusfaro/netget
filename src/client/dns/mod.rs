@@ -89,7 +89,10 @@ impl DnsClient {
             let status_tx = conversation_tx;
 
             let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
-                debug!("DNS client {} has no instruction; nothing to drive", client_id);
+                debug!(
+                    "DNS client {} has no instruction; nothing to drive",
+                    client_id
+                );
                 return;
             };
 

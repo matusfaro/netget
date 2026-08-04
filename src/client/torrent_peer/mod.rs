@@ -11,8 +11,8 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
-use crate::client::torrent_peer::actions::{PEER_HANDSHAKE_EVENT, PEER_MESSAGE_EVENT};
 use crate::client::llm_budget::call_llm_for_client;
+use crate::client::torrent_peer::actions::{PEER_HANDSHAKE_EVENT, PEER_MESSAGE_EVENT};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

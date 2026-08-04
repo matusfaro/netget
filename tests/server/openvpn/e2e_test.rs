@@ -103,8 +103,7 @@ async fn test_openvpn_server_startup() -> E2EResult<()> {
 
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("Start an")
+            mock.on_instruction_containing("Start an")
                 .and_instruction_containing("OpenVPN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -153,8 +152,7 @@ async fn test_openvpn_handshake_with_client() -> E2EResult<()> {
 
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("Start an")
+            mock.on_instruction_containing("Start an")
                 .and_instruction_containing("OpenVPN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -275,8 +273,7 @@ async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
 
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("Start an")
+            mock.on_instruction_containing("Start an")
                 .and_instruction_containing("OpenVPN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -323,8 +320,7 @@ async fn test_openvpn_manual_handshake_v2() -> E2EResult<()> {
 
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("Start an")
+            mock.on_instruction_containing("Start an")
                 .and_instruction_containing("OpenVPN")
                 .respond_with_actions(serde_json::json!([
                     {

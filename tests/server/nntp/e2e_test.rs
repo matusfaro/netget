@@ -5,21 +5,25 @@
 
 #![cfg(all(test, feature = "nntp"))]
 
-use crate::helpers::{start_netget_server, NetGetConfig, E2EResult};
+use crate::helpers::{start_netget_server, E2EResult, NetGetConfig};
 
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 /// Helper to read NNTP response line
-async fn read_response_line(reader: &mut BufReader<tokio::io::ReadHalf<TcpStream>>) -> std::io::Result<String> {
+async fn read_response_line(
+    reader: &mut BufReader<tokio::io::ReadHalf<TcpStream>>,
+) -> std::io::Result<String> {
     let mut line = String::new();
     reader.read_line(&mut line).await?;
     Ok(line)
 }
 
 /// Helper to read multi-line NNTP response (until ".\r\n")
-async fn read_multiline_response(reader: &mut BufReader<tokio::io::ReadHalf<TcpStream>>) -> std::io::Result<Vec<String>> {
+async fn read_multiline_response(
+    reader: &mut BufReader<tokio::io::ReadHalf<TcpStream>>,
+) -> std::io::Result<Vec<String>> {
     let mut lines = Vec::new();
     loop {
         let mut line = String::new();
@@ -119,10 +123,8 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     let mut reader = BufReader::new(read_half);
 
     // Read greeting
-    let greeting = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let greeting =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
     assert!(
         greeting.starts_with("200") || greeting.starts_with("201"),
         "Expected 200/201 greeting, got: {}",
@@ -133,10 +135,8 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     write_half.write_all(b"LIST\r\n").await?;
     write_half.flush().await?;
 
-    let list_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let list_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
     assert!(
         list_response.starts_with("215"),
         "Expected 215 list follows, got: {}",
@@ -145,8 +145,9 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
 
     let newsgroups = tokio::time::timeout(
         Duration::from_secs(10),
-        read_multiline_response(&mut reader)
-    ).await??;
+        read_multiline_response(&mut reader),
+    )
+    .await??;
     assert!(
         newsgroups.len() >= 3,
         "Expected at least 3 newsgroups, got: {}",
@@ -172,10 +173,8 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     write_half.write_all(b"GROUP comp.lang.rust\r\n").await?;
     write_half.flush().await?;
 
-    let group_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let group_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
     assert!(
         group_response.starts_with("211"),
         "Expected 211 group selected, got: {}",
@@ -191,10 +190,8 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     write_half.write_all(b"ARTICLE 1\r\n").await?;
     write_half.flush().await?;
 
-    let article_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let article_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
     assert!(
         article_response.starts_with("220"),
         "Expected 220 article follows, got: {}",
@@ -203,8 +200,9 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
 
     let article_lines = tokio::time::timeout(
         Duration::from_secs(10),
-        read_multiline_response(&mut reader)
-    ).await??;
+        read_multiline_response(&mut reader),
+    )
+    .await??;
     let article_text = article_lines.join("");
 
     // Verify article has headers
@@ -218,10 +216,8 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     write_half.write_all(b"QUIT\r\n").await?;
     write_half.flush().await?;
 
-    let quit_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let quit_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
     assert!(
         quit_response.starts_with("205") || quit_response.starts_with("200"),
         "Expected 205 goodbye, got: {}",
@@ -308,27 +304,21 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
     let mut reader = BufReader::new(read_half);
 
     // Read greeting
-    let _greeting = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let _greeting =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
 
     // Select group
     write_half.write_all(b"GROUP comp.test\r\n").await?;
     write_half.flush().await?;
-    let _group_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let _group_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
 
     // Test XOVER command
     write_half.write_all(b"XOVER 1-5\r\n").await?;
     write_half.flush().await?;
 
-    let xover_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let xover_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
     assert!(
         xover_response.starts_with("224"),
         "Expected 224 overview follows, got: {}",
@@ -337,8 +327,9 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
 
     let overview_lines = tokio::time::timeout(
         Duration::from_secs(10),
-        read_multiline_response(&mut reader)
-    ).await??;
+        read_multiline_response(&mut reader),
+    )
+    .await??;
     assert!(
         overview_lines.len() >= 1,
         "Expected at least 1 article in overview, got: {}",
@@ -356,10 +347,8 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
     // Send QUIT
     write_half.write_all(b"QUIT\r\n").await?;
     write_half.flush().await?;
-    let _quit_response = tokio::time::timeout(
-        Duration::from_secs(10),
-        read_response_line(&mut reader)
-    ).await??;
+    let _quit_response =
+        tokio::time::timeout(Duration::from_secs(10), read_response_line(&mut reader)).await??;
 
     server.verify_mocks().await?;
     server.stop().await?;

@@ -18,21 +18,19 @@ async fn test_webdav_server_start() -> E2EResult<()> {
     // PROMPT: Basic WebDAV server
     let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. Provide a virtual filesystem with directory /documents";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("webdav")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebDAV",
-                        "instruction": "WebDAV server with /documents directory"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("webdav")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "WebDAV",
+                    "instruction": "WebDAV server with /documents directory"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the WebDAV server
     let mut server = helpers::start_netget_server(config).await?;
@@ -62,21 +60,19 @@ async fn test_webdav_propfind() -> E2EResult<()> {
     // PROMPT: WebDAV server with file listings
     let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. For PROPFIND requests on /, return directory listing showing 'documents' folder";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("webdav")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebDAV",
-                        "instruction": "WebDAV server with directory listings"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("webdav")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "WebDAV",
+                    "instruction": "WebDAV server with directory listings"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the WebDAV server
     let mut server = helpers::start_netget_server(config).await?;
@@ -119,21 +115,19 @@ async fn test_webdav_put_file() -> E2EResult<()> {
     // PROMPT: WebDAV server with file creation
     let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. Accept PUT requests to create files. Return status 201 Created";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("webdav")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebDAV",
-                        "instruction": "WebDAV server accepting PUT requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("webdav")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "WebDAV",
+                    "instruction": "WebDAV server accepting PUT requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the WebDAV server
     let mut server = helpers::start_netget_server(config).await?;
@@ -173,21 +167,19 @@ async fn test_webdav_mkcol() -> E2EResult<()> {
     // PROMPT: WebDAV server with directory creation
     let prompt = "listen on port {AVAILABLE_PORT} using webdav stack. Accept MKCOL requests to create directories. Return status 201 Created";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("webdav")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebDAV",
-                        "instruction": "WebDAV server accepting MKCOL requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("webdav")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "WebDAV",
+                    "instruction": "WebDAV server accepting MKCOL requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the WebDAV server
     let mut server = helpers::start_netget_server(config).await?;

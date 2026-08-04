@@ -125,7 +125,11 @@ async fn test_ftp_user_pass() -> E2EResult<()> {
 
     // Read USER response
     let mut user_response = String::new();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut user_response)).await
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        reader.read_line(&mut user_response),
+    )
+    .await
     {
         Ok(Ok(n)) if n > 0 => {
             println!("USER response: {}", user_response.trim());
@@ -143,7 +147,11 @@ async fn test_ftp_user_pass() -> E2EResult<()> {
 
     // Read PASS response
     let mut pass_response = String::new();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut pass_response)).await
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        reader.read_line(&mut pass_response),
+    )
+    .await
     {
         Ok(Ok(n)) if n > 0 => {
             println!("PASS response: {}", pass_response.trim());
@@ -225,7 +233,11 @@ async fn test_ftp_pwd_quit() -> E2EResult<()> {
 
     // Read QUIT response
     let mut quit_response = String::new();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut quit_response)).await
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        reader.read_line(&mut quit_response),
+    )
+    .await
     {
         Ok(Ok(n)) if n > 0 => {
             println!("QUIT response: {}", quit_response.trim());

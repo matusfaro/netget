@@ -159,7 +159,7 @@ impl Protocol for XmppClientProtocol {
                     "to": "friend@example.com",
                     "body": "Hello from NetGet!"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_presence".to_string(),
@@ -183,7 +183,7 @@ impl Protocol for XmppClientProtocol {
                     "show": "away",
                     "status": "Out for lunch"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -192,7 +192,7 @@ impl Protocol for XmppClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -221,7 +221,7 @@ impl Protocol for XmppClientProtocol {
                     "to": "friend@example.com",
                     "body": "Thanks for your message!"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -230,7 +230,7 @@ impl Protocol for XmppClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -239,9 +239,21 @@ impl Protocol for XmppClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("xmpp_connected", "Triggered when XMPP client connects and authenticates", json!({"type": "placeholder", "event_id": "xmpp_connected"})),
-            EventType::new("xmpp_message_received", "Triggered when XMPP message is received", json!({"type": "placeholder", "event_id": "xmpp_message_received"})),
-            EventType::new("xmpp_presence_received", "Triggered when presence update is received", json!({"type": "placeholder", "event_id": "xmpp_presence_received"})),
+            EventType::new(
+                "xmpp_connected",
+                "Triggered when XMPP client connects and authenticates",
+                json!({"type": "placeholder", "event_id": "xmpp_connected"}),
+            ),
+            EventType::new(
+                "xmpp_message_received",
+                "Triggered when XMPP message is received",
+                json!({"type": "placeholder", "event_id": "xmpp_message_received"}),
+            ),
+            EventType::new(
+                "xmpp_presence_received",
+                "Triggered when presence update is received",
+                json!({"type": "placeholder", "event_id": "xmpp_presence_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

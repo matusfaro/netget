@@ -65,10 +65,7 @@ mod usb_keyboard_e2e {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify server is running
-        assert!(
-            server.is_running(),
-            "USB keyboard server should be running"
-        );
+        assert!(server.is_running(), "USB keyboard server should be running");
 
         println!("✅ USB keyboard server started and ready for attachment");
 
@@ -134,36 +131,35 @@ mod usb_keyboard_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_keyboard_key_combo() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB keyboard. Press Ctrl+C when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB keyboard")
-                .and_instruction_containing("Ctrl+C")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Keyboard",
-                        "instruction": "Press Ctrl+C when attached"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached, press Ctrl+C
-                .on_event("usb_keyboard_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "press_key",
-                        "key": "c",
-                        "modifiers": ["ctrl"]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Create a USB keyboard. Press Ctrl+C when attached.".to_string())
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_instruction_containing("USB keyboard")
+                        .and_instruction_containing("Ctrl+C")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "USB-Keyboard",
+                                "instruction": "Press Ctrl+C when attached"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Device attached, press Ctrl+C
+                        .on_event("usb_keyboard_attached")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "press_key",
+                                "key": "c",
+                                "modifiers": ["ctrl"]
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -183,44 +179,43 @@ mod usb_keyboard_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_keyboard_led_status() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB keyboard. Report LED status changes.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB keyboard")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Keyboard",
-                        "instruction": "Report LED status changes"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached
-                .on_event("usb_keyboard_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: LED status changed (Caps Lock ON)
-                .on_event("usb_keyboard_led_status")
-                .and_event_data_contains("caps_lock", "true")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "show_message",
-                        "message": "Caps Lock is now ON"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Create a USB keyboard. Report LED status changes.".to_string())
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_instruction_containing("USB keyboard")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "USB-Keyboard",
+                                "instruction": "Report LED status changes"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Device attached
+                        .on_event("usb_keyboard_attached")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "wait_for_more"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 3: LED status changed (Caps Lock ON)
+                        .on_event("usb_keyboard_led_status")
+                        .and_event_data_contains("caps_lock", "true")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "show_message",
+                                "message": "Caps Lock is now ON"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -240,36 +235,37 @@ mod usb_keyboard_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_keyboard_release_all() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB keyboard. Type 'test' then release all keys when attached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB keyboard")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Keyboard",
-                                "instruction": "Type test then release all keys"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Device attached, type and release
-                        .on_event("usb_keyboard_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "type_text",
-                                "text": "test"
-                            },
-                            {
-                                "type": "release_all_keys"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Create a USB keyboard. Type 'test' then release all keys when attached.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("USB keyboard")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "USB-Keyboard",
+                        "instruction": "Type test then release all keys"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Device attached, type and release
+                .on_event("usb_keyboard_attached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "type_text",
+                        "text": "test"
+                    },
+                    {
+                        "type": "release_all_keys"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 

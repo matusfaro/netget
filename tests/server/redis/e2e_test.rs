@@ -14,7 +14,7 @@ mod redis_server_tests {
     async fn test_redis_ping_with_mocks() -> E2EResult<()> {
         // Start a Redis server with mocks
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Redis. Respond to PING with PONG."
+            "Listen on port {AVAILABLE_PORT} via Redis. Respond to PING with PONG.",
         )
         .with_mock(|mock| {
             mock
@@ -82,7 +82,7 @@ mod redis_server_tests {
     async fn test_redis_get_set_with_mocks() -> E2EResult<()> {
         // Start a Redis server
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Redis. Handle GET and SET commands."
+            "Listen on port {AVAILABLE_PORT} via Redis. Handle GET and SET commands.",
         )
         .with_mock(|mock| {
             mock
@@ -165,7 +165,7 @@ mod redis_server_tests {
     async fn test_redis_integer_response_with_mocks() -> E2EResult<()> {
         // Start a Redis server
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Redis. Handle INCR command returning integer."
+            "Listen on port {AVAILABLE_PORT} via Redis. Handle INCR command returning integer.",
         )
         .with_mock(|mock| {
             mock
@@ -233,7 +233,7 @@ mod redis_server_tests {
     async fn test_redis_array_response_with_mocks() -> E2EResult<()> {
         // Start a Redis server
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Redis. Handle KEYS command returning array."
+            "Listen on port {AVAILABLE_PORT} via Redis. Handle KEYS command returning array.",
         )
         .with_mock(|mock| {
             mock
@@ -279,7 +279,8 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Test KEYS command (returns array)
-        let keys: Vec<String> = with_client_timeout(redis::cmd("KEYS").arg("*").query_async(&mut con)).await?;
+        let keys: Vec<String> =
+            with_client_timeout(redis::cmd("KEYS").arg("*").query_async(&mut con)).await?;
         assert!(!keys.is_empty(), "Expected at least one key");
 
         println!("✅ Redis server returned array response with mocks");
@@ -301,7 +302,7 @@ mod redis_server_tests {
     async fn test_redis_null_response_with_mocks() -> E2EResult<()> {
         // Start a Redis server
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Redis. Return null for non-existent keys."
+            "Listen on port {AVAILABLE_PORT} via Redis. Return null for non-existent keys.",
         )
         .with_mock(|mock| {
             mock
@@ -368,7 +369,7 @@ mod redis_server_tests {
     async fn test_redis_error_response_with_mocks() -> E2EResult<()> {
         // Start a Redis server
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Redis. Return error for invalid commands."
+            "Listen on port {AVAILABLE_PORT} via Redis. Return error for invalid commands.",
         )
         .with_mock(|mock| {
             mock

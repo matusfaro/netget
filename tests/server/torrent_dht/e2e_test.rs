@@ -127,8 +127,7 @@ async fn test_dht_queries() -> E2EResult<()> {
         );
         query.insert(b"a".to_vec(), serde_bencode::value::Value::Dict(args));
 
-        let query_bytes =
-            serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(query))?;
+        let query_bytes = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(query))?;
 
         println!("[Ping] Sending query ({} bytes)", query_bytes.len());
         socket.send_to(&query_bytes, &dht_addr).await?;
@@ -188,8 +187,7 @@ async fn test_dht_queries() -> E2EResult<()> {
         );
         query.insert(b"a".to_vec(), serde_bencode::value::Value::Dict(args));
 
-        let query_bytes =
-            serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(query))?;
+        let query_bytes = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(query))?;
 
         println!("[FindNode] Sending query ({} bytes)", query_bytes.len());
         socket.send_to(&query_bytes, &dht_addr).await?;
@@ -263,8 +261,7 @@ async fn test_dht_queries() -> E2EResult<()> {
         );
         query.insert(b"a".to_vec(), serde_bencode::value::Value::Dict(args));
 
-        let query_bytes =
-            serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(query))?;
+        let query_bytes = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(query))?;
 
         println!("[GetPeers] Sending query ({} bytes)", query_bytes.len());
         socket.send_to(&query_bytes, &dht_addr).await?;

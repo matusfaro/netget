@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "bluetooth-ble-beacon"))]
 
-use crate::helpers::{self, E2EResult, NetGetConfig, with_timeout};
+use crate::helpers::{self, with_timeout, E2EResult, NetGetConfig};
 use std::time::Duration;
 
 /// Test iBeacon advertising startup

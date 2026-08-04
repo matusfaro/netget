@@ -78,34 +78,35 @@ mod usb_mouse_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_move_relative() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB mouse. Move cursor 50 pixels right when attached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mouse")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Mouse",
-                                "instruction": "Move 50 pixels right when attached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Move relative
-                        .on_event("usb_mouse_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "move_relative",
-                                "dx": 50,
-                                "dy": 0
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Create a USB mouse. Move cursor 50 pixels right when attached.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("USB mouse")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "USB-Mouse",
+                        "instruction": "Move 50 pixels right when attached"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Move relative
+                .on_event("usb_mouse_attached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "move_relative",
+                        "dx": 50,
+                        "dy": 0
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -169,33 +170,34 @@ mod usb_mouse_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_scroll() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB mouse. Scroll down 3 clicks when attached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mouse")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Mouse",
-                                "instruction": "Scroll down 3 clicks when attached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Scroll
-                        .on_event("usb_mouse_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "scroll",
-                                "amount": -3
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Create a USB mouse. Scroll down 3 clicks when attached.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("USB mouse")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "USB-Mouse",
+                        "instruction": "Scroll down 3 clicks when attached"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Scroll
+                .on_event("usb_mouse_attached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "scroll",
+                        "amount": -3
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -214,36 +216,37 @@ mod usb_mouse_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_drag() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB mouse. Drag from (0,0) to (100,100) when attached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mouse")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Mouse",
-                                "instruction": "Drag from (0,0) to (100,100) when attached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Drag
-                        .on_event("usb_mouse_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "drag",
-                                "start_x": 0,
-                                "start_y": 0,
-                                "end_x": 100,
-                                "end_y": 100
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Create a USB mouse. Drag from (0,0) to (100,100) when attached.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("USB mouse")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "USB-Mouse",
+                        "instruction": "Drag from (0,0) to (100,100) when attached"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Drag
+                .on_event("usb_mouse_attached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "drag",
+                        "start_x": 0,
+                        "start_y": 0,
+                        "end_x": 100,
+                        "end_y": 100
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 

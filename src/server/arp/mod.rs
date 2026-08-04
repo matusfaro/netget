@@ -89,9 +89,8 @@ impl ArpServer {
         let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
             let open_captures = || -> Result<(Capture<pcap::Active>, Capture<pcap::Active>)> {
-                let device = Self::find_device(&interface_clone).with_context(|| {
-                    format!("no such capture device '{}'", interface_clone)
-                })?;
+                let device = Self::find_device(&interface_clone)
+                    .with_context(|| format!("no such capture device '{}'", interface_clone))?;
 
                 // Open capture for receiving
                 let mut cap_rx = Capture::from_device(device.clone())
@@ -115,7 +114,10 @@ impl ArpServer {
                     .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
                     .and_then(|c| c.open())
                     .with_context(|| {
-                        format!("failed to open pcap injection handle on '{}'", interface_clone)
+                        format!(
+                            "failed to open pcap injection handle on '{}'",
+                            interface_clone
+                        )
                     })?;
 
                 Ok((cap_rx, cap_tx))

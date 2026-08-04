@@ -83,7 +83,7 @@ impl Protocol for WhoisClientProtocol {
                     "type": "query_whois",
                     "query": "example.com"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -92,7 +92,7 @@ impl Protocol for WhoisClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -106,8 +106,16 @@ impl Protocol for WhoisClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("whois_connected", "Triggered when WHOIS client connects to server", json!({"type": "placeholder", "event_id": "whois_connected"})),
-            EventType::new("whois_response_received", "Triggered when WHOIS client receives a response", json!({"type": "placeholder", "event_id": "whois_response_received"})),
+            EventType::new(
+                "whois_connected",
+                "Triggered when WHOIS client connects to server",
+                json!({"type": "placeholder", "event_id": "whois_connected"}),
+            ),
+            EventType::new(
+                "whois_response_received",
+                "Triggered when WHOIS client receives a response",
+                json!({"type": "placeholder", "event_id": "whois_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

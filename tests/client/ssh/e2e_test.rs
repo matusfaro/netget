@@ -55,7 +55,8 @@ mod ssh_client_tests {
         // Verify client shows authentication success
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("authenticated")) || output.iter().any(|l| l.contains("connected")),
+            output.iter().any(|l| l.contains("authenticated"))
+                || output.iter().any(|l| l.contains("connected")),
             "Client should show authentication success. Output: {:?}",
             output
         );
@@ -197,7 +198,8 @@ mod ssh_client_tests {
         // Verify client shows disconnection
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("disconnect")) || output.iter().any(|l| l.contains("CONNECTED")),
+            output.iter().any(|l| l.contains("disconnect"))
+                || output.iter().any(|l| l.contains("CONNECTED")),
             "Client should show connection and disconnection. Output: {:?}",
             output
         );

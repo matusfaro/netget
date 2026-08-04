@@ -19,7 +19,7 @@ pub static NPM_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "get_package_info",
             "package_name": "express"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "registry_url".to_string(),
@@ -37,7 +37,7 @@ pub static NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
         json!({
             "type": "search_packages",
             "query": "express middleware"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -81,7 +81,7 @@ pub static NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT: LazyLock<EventType> = LazyL
         json!({
             "type": "get_package_info",
             "package_name": "express"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -150,7 +150,7 @@ impl Protocol for NpmClientProtocol {
                     "package_name": "express",
                     "version": "latest"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "search_packages".to_string(),
@@ -174,7 +174,7 @@ impl Protocol for NpmClientProtocol {
                     "query": "http server",
                     "limit": 10
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "download_tarball".to_string(),
@@ -205,7 +205,7 @@ impl Protocol for NpmClientProtocol {
                     "version": "4.17.21",
                     "output_path": "./lodash.tgz"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -214,7 +214,7 @@ impl Protocol for NpmClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -242,7 +242,7 @@ impl Protocol for NpmClientProtocol {
                     "type": "get_package_info",
                     "package_name": "express"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "search_packages".to_string(),
@@ -257,7 +257,7 @@ impl Protocol for NpmClientProtocol {
                     "type": "search_packages",
                     "query": "express middleware"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -266,9 +266,21 @@ impl Protocol for NpmClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("npm_connected", "Triggered when NPM Registry client is initialized", json!({"type": "placeholder", "event_id": "npm_connected"})),
-            EventType::new("npm_package_info_received", "Triggered when package information is received", json!({"type": "placeholder", "event_id": "npm_package_info_received"})),
-            EventType::new("npm_search_results_received", "Triggered when search results are received", json!({"type": "placeholder", "event_id": "npm_search_results_received"})),
+            EventType::new(
+                "npm_connected",
+                "Triggered when NPM Registry client is initialized",
+                json!({"type": "placeholder", "event_id": "npm_connected"}),
+            ),
+            EventType::new(
+                "npm_package_info_received",
+                "Triggered when package information is received",
+                json!({"type": "placeholder", "event_id": "npm_package_info_received"}),
+            ),
+            EventType::new(
+                "npm_search_results_received",
+                "Triggered when search results are received",
+                json!({"type": "placeholder", "event_id": "npm_search_results_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

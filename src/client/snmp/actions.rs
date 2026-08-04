@@ -19,7 +19,7 @@ pub static SNMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_snmp_get",
             "oids": ["1.3.6.1.2.1.1.3.0"]
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -37,7 +37,7 @@ pub static SNMP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
         json!({
             "type": "send_snmp_getnext",
             "oids": ["1.3.6.1.2.1.1.1.0"]
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -89,7 +89,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_get",
                     "oids": ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_getnext".to_string(),
@@ -104,7 +104,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_getnext",
                     "oids": ["1.3.6.1.2.1.1"]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_getbulk".to_string(),
@@ -139,7 +139,7 @@ impl Protocol for SnmpClientProtocol {
                     "non_repeaters": 0,
                     "max_repetitions": 10
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_set".to_string(),
@@ -156,7 +156,7 @@ impl Protocol for SnmpClientProtocol {
                         {"oid": "1.3.6.1.2.1.1.5.0", "type": "string", "value": "new-hostname"}
                     ]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -165,7 +165,7 @@ impl Protocol for SnmpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -184,7 +184,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_get",
                     "oids": ["1.3.6.1.2.1.1.3.0"]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_snmp_getnext".to_string(),
@@ -199,7 +199,7 @@ impl Protocol for SnmpClientProtocol {
                     "type": "send_snmp_getnext",
                     "oids": ["1.3.6.1.2.1.1.1.0"]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -208,7 +208,7 @@ impl Protocol for SnmpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -217,8 +217,16 @@ impl Protocol for SnmpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("snmp_connected", "Triggered when SNMP client connects to agent", json!({"type": "placeholder", "event_id": "snmp_connected"})),
-            EventType::new("snmp_response_received", "Triggered when SNMP client receives a response", json!({"type": "placeholder", "event_id": "snmp_response_received"})),
+            EventType::new(
+                "snmp_connected",
+                "Triggered when SNMP client connects to agent",
+                json!({"type": "placeholder", "event_id": "snmp_connected"}),
+            ),
+            EventType::new(
+                "snmp_response_received",
+                "Triggered when SNMP client receives a response",
+                json!({"type": "placeholder", "event_id": "snmp_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

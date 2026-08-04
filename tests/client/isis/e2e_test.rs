@@ -14,7 +14,7 @@
 #![cfg(all(test, feature = "isis"))]
 
 use crate::helpers::netget::start_netget;
-use crate::helpers::{NetGetConfig, E2EResult};
+use crate::helpers::{E2EResult, NetGetConfig};
 use std::time::Duration;
 
 /// Test IS-IS client startup and interface capture
@@ -26,23 +26,22 @@ async fn test_isis_client_startup() -> E2EResult<()> {
 
     let prompt = "Connect to interface lo0 via IS-IS. Capture and analyze IS-IS PDUs.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Client startup (user command)
-                .on_instruction_containing("interface")
-                .and_instruction_containing("IS-IS")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "lo0",  // For ISIS, this is the interface name
-                        "protocol": "IS-IS",
-                        "instruction": "Capture IS-IS PDUs and analyze topology"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Client startup (user command)
+            .on_instruction_containing("interface")
+            .and_instruction_containing("IS-IS")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "lo0",  // For ISIS, this is the interface name
+                    "protocol": "IS-IS",
+                    "instruction": "Capture IS-IS PDUs and analyze topology"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut instance = start_netget(config).await?;
 
@@ -51,8 +50,14 @@ async fn test_isis_client_startup() -> E2EResult<()> {
 
     // Verify client was started
     assert_eq!(instance.clients.len(), 1, "Should have 1 client");
-    assert_eq!(instance.clients[0].protocol, "IS-IS", "Should be IS-IS protocol");
-    assert_eq!(instance.clients[0].remote_addr, "lo0", "Should be capturing on lo0");
+    assert_eq!(
+        instance.clients[0].protocol, "IS-IS",
+        "Should be IS-IS protocol"
+    );
+    assert_eq!(
+        instance.clients[0].remote_addr, "lo0",
+        "Should be capturing on lo0"
+    );
 
     println!("  [TEST] ✓ IS-IS client started successfully");
 
@@ -71,33 +76,32 @@ async fn test_isis_client_capture_hello() -> E2EResult<()> {
 
     let prompt = "Connect to interface veth1 via IS-IS. When you capture a Hello PDU, analyze it and report the neighbor's system ID.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                .on_instruction_containing("veth1")
-                .and_instruction_containing("IS-IS")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "veth1",
-                        "protocol": "IS-IS",
-                        "instruction": "Analyze IS-IS Hello PDUs"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: PDU received event
-                .on_event("isis_pdu_received")
-                .and_event_data_contains("pdu_type", "L2 LAN Hello")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("veth1")
+            .and_instruction_containing("IS-IS")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "veth1",
+                    "protocol": "IS-IS",
+                    "instruction": "Analyze IS-IS Hello PDUs"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: PDU received event
+            .on_event("isis_pdu_received")
+            .and_event_data_contains("pdu_type", "L2 LAN Hello")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut instance = start_netget(config).await?;
 
@@ -141,56 +145,52 @@ async fn test_isis_client_server_interaction() -> E2EResult<()> {
     // Server configuration
     let server_prompt = "Start an IS-IS router on interface veth0 with system-id 0000.0000.0001 in area 49.0001. Send periodic Hello PDUs.";
 
-    let server_config = NetGetConfig::new(server_prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("IS-IS router")
-                .and_instruction_containing("veth0")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
+    let server_config = NetGetConfig::new(server_prompt).with_mock(|mock| {
+        mock.on_instruction_containing("IS-IS router")
+            .and_instruction_containing("veth0")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "interface": "veth0",
+                    "protocol": "IS-IS",
+                    "instruction": "IS-IS router sending Hello PDUs",
+                    "startup_params": {
                         "interface": "veth0",
-                        "protocol": "IS-IS",
-                        "instruction": "IS-IS router sending Hello PDUs",
-                        "startup_params": {
-                            "interface": "veth0",
-                            "system_id": "0000.0000.0001",
-                            "area_id": "49.0001",
-                            "level": "level-2"
-                        }
+                        "system_id": "0000.0000.0001",
+                        "area_id": "49.0001",
+                        "level": "level-2"
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Client configuration
     let client_prompt = "Connect to interface veth1 via IS-IS. Capture IS-IS PDUs and identify all routers in the network.";
 
-    let client_config = NetGetConfig::new(client_prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("veth1")
-                .and_instruction_containing("IS-IS")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "veth1",
-                        "protocol": "IS-IS",
-                        "instruction": "Analyze IS-IS topology"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                .on_event("isis_pdu_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let client_config = NetGetConfig::new(client_prompt).with_mock(|mock| {
+        mock.on_instruction_containing("veth1")
+            .and_instruction_containing("IS-IS")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "veth1",
+                    "protocol": "IS-IS",
+                    "instruction": "Analyze IS-IS topology"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("isis_pdu_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     println!("\n  [TEST] Starting server on veth0...");
     let mut server = start_netget(server_config).await?;
@@ -227,46 +227,45 @@ async fn test_isis_client_multiple_pdu_types() -> E2EResult<()> {
 
     let prompt = "Connect to interface veth1 via IS-IS. Capture and analyze all types of IS-IS PDUs: Hello, LSP, CSNP, PSNP.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                .on_instruction_containing("interface veth1")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "veth1",
-                        "protocol": "IS-IS",
-                        "instruction": "Analyze all IS-IS PDU types"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: L2 LAN Hello
-                .on_event("isis_pdu_received")
-                .and_event_data_contains("pdu_type", "L2 LAN Hello")
-                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: L2 LSP
-                .on_event("isis_pdu_received")
-                .and_event_data_contains("pdu_type", "L2 LSP")
-                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: L2 CSNP
-                .on_event("isis_pdu_received")
-                .and_event_data_contains("pdu_type", "L2 CSNP")
-                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: L2 PSNP
-                .on_event("isis_pdu_received")
-                .and_event_data_contains("pdu_type", "L2 PSNP")
-                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("interface veth1")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "veth1",
+                    "protocol": "IS-IS",
+                    "instruction": "Analyze all IS-IS PDU types"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: L2 LAN Hello
+            .on_event("isis_pdu_received")
+            .and_event_data_contains("pdu_type", "L2 LAN Hello")
+            .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: L2 LSP
+            .on_event("isis_pdu_received")
+            .and_event_data_contains("pdu_type", "L2 LSP")
+            .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: L2 CSNP
+            .on_event("isis_pdu_received")
+            .and_event_data_contains("pdu_type", "L2 CSNP")
+            .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: L2 PSNP
+            .on_event("isis_pdu_received")
+            .and_event_data_contains("pdu_type", "L2 PSNP")
+            .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut instance = start_netget(config).await?;
 

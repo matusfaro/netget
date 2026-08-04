@@ -309,8 +309,9 @@ pub async fn start_server_from_action(
         Some(params_json) => {
             let schema = protocol_impl.get_startup_parameters();
             Some(
-                crate::protocol::StartupParams::new(params_json, schema)
-                    .map_err(|e| anyhow::anyhow!("Invalid startup_params for {}: {}", protocol, e))?,
+                crate::protocol::StartupParams::new(params_json, schema).map_err(|e| {
+                    anyhow::anyhow!("Invalid startup_params for {}: {}", protocol, e)
+                })?,
             )
         }
         None => None,

@@ -56,8 +56,12 @@ mod tls_client_tests {
         let server_cert_pem = server_cert.pem();
         let server_key_pem = server_key_pair.serialize_pem();
 
-        let server_cert_path = temp_dir.join(format!("netget_test_server_cert_{}.pem", std::process::id()));
-        let server_key_path = temp_dir.join(format!("netget_test_server_key_{}.pem", std::process::id()));
+        let server_cert_path = temp_dir.join(format!(
+            "netget_test_server_cert_{}.pem",
+            std::process::id()
+        ));
+        let server_key_path =
+            temp_dir.join(format!("netget_test_server_key_{}.pem", std::process::id()));
 
         fs::write(&server_cert_path, server_cert_pem)?;
         fs::write(&server_key_path, server_key_pem)?;
@@ -109,7 +113,10 @@ mod tls_client_tests {
 
         // Wait for TLS server to be listening
         server
-            .wait_for_pattern("TLS server (action-based) listening on", Duration::from_secs(5))
+            .wait_for_pattern(
+                "TLS server (action-based) listening on",
+                Duration::from_secs(5),
+            )
             .await?;
 
         // Now start a TLS client that connects to this server with mocks
@@ -154,9 +161,9 @@ mod tls_client_tests {
         client
             .wait_for_patterns(
                 &[
-                    "TLS handshake complete",           // TLS handshake succeeded
-                    patterns::TLS_CLIENT_CONNECTED,     // Client connected
-                    patterns::TLS_CLIENT_SENT,          // Client sent HELLO_TLS
+                    "TLS handshake complete",       // TLS handshake succeeded
+                    patterns::TLS_CLIENT_CONNECTED, // Client connected
+                    patterns::TLS_CLIENT_SENT,      // Client sent HELLO_TLS
                 ],
                 Duration::from_secs(10), // Longer timeout for TLS handshake
             )
@@ -228,7 +235,10 @@ mod tls_client_tests {
 
         // Wait for TLS server to be listening
         server
-            .wait_for_pattern("TLS server (action-based) listening on", Duration::from_secs(5))
+            .wait_for_pattern(
+                "TLS server (action-based) listening on",
+                Duration::from_secs(5),
+            )
             .await?;
 
         // Connect with TLS client using custom CA certificate (proper validation)
@@ -275,9 +285,9 @@ mod tls_client_tests {
         client
             .wait_for_patterns(
                 &[
-                    "TLS handshake complete",           // TLS handshake succeeded
-                    patterns::TLS_CLIENT_CONNECTED,     // Client connected
-                    patterns::TLS_CLIENT_SENT,          // Client sent HELLO_VALIDATED
+                    "TLS handshake complete",       // TLS handshake succeeded
+                    patterns::TLS_CLIENT_CONNECTED, // Client connected
+                    patterns::TLS_CLIENT_SENT,      // Client sent HELLO_VALIDATED
                 ],
                 Duration::from_secs(10),
             )
@@ -312,26 +322,28 @@ mod tls_client_tests {
         // Start a TLS server with self-signed certificate
         let server_config =
             NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TLS. Log connections.")
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("TLS")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "TLS",
-                            "instruction": "Log connections"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                .with_mock(|mock| {
+                    mock.on_instruction_containing("TLS")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "TLS",
+                                "instruction": "Log connections"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let server = start_netget_server(server_config).await?;
 
         // Wait for server listening
         server
-            .wait_for_pattern("TLS server (action-based) listening on", Duration::from_secs(5))
+            .wait_for_pattern(
+                "TLS server (action-based) listening on",
+                Duration::from_secs(5),
+            )
             .await?;
 
         // Try to connect with certificate validation enabled (should fail)
@@ -340,8 +352,7 @@ mod tls_client_tests {
             server.port
         ))
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("TLS")
+            mock.on_instruction_containing("TLS")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_client",

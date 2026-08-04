@@ -104,22 +104,21 @@ async fn test_smb_negotiate() -> E2EResult<()> {
                  Accept all guest connections without password. \
                  Provide a virtual filesystem with /documents directory containing welcome.txt";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup (use on_any since instruction extraction is unreliable)
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup (use on_any since instruction extraction is unreliable)
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -131,7 +130,7 @@ async fn test_smb_negotiate() -> E2EResult<()> {
     println!("  [TEST] Connecting to {}", addr);
 
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?; // Increased for debugging
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     // Send SMB2 Negotiate
@@ -176,29 +175,28 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8446. \
                  Allow guest authentication without credentials.";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: SMB operation events (session_setup) - MUST come before on_any()
-                .on_event("smb_operation")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "smb_auth_success"}
-                ]))
-                .expect_at_least(1)
-                .and()
-                // Mock 2: Server startup (user command) - Catch-all for other LLM calls
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: SMB operation events (session_setup) - MUST come before on_any()
+            .on_event("smb_operation")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_auth_success"}
+            ]))
+            .expect_at_least(1)
+            .and()
+            // Mock 2: Server startup (user command) - Catch-all for other LLM calls
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -208,7 +206,7 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     println!("  [TEST] Connecting to {}", addr);
 
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?; // Increased for debugging
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     // Send SMB2 Negotiate
@@ -265,23 +263,21 @@ async fn test_smb_concurrent_connections() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8447. \
                  Handle multiple concurrent client connections.";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup
-                .on_any()  // Changed from on_instruction_containing since instruction extraction is unreliable
-                
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup
+            .on_any() // Changed from on_instruction_containing since instruction extraction is unreliable
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -350,21 +346,19 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8448. \
                  Respond to all SMB2 requests with appropriate messages.";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_any()  // Changed from on_instruction_containing since instruction extraction is unreliable
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_any() // Changed from on_instruction_containing since instruction extraction is unreliable
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -378,7 +372,7 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
         Ok(mut stream) => {
             println!("  [TEST] ✓ TCP connection established");
 
-            stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
+            stream.set_read_timeout(Some(Duration::from_secs(30)))?; // Increased for debugging
             stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
             // Send negotiate
@@ -435,22 +429,19 @@ async fn test_smb_correct_stack() -> E2EResult<()> {
 
     let prompt = "Start an SMB file server on port 8449 via smb.";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_any()  // Changed from on_instruction_containing since instruction extraction is unreliable
-                
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_any() // Changed from on_instruction_containing since instruction extraction is unreliable
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -480,29 +471,28 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
                  Allow user 'alice' by responding with smb_auth_success. \
                  For all other users, respond with smb_auth_deny.";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: SMB operation events - MUST come before on_any()
-                .on_event("smb_operation")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "wait_for_more"}  // Deny auth
-                ]))
-                .expect_at_least(1)
-                .and()
-                // Mock 2: Server startup - Catch-all
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: SMB operation events - MUST come before on_any()
+            .on_event("smb_operation")
+            .respond_with_actions(serde_json::json!([
+                {"type": "wait_for_more"}  // Deny auth
+            ]))
+            .expect_at_least(1)
+            .and()
+            // Mock 2: Server startup - Catch-all
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -513,7 +503,7 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
 
     // Test 1: Try to connect (Negotiate + Session Setup for guest)
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?; // Increased for debugging
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     // Send Negotiate
@@ -572,22 +562,19 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
 
     let prompt = "Start an SMB file server on port 8451 via smb.";
 
-    let config = crate::helpers::NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_any()  // Changed from on_instruction_containing since instruction extraction is unreliable
-                
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SMB",
-                        "instruction": prompt
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_any() // Changed from on_instruction_containing since instruction extraction is unreliable
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": prompt
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -597,7 +584,7 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
 
     // Make a connection
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?; // Increased for debugging
 
     // Send negotiate to establish connection
     let negotiate = build_smb2_negotiate();

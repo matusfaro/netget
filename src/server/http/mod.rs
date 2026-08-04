@@ -403,13 +403,22 @@ async fn handle_http_request_with_llm_actions(
         for pair in qs.split('&') {
             if let Some((key, value)) = pair.split_once('=') {
                 // URL decode the key and value
-                let decoded_key = urlencoding::decode(key).unwrap_or(std::borrow::Cow::Borrowed(key));
-                let decoded_value = urlencoding::decode(value).unwrap_or(std::borrow::Cow::Borrowed(value));
-                params.insert(decoded_key.to_string(), serde_json::Value::String(decoded_value.to_string()));
+                let decoded_key =
+                    urlencoding::decode(key).unwrap_or(std::borrow::Cow::Borrowed(key));
+                let decoded_value =
+                    urlencoding::decode(value).unwrap_or(std::borrow::Cow::Borrowed(value));
+                params.insert(
+                    decoded_key.to_string(),
+                    serde_json::Value::String(decoded_value.to_string()),
+                );
             } else {
                 // Handle keys without values
-                let decoded_key = urlencoding::decode(pair).unwrap_or(std::borrow::Cow::Borrowed(pair));
-                params.insert(decoded_key.to_string(), serde_json::Value::String(String::new()));
+                let decoded_key =
+                    urlencoding::decode(pair).unwrap_or(std::borrow::Cow::Borrowed(pair));
+                params.insert(
+                    decoded_key.to_string(),
+                    serde_json::Value::String(String::new()),
+                );
             }
         }
         serde_json::Value::Object(params)

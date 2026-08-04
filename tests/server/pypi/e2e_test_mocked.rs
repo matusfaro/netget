@@ -63,7 +63,7 @@ mod pypi_server_tests {
                     .arg("5")
                     .arg(&url)
                     .output()
-            })
+            }),
         )
         .await
         .map_err(|_| "curl timeout")?
@@ -73,7 +73,10 @@ mod pypi_server_tests {
         // Wait for server to fully process the request
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ PyPI server served package index with mocks (response: {} bytes)", output.stdout.len());
+        println!(
+            "✅ PyPI server served package index with mocks (response: {} bytes)",
+            output.stdout.len()
+        );
 
         // Add timeout to mock verification to prevent indefinite hanging
         tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
@@ -142,7 +145,7 @@ mod pypi_server_tests {
                     .arg("5")
                     .arg(&url)
                     .output()
-            })
+            }),
         )
         .await
         .map_err(|_| "curl timeout")?
@@ -152,7 +155,10 @@ mod pypi_server_tests {
         // Wait for server to fully process the request
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ PyPI server served package page with mocks (response: {} bytes)", output.stdout.len());
+        println!(
+            "✅ PyPI server served package page with mocks (response: {} bytes)",
+            output.stdout.len()
+        );
 
         // Add timeout to mock verification to prevent indefinite hanging
         tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
@@ -172,7 +178,7 @@ mod pypi_server_tests {
     async fn test_pypi_package_not_found_with_mocks() -> E2EResult<()> {
         // Start a PyPI server
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via pypi. Return 404 for non-existent packages."
+            "Listen on port {AVAILABLE_PORT} via pypi. Return 404 for non-existent packages.",
         )
         .with_mock(|mock| {
             mock
@@ -208,7 +214,10 @@ mod pypi_server_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Make HTTP request to trigger pypi_request event
-        let url = format!("http://127.0.0.1:{}/simple/nonexistent-package/", server.port);
+        let url = format!(
+            "http://127.0.0.1:{}/simple/nonexistent-package/",
+            server.port
+        );
         let output = tokio::time::timeout(
             Duration::from_secs(10),
             tokio::task::spawn_blocking(move || {
@@ -218,7 +227,7 @@ mod pypi_server_tests {
                     .arg("5")
                     .arg(&url)
                     .output()
-            })
+            }),
         )
         .await
         .map_err(|_| "curl timeout")?
@@ -228,7 +237,10 @@ mod pypi_server_tests {
         // Wait for server to fully process the request
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ PyPI server returned 404 for non-existent package with mocks (response: {} bytes)", output.stdout.len());
+        println!(
+            "✅ PyPI server returned 404 for non-existent package with mocks (response: {} bytes)",
+            output.stdout.len()
+        );
 
         // Add timeout to mock verification to prevent indefinite hanging
         tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())

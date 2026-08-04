@@ -98,7 +98,10 @@ impl IpsecServer {
         server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        info!("Starting IPSec/IKEv2 parse-and-log honeypot on {}", bind_addr);
+        info!(
+            "Starting IPSec/IKEv2 parse-and-log honeypot on {}",
+            bind_addr
+        );
         let _ = status_tx.send(format!(
             "[INFO] Starting IPSec/IKEv2 honeypot on {} (parses and logs IKE, never replies)",
             bind_addr
@@ -397,12 +400,9 @@ impl IpsecServer {
         // honeypot still transmits nothing.
         let protocol = IpsecProtocol::new();
         match call_llm(
-            llm_client,
-            app_state,
-            server_id,
+            llm_client, app_state, server_id,
             None, // IKE is connectionless; no per-connection state is tracked
-            &event,
-            &protocol,
+            &event, &protocol,
         )
         .await
         {

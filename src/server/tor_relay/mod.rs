@@ -759,7 +759,11 @@ impl TorRelaySession {
             .create_directory_stream(circuit_id, stream_id)
             .await?;
 
-        info!("Directory stream {} ready on circuit {}", stream_id.as_u16(), circuit_id.as_u32());
+        info!(
+            "Directory stream {} ready on circuit {}",
+            stream_id.as_u16(),
+            circuit_id.as_u32()
+        );
 
         // Build CONNECTED response (same as normal stream)
         let connected_cell = build_relay_cell(
@@ -818,8 +822,14 @@ impl TorRelaySession {
         }
 
         // Check if this is a directory stream (BEGIN_DIR)
-        if self.circuit_manager.is_directory_stream(circuit_id, stream_id).await? {
-            return self.handle_directory_data(circuit_id, stream_id, data).await;
+        if self
+            .circuit_manager
+            .is_directory_stream(circuit_id, stream_id)
+            .await?
+        {
+            return self
+                .handle_directory_data(circuit_id, stream_id, data)
+                .await;
         }
 
         // Get TCP connection for this stream
@@ -913,10 +923,16 @@ impl TorRelaySession {
                 b"HTTP/1.0 404 Not Found\r\n\r\n".to_vec()
             };
 
-            info!("Serving {} response ({} bytes) for directory path: {}",
-                  if path.contains("consensus") { "consensus" } else { "404" },
-                  consensus.len(),
-                  path);
+            info!(
+                "Serving {} response ({} bytes) for directory path: {}",
+                if path.contains("consensus") {
+                    "consensus"
+                } else {
+                    "404"
+                },
+                consensus.len(),
+                path
+            );
 
             // Send response as DATA cells
             self.send_directory_response(circuit_id, stream_id, &consensus)

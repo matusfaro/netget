@@ -10,12 +10,12 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use urlencoding;
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::openidconnect::actions::{
     OIDC_CLIENT_DISCOVERED_EVENT, OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
     OIDC_CLIENT_USERINFO_RECEIVED_EVENT,
 };
 use crate::console_error;
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

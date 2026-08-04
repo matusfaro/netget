@@ -113,14 +113,17 @@ pub static TURN_CLIENT_PERMISSION_CREATED_EVENT: LazyLock<EventType> = LazyLock:
 
 /// TURN client allocation refreshed event
 pub static TURN_CLIENT_REFRESHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("turn_refreshed", "TURN allocation lifetime extended", json!({"type": "placeholder", "event_id": "turn_refreshed"})).with_parameters(vec![
-        Parameter {
-            name: "lifetime_seconds".to_string(),
-            type_hint: "number".to_string(),
-            description: "New lifetime in seconds".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "turn_refreshed",
+        "TURN allocation lifetime extended",
+        json!({"type": "placeholder", "event_id": "turn_refreshed"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "lifetime_seconds".to_string(),
+        type_hint: "number".to_string(),
+        description: "New lifetime in seconds".to_string(),
+        required: true,
+    }])
 });
 
 /// TURN client protocol action handler
@@ -149,7 +152,7 @@ impl Protocol for TurnClientProtocol {
                     "type": "allocate_turn_relay",
                     "lifetime_seconds": 600
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "create_permission".to_string(),
@@ -166,7 +169,7 @@ impl Protocol for TurnClientProtocol {
                     "type": "create_permission",
                     "peer_address": "192.168.1.100:5000"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_turn_data".to_string(),
@@ -190,7 +193,7 @@ impl Protocol for TurnClientProtocol {
                     "peer_address": "192.168.1.100:5000",
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "refresh_allocation".to_string(),
@@ -205,7 +208,7 @@ impl Protocol for TurnClientProtocol {
                     "type": "refresh_allocation",
                     "lifetime_seconds": 600
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -214,7 +217,7 @@ impl Protocol for TurnClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -243,7 +246,7 @@ impl Protocol for TurnClientProtocol {
                     "peer_address": "192.168.1.100:5000",
                     "data_hex": "48656c6c6f"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -252,7 +255,7 @@ impl Protocol for TurnClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -261,11 +264,31 @@ impl Protocol for TurnClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("turn_connected", "Triggered when TURN client connects to server", json!({"type": "placeholder", "event_id": "turn_connected"})),
-            EventType::new("turn_allocated", "Triggered when relay address is allocated", json!({"type": "placeholder", "event_id": "turn_allocated"})),
-            EventType::new("turn_data_received", "Triggered when data is received from peer via relay", json!({"type": "placeholder", "event_id": "turn_data_received"})),
-            EventType::new("turn_permission_created", "Triggered when permission is created for a peer", json!({"type": "placeholder", "event_id": "turn_permission_created"})),
-            EventType::new("turn_refreshed", "Triggered when allocation is refreshed", json!({"type": "placeholder", "event_id": "turn_refreshed"})),
+            EventType::new(
+                "turn_connected",
+                "Triggered when TURN client connects to server",
+                json!({"type": "placeholder", "event_id": "turn_connected"}),
+            ),
+            EventType::new(
+                "turn_allocated",
+                "Triggered when relay address is allocated",
+                json!({"type": "placeholder", "event_id": "turn_allocated"}),
+            ),
+            EventType::new(
+                "turn_data_received",
+                "Triggered when data is received from peer via relay",
+                json!({"type": "placeholder", "event_id": "turn_data_received"}),
+            ),
+            EventType::new(
+                "turn_permission_created",
+                "Triggered when permission is created for a peer",
+                json!({"type": "placeholder", "event_id": "turn_permission_created"}),
+            ),
+            EventType::new(
+                "turn_refreshed",
+                "Triggered when allocation is refreshed",
+                json!({"type": "placeholder", "event_id": "turn_refreshed"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

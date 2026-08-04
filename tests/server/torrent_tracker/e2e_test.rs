@@ -107,7 +107,10 @@ async fn test_tracker_announce_and_scrape() -> E2EResult<()> {
 
     // Parse bencode response
     let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-    let dict = match value { serde_bencode::value::Value::Dict(d) => d, _ => panic!("Expected Dict") };
+    let dict = match value {
+        serde_bencode::value::Value::Dict(d) => d,
+        _ => panic!("Expected Dict"),
+    };
 
     // Verify interval
     let interval = dict
@@ -152,7 +155,10 @@ async fn test_tracker_announce_and_scrape() -> E2EResult<()> {
 
     // Parse bencode response
     let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-    let dict = match value { serde_bencode::value::Value::Dict(d) => d, _ => panic!("Expected Dict") };
+    let dict = match value {
+        serde_bencode::value::Value::Dict(d) => d,
+        _ => panic!("Expected Dict"),
+    };
 
     // Verify files dictionary exists
     assert!(
@@ -180,7 +186,7 @@ async fn test_tracker_announce_and_scrape() -> E2EResult<()> {
 async fn test_tracker_error_response() -> E2EResult<()> {
     // Start tracker server with mocks
     let server_config = NetGetConfig::new(
-        "Listen on port {AVAILABLE_PORT} via torrent-tracker. Return errors for invalid requests."
+        "Listen on port {AVAILABLE_PORT} via torrent-tracker. Return errors for invalid requests.",
     )
     .with_mock(|mock| {
         mock
@@ -230,7 +236,10 @@ async fn test_tracker_error_response() -> E2EResult<()> {
 
     let body = response.bytes().await?;
     let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-    let dict = match value { serde_bencode::value::Value::Dict(d) => d, _ => panic!("Expected Dict") };
+    let dict = match value {
+        serde_bencode::value::Value::Dict(d) => d,
+        _ => panic!("Expected Dict"),
+    };
 
     // Verify error response
     assert!(

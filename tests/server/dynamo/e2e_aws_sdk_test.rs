@@ -207,7 +207,7 @@ mod tests {
                 .get_item()
                 .table_name("Users")
                 .key("userId", AttributeValue::S("user-123".to_string()))
-                .send()
+                .send(),
         )
         .await;
 
@@ -312,7 +312,7 @@ mod tests {
                 .key("productId", AttributeValue::S("prod-001".to_string()))
                 .update_expression("SET price = :newprice")
                 .expression_attribute_values(":newprice", AttributeValue::N("79.99".to_string()))
-                .send()
+                .send(),
         )
         .await;
 
@@ -411,7 +411,7 @@ mod tests {
                 .delete_item()
                 .table_name("Orders")
                 .key("orderId", AttributeValue::S("order-999".to_string()))
-                .send()
+                .send(),
         )
         .await;
 
@@ -511,7 +511,7 @@ mod tests {
                 .table_name("CustomerOrders")
                 .key_condition_expression("customerId = :cid")
                 .expression_attribute_values(":cid", AttributeValue::S("cust-001".to_string()))
-                .send()
+                .send(),
         )
         .await;
 
@@ -612,10 +612,7 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // Scan with AWS SDK
-        let scan_result = with_aws_sdk_timeout(
-            client.scan().table_name("Inventory").send()
-        )
-        .await;
+        let scan_result = with_aws_sdk_timeout(client.scan().table_name("Inventory").send()).await;
 
         match scan_result {
             Ok(output) => {

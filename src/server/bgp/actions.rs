@@ -305,7 +305,9 @@ pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_log_template(
         LogTemplate::new()
             .with_info("BGP NOTIFICATION code={error_code} subcode={error_subcode}")
-            .with_debug("BGP NOTIFICATION: code={error_code} subcode={error_subcode} from AS{peer_as}")
+            .with_debug(
+                "BGP NOTIFICATION: code={error_code} subcode={error_subcode} from AS{peer_as}",
+            )
             .with_trace("BGP NOTIFICATION: {json_pretty(.)}"),
     )
 });

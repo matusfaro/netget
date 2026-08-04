@@ -167,45 +167,45 @@ mod webdav_client_tests {
             "Connect to http://127.0.0.1:{} via WebDAV and list the root directory using PROPFIND.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("WebDAV")
-                    .and_instruction_containing("PROPFIND")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("http://127.0.0.1:{}", server.port),
-                            "protocol": "WebDAV",
-                            "instruction": "List root directory with PROPFIND"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected - send PROPFIND
-                    .on_event("http_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_request",
-                            "method": "PROPFIND",
-                            "path": "/",
-                            "headers": {"Depth": "1"},
-                            "body": ""
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Client receives response
-                    .on_event("http_response_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("WebDAV")
+                .and_instruction_containing("PROPFIND")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("http://127.0.0.1:{}", server.port),
+                        "protocol": "WebDAV",
+                        "instruction": "List root directory with PROPFIND"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected - send PROPFIND
+                .on_event("http_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_request",
+                        "method": "PROPFIND",
+                        "path": "/",
+                        "headers": {"Depth": "1"},
+                        "body": ""
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response
+                .on_event("http_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 

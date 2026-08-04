@@ -13,14 +13,17 @@ use std::sync::LazyLock;
 
 /// NTP client connected event
 pub static NTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ntp_connected", "NTP client ready to query time servers", json!({"type": "placeholder", "event_id": "ntp_connected"})).with_parameters(vec![
-        Parameter {
-            name: "remote_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "NTP server address".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "ntp_connected",
+        "NTP client ready to query time servers",
+        json!({"type": "placeholder", "event_id": "ntp_connected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "remote_addr".to_string(),
+        type_hint: "string".to_string(),
+        description: "NTP server address".to_string(),
+        required: true,
+    }])
 });
 
 /// NTP client response received event
@@ -90,7 +93,7 @@ impl Protocol for NtpClientProtocol {
                 example: json!({
                     "type": "query_time"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -99,7 +102,7 @@ impl Protocol for NtpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -120,8 +123,16 @@ impl Protocol for NtpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ntp_connected", "Triggered when NTP client is ready", json!({"type": "placeholder", "event_id": "ntp_connected"})),
-            EventType::new("ntp_response_received", "Triggered when NTP response is received", json!({"type": "placeholder", "event_id": "ntp_response_received"})),
+            EventType::new(
+                "ntp_connected",
+                "Triggered when NTP client is ready",
+                json!({"type": "placeholder", "event_id": "ntp_connected"}),
+            ),
+            EventType::new(
+                "ntp_response_received",
+                "Triggered when NTP response is received",
+                json!({"type": "placeholder", "event_id": "ntp_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

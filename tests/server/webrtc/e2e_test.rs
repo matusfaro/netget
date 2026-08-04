@@ -18,28 +18,27 @@ mod webrtc_server_tests {
     /// LLM calls: 1 (server startup)
     #[tokio::test]
     async fn test_webrtc_server_startup_with_mocks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Open WebRTC server for peer-to-peer data channel communication"
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebRTC",
-                        "startup_params": {
-                            "ice_servers": ["stun:stun.l.google.com:19302"],
-                            "signaling_mode": "manual"
-                        },
-                        "instruction": "Accept WebRTC connections and respond to messages"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Open WebRTC server for peer-to-peer data channel communication")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_any()
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "WebRTC",
+                                "startup_params": {
+                                    "ice_servers": ["stun:stun.l.google.com:19302"],
+                                    "signaling_mode": "manual"
+                                },
+                                "instruction": "Accept WebRTC connections and respond to messages"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -59,7 +58,7 @@ mod webrtc_server_tests {
     #[tokio::test]
     async fn test_webrtc_accept_offer_with_mocks() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Open WebRTC server and accept offer from peer-abc123"
+            "Open WebRTC server and accept offer from peer-abc123",
         )
         .with_mock(|mock| {
             mock
@@ -110,49 +109,47 @@ mod webrtc_server_tests {
     /// LLM calls: 3 (server startup + peer connected + message received)
     #[tokio::test]
     async fn test_webrtc_send_message_with_mocks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Open WebRTC server and echo messages back to peers"
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebRTC",
-                        "startup_params": {},
-                        "instruction": "Echo messages back to peers"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Peer connected event
-                .on_event("webrtc_peer_connected")
-                .and_event_data_contains("peer_id", "peer-xyz")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_to_peer",
-                        "peer_id": "peer-xyz",
-                        "message": "Welcome to WebRTC server!"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Message received event
-                .on_event("webrtc_message_received")
-                .and_event_data_contains("peer_id", "peer-xyz")
-                .and_event_data_contains("message", "Hello server!")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_message",
-                        "message": "Echo: Hello server!"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config = NetGetConfig::new("Open WebRTC server and echo messages back to peers")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_any()
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WebRTC",
+                            "startup_params": {},
+                            "instruction": "Echo messages back to peers"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Peer connected event
+                    .on_event("webrtc_peer_connected")
+                    .and_event_data_contains("peer_id", "peer-xyz")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_to_peer",
+                            "peer_id": "peer-xyz",
+                            "message": "Welcome to WebRTC server!"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Message received event
+                    .on_event("webrtc_message_received")
+                    .and_event_data_contains("peer_id", "peer-xyz")
+                    .and_event_data_contains("message", "Hello server!")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_message",
+                            "message": "Echo: Hello server!"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -172,7 +169,7 @@ mod webrtc_server_tests {
     #[tokio::test]
     async fn test_webrtc_multi_peer_with_mocks() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Open WebRTC server for multiple peers and list them"
+            "Open WebRTC server for multiple peers and list them",
         )
         .with_mock(|mock| {
             mock
@@ -230,47 +227,46 @@ mod webrtc_server_tests {
     /// LLM calls: 3 (server startup + peer connected + peer disconnected)
     #[tokio::test]
     async fn test_webrtc_peer_disconnect_with_mocks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Open WebRTC server and handle peer disconnections gracefully"
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WebRTC",
-                        "startup_params": {},
-                        "instruction": "Track peer connections and disconnections"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Peer connected
-                .on_event("webrtc_peer_connected")
-                .and_event_data_contains("peer_id", "peer-test")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_to_peer",
-                        "peer_id": "peer-test",
-                        "message": "Connected"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Peer disconnected
-                .on_event("webrtc_peer_disconnected")
-                .and_event_data_contains("peer_id", "peer-test")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let server_config =
+            NetGetConfig::new("Open WebRTC server and handle peer disconnections gracefully")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Server startup
+                        .on_any()
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "WebRTC",
+                                "startup_params": {},
+                                "instruction": "Track peer connections and disconnections"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Peer connected
+                        .on_event("webrtc_peer_connected")
+                        .and_event_data_contains("peer_id", "peer-test")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "send_to_peer",
+                                "peer_id": "peer-test",
+                                "message": "Connected"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 3: Peer disconnected
+                        .on_event("webrtc_peer_disconnected")
+                        .and_event_data_contains("peer_id", "peer-test")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "wait_for_more"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let mut server = start_netget_server(server_config).await?;
 

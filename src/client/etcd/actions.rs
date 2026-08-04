@@ -19,7 +19,7 @@ pub static ETCD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "etcd_get",
             "key": "/config/database"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -38,7 +38,7 @@ pub static ETCD_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
             "type": "etcd_put",
             "key": "/config/database",
             "value": "postgresql://localhost:5432/mydb"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -82,7 +82,7 @@ impl Protocol for EtcdClientProtocol {
                     "type": "etcd_get",
                     "key": "/config/database"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "etcd_put".to_string(),
@@ -106,7 +106,7 @@ impl Protocol for EtcdClientProtocol {
                     "key": "/config/database",
                     "value": "postgresql://localhost:5432/mydb"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "etcd_delete".to_string(),
@@ -121,7 +121,7 @@ impl Protocol for EtcdClientProtocol {
                     "type": "etcd_delete",
                     "key": "/config/database"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -130,7 +130,7 @@ impl Protocol for EtcdClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -149,7 +149,7 @@ impl Protocol for EtcdClientProtocol {
                     "type": "etcd_get",
                     "key": "/config/database"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "etcd_put".to_string(),
@@ -173,7 +173,7 @@ impl Protocol for EtcdClientProtocol {
                     "key": "/config/database",
                     "value": "postgresql://localhost:5432/mydb"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -182,8 +182,16 @@ impl Protocol for EtcdClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("etcd_connected", "Triggered when etcd client connects to server", json!({"type": "placeholder", "event_id": "etcd_connected"})),
-            EventType::new("etcd_response_received", "Triggered when etcd client receives a response", json!({"type": "placeholder", "event_id": "etcd_response_received"})),
+            EventType::new(
+                "etcd_connected",
+                "Triggered when etcd client connects to server",
+                json!({"type": "placeholder", "event_id": "etcd_connected"}),
+            ),
+            EventType::new(
+                "etcd_response_received",
+                "Triggered when etcd client receives a response",
+                json!({"type": "placeholder", "event_id": "etcd_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

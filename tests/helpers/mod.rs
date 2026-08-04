@@ -22,7 +22,9 @@ pub use common::{
 };
 pub use event_trigger::EventTrigger;
 pub use example_test_framework::{ProtocolExampleTest, TestReport};
-pub use mock_config::{MockLlmConfig, MockResponse, MockRule, ResponseGenerator, SerializedMockRule};
+pub use mock_config::{
+    MockLlmConfig, MockResponse, MockRule, ResponseGenerator, SerializedMockRule,
+};
 pub use mock_matcher::{LlmContext, MockMatcher};
 pub use ollama_test_builder::OllamaTestBuilder;
 pub use server::{start_netget_server, wait_for_server_startup};

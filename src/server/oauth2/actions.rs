@@ -441,7 +441,9 @@ fn oauth2_error_response_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> OAuth2 error {error}")
-                .with_debug("OAuth2 oauth2_error_response: error={error}, description={error_description}"),
+                .with_debug(
+                    "OAuth2 oauth2_error_response: error={error}, description={error_description}",
+                ),
         ),
     }
 }
@@ -452,203 +454,220 @@ fn oauth2_error_response_action() -> ActionDefinition {
 
 /// OAuth2 authorize event - triggered when client requests authorization
 pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_authorize", "OAuth2 authorization request received", json!({"type": "placeholder", "event_id": "oauth2_authorize"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "response_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "Response type (e.g., 'code', 'token')".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "client_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client identifier".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "redirect_uri".to_string(),
-                type_hint: "string".to_string(),
-                description: "Redirection URI".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "scope".to_string(),
-                type_hint: "string".to_string(),
-                description: "Requested scopes".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "state".to_string(),
-                type_hint: "string".to_string(),
-                description: "State parameter for CSRF protection".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            ActionDefinition {
-                name: "oauth2_authorize_response".to_string(),
-                description: "Approve authorization and return code".to_string(),
-                parameters: vec![],
-                example: json!({}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OAuth2 authorize approved")
-                        .with_debug("OAuth2 oauth2_authorize_response"),
-                ),
-            },
-            ActionDefinition {
-                name: "oauth2_error_response".to_string(),
-                description: "Deny authorization with error".to_string(),
-                parameters: vec![],
-                example: json!({}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OAuth2 error")
-                        .with_debug("OAuth2 oauth2_error_response"),
-                ),
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OAuth2 authorize {response_type} from {client_id}")
-                .with_debug("OAuth2 authorize {response_type} from {client_id}, scope={scope}")
-                .with_trace("OAuth2 authorize: {json_pretty(.)}"),
-        )
-});
-
-/// OAuth2 token event - triggered when client requests access token
-pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_token", "OAuth2 token request received", json!({"type": "placeholder", "event_id": "oauth2_token"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "grant_type".to_string(),
-                type_hint: "string".to_string(),
-                description:
-                    "Grant type (authorization_code, refresh_token, password, client_credentials)"
-                        .to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "code".to_string(),
-                type_hint: "string".to_string(),
-                description: "Authorization code (for authorization_code grant)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "redirect_uri".to_string(),
-                type_hint: "string".to_string(),
-                description: "Redirection URI".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "client_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client identifier".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "client_secret".to_string(),
-                type_hint: "string".to_string(),
-                description: "Client secret".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "refresh_token".to_string(),
-                type_hint: "string".to_string(),
-                description: "Refresh token (for refresh_token grant)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "username".to_string(),
-                type_hint: "string".to_string(),
-                description: "Username (for password grant)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "password".to_string(),
-                type_hint: "string".to_string(),
-                description: "Password (for password grant)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "scope".to_string(),
-                type_hint: "string".to_string(),
-                description: "Requested scopes".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            ActionDefinition {
-                name: "oauth2_token_response".to_string(),
-                description: "Issue access token".to_string(),
-                parameters: vec![],
-                example: json!({}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OAuth2 token issued")
-                        .with_debug("OAuth2 oauth2_token_response"),
-                ),
-            },
-            ActionDefinition {
-                name: "oauth2_error_response".to_string(),
-                description: "Deny token request with error".to_string(),
-                parameters: vec![],
-                example: json!({}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OAuth2 token error")
-                        .with_debug("OAuth2 oauth2_error_response"),
-                ),
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("OAuth2 token {grant_type}")
-                .with_debug("OAuth2 token {grant_type}, client={client_id}")
-                .with_trace("OAuth2 token: {json_pretty(.)}"),
-        )
-});
-
-/// OAuth2 introspect event - triggered when token introspection is requested
-pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_introspect", "OAuth2 token introspection request", json!({"type": "placeholder", "event_id": "oauth2_introspect"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "token".to_string(),
-                type_hint: "string".to_string(),
-                description: "Token to introspect".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "token_type_hint".to_string(),
-                type_hint: "string".to_string(),
-                description: "Hint about token type (access_token, refresh_token)".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![ActionDefinition {
-            name: "oauth2_introspect_response".to_string(),
-            description: "Return token introspection result".to_string(),
+    EventType::new(
+        "oauth2_authorize",
+        "OAuth2 authorization request received",
+        json!({"type": "placeholder", "event_id": "oauth2_authorize"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "response_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Response type (e.g., 'code', 'token')".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client identifier".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "redirect_uri".to_string(),
+            type_hint: "string".to_string(),
+            description: "Redirection URI".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "scope".to_string(),
+            type_hint: "string".to_string(),
+            description: "Requested scopes".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "state".to_string(),
+            type_hint: "string".to_string(),
+            description: "State parameter for CSRF protection".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        ActionDefinition {
+            name: "oauth2_authorize_response".to_string(),
+            description: "Approve authorization and return code".to_string(),
             parameters: vec![],
             example: json!({}),
             log_template: Some(
                 LogTemplate::new()
-                    .with_info("-> OAuth2 introspect result")
-                    .with_debug("OAuth2 oauth2_introspect_response"),
+                    .with_info("-> OAuth2 authorize approved")
+                    .with_debug("OAuth2 oauth2_authorize_response"),
             ),
-        }])
-        .with_log_template(
+        },
+        ActionDefinition {
+            name: "oauth2_error_response".to_string(),
+            description: "Deny authorization with error".to_string(),
+            parameters: vec![],
+            example: json!({}),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> OAuth2 error")
+                    .with_debug("OAuth2 oauth2_error_response"),
+            ),
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OAuth2 authorize {response_type} from {client_id}")
+            .with_debug("OAuth2 authorize {response_type} from {client_id}, scope={scope}")
+            .with_trace("OAuth2 authorize: {json_pretty(.)}"),
+    )
+});
+
+/// OAuth2 token event - triggered when client requests access token
+pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "oauth2_token",
+        "OAuth2 token request received",
+        json!({"type": "placeholder", "event_id": "oauth2_token"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "grant_type".to_string(),
+            type_hint: "string".to_string(),
+            description:
+                "Grant type (authorization_code, refresh_token, password, client_credentials)"
+                    .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "code".to_string(),
+            type_hint: "string".to_string(),
+            description: "Authorization code (for authorization_code grant)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "redirect_uri".to_string(),
+            type_hint: "string".to_string(),
+            description: "Redirection URI".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client identifier".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_secret".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client secret".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "refresh_token".to_string(),
+            type_hint: "string".to_string(),
+            description: "Refresh token (for refresh_token grant)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "username".to_string(),
+            type_hint: "string".to_string(),
+            description: "Username (for password grant)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "password".to_string(),
+            type_hint: "string".to_string(),
+            description: "Password (for password grant)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "scope".to_string(),
+            type_hint: "string".to_string(),
+            description: "Requested scopes".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        ActionDefinition {
+            name: "oauth2_token_response".to_string(),
+            description: "Issue access token".to_string(),
+            parameters: vec![],
+            example: json!({}),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> OAuth2 token issued")
+                    .with_debug("OAuth2 oauth2_token_response"),
+            ),
+        },
+        ActionDefinition {
+            name: "oauth2_error_response".to_string(),
+            description: "Deny token request with error".to_string(),
+            parameters: vec![],
+            example: json!({}),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> OAuth2 token error")
+                    .with_debug("OAuth2 oauth2_error_response"),
+            ),
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OAuth2 token {grant_type}")
+            .with_debug("OAuth2 token {grant_type}, client={client_id}")
+            .with_trace("OAuth2 token: {json_pretty(.)}"),
+    )
+});
+
+/// OAuth2 introspect event - triggered when token introspection is requested
+pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "oauth2_introspect",
+        "OAuth2 token introspection request",
+        json!({"type": "placeholder", "event_id": "oauth2_introspect"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "token".to_string(),
+            type_hint: "string".to_string(),
+            description: "Token to introspect".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "token_type_hint".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hint about token type (access_token, refresh_token)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![ActionDefinition {
+        name: "oauth2_introspect_response".to_string(),
+        description: "Return token introspection result".to_string(),
+        parameters: vec![],
+        example: json!({}),
+        log_template: Some(
             LogTemplate::new()
-                .with_info("OAuth2 introspect")
-                .with_debug("OAuth2 introspect, token_type={token_type_hint}")
-                .with_trace("OAuth2 introspect: {json_pretty(.)}"),
-        )
+                .with_info("-> OAuth2 introspect result")
+                .with_debug("OAuth2 oauth2_introspect_response"),
+        ),
+    }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("OAuth2 introspect")
+            .with_debug("OAuth2 introspect, token_type={token_type_hint}")
+            .with_trace("OAuth2 introspect: {json_pretty(.)}"),
+    )
 });
 
 /// OAuth2 revoke event - triggered when token revocation is requested
 pub static OAUTH2_REVOKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_revoke", "OAuth2 token revocation request", json!({"type": "placeholder", "event_id": "oauth2_revoke"})).with_parameters(vec![
+    EventType::new(
+        "oauth2_revoke",
+        "OAuth2 token revocation request",
+        json!({"type": "placeholder", "event_id": "oauth2_revoke"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "token".to_string(),
             type_hint: "string".to_string(),

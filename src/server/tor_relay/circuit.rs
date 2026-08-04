@@ -535,7 +535,9 @@ impl CircuitManager {
         let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         // Create stream with "directory" as target
-        circuit.stream_manager.create_stream(stream_id, "directory".to_string())?;
+        circuit
+            .stream_manager
+            .create_stream(stream_id, "directory".to_string())?;
 
         // Set it as directory stream
         let stream = circuit

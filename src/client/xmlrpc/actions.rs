@@ -152,8 +152,16 @@ impl Protocol for XmlRpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("xmlrpc_connected", "Triggered when XML-RPC client is initialized", json!({"type": "placeholder", "event_id": "xmlrpc_connected"})),
-            EventType::new("xmlrpc_response_received", "Triggered when XML-RPC client receives a response", json!({"type": "placeholder", "event_id": "xmlrpc_response_received"})),
+            EventType::new(
+                "xmlrpc_connected",
+                "Triggered when XML-RPC client is initialized",
+                json!({"type": "placeholder", "event_id": "xmlrpc_connected"}),
+            ),
+            EventType::new(
+                "xmlrpc_response_received",
+                "Triggered when XML-RPC client receives a response",
+                json!({"type": "placeholder", "event_id": "xmlrpc_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

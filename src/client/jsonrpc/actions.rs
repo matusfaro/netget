@@ -110,7 +110,7 @@ impl Protocol for JsonRpcClientProtocol {
                     "params": [5, 3],
                     "id": 1
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_jsonrpc_batch".to_string(),
@@ -128,7 +128,7 @@ impl Protocol for JsonRpcClientProtocol {
                         {"method": "multiply", "params": [3, 4], "id": 2}
                     ]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -137,7 +137,7 @@ impl Protocol for JsonRpcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -178,8 +178,16 @@ impl Protocol for JsonRpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("jsonrpc_connected", "Triggered when JSON-RPC client is initialized", json!({"type": "send_jsonrpc_request", "method": "add", "params": [5, 3], "id": 1})),
-            EventType::new("jsonrpc_response_received", "Triggered when JSON-RPC client receives a response", json!({"type": "send_jsonrpc_request", "method": "getStatus", "id": 2})),
+            EventType::new(
+                "jsonrpc_connected",
+                "Triggered when JSON-RPC client is initialized",
+                json!({"type": "send_jsonrpc_request", "method": "add", "params": [5, 3], "id": 1}),
+            ),
+            EventType::new(
+                "jsonrpc_response_received",
+                "Triggered when JSON-RPC client receives a response",
+                json!({"type": "send_jsonrpc_request", "method": "getStatus", "id": 2}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

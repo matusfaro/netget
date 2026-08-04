@@ -9,10 +9,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::postgresql::actions::{
     POSTGRESQL_CLIENT_CONNECTED_EVENT, POSTGRESQL_CLIENT_QUERY_RESULT_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

@@ -177,9 +177,21 @@ impl Protocol for MdnsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mdns_connected", "Triggered when mDNS client is initialized", json!({"type": "wait_for_more"})),
-            EventType::new("mdns_service_found", "Triggered when an mDNS service is discovered", json!({"type": "wait_for_more"})),
-            EventType::new("mdns_service_resolved", "Triggered when an mDNS service is fully resolved with IP and port", json!({"type": "wait_for_more"})),
+            EventType::new(
+                "mdns_connected",
+                "Triggered when mDNS client is initialized",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "mdns_service_found",
+                "Triggered when an mDNS service is discovered",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "mdns_service_resolved",
+                "Triggered when an mDNS service is fully resolved with IP and port",
+                json!({"type": "wait_for_more"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

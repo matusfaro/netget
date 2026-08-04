@@ -17,40 +17,39 @@ async fn test_ollama_list_models() -> E2EResult<()> {
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server. \
         When clients request GET /api/tags, list available Ollama models from the backend.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open Ollama server
-                .on_instruction_containing("Open Ollama")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "Ollama",
-                        "instruction": "Handle Ollama API requests"
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open Ollama server
+            .on_instruction_containing("Open Ollama")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Ollama",
+                    "instruction": "Handle Ollama API requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Models list request (GET /api/tags)
+            .on_event("ollama_models_request")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_ollama_response",
+                    "body": {
+                        "models": [
+                            {
+                                "name": "qwen2.5-coder:0.5b",
+                                "size": 524288000,
+                                "modified_at": "2024-01-01T00:00:00Z"
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Models list request (GET /api/tags)
-                .on_event("ollama_models_request")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_ollama_response",
-                        "body": {
-                            "models": [
-                                {
-                                    "name": "qwen2.5-coder:0.5b",
-                                    "size": 524288000,
-                                    "modified_at": "2024-01-01T00:00:00Z"
-                                }
-                            ]
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -123,33 +122,32 @@ async fn test_ollama_generate() -> E2EResult<()> {
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server. \
         When clients send POST /api/generate requests, use the backend Ollama to generate responses.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open Ollama server
-                .on_instruction_containing("Open Ollama")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "Ollama",
-                        "instruction": "Handle Ollama generate requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Generate request (POST /api/generate)
-                .on_event("ollama_generate_request")
-                .and_event_data_contains("model", "qwen2.5-coder:0.5b")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "ollama_generate_response",
-                        "response_text": "Hello from NetGet Ollama"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open Ollama server
+            .on_instruction_containing("Open Ollama")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Ollama",
+                    "instruction": "Handle Ollama generate requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Generate request (POST /api/generate)
+            .on_event("ollama_generate_request")
+            .and_event_data_contains("model", "qwen2.5-coder:0.5b")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "ollama_generate_response",
+                    "response_text": "Hello from NetGet Ollama"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -223,33 +221,32 @@ async fn test_ollama_chat() -> E2EResult<()> {
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server. \
         When clients send POST /api/chat requests, use the backend Ollama to generate chat responses.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open Ollama server
-                .on_instruction_containing("Open Ollama")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "Ollama",
-                        "instruction": "Handle Ollama chat requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Chat request (POST /api/chat)
-                .on_event("ollama_chat_request")
-                .and_event_data_contains("model", "qwen2.5-coder:0.5b")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "ollama_chat_response",
-                        "message_content": "NetGet Ollama Chat"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open Ollama server
+            .on_instruction_containing("Open Ollama")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Ollama",
+                    "instruction": "Handle Ollama chat requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Chat request (POST /api/chat)
+            .on_event("ollama_chat_request")
+            .and_event_data_contains("model", "qwen2.5-coder:0.5b")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "ollama_chat_response",
+                    "message_content": "NetGet Ollama Chat"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -331,24 +328,23 @@ async fn test_ollama_invalid_endpoint() -> E2EResult<()> {
 
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open Ollama server
-                .on_instruction_containing("Open Ollama")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "Ollama",
-                        "instruction": "Handle Ollama API server"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Note: Invalid endpoints are handled directly by Ollama server
-                // No LLM call is made, so no mock needed for the 404 response
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open Ollama server
+            .on_instruction_containing("Open Ollama")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Ollama",
+                    "instruction": "Handle Ollama API server"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+        // Note: Invalid endpoints are handled directly by Ollama server
+        // No LLM call is made, so no mock needed for the 404 response
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

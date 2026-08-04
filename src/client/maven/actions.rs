@@ -190,7 +190,7 @@ impl Protocol for MavenClientProtocol {
                     "version": "3.12.0",
                     "packaging": "jar"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "download_pom".to_string(),
@@ -221,7 +221,7 @@ impl Protocol for MavenClientProtocol {
                     "artifact_id": "spring-boot-starter",
                     "version": "2.7.0"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "search_versions".to_string(),
@@ -245,7 +245,7 @@ impl Protocol for MavenClientProtocol {
                     "group_id": "junit",
                     "artifact_id": "junit"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -254,7 +254,7 @@ impl Protocol for MavenClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -296,7 +296,7 @@ impl Protocol for MavenClientProtocol {
                     "artifact_id": "guava",
                     "version": "31.1-jre"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "download_pom".to_string(),
@@ -327,7 +327,7 @@ impl Protocol for MavenClientProtocol {
                     "artifact_id": "commons-collections4",
                     "version": "4.4"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -336,10 +336,26 @@ impl Protocol for MavenClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("maven_connected", "Triggered when Maven client connects to repository", json!({"type": "download_artifact", "group_id": "org.apache.commons", "artifact_id": "commons-lang3", "version": "3.12.0"})),
-            EventType::new("maven_artifact_downloaded", "Triggered when Maven artifact is successfully downloaded", json!({"type": "download_pom", "group_id": "org.apache.commons", "artifact_id": "commons-collections4", "version": "4.4"})),
-            EventType::new("maven_pom_received", "Triggered when POM file is downloaded and received", json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"})),
-            EventType::new("maven_metadata_received", "Triggered when Maven metadata is received", json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"})),
+            EventType::new(
+                "maven_connected",
+                "Triggered when Maven client connects to repository",
+                json!({"type": "download_artifact", "group_id": "org.apache.commons", "artifact_id": "commons-lang3", "version": "3.12.0"}),
+            ),
+            EventType::new(
+                "maven_artifact_downloaded",
+                "Triggered when Maven artifact is successfully downloaded",
+                json!({"type": "download_pom", "group_id": "org.apache.commons", "artifact_id": "commons-collections4", "version": "4.4"}),
+            ),
+            EventType::new(
+                "maven_pom_received",
+                "Triggered when POM file is downloaded and received",
+                json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"}),
+            ),
+            EventType::new(
+                "maven_metadata_received",
+                "Triggered when Maven metadata is received",
+                json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

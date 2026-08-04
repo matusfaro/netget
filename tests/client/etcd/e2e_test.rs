@@ -21,80 +21,81 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_etcd_client_basic_operations() -> E2EResult<()> {
     // Start etcd server with mocks
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via etcd. Handle all KV operations.")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("etcd")
-                .respond_with_actions(json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ETCD",
-                        "instruction": "etcd KV store"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: PUT /test/key1 = value1
-                .on_event("etcd_put_request")
-                .and_event_data_contains("key", "/test/key1")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_put_response",
-                        "revision": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: GET /test/key1
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/test/key1")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [
-                            {
-                                "key": "/test/key1",
-                                "value": "value1",
-                                "create_revision": 1,
-                                "mod_revision": 1,
-                                "version": 1,
-                                "lease": 0
-                            }
-                        ],
-                        "more": false,
-                        "count": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: DELETE /test/key1
-                .on_event("etcd_delete_request")
-                .and_event_data_contains("key", "/test/key1")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_delete_range_response",
-                        "deleted": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: GET /test/key1 after delete (returns empty)
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/test/key1")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [],
-                        "more": false,
-                        "count": 0
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via etcd. Handle all KV operations.")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("etcd")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "ETCD",
+                            "instruction": "etcd KV store"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PUT /test/key1 = value1
+                    .on_event("etcd_put_request")
+                    .and_event_data_contains("key", "/test/key1")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "etcd_put_response",
+                            "revision": 1
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: GET /test/key1
+                    .on_event("etcd_range_request")
+                    .and_event_data_contains("key", "/test/key1")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "etcd_range_response",
+                            "kvs": [
+                                {
+                                    "key": "/test/key1",
+                                    "value": "value1",
+                                    "create_revision": 1,
+                                    "mod_revision": 1,
+                                    "version": 1,
+                                    "lease": 0
+                                }
+                            ],
+                            "more": false,
+                            "count": 1
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: DELETE /test/key1
+                    .on_event("etcd_delete_request")
+                    .and_event_data_contains("key", "/test/key1")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "etcd_delete_range_response",
+                            "deleted": 1
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: GET /test/key1 after delete (returns empty)
+                    .on_event("etcd_range_request")
+                    .and_event_data_contains("key", "/test/key1")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "etcd_range_response",
+                            "kvs": [],
+                            "more": false,
+                            "count": 0
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let mut server = start_netget_server(server_config).await?;
 
@@ -213,54 +214,55 @@ async fn test_etcd_client_basic_operations() -> E2EResult<()> {
 #[tokio::test]
 async fn test_etcd_client_multiple_keys() -> E2EResult<()> {
     // Start etcd server with mocks
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via etcd. Store config keys.")
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("etcd")
-                .respond_with_actions(json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ETCD",
-                        "instruction": "Config store"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mocks: 3 PUT operations
-                .on_event("etcd_put_request")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_put_response",
-                        "revision": 1
-                    }
-                ]))
-                .expect_calls(3)  // Will be called 3 times
-                .and()
-                // Mocks: GET operations
-                .on_event("etcd_range_request")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [
-                            {
-                                "key": "/app/config/database",
-                                "value": "postgresql://localhost:5432/mydb",
-                                "create_revision": 1,
-                                "mod_revision": 1,
-                                "version": 1,
-                                "lease": 0
-                            }
-                        ],
-                        "more": false,
-                        "count": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via etcd. Store config keys.")
+            .with_mock(|mock| {
+                mock
+                    // Mock: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("etcd")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "ETCD",
+                            "instruction": "Config store"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mocks: 3 PUT operations
+                    .on_event("etcd_put_request")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "etcd_put_response",
+                            "revision": 1
+                        }
+                    ]))
+                    .expect_calls(3) // Will be called 3 times
+                    .and()
+                    // Mocks: GET operations
+                    .on_event("etcd_range_request")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "etcd_range_response",
+                            "kvs": [
+                                {
+                                    "key": "/app/config/database",
+                                    "value": "postgresql://localhost:5432/mydb",
+                                    "create_revision": 1,
+                                    "mod_revision": 1,
+                                    "version": 1,
+                                    "lease": 0
+                                }
+                            ],
+                            "more": false,
+                            "count": 1
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let mut server = start_netget_server(server_config).await?;
 
@@ -347,10 +349,9 @@ async fn test_etcd_client_multiple_keys() -> E2EResult<()> {
 #[tokio::test]
 async fn test_etcd_client_nonexistent_key() -> E2EResult<()> {
     // Start server
-    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via etcd.")
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("Listen on port")
+    let server_config =
+        NetGetConfig::new("Listen on port {AVAILABLE_PORT} via etcd.").with_mock(|mock| {
+            mock.on_instruction_containing("Listen on port")
                 .and_instruction_containing("etcd")
                 .respond_with_actions(json!([
                     {
@@ -387,8 +388,7 @@ async fn test_etcd_client_nonexistent_key() -> E2EResult<()> {
         server.port
     ))
     .with_mock(|mock| {
-        mock
-            .on_instruction_containing("Connect to")
+        mock.on_instruction_containing("Connect to")
             .and_instruction_containing("etcd")
             .respond_with_actions(json!([
                 {

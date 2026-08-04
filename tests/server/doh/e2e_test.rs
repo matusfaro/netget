@@ -196,10 +196,7 @@ async fn test_doh_server() -> E2EResult<()> {
 
     println!("\n[Test 3] Another GET query - different domain...");
     let response3 = query_doh_get(&client, server.port, "test.com.", RecordType::A).await?;
-    assert!(
-        !response3.answers().is_empty(),
-        "Expected answer from mock"
-    );
+    assert!(!response3.answers().is_empty(), "Expected answer from mock");
     println!("✓ GET response: {:?}", response3.answers()[0]);
 
     println!("\n=== All DoH tests passed! ===");

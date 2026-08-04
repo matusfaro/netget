@@ -85,12 +85,7 @@ impl BindingDefaults {
         user_interface: Option<String>,
         user_host: Option<String>,
         user_port: Option<u16>,
-    ) -> (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<u16>,
-    ) {
+    ) -> (Option<String>, Option<String>, Option<String>, Option<u16>) {
         (
             user_mac.or_else(|| self.mac_address.clone()),
             user_interface.or_else(|| self.interface.clone()),

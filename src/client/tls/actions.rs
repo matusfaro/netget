@@ -135,7 +135,7 @@ impl Protocol for TlsClientProtocol {
                     "type": "send_tls_data",
                     "data": "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -144,7 +144,7 @@ impl Protocol for TlsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -175,7 +175,7 @@ impl Protocol for TlsClientProtocol {
                     "type": "send_tls_data",
                     "data": "Response data"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -184,7 +184,7 @@ impl Protocol for TlsClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -195,8 +195,16 @@ impl Protocol for TlsClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tls_client_connected", "Triggered when TLS client completes handshake with server", json!({"type": "placeholder", "event_id": "tls_client_connected"})),
-            EventType::new("tls_client_data_received", "Triggered when TLS client receives decrypted data from server", json!({"type": "placeholder", "event_id": "tls_client_data_received"})),
+            EventType::new(
+                "tls_client_connected",
+                "Triggered when TLS client completes handshake with server",
+                json!({"type": "placeholder", "event_id": "tls_client_connected"}),
+            ),
+            EventType::new(
+                "tls_client_data_received",
+                "Triggered when TLS client receives decrypted data from server",
+                json!({"type": "placeholder", "event_id": "tls_client_data_received"}),
+            ),
         ]
     }
 

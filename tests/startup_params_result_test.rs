@@ -128,20 +128,23 @@ fn present_values_round_trip() {
     assert_eq!(params.get_string("banner").unwrap(), "220 ready");
     assert_eq!(params.get_i64("max_connections").unwrap(), 12);
     assert_eq!(params.get_u64("max_connections").unwrap(), 12);
-    assert_eq!(params.get_optional_u32("max_connections").unwrap(), Some(12));
+    assert_eq!(
+        params.get_optional_u32("max_connections").unwrap(),
+        Some(12)
+    );
     assert_eq!(params.get_object("headers").unwrap().len(), 1);
     assert_eq!(params.get_array("hosts").unwrap().len(), 2);
 }
 
 #[test]
 fn u32_overflow_is_an_error() {
-    let params = StartupParams::new(
-        json!({ "max_connections": u32::MAX as u64 + 1 }),
-        schema(),
-    )
-    .unwrap();
+    let params =
+        StartupParams::new(json!({ "max_connections": u32::MAX as u64 + 1 }), schema()).unwrap();
 
-    let msg = params.get_optional_u32("max_connections").unwrap_err().to_string();
+    let msg = params
+        .get_optional_u32("max_connections")
+        .unwrap_err()
+        .to_string();
     assert!(msg.contains("max_connections"), "{msg}");
     assert!(msg.contains("u32::MAX"), "{msg}");
 }

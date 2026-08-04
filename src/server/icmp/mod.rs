@@ -66,11 +66,10 @@ impl IcmpServer {
         tokio::task::spawn_blocking(move || {
             let open_sockets = || -> Result<(Socket, Arc<Socket>)> {
                 // Create raw ICMP socket
-                let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
-                    .context(
-                        "failed to create raw ICMP receive socket \
+                let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).context(
+                    "failed to create raw ICMP receive socket \
                          (needs root, or CAP_NET_RAW on Linux)",
-                    )?;
+                )?;
 
                 // Set socket to non-blocking for timeout handling
                 socket

@@ -46,7 +46,6 @@
 ///         .assert_success()
 /// }
 /// ```
-
 mod helpers;
 
 use anyhow::Result;
@@ -143,7 +142,7 @@ async fn test_client_request_without_docs() -> Result<()> {
 async fn test_open_http_server() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("open http server")
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .run()
@@ -159,7 +158,7 @@ async fn test_open_http_server() -> Result<()> {
 async fn test_open_tcp_server_with_port() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("open tcp server on port 8080")
-        .with_server_documentation("tcp")  // Inject TCP docs so open_server is available
+        .with_server_documentation("tcp") // Inject TCP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("tcp")
         .expect_field_exact("port", json!(8080))
@@ -176,7 +175,7 @@ async fn test_open_tcp_server_with_port() -> Result<()> {
 async fn test_open_server_with_instruction() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("open an http server that responds with hello world to all requests")
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .expect_field_contains("instruction", "hello world")
@@ -193,7 +192,7 @@ async fn test_open_server_with_instruction() -> Result<()> {
 async fn test_dns_server_with_static_response() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("open a dns server that always responds with 1.2.3.4 for any query")
-        .with_server_documentation("dns")  // Inject DNS docs so open_server is available
+        .with_server_documentation("dns") // Inject DNS docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("dns")
         .expect_static_handler(json!({
@@ -215,17 +214,19 @@ async fn test_dns_server_with_static_response() -> Result<()> {
 async fn test_open_client() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("connect to redis server at localhost:6379")
-        .with_client_documentation("redis")  // Inject Redis client docs so open_client is available
+        .with_client_documentation("redis") // Inject Redis client docs so open_client is available
         .expect_action_type("open_client")
         .expect_protocol("redis")
         // Action definition uses "remote_addr" as combined "host:port" string
         // Accept either remote_addr or address field containing the target
         .expect_custom("address contains localhost:6379", |action| {
-            let has_remote_addr = action.get("remote_addr")
+            let has_remote_addr = action
+                .get("remote_addr")
                 .and_then(|v| v.as_str())
                 .map(|s| s.contains("localhost") && s.contains("6379"))
                 .unwrap_or(false);
-            let has_address = action.get("address")
+            let has_address = action
+                .get("address")
                 .and_then(|v| v.as_str())
                 .map(|s| s.contains("localhost") && s.contains("6379"))
                 .unwrap_or(false);
@@ -268,33 +269,37 @@ async fn test_http_script_sum_query_params() -> Result<()> {
     // Create test event (HTTP request with query params)
     let test_event = Event::new(
         Box::leak(Box::new(
-            EventType::new("http_request", "HTTP request received", json!({"type": "placeholder", "event_id": "http_request"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "method".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "HTTP method".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Request path (without query string)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "query_string".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Raw query string (e.g., 'x=5&y=3')".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "query".to_string(),
-                        type_hint: "object".to_string(),
-                        description: "Parsed query parameters as key-value pairs".to_string(),
-                        required: false,
-                    },
-                ])
+            EventType::new(
+                "http_request",
+                "HTTP request received",
+                json!({"type": "placeholder", "event_id": "http_request"}),
+            )
+            .with_parameters(vec![
+                Parameter {
+                    name: "method".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "HTTP method".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Request path (without query string)".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "query_string".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Raw query string (e.g., 'x=5&y=3')".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "query".to_string(),
+                    type_hint: "object".to_string(),
+                    description: "Parsed query parameters as key-value pairs".to_string(),
+                    required: false,
+                },
+            ]),
         )),
         json!({
             "method": "GET",
@@ -316,9 +321,9 @@ async fn test_http_script_sum_query_params() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input(
             "create an http server that receives query parameters x and y \
-             and returns their mathematical sum. write this as a script."
+             and returns their mathematical sum. write this as a script.",
         )
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .expect_script_handler()
@@ -338,15 +343,17 @@ async fn test_tcp_echo_script() -> Result<()> {
     // Create test event (TCP data received)
     let test_event = Event::new(
         Box::leak(Box::new(
-            EventType::new("tcp_data_received", "TCP data received", json!({"type": "placeholder", "event_id": "tcp_data_received"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "The data received (as hex string or UTF-8 if printable)".to_string(),
-                        required: true,
-                    },
-                ])
+            EventType::new(
+                "tcp_data_received",
+                "TCP data received",
+                json!({"type": "placeholder", "event_id": "tcp_data_received"}),
+            )
+            .with_parameters(vec![Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "The data received (as hex string or UTF-8 if printable)".to_string(),
+                required: true,
+            }]),
         )),
         json!({
             "data": "48656c6c6f"
@@ -361,7 +368,7 @@ async fn test_tcp_echo_script() -> Result<()> {
 
     OllamaTestBuilder::new()
         .with_user_input("create a tcp echo server using a script")
-        .with_server_documentation("tcp")  // Inject TCP docs so open_server is available
+        .with_server_documentation("tcp") // Inject TCP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("tcp")
         .expect_script_handler()
@@ -380,21 +387,25 @@ async fn test_http_conditional_script() -> Result<()> {
     // Create test event (GET request)
     let test_event_get = Event::new(
         Box::leak(Box::new(
-            EventType::new("http_request", "HTTP request received", json!({"type": "placeholder", "event_id": "http_request"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "method".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "HTTP method".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Request path".to_string(),
-                        required: true,
-                    },
-                ])
+            EventType::new(
+                "http_request",
+                "HTTP request received",
+                json!({"type": "placeholder", "event_id": "http_request"}),
+            )
+            .with_parameters(vec![
+                Parameter {
+                    name: "method".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "HTTP method".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Request path".to_string(),
+                    required: true,
+                },
+            ]),
         )),
         json!({
             "method": "GET",
@@ -412,9 +423,9 @@ async fn test_http_conditional_script() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input(
             "create an http server that responds with 'Hello GET' for GET requests \
-             and 'Hello POST' for POST requests. write as a script."
+             and 'Hello POST' for POST requests. write as a script.",
         )
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .expect_script_handler()
@@ -438,21 +449,25 @@ async fn test_http_conditional_script() -> Result<()> {
 async fn test_http_request_with_instruction() -> Result<()> {
     let event = Event::new(
         Box::leak(Box::new(
-            EventType::new("http_request", "HTTP request received", json!({"type": "placeholder", "event_id": "http_request"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "method".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "HTTP method".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Request path".to_string(),
-                        required: true,
-                    },
-                ])
+            EventType::new(
+                "http_request",
+                "HTTP request received",
+                json!({"type": "placeholder", "event_id": "http_request"}),
+            )
+            .with_parameters(vec![
+                Parameter {
+                    name: "method".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "HTTP method".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Request path".to_string(),
+                    required: true,
+                },
+            ]),
         )),
         json!({
             "method": "GET",
@@ -497,27 +512,31 @@ async fn test_http_request_with_instruction() -> Result<()> {
 async fn test_dns_query_response() -> Result<()> {
     let event = Event::new(
         Box::leak(Box::new(
-            EventType::new("dns_query", "DNS query received", json!({"type": "placeholder", "event_id": "dns_query"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "query_id".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "DNS query identifier".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "domain".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Domain name being queried".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "query_type".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "DNS query type (A, AAAA, etc.)".to_string(),
-                        required: true,
-                    },
-                ])
+            EventType::new(
+                "dns_query",
+                "DNS query received",
+                json!({"type": "placeholder", "event_id": "dns_query"}),
+            )
+            .with_parameters(vec![
+                Parameter {
+                    name: "query_id".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "DNS query identifier".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "domain".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Domain name being queried".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "query_type".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "DNS query type (A, AAAA, etc.)".to_string(),
+                    required: true,
+                },
+            ]),
         )),
         json!({
             "query_id": 12345,
@@ -567,15 +586,17 @@ async fn test_dns_query_response() -> Result<()> {
 async fn test_tcp_hex_response() -> Result<()> {
     let event = Event::new(
         Box::leak(Box::new(
-            EventType::new("tcp_data_received", "TCP data received", json!({"type": "placeholder", "event_id": "tcp_data_received"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "The data received (as hex string or UTF-8 if printable)".to_string(),
-                        required: true,
-                    },
-                ])
+            EventType::new(
+                "tcp_data_received",
+                "TCP data received",
+                json!({"type": "placeholder", "event_id": "tcp_data_received"}),
+            )
+            .with_parameters(vec![Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "The data received (as hex string or UTF-8 if printable)".to_string(),
+                required: true,
+            }]),
         )),
         json!({
             "data": "48656c6c6f"
@@ -621,11 +642,12 @@ async fn test_tcp_hex_response() -> Result<()> {
 async fn test_custom_validation() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("open http server on port 8080 and server cooking recipes")
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .expect_custom("port in valid range", |action| {
-            let port = action["port"].as_u64()
+            let port = action["port"]
+                .as_u64()
                 .ok_or_else(|| anyhow::anyhow!("Port is not a number"))?;
             if port < 1024 || port > 65535 {
                 anyhow::bail!("Port {} is outside valid range 1024-65535", port);
@@ -633,7 +655,8 @@ async fn test_custom_validation() -> Result<()> {
             Ok(())
         })
         .expect_custom("instruction mentions recipe", |action| {
-            let instruction = action["instruction"].as_str()
+            let instruction = action["instruction"]
+                .as_str()
                 .ok_or_else(|| anyhow::anyhow!("No instruction field"))?;
             if !instruction.to_lowercase().contains("recipe") {
                 anyhow::bail!("Instruction doesn't mention recipe");
@@ -652,7 +675,7 @@ async fn test_custom_validation() -> Result<()> {
 async fn test_regex_pattern_matching() -> Result<()> {
     OllamaTestBuilder::new()
         .with_user_input("open http server on localhost port 8080")
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .expect_field_matches("instruction", r"(?i)(localhost|127\.0\.0\.1)")
@@ -672,14 +695,13 @@ async fn test_regex_pattern_matching() -> Result<()> {
 #[tokio::test]
 async fn test_server_with_scheduled_tasks() -> Result<()> {
     OllamaTestBuilder::new()
-        .with_user_input(
-            "open http server that sends a heartbeat log every 10 seconds"
-        )
-        .with_server_documentation("http")  // Inject HTTP docs so open_server is available
+        .with_user_input("open http server that sends a heartbeat log every 10 seconds")
+        .with_server_documentation("http") // Inject HTTP docs so open_server is available
         .expect_action_type("open_server")
         .expect_protocol("http")
         .expect_custom("has scheduled tasks", |action| {
-            let tasks = action.get("scheduled_tasks")
+            let tasks = action
+                .get("scheduled_tasks")
                 .ok_or_else(|| anyhow::anyhow!("No scheduled_tasks field"))?;
             if !tasks.is_array() || tasks.as_array().unwrap().is_empty() {
                 anyhow::bail!("No scheduled tasks defined");
@@ -698,8 +720,8 @@ async fn test_server_with_scheduled_tasks() -> Result<()> {
 async fn test_multiple_actions() -> Result<()> {
     let result = OllamaTestBuilder::new()
         .with_user_input("open both http and tcp servers")
-        .with_server_documentation("http")  // Inject HTTP docs
-        .with_server_documentation("tcp")   // Inject TCP docs
+        .with_server_documentation("http") // Inject HTTP docs
+        .with_server_documentation("tcp") // Inject TCP docs
         .expect_custom("multiple servers", |action| {
             // This test expects the first action but also checks if
             // the LLM returned multiple actions
@@ -727,7 +749,7 @@ async fn test_multiple_actions() -> Result<()> {
 async fn test_dhcp_server_with_sqlite_storage() -> Result<()> {
     let result = OllamaTestBuilder::new()
         .with_user_input(
-            "open a DHCP server that stores MAC address to IP mappings in a SQLite database"
+            "open a DHCP server that stores MAC address to IP mappings in a SQLite database",
         )
         .with_server_documentation("dhcp")
         .expect_custom("has open_server or create_database", |action| {
@@ -747,12 +769,12 @@ async fn test_dhcp_server_with_sqlite_storage() -> Result<()> {
 
     // Check if the response mentions database/storage in some way
     let actions_json = serde_json::to_string(&result.actions)?;
-    let mentions_db = actions_json.contains("database") ||
-                      actions_json.contains("sqlite") ||
-                      actions_json.contains("create_database") ||
-                      actions_json.contains("storage") ||
-                      actions_json.contains("MAC") ||
-                      actions_json.contains("mapping");
+    let mentions_db = actions_json.contains("database")
+        || actions_json.contains("sqlite")
+        || actions_json.contains("create_database")
+        || actions_json.contains("storage")
+        || actions_json.contains("MAC")
+        || actions_json.contains("mapping");
 
     if !mentions_db && result.actions.len() < 2 {
         // Only fail if there's no indication the LLM understood the storage requirement
@@ -772,27 +794,31 @@ async fn test_dhcp_request_with_sqlite_query() -> Result<()> {
     // Create DHCP request event
     let dhcp_event = Event::new(
         Box::leak(Box::new(
-            EventType::new("dhcp_discover", "DHCP DISCOVER received from client", json!({"type": "placeholder", "event_id": "dhcp_discover"}))
-                .with_parameters(vec![
-                    Parameter {
-                        name: "mac_address".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Client's MAC address".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "hostname".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Client's hostname if provided".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "requested_ip".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "IP address requested by client (if any)".to_string(),
-                        required: false,
-                    },
-                ])
+            EventType::new(
+                "dhcp_discover",
+                "DHCP DISCOVER received from client",
+                json!({"type": "placeholder", "event_id": "dhcp_discover"}),
+            )
+            .with_parameters(vec![
+                Parameter {
+                    name: "mac_address".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Client's MAC address".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "hostname".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Client's hostname if provided".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "requested_ip".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "IP address requested by client (if any)".to_string(),
+                    required: false,
+                },
+            ]),
         )),
         json!({
             "mac_address": "AA:BB:CC:DD:EE:FF",
@@ -806,11 +832,7 @@ async fn test_dhcp_request_with_sqlite_query() -> Result<()> {
         Store the new mapping in the leases table.";
 
     OllamaTestBuilder::new()
-        .with_network_request(
-            dhcp_event,
-            instruction,
-            ServerId::new(1),
-        )
+        .with_network_request(dhcp_event, instruction, ServerId::new(1))
         .expect_custom("attempts database/storage access", |action| {
             let action_type = action["type"].as_str().unwrap_or("");
             // LLM should attempt to access storage for lease information
@@ -819,10 +841,10 @@ async fn test_dhcp_request_with_sqlite_query() -> Result<()> {
             if action_type == "execute_sql" {
                 // Check that the query mentions the MAC address or leases
                 if let Some(query) = action.get("query").and_then(|q| q.as_str()) {
-                    let mentions_mac = query.contains("AA:BB:CC:DD:EE:FF") ||
-                                       query.to_uppercase().contains("MAC") ||
-                                       query.to_uppercase().contains("SELECT") ||
-                                       query.to_uppercase().contains("INSERT");
+                    let mentions_mac = query.contains("AA:BB:CC:DD:EE:FF")
+                        || query.to_uppercase().contains("MAC")
+                        || query.to_uppercase().contains("SELECT")
+                        || query.to_uppercase().contains("INSERT");
                     if mentions_mac {
                         return Ok(());
                     }

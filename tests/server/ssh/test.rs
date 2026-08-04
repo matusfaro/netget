@@ -20,24 +20,22 @@ async fn test_ssh_banner() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Send SSH protocol version banner 'SSH-2.0-NetGet_1.0' when clients connect";
 
     // Start the server with mocks
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock: Server startup
-                    .on_instruction_containing("ssh")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SSH",
-                            "instruction": "Send SSH protocol version banner"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup
+            .on_instruction_containing("ssh")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SSH",
+                    "instruction": "Send SSH protocol version banner"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and read SSH banner
@@ -103,22 +101,21 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
     // PROMPT: Tell the LLM to handle SSH version exchange
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Implement SSH-2.0 protocol.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup
-                .on_instruction_containing("ssh")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SSH",
-                        "instruction": "SSH server with version exchange"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup
+            .on_instruction_containing("ssh")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SSH",
+                    "instruction": "SSH server with version exchange"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the server
     let mut server = helpers::start_netget_server(config).await?;
@@ -180,25 +177,24 @@ async fn test_ssh_connection_attempt() -> E2EResult<()> {
     // PROMPT: Tell the LLM to accept SSH connections
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Accept SSH connections.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup
-                .on_instruction_containing("ssh")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "SSH",
-                        "instruction": "SSH server accepting connections"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Note: SSH authentication without scripts is not tested here
-                // The ssh2 client library has timing/compatibility issues with russh server
-                // For authentication testing, see test_ssh_python_auth_script which uses scripts
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup
+            .on_instruction_containing("ssh")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SSH",
+                    "instruction": "SSH server accepting connections"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+        // Note: SSH authentication without scripts is not tested here
+        // The ssh2 client library has timing/compatibility issues with russh server
+        // For authentication testing, see test_ssh_python_auth_script which uses scripts
+    });
 
     // Start the server
     let mut server = helpers::start_netget_server(config).await?;
@@ -332,7 +328,8 @@ async fn test_ssh_python_auth_script() -> E2EResult<()> {
     use crate::helpers::NetGetConfig;
 
     // PROMPT: Simple prompt asking for SSH auth via script
-    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Allow user 'alice' and deny all other users.";
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via ssh. Allow user 'alice' and deny all other users.";
 
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
@@ -471,7 +468,10 @@ async fn test_ssh_python_auth_script() -> E2EResult<()> {
         llm_request_count
     );
 
-    println!("  ✓ Verified: Script handled authentication ({} LLM call(s) total)", llm_request_count);
+    println!(
+        "  ✓ Verified: Script handled authentication ({} LLM call(s) total)",
+        llm_request_count
+    );
 
     // Verify mock expectations
     server.verify_mocks().await?;
@@ -763,75 +763,73 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
         Accept password authentication for user 'test' with any password.";
 
     // Start the server with mocks
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("ssh")
-                    .and_instruction_containing("SFTP subsystem")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SSH",
-                            "instruction": "Enable SFTP subsystem with virtual filesystem"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Authentication
-                    .on_event("ssh_auth")
-                    .and_event_data_contains("username", "test")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "ssh_auth_decision",
-                            "allowed": true
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: SFTP directory listing
-                    .on_event("sftp_readdir")
-                    .and_event_data_contains("path", "/")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "sftp_directory_response",
-                            "entries": [
-                                {"name": "readme.txt", "size": 100, "is_dir": false},
-                                {"name": "data.json", "size": 256, "is_dir": false},
-                                {"name": "logs", "size": 0, "is_dir": true}
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: SFTP file read
-                    .on_event("sftp_read")
-                    .and_event_data_contains("path", "readme.txt")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "sftp_file_content",
-                            "data": "Hello from NetGet SFTP!"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 5: SFTP file stat
-                    .on_event("sftp_stat")
-                    .and_event_data_contains("path", "readme.txt")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "sftp_stat_response",
-                            "size": 100,
-                            "is_file": true,
-                            "is_dir": false
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("ssh")
+            .and_instruction_containing("SFTP subsystem")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SSH",
+                    "instruction": "Enable SFTP subsystem with virtual filesystem"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Authentication
+            .on_event("ssh_auth")
+            .and_event_data_contains("username", "test")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "ssh_auth_decision",
+                    "allowed": true
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: SFTP directory listing
+            .on_event("sftp_readdir")
+            .and_event_data_contains("path", "/")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "sftp_directory_response",
+                    "entries": [
+                        {"name": "readme.txt", "size": 100, "is_dir": false},
+                        {"name": "data.json", "size": 256, "is_dir": false},
+                        {"name": "logs", "size": 0, "is_dir": true}
+                    ]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: SFTP file read
+            .on_event("sftp_read")
+            .and_event_data_contains("path", "readme.txt")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "sftp_file_content",
+                    "data": "Hello from NetGet SFTP!"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: SFTP file stat
+            .on_event("sftp_stat")
+            .and_event_data_contains("path", "readme.txt")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "sftp_stat_response",
+                    "size": 100,
+                    "is_file": true,
+                    "is_dir": false
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Test SFTP operations using ssh2

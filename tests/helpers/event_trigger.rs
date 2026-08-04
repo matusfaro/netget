@@ -201,14 +201,12 @@ impl EventTrigger {
                     Ok(())
                 }
 
-                EventTrigger::Hardware { description } => {
-                    Err(format!(
-                        "Hardware trigger not available: {}. \
+                EventTrigger::Hardware { description } => Err(format!(
+                    "Hardware trigger not available: {}. \
                          This test requires physical hardware or elevated permissions.",
-                        description
-                    )
-                    .into())
-                }
+                    description
+                )
+                .into()),
             }
         })
     }

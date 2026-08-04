@@ -228,70 +228,65 @@ impl ImapProtocol {
         if let Some(data) = action.get("data").and_then(|v| v.as_object()) {
             // Structured format - use "data" object
             for (key, value) in data {
-            match key.to_uppercase().as_str() {
-                "FLAGS" => {
-                    if let Some(flags_arr) = value.as_array() {
-                        let flags: Vec<&str> =
-                            flags_arr.iter().filter_map(|v| v.as_str()).collect();
-                        items.push(format!("FLAGS ({})", flags.join(" ")));
+                match key.to_uppercase().as_str() {
+                    "FLAGS" => {
+                        if let Some(flags_arr) = value.as_array() {
+                            let flags: Vec<&str> =
+                                flags_arr.iter().filter_map(|v| v.as_str()).collect();
+                            items.push(format!("FLAGS ({})", flags.join(" ")));
+                        }
                     }
-                }
-                "UID" => {
-                    if let Some(uid) = value.as_u64() {
-                        items.push(format!("UID {}", uid));
+                    "UID" => {
+                        if let Some(uid) = value.as_u64() {
+                            items.push(format!("UID {}", uid));
+                        }
                     }
-                }
-                "RFC822.SIZE" => {
-                    if let Some(size) = value.as_u64() {
-                        items.push(format!("RFC822.SIZE {}", size));
+                    "RFC822.SIZE" => {
+                        if let Some(size) = value.as_u64() {
+                            items.push(format!("RFC822.SIZE {}", size));
+                        }
                     }
-                }
-                "BODY[]" | "RFC822" => {
-                    if let Some(body) = value.as_str() {
-                        items.push(format!(
-                            "{} {{{}}}\r\n{}",
-                            key.to_uppercase(),
-                            body.len(),
-                            body
-                        ));
+                    "BODY[]" | "RFC822" => {
+                        if let Some(body) = value.as_str() {
+                            items.push(format!(
+                                "{} {{{}}}\r\n{}",
+                                key.to_uppercase(),
+                                body.len(),
+                                body
+                            ));
+                        }
                     }
-                }
-                "ENVELOPE" => {
-                    if let Some(env_str) = value.as_str() {
-                        items.push(format!("ENVELOPE {}", env_str));
+                    "ENVELOPE" => {
+                        if let Some(env_str) = value.as_str() {
+                            items.push(format!("ENVELOPE {}", env_str));
+                        }
                     }
-                }
-                "BODYSTRUCTURE" => {
-                    if let Some(bs_str) = value.as_str() {
-                        items.push(format!("BODYSTRUCTURE {}", bs_str));
+                    "BODYSTRUCTURE" => {
+                        if let Some(bs_str) = value.as_str() {
+                            items.push(format!("BODYSTRUCTURE {}", bs_str));
+                        }
                     }
-                }
-                "INTERNALDATE" => {
-                    if let Some(date) = value.as_str() {
-                        items.push(format!("INTERNALDATE \"{}\"", date));
+                    "INTERNALDATE" => {
+                        if let Some(date) = value.as_str() {
+                            items.push(format!("INTERNALDATE \"{}\"", date));
+                        }
                     }
-                }
-                _ => {
-                    // Handle any other custom items
-                    if let Some(val_str) = value.as_str() {
-                        items.push(format!("{} {}", key.to_uppercase(), val_str));
+                    _ => {
+                        // Handle any other custom items
+                        if let Some(val_str) = value.as_str() {
+                            items.push(format!("{} {}", key.to_uppercase(), val_str));
+                        }
                     }
                 }
             }
-        }
         } else {
             // Simple format - check for direct fields
             if let Some(body) = action.get("body").and_then(|v| v.as_str()) {
-                items.push(format!(
-                    "RFC822 {{{}}}\r\n{}",
-                    body.len(),
-                    body
-                ));
+                items.push(format!("RFC822 {{{}}}\r\n{}", body.len(), body));
             }
 
             if let Some(flags_arr) = action.get("flags").and_then(|v| v.as_array()) {
-                let flags: Vec<&str> =
-                    flags_arr.iter().filter_map(|v| v.as_str()).collect();
+                let flags: Vec<&str> = flags_arr.iter().filter_map(|v| v.as_str()).collect();
                 items.push(format!("FLAGS ({})", flags.join(" ")));
             }
 
@@ -381,37 +376,25 @@ impl ImapProtocol {
 
     fn execute_send_imap_select(&self, action: serde_json::Value) -> Result<ActionResult> {
         // Generate SELECT/EXAMINE response with mailbox status
-        let exists = action
-            .get("exists")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let exists = action.get("exists").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        let recent = action
-            .get("recent")
-            .and_then(|v| v.as_u64());
+        let recent = action.get("recent").and_then(|v| v.as_u64());
 
-        let unseen = action
-            .get("unseen")
-            .and_then(|v| v.as_u64());
+        let unseen = action.get("unseen").and_then(|v| v.as_u64());
 
         let uidvalidity = action
             .get("uidvalidity")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
 
-        let uidnext = action
-            .get("uidnext")
-            .and_then(|v| v.as_u64());
+        let uidnext = action.get("uidnext").and_then(|v| v.as_u64());
 
-        let flags = action
-            .get("flags")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<&str>>()
-                    .join(" ")
-            });
+        let flags = action.get("flags").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<&str>>()
+                .join(" ")
+        });
 
         let permanent_flags = action
             .get("permanent_flags")
@@ -444,13 +427,22 @@ impl ImapProtocol {
 
         // Optional OK responses with codes
         if let Some(unseen) = unseen {
-            response.push_str(&format!("* OK [UNSEEN {}] Message {} is first unseen\r\n", unseen, unseen));
+            response.push_str(&format!(
+                "* OK [UNSEEN {}] Message {} is first unseen\r\n",
+                unseen, unseen
+            ));
         }
 
-        response.push_str(&format!("* OK [UIDVALIDITY {}] UIDs valid\r\n", uidvalidity));
+        response.push_str(&format!(
+            "* OK [UIDVALIDITY {}] UIDs valid\r\n",
+            uidvalidity
+        ));
 
         if let Some(uidnext) = uidnext {
-            response.push_str(&format!("* OK [UIDNEXT {}] Predicted next UID\r\n", uidnext));
+            response.push_str(&format!(
+                "* OK [UIDNEXT {}] Predicted next UID\r\n",
+                uidnext
+            ));
         }
 
         // FLAGS
@@ -462,7 +454,10 @@ impl ImapProtocol {
 
         // PERMANENTFLAGS
         if let Some(perm_flags) = permanent_flags {
-            response.push_str(&format!("* OK [PERMANENTFLAGS ({})] Limited\r\n", perm_flags));
+            response.push_str(&format!(
+                "* OK [PERMANENTFLAGS ({})] Limited\r\n",
+                perm_flags
+            ));
         } else {
             response.push_str("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n");
         }
@@ -1060,10 +1055,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("IMAP waiting for more data"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("IMAP waiting for more data")),
     }
 }
 
@@ -1148,68 +1140,72 @@ pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("imap_command", "IMAP command received from client", json!({"type": "placeholder", "event_id": "imap_command"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "tag".to_string(),
-                type_hint: "string".to_string(),
-                description: "Command tag".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "command".to_string(),
-                type_hint: "string".to_string(),
-                description: "IMAP command (CAPABILITY, SELECT, LIST, FETCH, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "args".to_string(),
-                type_hint: "string".to_string(),
-                description: "Command arguments".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "session_state".to_string(),
-                type_hint: "string".to_string(),
-                description:
-                    "Current session state (NotAuthenticated, Authenticated, Selected, Logout)"
-                        .to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "authenticated_user".to_string(),
-                type_hint: "string".to_string(),
-                description: "Authenticated username (if any)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "selected_mailbox".to_string(),
-                type_hint: "string".to_string(),
-                description: "Currently selected mailbox (if any)".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            send_imap_response_action(),
-            send_imap_untagged_action(),
-            send_imap_capability_action(),
-            send_imap_list_action(),
-            send_imap_status_action(),
-            send_imap_fetch_action(),
-            send_imap_search_action(),
-            send_imap_exists_action(),
-            send_imap_recent_action(),
-            send_imap_flags_action(),
-            send_imap_expunge_action(),
-            wait_for_more_action(),
-            close_connection_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("IMAP {client_ip} {tag} {command}")
-                .with_debug("IMAP command from {client_ip}:{client_port}: {tag} {command} {args}")
-                .with_trace("IMAP command: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "imap_command",
+        "IMAP command received from client",
+        json!({"type": "placeholder", "event_id": "imap_command"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "tag".to_string(),
+            type_hint: "string".to_string(),
+            description: "Command tag".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "IMAP command (CAPABILITY, SELECT, LIST, FETCH, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "args".to_string(),
+            type_hint: "string".to_string(),
+            description: "Command arguments".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "session_state".to_string(),
+            type_hint: "string".to_string(),
+            description:
+                "Current session state (NotAuthenticated, Authenticated, Selected, Logout)"
+                    .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "authenticated_user".to_string(),
+            type_hint: "string".to_string(),
+            description: "Authenticated username (if any)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "selected_mailbox".to_string(),
+            type_hint: "string".to_string(),
+            description: "Currently selected mailbox (if any)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_imap_response_action(),
+        send_imap_untagged_action(),
+        send_imap_capability_action(),
+        send_imap_list_action(),
+        send_imap_status_action(),
+        send_imap_fetch_action(),
+        send_imap_search_action(),
+        send_imap_exists_action(),
+        send_imap_recent_action(),
+        send_imap_flags_action(),
+        send_imap_expunge_action(),
+        wait_for_more_action(),
+        close_connection_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("IMAP {client_ip} {tag} {command}")
+            .with_debug("IMAP command from {client_ip}:{client_port}: {tag} {command} {args}")
+            .with_trace("IMAP command: {json_pretty(.)}"),
+    )
 });
 
 pub fn get_imap_event_types() -> Vec<EventType> {

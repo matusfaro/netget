@@ -238,15 +238,24 @@ impl ToolAction {
             ToolAction::ReadBaseStackDocs { protocol } => {
                 format!("read_base_stack_docs: \"{}\"", protocol)
             }
-            ToolAction::ReadServerDocumentation { protocols, protocol } => {
+            ToolAction::ReadServerDocumentation {
+                protocols,
+                protocol,
+            } => {
                 let all_protocols = Self::merge_protocols(protocols, protocol);
                 format!("read_server_documentation: {:?}", all_protocols)
             }
-            ToolAction::ReadClientDocumentation { protocols, protocol } => {
+            ToolAction::ReadClientDocumentation {
+                protocols,
+                protocol,
+            } => {
                 let all_protocols = Self::merge_protocols(protocols, protocol);
                 format!("read_client_documentation: {:?}", all_protocols)
             }
-            ToolAction::ReadDocumentation { protocols, protocol } => {
+            ToolAction::ReadDocumentation {
+                protocols,
+                protocol,
+            } => {
                 let all_protocols = Self::merge_protocols(protocols, protocol);
                 format!("read_documentation: {:?}", all_protocols)
             }
@@ -272,10 +281,7 @@ impl ToolAction {
             }
             ToolAction::ListTasks => "list_tasks: list all scheduled tasks".to_string(),
             #[cfg(feature = "sqlite")]
-            ToolAction::ExecuteSql {
-                database_id,
-                query,
-            } => {
+            ToolAction::ExecuteSql { database_id, query } => {
                 format!("execute_sql: db-{} query=\"{}\"", database_id, query)
             }
             #[cfg(feature = "sqlite")]
@@ -1191,7 +1197,9 @@ pub async fn execute_generate_random(
             let min_time = min
                 .map(|m| m as u64)
                 .unwrap_or(now.saturating_sub(one_year));
-            let max_time = max.map(|m| m as u64).unwrap_or(now.saturating_add(one_year));
+            let max_time = max
+                .map(|m| m as u64)
+                .unwrap_or(now.saturating_add(one_year));
             let timestamp = rng.gen_range(min_time..=max_time);
             info!("  ✓ Generated timestamp: {}", timestamp);
             timestamp.to_string()
@@ -1432,7 +1440,10 @@ pub fn read_documentation_action() -> ActionDefinition {
     // Build example protocols array with all available protocols
     let mut all_protocols: Vec<String> = server_protocols.clone();
     for client_proto in &client_protocols {
-        if !all_protocols.iter().any(|s| s.eq_ignore_ascii_case(client_proto)) {
+        if !all_protocols
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(client_proto))
+        {
             all_protocols.push(client_proto.clone());
         }
     }
@@ -1756,15 +1767,24 @@ pub async fn execute_tool(
             }
         }
         ToolAction::ReadBaseStackDocs { protocol } => execute_read_base_stack_docs(protocol).await,
-        ToolAction::ReadServerDocumentation { protocols, protocol } => {
+        ToolAction::ReadServerDocumentation {
+            protocols,
+            protocol,
+        } => {
             let all_protocols = ToolAction::merge_protocols(protocols, protocol);
             execute_read_server_documentation(&all_protocols).await
         }
-        ToolAction::ReadClientDocumentation { protocols, protocol } => {
+        ToolAction::ReadClientDocumentation {
+            protocols,
+            protocol,
+        } => {
             let all_protocols = ToolAction::merge_protocols(protocols, protocol);
             execute_read_client_documentation(&all_protocols).await
         }
-        ToolAction::ReadDocumentation { protocols, protocol } => {
+        ToolAction::ReadDocumentation {
+            protocols,
+            protocol,
+        } => {
             let all_protocols = ToolAction::merge_protocols(protocols, protocol);
             execute_read_documentation(&all_protocols).await
         }
@@ -1801,10 +1821,7 @@ pub async fn execute_tool(
             }
         }
         #[cfg(feature = "sqlite")]
-        ToolAction::ExecuteSql {
-            database_id,
-            query,
-        } => {
+        ToolAction::ExecuteSql { database_id, query } => {
             if let Some(state) = _state {
                 execute_execute_sql(state, *database_id, query).await
             } else {
@@ -1887,12 +1904,13 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
     result.push_str("\n\n---\n\n");
     result.push_str("## open_server Action\n\n");
     result.push_str("**Action:** `open_server`\n\n");
-    result.push_str(
-        "**Description:** Start a new server with the protocol you just read about.\n\n",
-    );
+    result
+        .push_str("**Description:** Start a new server with the protocol you just read about.\n\n");
     result.push_str("**Required Parameters:**\n");
     result.push_str("- `port` (number): Port number to listen on\n");
-    result.push_str("- `base_stack` (string): Protocol stack to use (e.g., the protocol you just read about)\n");
+    result.push_str(
+        "- `base_stack` (string): Protocol stack to use (e.g., the protocol you just read about)\n",
+    );
     result.push_str(
         "- `instruction` (string): Detailed instructions for handling network events\n\n",
     );
@@ -1900,9 +1918,7 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
     result.push_str("- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)\n");
     result.push_str("- `initial_memory` (string): Initial memory as a string for persistent context across connections\n");
     result.push_str("- `startup_params` (object): Protocol-specific startup parameters (see protocol documentation above)\n");
-    result.push_str(
-        "- `scheduled_tasks` (array): Scheduled tasks to create with this server\n",
-    );
+    result.push_str("- `scheduled_tasks` (array): Scheduled tasks to create with this server\n");
     result.push_str("- Script-related parameters (if scripting is enabled)\n\n");
     result.push_str("**Example:**\n");
     result.push_str("```json\n");
@@ -1913,9 +1929,7 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
         "  \"base_stack\": \"{}\",\n",
         protocol.to_lowercase()
     ));
-    result.push_str(
-        "  \"instruction\": \"Handle requests according to protocol specification\"\n",
-    );
+    result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
     result.push_str("}\n");
     result.push_str("```\n");
 
@@ -1930,12 +1944,19 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
         return ToolResult::error(
             "read_server_documentation",
             "no protocols".to_string(),
-            "No protocols specified. Provide at least one protocol name in the 'protocols' array.".to_string(),
+            "No protocols specified. Provide at least one protocol name in the 'protocols' array."
+                .to_string(),
         );
     }
 
-    info!("🔧 Tool: read_server_documentation - protocols={:?}", protocols);
-    debug!("Getting server documentation for protocols: {:?}", protocols);
+    info!(
+        "🔧 Tool: read_server_documentation - protocols={:?}",
+        protocols
+    );
+    debug!(
+        "Getting server documentation for protocols: {:?}",
+        protocols
+    );
 
     let registry = crate::protocol::server_registry::registry();
     let mut result = String::new();
@@ -1970,7 +1991,10 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
         if !startup_params.is_empty() {
             result.push_str("## Startup Parameters\n\n");
             for param in &startup_params {
-                result.push_str(&format!("- **{}** ({}): {}\n", param.name, param.type_hint, param.description));
+                result.push_str(&format!(
+                    "- **{}** ({}): {}\n",
+                    param.name, param.type_hint, param.description
+                ));
                 if param.required {
                     result.push_str("  - Required: Yes\n");
                 }
@@ -2002,7 +2026,9 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
 
                 // Response example is always present (required field)
                 result.push_str("**Response Example:**\n```json\n");
-                result.push_str(&serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default());
+                result.push_str(
+                    &serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default(),
+                );
                 result.push_str("\n```\n\n");
 
                 if !event_type.alternative_examples.is_empty() {
@@ -2033,7 +2059,9 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
 
     // Add open_server action description once at the end
     result.push_str("## open_server Action (Now Enabled)\n\n");
-    result.push_str("The `open_server` action is now enabled for the protocols documented above.\n\n");
+    result.push_str(
+        "The `open_server` action is now enabled for the protocols documented above.\n\n",
+    );
 
     // Add examples for each documented protocol
     for protocol in &found_protocols {
@@ -2041,7 +2069,9 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
         result.push_str("  \"type\": \"open_server\",\n");
         result.push_str("  \"port\": 8080,\n");
         result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol));
-        result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
+        result.push_str(
+            "  \"instruction\": \"Handle requests according to protocol specification\"\n",
+        );
         result.push_str("}\n```\n\n");
     }
 
@@ -2063,7 +2093,11 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
         result.len()
     );
 
-    ToolResult::success("read_server_documentation", found_protocols.join(", "), result)
+    ToolResult::success(
+        "read_server_documentation",
+        found_protocols.join(", "),
+        result,
+    )
 }
 
 /// Execute read_client_documentation tool
@@ -2074,12 +2108,19 @@ async fn execute_read_client_documentation(protocols: &[String]) -> ToolResult {
         return ToolResult::error(
             "read_client_documentation",
             "no protocols".to_string(),
-            "No protocols specified. Provide at least one protocol name in the 'protocols' array.".to_string(),
+            "No protocols specified. Provide at least one protocol name in the 'protocols' array."
+                .to_string(),
         );
     }
 
-    info!("🔧 Tool: read_client_documentation - protocols={:?}", protocols);
-    debug!("Getting client documentation for protocols: {:?}", protocols);
+    info!(
+        "🔧 Tool: read_client_documentation - protocols={:?}",
+        protocols
+    );
+    debug!(
+        "Getting client documentation for protocols: {:?}",
+        protocols
+    );
 
     let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
     let mut result = String::new();
@@ -2114,7 +2155,10 @@ async fn execute_read_client_documentation(protocols: &[String]) -> ToolResult {
         if !startup_params.is_empty() {
             result.push_str("## Startup Parameters\n\n");
             for param in &startup_params {
-                result.push_str(&format!("- **{}** ({}): {}\n", param.name, param.type_hint, param.description));
+                result.push_str(&format!(
+                    "- **{}** ({}): {}\n",
+                    param.name, param.type_hint, param.description
+                ));
                 if param.required {
                     result.push_str("  - Required: Yes\n");
                 }
@@ -2146,7 +2190,9 @@ async fn execute_read_client_documentation(protocols: &[String]) -> ToolResult {
 
                 // Response example is always present (required field)
                 result.push_str("**Action Example:**\n```json\n");
-                result.push_str(&serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default());
+                result.push_str(
+                    &serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default(),
+                );
                 result.push_str("\n```\n\n");
 
                 if !event_type.alternative_examples.is_empty() {
@@ -2177,7 +2223,9 @@ async fn execute_read_client_documentation(protocols: &[String]) -> ToolResult {
 
     // Add open_client action description once at the end
     result.push_str("## open_client Action (Now Enabled)\n\n");
-    result.push_str("The `open_client` action is now enabled for the protocols documented above.\n\n");
+    result.push_str(
+        "The `open_client` action is now enabled for the protocols documented above.\n\n",
+    );
 
     // Add examples for each documented protocol
     for protocol in &found_protocols {
@@ -2207,7 +2255,11 @@ async fn execute_read_client_documentation(protocols: &[String]) -> ToolResult {
         result.len()
     );
 
-    ToolResult::success("read_client_documentation", found_protocols.join(", "), result)
+    ToolResult::success(
+        "read_client_documentation",
+        found_protocols.join(", "),
+        result,
+    )
 }
 
 /// Execute unified read_documentation tool
@@ -2221,7 +2273,8 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
         return ToolResult::error(
             "read_documentation",
             "no protocols".to_string(),
-            "No protocols specified. Provide at least one protocol name in the 'protocols' array.".to_string(),
+            "No protocols specified. Provide at least one protocol name in the 'protocols' array."
+                .to_string(),
         );
     }
 
@@ -2251,7 +2304,9 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     // Add guidance header with explicit keyword matching
     result.push_str("# Protocol Documentation\n\n");
     result.push_str("## CRITICAL: When to Use Server vs Client Mode\n\n");
-    result.push_str("**Server Mode (open_server)** - Use when the user wants to HOST/SERVE content:\n");
+    result.push_str(
+        "**Server Mode (open_server)** - Use when the user wants to HOST/SERVE content:\n",
+    );
     result.push_str("- Keywords: \"serve\", \"host\", \"listen\", \"start a server\", \"create a server\", \"run a server\", \"open server\", \"provide\", \"respond to\"\n");
     result.push_str("- You LISTEN on a port and RESPOND to incoming requests\n");
     result.push_str("- User wants to PROVIDE a service that others connect to\n");
@@ -2276,7 +2331,10 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
         let found_any = server_protocol.is_some() || client_protocol.is_some();
 
         if !found_any {
-            warn!("Protocol '{}' not found in server or client registry", protocol);
+            warn!(
+                "Protocol '{}' not found in server or client registry",
+                protocol
+            );
             not_found_protocols.push(protocol.clone());
             continue;
         }
@@ -2300,7 +2358,10 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
             if !startup_params.is_empty() {
                 result.push_str("## Startup Parameters\n\n");
                 for param in &startup_params {
-                    result.push_str(&format!("- **{}** ({}): {}\n", param.name, param.type_hint, param.description));
+                    result.push_str(&format!(
+                        "- **{}** ({}): {}\n",
+                        param.name, param.type_hint, param.description
+                    ));
                     if param.required {
                         result.push_str("  - Required: Yes\n");
                     }
@@ -2328,7 +2389,10 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
                 for event_type in event_types {
                     result.push_str(&format!("### Event: {}\n\n", event_type.id));
                     result.push_str("**Response Example:**\n```json\n");
-                    result.push_str(&serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default());
+                    result.push_str(
+                        &serde_json::to_string_pretty(&event_type.response_example)
+                            .unwrap_or_default(),
+                    );
                     result.push_str("\n```\n\n");
                 }
             }
@@ -2355,7 +2419,10 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
             if !startup_params.is_empty() {
                 result.push_str("## Startup Parameters\n\n");
                 for param in &startup_params {
-                    result.push_str(&format!("- **{}** ({}): {}\n", param.name, param.type_hint, param.description));
+                    result.push_str(&format!(
+                        "- **{}** ({}): {}\n",
+                        param.name, param.type_hint, param.description
+                    ));
                     if param.required {
                         result.push_str("  - Required: Yes\n");
                     }
@@ -2383,7 +2450,10 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
                 for event_type in event_types {
                     result.push_str(&format!("### Event: {}\n\n", event_type.id));
                     result.push_str("**Action Example:**\n```json\n");
-                    result.push_str(&serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default());
+                    result.push_str(
+                        &serde_json::to_string_pretty(&event_type.response_example)
+                            .unwrap_or_default(),
+                    );
                     result.push_str("\n```\n\n");
                 }
             }
@@ -2407,9 +2477,11 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
     result.push_str("## Enabled Actions\n\n");
 
     // Add decision reminder before showing actions
-    result.push_str("**⚠️ BEFORE CHOOSING**: Re-read the user's request. What do they want to DO?\n");
+    result
+        .push_str("**⚠️ BEFORE CHOOSING**: Re-read the user's request. What do they want to DO?\n");
     result.push_str("- If they want to SERVE/HOST/PROVIDE content → use `open_server`\n");
-    result.push_str("- If they want to CONNECT TO/FETCH FROM a remote server → use `open_client`\n");
+    result
+        .push_str("- If they want to CONNECT TO/FETCH FROM a remote server → use `open_client`\n");
     result.push_str("- The ACTION matters, not the words. \"serve recipes\" = server, even if user says \"client\"\n\n");
 
     if !found_server_protocols.is_empty() {
@@ -2420,7 +2492,10 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
             result.push_str("{\n");
             result.push_str("  \"type\": \"open_server\",\n");
             result.push_str("  \"port\": 8080,\n");
-            result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol.to_lowercase()));
+            result.push_str(&format!(
+                "  \"base_stack\": \"{}\",\n",
+                protocol.to_lowercase()
+            ));
             result.push_str("  \"instruction\": \"Handle incoming requests\"\n");
             result.push_str("}\n```\n\n");
         }

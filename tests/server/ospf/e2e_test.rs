@@ -100,34 +100,33 @@ mod tests {
                      When receiving OSPF Hello packets, respond with Hello packets including the sender's router_id in the neighbor list.";
 
         // Start the server with mocks
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("OSPF")
-                    .and_instruction_containing("router")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "UDP",
-                            "application_protocol": "OSPF",
-                            "instruction": "Act as OSPF router 1.1.1.1 in area 0.0.0.0"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Receive OSPF Hello packet
-                    .on_event("udp_datagram_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_udp_response",
-                            "data": hex::encode(build_ospf_hello_response())
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("OSPF")
+                .and_instruction_containing("router")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "UDP",
+                        "application_protocol": "OSPF",
+                        "instruction": "Act as OSPF router 1.1.1.1 in area 0.0.0.0"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Receive OSPF Hello packet
+                .on_event("udp_datagram_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_udp_response",
+                        "data": hex::encode(build_ospf_hello_response())
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
         println!("OSPF server started on port {}", server.port);
@@ -146,7 +145,10 @@ mod tests {
             1,               // priority
         );
 
-        println!("Sending OSPF Hello packet ({} bytes)...", hello_packet.len());
+        println!(
+            "Sending OSPF Hello packet ({} bytes)...",
+            hello_packet.len()
+        );
         client_socket.send(&hello_packet).await?;
 
         // Receive Hello response
@@ -190,39 +192,40 @@ mod tests {
         let prompt = "Listen on port {AVAILABLE_PORT} via UDP. Act as OSPF router 1.1.1.1 in area 0.0.0.0. \
                      Track neighbors from received Hello packets. When receiving Hello, respond with Hello including all known neighbors.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("OSPF")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "UDP",
-                            "application_protocol": "OSPF",
-                            "instruction": "Track and respond to OSPF neighbors"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2-3: Multiple Hello exchanges
-                    .on_event("udp_datagram_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_udp_response",
-                            "data": hex::encode(build_ospf_hello_response())
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("OSPF")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "UDP",
+                        "application_protocol": "OSPF",
+                        "instruction": "Track and respond to OSPF neighbors"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-3: Multiple Hello exchanges
+                .on_event("udp_datagram_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_udp_response",
+                        "data": hex::encode(build_ospf_hello_response())
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
         println!("OSPF server started on port {}", server.port);
 
         let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
-        client_socket.connect(format!("127.0.0.1:{}", server.port)).await?;
+        client_socket
+            .connect(format!("127.0.0.1:{}", server.port))
+            .await?;
 
         // Send first Hello packet
         println!("Sending first OSPF Hello...");
@@ -267,33 +270,32 @@ mod tests {
         let prompt = "Listen on port {AVAILABLE_PORT} via UDP. Act as OSPF router 1.1.1.1 in area 0.0.0.0. \
                      Accept Hello packets from multiple routers and maintain neighbor relationships.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("OSPF")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "UDP",
-                            "application_protocol": "OSPF",
-                            "instruction": "Handle multiple OSPF neighbors"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2-4: Multiple Hello packets from different routers
-                    .on_event("udp_datagram_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_udp_response",
-                            "data": hex::encode(build_ospf_hello_response())
-                        }
-                    ]))
-                    .expect_calls(3)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("OSPF")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "UDP",
+                        "application_protocol": "OSPF",
+                        "instruction": "Handle multiple OSPF neighbors"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Multiple Hello packets from different routers
+                .on_event("udp_datagram_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_udp_response",
+                        "data": hex::encode(build_ospf_hello_response())
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
         println!("OSPF server started on port {}", server.port);
@@ -307,7 +309,9 @@ mod tests {
 
         for (router_id, name) in &routers {
             let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
-            client_socket.connect(format!("127.0.0.1:{}", server.port)).await?;
+            client_socket
+                .connect(format!("127.0.0.1:{}", server.port))
+                .await?;
 
             println!("Sending Hello from {} ({})", name, router_id);
             let hello = build_ospf_hello(router_id, "0.0.0.0", "255.255.255.0", 1);

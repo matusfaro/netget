@@ -330,8 +330,16 @@ impl Protocol for WebdavClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webdav_connected", "Triggered when WebDAV client is initialized", json!({"type": "placeholder", "event_id": "webdav_connected"})),
-            EventType::new("webdav_response_received", "Triggered when WebDAV client receives a response", json!({"type": "placeholder", "event_id": "webdav_response_received"})),
+            EventType::new(
+                "webdav_connected",
+                "Triggered when WebDAV client is initialized",
+                json!({"type": "placeholder", "event_id": "webdav_connected"}),
+            ),
+            EventType::new(
+                "webdav_response_received",
+                "Triggered when WebDAV client receives a response",
+                json!({"type": "placeholder", "event_id": "webdav_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

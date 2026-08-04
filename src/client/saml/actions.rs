@@ -20,7 +20,7 @@ pub static SAML_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "parse_assertion",
             "response_xml": "<samlp:Response...>"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "idp_url".to_string(),
@@ -38,7 +38,7 @@ pub static SAML_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
         json!({
             "type": "parse_assertion",
             "response_xml": "<samlp:Response...>"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -129,7 +129,7 @@ impl Protocol for SamlClientProtocol {
                     "relay_state": "/protected/resource",
                     "force_authn": false
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "validate_assertion".to_string(),
@@ -144,7 +144,7 @@ impl Protocol for SamlClientProtocol {
                     "type": "validate_assertion",
                     "saml_response": "PHNhbWxwOlJlc3BvbnNlLi4uPg=="
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -153,7 +153,7 @@ impl Protocol for SamlClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -183,8 +183,16 @@ impl Protocol for SamlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("saml_connected", "Triggered when SAML client is initialized", json!({"type": "placeholder", "event_id": "saml_connected"})),
-            EventType::new("saml_response_received", "Triggered when SAML client receives an authentication response", json!({"type": "placeholder", "event_id": "saml_response_received"})),
+            EventType::new(
+                "saml_connected",
+                "Triggered when SAML client is initialized",
+                json!({"type": "placeholder", "event_id": "saml_connected"}),
+            ),
+            EventType::new(
+                "saml_response_received",
+                "Triggered when SAML client receives an authentication response",
+                json!({"type": "placeholder", "event_id": "saml_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

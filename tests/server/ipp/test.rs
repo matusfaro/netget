@@ -281,34 +281,33 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
 
     let prompt = "Open IPP on port {AVAILABLE_PORT}. For all IPP requests, use ipp_response action with status=200.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("Open IPP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "IPP",
-                        "instruction": "IPP server responding to all requests with status 200"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: HTTP GET request (not typical IPP but tests HTTP layer)
-                .on_event("ipp_request_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "http_response",
-                        "status": 200,
-                        "body": ""
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("Open IPP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IPP",
+                    "instruction": "IPP server responding to all requests with status 200"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: HTTP GET request (not typical IPP but tests HTTP layer)
+            .on_event("ipp_request_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "http_response",
+                    "status": 200,
+                    "body": ""
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

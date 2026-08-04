@@ -326,7 +326,10 @@ impl ActionDefinition {
         match self.category() {
             ToolCategory::InformationTool => {
                 // Expose information tools except generate_random (MCP clients can do this)
-                !matches!(self.name.as_str(), "generate_random" | "list_network_interfaces")
+                !matches!(
+                    self.name.as_str(),
+                    "generate_random" | "list_network_interfaces"
+                )
             }
             ToolCategory::Action => {
                 // Expose management actions, exclude internal-only ones
@@ -415,7 +418,10 @@ impl ActionDefinition {
                 "object" => "object",
                 _ => "string",
             };
-            prop.insert("type".to_string(), serde_json::Value::String(json_type.to_string()));
+            prop.insert(
+                "type".to_string(),
+                serde_json::Value::String(json_type.to_string()),
+            );
             prop.insert(
                 "description".to_string(),
                 serde_json::Value::String(param.description.clone()),
@@ -467,7 +473,10 @@ impl ActionDefinition {
                 "object" => "object",
                 _ => "string",
             };
-            prop.insert("type".to_string(), serde_json::Value::String(json_type.to_string()));
+            prop.insert(
+                "type".to_string(),
+                serde_json::Value::String(json_type.to_string()),
+            );
             prop.insert(
                 "description".to_string(),
                 serde_json::Value::String(param.description.clone()),
@@ -546,14 +555,19 @@ impl ActionResponse {
 
         // Strip any extra characters before the JSON object or array
         // Sometimes LLMs add extra text like "Y{" instead of just "{"
-        let json_start = json_str.find('{').or_else(|| json_str.find('[')).unwrap_or(0);
+        let json_start = json_str
+            .find('{')
+            .or_else(|| json_str.find('['))
+            .unwrap_or(0);
         let clean_json = &json_str[json_start..];
 
         // Try parsing as a single object first (most common case)
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(clean_json) {
             match json_value {
                 // Case 1: Full response object with tools and/or actions fields
-                serde_json::Value::Object(ref map) if map.contains_key("tools") || map.contains_key("actions") => {
+                serde_json::Value::Object(ref map)
+                    if map.contains_key("tools") || map.contains_key("actions") =>
+                {
                     match serde_json::from_value::<ActionResponse>(json_value.clone()) {
                         Ok(mut response) => {
                             // Separate tools and actions if mixed (support cross-contamination)
@@ -629,9 +643,11 @@ impl ActionResponse {
 
         // Check tools array for misplaced actions
         if !response.tools.is_empty() {
-            let (actual_tools, misplaced_actions): (Vec<_>, Vec<_>) =
-                response.tools.clone().into_iter()
-                    .partition(|item| ToolAction::is_tool_action(item));
+            let (actual_tools, misplaced_actions): (Vec<_>, Vec<_>) = response
+                .tools
+                .clone()
+                .into_iter()
+                .partition(|item| ToolAction::is_tool_action(item));
 
             response.tools = actual_tools;
             response.actions.extend(misplaced_actions);
@@ -639,9 +655,11 @@ impl ActionResponse {
 
         // Check actions array for misplaced tools
         if !response.actions.is_empty() {
-            let (misplaced_tools, actual_actions): (Vec<_>, Vec<_>) =
-                response.actions.clone().into_iter()
-                    .partition(|item| ToolAction::is_tool_action(item));
+            let (misplaced_tools, actual_actions): (Vec<_>, Vec<_>) = response
+                .actions
+                .clone()
+                .into_iter()
+                .partition(|item| ToolAction::is_tool_action(item));
 
             response.actions = actual_actions;
             response.tools.extend(misplaced_tools);

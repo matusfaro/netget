@@ -11,32 +11,29 @@ async fn test_running_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE running sensor. Create the Running Speed and Cadence Service (UUID: 00001814-0000-1000-8000-00805f9b34fb) with speed 10 km/h, cadence 170 steps/min. Advertise as 'NetGet-Running'.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Act as a BLE running")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BLUETOOTH_BLE_RUNNING",
-                            "instruction": "Create running service",
-                            "startup_params": {
-                                "device_name": "NetGet-Running"
-                            }
-                                
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("Act as a BLE running")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BLUETOOTH_BLE_RUNNING",
+                    "instruction": "Create running service",
+                    "startup_params": {
+                        "device_name": "NetGet-Running"
+                    }
+
+                }
+            ]))
+            .expect_calls(1)
+            .and()
             // Mock 2: Server started event - service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+            .on_event("bluetooth_ble_started")
+            .respond_with_actions(serde_json::json!([]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     println!("✓ Running service started");
     tokio::time::sleep(Duration::from_secs(2)).await;

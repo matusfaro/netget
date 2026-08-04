@@ -131,7 +131,7 @@ impl Protocol for HttpClientProtocol {
                         "Accept": "application/json"
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -140,7 +140,7 @@ impl Protocol for HttpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -188,8 +188,16 @@ impl Protocol for HttpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("http_connected", "Triggered when HTTP client is initialized", json!({"type": "placeholder", "event_id": "http_connected"})),
-            EventType::new("http_response_received", "Triggered when HTTP client receives a response", json!({"type": "placeholder", "event_id": "http_response_received"})),
+            EventType::new(
+                "http_connected",
+                "Triggered when HTTP client is initialized",
+                json!({"type": "placeholder", "event_id": "http_connected"}),
+            ),
+            EventType::new(
+                "http_response_received",
+                "Triggered when HTTP client receives a response",
+                json!({"type": "placeholder", "event_id": "http_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

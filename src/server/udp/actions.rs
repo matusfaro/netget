@@ -260,10 +260,7 @@ fn ignore_datagram_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_datagram"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("UDP ignore_datagram"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("UDP ignore_datagram")),
     }
 }
 
@@ -272,34 +269,38 @@ fn ignore_datagram_action() -> ActionDefinition {
 // ============================================================================
 
 pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("udp_datagram_received", "UDP datagram received from a peer", json!({"type": "placeholder", "event_id": "udp_datagram_received"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "peer_address".to_string(),
-                type_hint: "string".to_string(),
-                description: "Source address of the datagram (IP:port)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data_length".to_string(),
-                type_hint: "number".to_string(),
-                description: "Length of the received data in bytes".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data_preview".to_string(),
-                type_hint: "string".to_string(),
-                description: "Preview of the received data".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![send_udp_response_action(), ignore_datagram_action()])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("UDP {data_length}B from {peer_address}")
-                .with_debug("UDP datagram: {data_length}B from {peer_address}")
-                .with_trace("UDP data: {preview(data_preview,200)}"),
-        )
+    EventType::new(
+        "udp_datagram_received",
+        "UDP datagram received from a peer",
+        json!({"type": "placeholder", "event_id": "udp_datagram_received"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "peer_address".to_string(),
+            type_hint: "string".to_string(),
+            description: "Source address of the datagram (IP:port)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_length".to_string(),
+            type_hint: "number".to_string(),
+            description: "Length of the received data in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_preview".to_string(),
+            type_hint: "string".to_string(),
+            description: "Preview of the received data".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![send_udp_response_action(), ignore_datagram_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("UDP {data_length}B from {peer_address}")
+            .with_debug("UDP datagram: {data_length}B from {peer_address}")
+            .with_trace("UDP data: {preview(data_preview,200)}"),
+    )
 });
 
 pub fn get_udp_event_types() -> Vec<EventType> {

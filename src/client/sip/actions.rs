@@ -329,7 +329,12 @@ impl Client for SipClientProtocol {
 
 // Event type constants
 pub static SIP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sip_client_connected", "SIP client connected to server", json!({"type": "placeholder", "event_id": "sip_client_connected"})).with_parameters(vec![
+    EventType::new(
+        "sip_client_connected",
+        "SIP client connected to server",
+        json!({"type": "placeholder", "event_id": "sip_client_connected"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "remote_addr".to_string(),
             type_hint: "string".to_string(),
@@ -351,7 +356,7 @@ pub static SIP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
         "SIP response received from server",
         json!({
             "type": "disconnect"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {

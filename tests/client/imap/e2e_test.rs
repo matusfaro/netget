@@ -64,48 +64,48 @@ mod imap_client_tests {
             "Connect to 127.0.0.1:{} via IMAP. Select INBOX and check for messages.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup (user command)
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("IMAP")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "IMAP",
-                            "instruction": "Authenticate and select INBOX",
-                            "startup_params": {
-                                "username": "testuser",
-                                "password": "testpass",
-                                "use_tls": false
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected (imap_client_connected event)
-                    .on_event("imap_client_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "authenticate_imap",
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup (user command)
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("IMAP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "IMAP",
+                        "instruction": "Authenticate and select INBOX",
+                        "startup_params": {
                             "username": "testuser",
-                            "password": "testpass"
+                            "password": "testpass",
+                            "use_tls": false
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Client authenticated (imap_client_authenticated event)
-                    .on_event("imap_client_authenticated")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "select_mailbox",
-                            "mailbox": "INBOX"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected (imap_client_connected event)
+                .on_event("imap_client_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "authenticate_imap",
+                        "username": "testuser",
+                        "password": "testpass"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client authenticated (imap_client_authenticated event)
+                .on_event("imap_client_authenticated")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "select_mailbox",
+                        "mailbox": "INBOX"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -339,52 +339,52 @@ mod imap_client_tests {
             "Connect to 127.0.0.1:{} via IMAP. Select INBOX and search for UNSEEN messages.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("IMAP")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "IMAP",
-                            "instruction": "Authenticate, select INBOX, search UNSEEN",
-                            "startup_params": {
-                                "username": "testuser",
-                                "password": "testpass",
-                                "use_tls": false
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected
-                    .on_event("imap_client_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "authenticate_imap",
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("IMAP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "IMAP",
+                        "instruction": "Authenticate, select INBOX, search UNSEEN",
+                        "startup_params": {
                             "username": "testuser",
-                            "password": "testpass"
+                            "password": "testpass",
+                            "use_tls": false
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Client authenticated
-                    .on_event("imap_client_authenticated")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "select_mailbox",
-                            "mailbox": "INBOX"
-                        },
-                        {
-                            "type": "search_messages",
-                            "criteria": "UNSEEN"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("imap_client_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "authenticate_imap",
+                        "username": "testuser",
+                        "password": "testpass"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client authenticated
+                .on_event("imap_client_authenticated")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "select_mailbox",
+                        "mailbox": "INBOX"
+                    },
+                    {
+                        "type": "search_messages",
+                        "criteria": "UNSEEN"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -393,7 +393,8 @@ mod imap_client_tests {
         // Verify client performed search
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("search")) || output.iter().any(|l| l.contains("UNSEEN")),
+            output.iter().any(|l| l.contains("search"))
+                || output.iter().any(|l| l.contains("UNSEEN")),
             "Client should show search operation. Output: {:?}",
             output
         );
@@ -558,7 +559,8 @@ mod imap_client_tests {
         // Verify client fetched message
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("fetch")) || output.iter().any(|l| l.contains("message")),
+            output.iter().any(|l| l.contains("fetch"))
+                || output.iter().any(|l| l.contains("message")),
             "Client should show message fetch operation. Output: {:?}",
             output
         );

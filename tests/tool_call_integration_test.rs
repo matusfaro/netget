@@ -173,7 +173,9 @@ mod tool_call_integration_tests {
             .expect("Failed to start netget");
 
         // 2. Wait for server to start and process the file instructions
-        println!("Waiting for server to read prompt file and start (this takes time with real LLM)...");
+        println!(
+            "Waiting for server to read prompt file and start (this takes time with real LLM)..."
+        );
         sleep(Duration::from_secs(60)).await;
 
         // 3. Check that the process is still running

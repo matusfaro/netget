@@ -19,7 +19,6 @@ async fn test_http3_echo() -> E2EResult<()> {
             mock
                 // IMPORTANT: Event-specific mocks MUST come first
                 // The mock system uses the FIRST matching rule
-
                 // Mock 1: Connection opened - just acknowledge
                 .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
@@ -131,11 +130,7 @@ async fn test_http3_echo() -> E2EResult<()> {
     println!("✓ Received response: {} bytes", response.len());
 
     // Verify echo
-    assert_eq!(
-        response,
-        test_data.to_vec(),
-        "Expected echo of sent data"
-    );
+    assert_eq!(response, test_data.to_vec(), "Expected echo of sent data");
 
     // Cleanup
     connection.close(0u32.into(), b"done");
@@ -158,7 +153,6 @@ async fn test_http3_custom_response() -> E2EResult<()> {
             mock
                 // IMPORTANT: Event-specific mocks MUST come first
                 // The mock system uses the FIRST matching rule
-
                 // Mock 1: Connection opened - just acknowledge
                 .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
@@ -269,11 +263,7 @@ async fn test_http3_custom_response() -> E2EResult<()> {
     let response_str = String::from_utf8_lossy(&response);
     println!("✓ Received response: {}", response_str);
 
-    assert_eq!(
-        response_str,
-        "PONG",
-        "Expected PONG response"
-    );
+    assert_eq!(response_str, "PONG", "Expected PONG response");
 
     // Cleanup
     connection.close(0u32.into(), b"done");
@@ -296,7 +286,6 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
             mock
                 // IMPORTANT: Event-specific mocks MUST come first
                 // The mock system uses the FIRST matching rule
-
                 // Mock 1: Connection opened - just acknowledge
                 .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
@@ -328,7 +317,7 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                         }
                     ])
                 })
-                .expect_calls(3)  // Expecting 3 streams
+                .expect_calls(3) // Expecting 3 streams
                 .and()
                 // Mock 4: Server startup (catch-all for user input, MUST come LAST)
                 .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))

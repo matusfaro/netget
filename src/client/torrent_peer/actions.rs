@@ -13,28 +13,31 @@ use std::sync::LazyLock;
 
 /// Peer handshake event
 pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("peer_handshake", "Received handshake from BitTorrent peer", json!({"type": "placeholder", "event_id": "peer_handshake"})).with_parameters(
-        vec![
-            Parameter {
-                name: "info_hash".to_string(),
-                type_hint: "string".to_string(),
-                description: "Info hash (hex)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "peer_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Peer ID (hex)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "reserved".to_string(),
-                type_hint: "string".to_string(),
-                description: "Reserved bytes (hex)".to_string(),
-                required: false,
-            },
-        ],
+    EventType::new(
+        "peer_handshake",
+        "Received handshake from BitTorrent peer",
+        json!({"type": "placeholder", "event_id": "peer_handshake"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "info_hash".to_string(),
+            type_hint: "string".to_string(),
+            description: "Info hash (hex)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Peer ID (hex)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "reserved".to_string(),
+            type_hint: "string".to_string(),
+            description: "Reserved bytes (hex)".to_string(),
+            required: false,
+        },
+    ])
 });
 
 /// Peer message event
@@ -97,7 +100,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "info_hash": "0123456789abcdef0123456789abcdef01234567",
                     "peer_id": "abcdef0123456789abcdef0123456789abcdef01"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "peer_interested".to_string(),
@@ -108,7 +111,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 2,
                     "payload": ""
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "peer_not_interested".to_string(),
@@ -119,7 +122,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 3,
                     "payload": ""
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "peer_request_piece".to_string(),
@@ -149,7 +152,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 6,
                     "payload": "00000000000000000000400"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "peer_send_piece".to_string(),
@@ -179,7 +182,7 @@ impl Protocol for TorrentPeerClientProtocol {
                     "message_type": 7,
                     "payload": "0000000000000000abcdef..."
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -188,7 +191,7 @@ impl Protocol for TorrentPeerClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -200,8 +203,16 @@ impl Protocol for TorrentPeerClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("peer_handshake", "Received handshake from peer", json!({"type": "placeholder", "event_id": "peer_handshake"})),
-            EventType::new("peer_message", "Received message from peer", json!({"type": "placeholder", "event_id": "peer_message"})),
+            EventType::new(
+                "peer_handshake",
+                "Received handshake from peer",
+                json!({"type": "placeholder", "event_id": "peer_handshake"}),
+            ),
+            EventType::new(
+                "peer_message",
+                "Received message from peer",
+                json!({"type": "placeholder", "event_id": "peer_message"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

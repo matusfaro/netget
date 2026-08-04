@@ -70,11 +70,15 @@ fn test_rotation_and_retention_drops_oldest() {
 
     // Hard ceiling check: total bytes on disk for this log must never
     // exceed (max_files + 1) * max_bytes.
-    let total: u64 = [Some(path.clone()), Some(rotated_path(&path, 1)), Some(rotated_path(&path, 2))]
-        .into_iter()
-        .flatten()
-        .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
-        .sum();
+    let total: u64 = [
+        Some(path.clone()),
+        Some(rotated_path(&path, 1)),
+        Some(rotated_path(&path, 2)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+    .sum();
     assert!(
         total <= (max_files as u64 + 1) * max_bytes,
         "total log bytes {total} exceeded hard ceiling {}",
@@ -93,8 +97,7 @@ fn test_concurrent_writes_are_not_corrupted_or_lost_across_rotations() {
     let max_bytes = 500u64;
     let max_files = 20usize;
 
-    let writer =
-        RotatingFileWriter::with_limits(&path, max_bytes, max_files).expect("open writer");
+    let writer = RotatingFileWriter::with_limits(&path, max_bytes, max_files).expect("open writer");
 
     let n_threads = 8usize;
     let lines_per_thread = 50usize;
@@ -171,7 +174,10 @@ fn test_opening_oversized_existing_file_preserves_data_via_rotation() {
     // netget.log) that predates the rotator being wired in.
     let old_data = "OLD-DATA-FROM-BEFORE-ROTATION-WAS-ADDED\n".repeat(5);
     fs::write(&path, &old_data).expect("seed pre-existing oversized file");
-    assert!(old_data.len() as u64 > 50, "sanity: seed data must exceed max_bytes below");
+    assert!(
+        old_data.len() as u64 > 50,
+        "sanity: seed data must exceed max_bytes below"
+    );
 
     let max_bytes = 50u64;
     let max_files = 1usize;
@@ -190,5 +196,8 @@ fn test_opening_oversized_existing_file_preserves_data_via_rotation() {
     );
 
     let active = fs::read_to_string(&path).expect("read active file");
-    assert_eq!(active, "NEW\n", "active file should only contain the new write");
+    assert_eq!(
+        active, "NEW\n",
+        "active file should only contain the new write"
+    );
 }

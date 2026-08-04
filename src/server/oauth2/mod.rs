@@ -21,6 +21,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::console_info;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
@@ -30,7 +31,6 @@ use crate::server::oauth2::actions::{
     OAUTH2_TOKEN_EVENT,
 };
 use crate::state::app_state::AppState;
-use crate::console_info;
 
 /// OAuth2 authorization server
 pub struct OAuth2Server;
@@ -327,12 +327,17 @@ async fn handle_authorize_request(
             for result in execution_result.protocol_results {
                 if let crate::llm::ActionResult::Output(bytes) = result {
                     if let Ok(json_str) = String::from_utf8(bytes) {
-                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
                             // Extract code and state from LLM response
-                            if let Some(code_value) = json_value.get("code").and_then(|v| v.as_str()) {
+                            if let Some(code_value) =
+                                json_value.get("code").and_then(|v| v.as_str())
+                            {
                                 code = code_value.to_string();
                             }
-                            if let Some(state_value) = json_value.get("state").and_then(|v| v.as_str()) {
+                            if let Some(state_value) =
+                                json_value.get("state").and_then(|v| v.as_str())
+                            {
                                 state_from_llm = Some(state_value.to_string());
                             }
                         }
@@ -340,7 +345,9 @@ async fn handle_authorize_request(
                 }
             }
 
-            let state = state_from_llm.or_else(|| params.get("state").cloned()).unwrap_or_default();
+            let state = state_from_llm
+                .or_else(|| params.get("state").cloned())
+                .unwrap_or_default();
             let redirect_uri = params
                 .get("redirect_uri")
                 .cloned()
@@ -447,9 +454,7 @@ async fn handle_token_request(
                 .protocol_results
                 .into_iter()
                 .find_map(|result| match result {
-                    crate::llm::ActionResult::Output(bytes) => {
-                        String::from_utf8(bytes).ok()
-                    }
+                    crate::llm::ActionResult::Output(bytes) => String::from_utf8(bytes).ok(),
                     _ => None,
                 })
                 .unwrap_or_else(|| {
@@ -548,9 +553,7 @@ async fn handle_introspect_request(
                 .protocol_results
                 .into_iter()
                 .find_map(|result| match result {
-                    crate::llm::ActionResult::Output(bytes) => {
-                        String::from_utf8(bytes).ok()
-                    }
+                    crate::llm::ActionResult::Output(bytes) => String::from_utf8(bytes).ok(),
                     _ => None,
                 })
                 .unwrap_or_else(|| {

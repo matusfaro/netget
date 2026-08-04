@@ -81,47 +81,46 @@ async fn test_mcp_initialize() -> E2EResult<()> {
         - capabilities: resources with subscribe support, tools, and prompts \
         - serverInfo: name=netget-mcp, version=0.1.0";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with resources, tools, and prompts capabilities"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Initialize request
-                .on_event("mcp_initialize")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 1,
-                        "result": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {
-                                "resources": {
-                                    "subscribe": true
-                                },
-                                "tools": {},
-                                "prompts": {}
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with resources, tools, and prompts capabilities"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Initialize request
+            .on_event("mcp_initialize")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "resources": {
+                                "subscribe": true
                             },
-                            "serverInfo": {
-                                "name": "netget-mcp",
-                                "version": "0.1.0"
-                            }
+                            "tools": {},
+                            "prompts": {}
+                        },
+                        "serverInfo": {
+                            "name": "netget-mcp",
+                            "version": "0.1.0"
                         }
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -212,23 +211,22 @@ async fn test_mcp_ping() -> E2EResult<()> {
 
     let prompt = "Listen on port {AVAILABLE_PORT} via MCP. You are an MCP server.";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server that responds to ping"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server that responds to ping"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -271,47 +269,46 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
         - uri: file:///example.txt, name: Example File, description: A sample text file \
         - uri: file:///data.json, name: Data File, description: JSON data file";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with resources capability"
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with resources capability"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Resources list request
+            .on_event("mcp_resources_list")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 3,
+                    "result": {
+                        "resources": [
+                            {
+                                "uri": "file:///example.txt",
+                                "name": "Example File",
+                                "description": "A sample text file"
+                            },
+                            {
+                                "uri": "file:///data.json",
+                                "name": "Data File",
+                                "description": "JSON data file"
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Resources list request
-                .on_event("mcp_resources_list")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 3,
-                        "result": {
-                            "resources": [
-                                {
-                                    "uri": "file:///example.txt",
-                                    "name": "Example File",
-                                    "description": "A sample text file"
-                                },
-                                {
-                                    "uri": "file:///data.json",
-                                    "name": "Data File",
-                                    "description": "JSON data file"
-                                }
-                            ]
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -363,42 +360,41 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
         When a client reads resource 'file:///example.txt', \
         return contents with uri and text: 'Hello from NetGet MCP server!'";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with resource read capability"
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with resource read capability"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Resource read request
+            .on_event("mcp_resources_read")
+            .and_event_data_contains("uri", "file:///example.txt")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 4,
+                    "result": {
+                        "contents": [
+                            {
+                                "uri": "file:///example.txt",
+                                "text": "Hello from NetGet MCP server!"
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Resource read request
-                .on_event("mcp_resources_read")
-                .and_event_data_contains("uri", "file:///example.txt")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 4,
-                        "result": {
-                            "contents": [
-                                {
-                                    "uri": "file:///example.txt",
-                                    "text": "Hello from NetGet MCP server!"
-                                }
-                            ]
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -461,61 +457,60 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
         - name: calculate, description: Perform calculations, inputSchema with 'expression' string parameter \
         - name: search, description: Search files, inputSchema with 'query' string parameter";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with tools capability"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Tools list request
-                .on_event("mcp_tools_list")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 5,
-                        "result": {
-                            "tools": [
-                                {
-                                    "name": "calculate",
-                                    "description": "Perform calculations",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "expression": {
-                                                "type": "string"
-                                            }
-                                        }
-                                    }
-                                },
-                                {
-                                    "name": "search",
-                                    "description": "Search files",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "query": {
-                                                "type": "string"
-                                            }
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with tools capability"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Tools list request
+            .on_event("mcp_tools_list")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 5,
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "calculate",
+                                "description": "Perform calculations",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "expression": {
+                                            "type": "string"
                                         }
                                     }
                                 }
-                            ]
-                        }
+                            },
+                            {
+                                "name": "search",
+                                "description": "Search files",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -567,42 +562,41 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
         When a client calls tool 'calculate' with expression '2+2', \
         return content with type text and text '4'";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with tools call capability"
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with tools call capability"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Tool call request
+            .on_event("mcp_tools_call")
+            .and_event_data_contains("name", "calculate")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 6,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "4"
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Tool call request
-                .on_event("mcp_tools_call")
-                .and_event_data_contains("name", "calculate")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 6,
-                        "result": {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "4"
-                                }
-                            ]
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -668,45 +662,44 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
         - name: code-review, description: Review code for quality and bugs \
         - name: summarize, description: Summarize text content";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with prompts capability"
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with prompts capability"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Prompts list request
+            .on_event("mcp_prompts_list")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 7,
+                    "result": {
+                        "prompts": [
+                            {
+                                "name": "code-review",
+                                "description": "Review code for quality and bugs"
+                            },
+                            {
+                                "name": "summarize",
+                                "description": "Summarize text content"
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Prompts list request
-                .on_event("mcp_prompts_list")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 7,
-                        "result": {
-                            "prompts": [
-                                {
-                                    "name": "code-review",
-                                    "description": "Review code for quality and bugs"
-                                },
-                                {
-                                    "name": "summarize",
-                                    "description": "Summarize text content"
-                                }
-                            ]
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -758,45 +751,44 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
         When a client gets prompt 'code-review', \
         return messages with role 'user' and content with type 'text' and text 'Review this code'";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server with prompt get capability"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Prompt get request
-                .on_event("mcp_prompts_get")
-                .and_event_data_contains("name", "code-review")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_jsonrpc_response",
-                        "id": 8,
-                        "result": {
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": {
-                                        "type": "text",
-                                        "text": "Review this code"
-                                    }
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server with prompt get capability"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Prompt get request
+            .on_event("mcp_prompts_get")
+            .and_event_data_contains("name", "code-review")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_jsonrpc_response",
+                    "id": 8,
+                    "result": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": {
+                                    "type": "text",
+                                    "text": "Review this code"
                                 }
-                            ]
-                        }
+                            }
+                        ]
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -856,23 +848,22 @@ async fn test_mcp_error_handling() -> E2EResult<()> {
 
     let prompt = "Listen on port {AVAILABLE_PORT} via MCP. You are an MCP server.";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup
-                .on_instruction_containing("MCP")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MCP",
-                        "instruction": "MCP server for error handling test"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup
+            .on_instruction_containing("MCP")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MCP",
+                    "instruction": "MCP server for error handling test"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);

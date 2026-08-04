@@ -87,7 +87,7 @@ impl Protocol for IppClientProtocol {
                 example: json!({
                     "type": "get_printer_attributes"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "print_job".to_string(),
@@ -120,7 +120,7 @@ impl Protocol for IppClientProtocol {
                     "document_format": "text/plain",
                     "document_data": "Hello, Printer!\n"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_job_attributes".to_string(),
@@ -135,7 +135,7 @@ impl Protocol for IppClientProtocol {
                     "type": "get_job_attributes",
                     "job_id": 123
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -144,7 +144,7 @@ impl Protocol for IppClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -158,7 +158,7 @@ impl Protocol for IppClientProtocol {
                 example: json!({
                     "type": "get_printer_attributes"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_job_attributes".to_string(),
@@ -173,7 +173,7 @@ impl Protocol for IppClientProtocol {
                     "type": "get_job_attributes",
                     "job_id": 123
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -182,8 +182,16 @@ impl Protocol for IppClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ipp_connected", "Triggered when IPP client is initialized", json!({"type": "get_printer_attributes"})),
-            EventType::new("ipp_response_received", "Triggered when IPP client receives a response from the printer", json!({"type": "get_job_attributes", "job_id": 123})),
+            EventType::new(
+                "ipp_connected",
+                "Triggered when IPP client is initialized",
+                json!({"type": "get_printer_attributes"}),
+            ),
+            EventType::new(
+                "ipp_response_received",
+                "Triggered when IPP client receives a response from the printer",
+                json!({"type": "get_job_attributes", "job_id": 123}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

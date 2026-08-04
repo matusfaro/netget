@@ -66,8 +66,8 @@ pub mod dynamo;
 pub mod elasticsearch;
 #[cfg(feature = "etcd")]
 pub mod etcd;
-#[cfg(feature = "zookeeper")]
-pub mod zookeeper;
+#[cfg(feature = "ftp")]
+pub mod ftp;
 #[cfg(feature = "git")]
 pub mod git;
 #[cfg(feature = "grpc")]
@@ -110,10 +110,10 @@ pub mod mercurial;
 pub mod mongodb;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
-#[cfg(feature = "mysql")]
-pub mod mysql;
 #[cfg(feature = "mssql")]
 pub mod mssql;
+#[cfg(feature = "mysql")]
+pub mod mysql;
 #[cfg(feature = "nfc")]
 pub mod nfc;
 #[cfg(feature = "nfs")]
@@ -160,8 +160,6 @@ pub mod sip;
 pub mod smb;
 #[cfg(feature = "smtp")]
 pub mod smtp;
-#[cfg(feature = "ftp")]
-pub mod ftp;
 #[cfg(feature = "snmp")]
 pub mod snmp;
 #[cfg(all(feature = "socket_file", unix))]
@@ -236,6 +234,8 @@ pub mod wireguard;
 pub mod xmlrpc;
 #[cfg(feature = "xmpp")]
 pub mod xmpp;
+#[cfg(feature = "zookeeper")]
+pub mod zookeeper;
 
 // Shared test helpers - re-export from top-level for backward compatibility
 pub use super::helpers;

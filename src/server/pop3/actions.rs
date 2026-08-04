@@ -59,10 +59,7 @@ impl Pop3Protocol {
     }
 
     fn execute_send_pop3_ok(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
         let response = if message.is_empty() {
             "+OK\r\n".to_string()
@@ -99,7 +96,10 @@ impl Pop3Protocol {
 
         let response = format!("+OK {} {}\r\n", message_count, total_size);
 
-        debug!("POP3 sending STAT: {} messages, {} bytes", message_count, total_size);
+        debug!(
+            "POP3 sending STAT: {} messages, {} bytes",
+            message_count, total_size
+        );
         Ok(ActionResult::Output(response.as_bytes().to_vec()))
     }
 
@@ -315,7 +315,8 @@ impl Protocol for Pop3Protocol {
             },
             ActionDefinition {
                 name: "send_pop3_greeting".to_string(),
-                description: "Send POP3 greeting banner (sent automatically on connect)".to_string(),
+                description: "Send POP3 greeting banner (sent automatically on connect)"
+                    .to_string(),
                 parameters: vec![Parameter {
                     name: "message".to_string(),
                     type_hint: "string".to_string(),
@@ -334,7 +335,8 @@ impl Protocol for Pop3Protocol {
             },
             ActionDefinition {
                 name: "send_pop3_stat".to_string(),
-                description: "Send POP3 STAT response with message count and total size".to_string(),
+                description: "Send POP3 STAT response with message count and total size"
+                    .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "message_count".to_string(),
@@ -357,7 +359,9 @@ impl Protocol for Pop3Protocol {
                 log_template: Some(
                     LogTemplate::new()
                         .with_info("-> POP3 STAT {message_count} {total_size}")
-                        .with_debug("POP3 send_pop3_stat: {message_count} messages, {total_size} bytes"),
+                        .with_debug(
+                            "POP3 send_pop3_stat: {message_count} messages, {total_size} bytes",
+                        ),
                 ),
             },
             ActionDefinition {
@@ -366,8 +370,7 @@ impl Protocol for Pop3Protocol {
                 parameters: vec![Parameter {
                     name: "messages".to_string(),
                     type_hint: "array".to_string(),
-                    description:
-                        "Array of message objects with 'id' and 'size' fields".to_string(),
+                    description: "Array of message objects with 'id' and 'size' fields".to_string(),
                     required: true,
                 }],
                 example: json!({
@@ -501,7 +504,11 @@ impl Protocol for Pop3Protocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new("pop3_command", "Triggered when POP3 command is received from client", json!({"type": "placeholder", "event_id": "pop3_command"}))]
+        vec![EventType::new(
+            "pop3_command",
+            "Triggered when POP3 command is received from client",
+            json!({"type": "placeholder", "event_id": "pop3_command"}),
+        )]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -520,9 +527,7 @@ impl Protocol for Pop3Protocol {
             .implementation(
                 "Manual TCP/TLS implementation with full LLM control over protocol responses",
             )
-            .llm_control(
-                "Full control over POP3 responses (+OK, -ERR, STAT, LIST, RETR, etc.)",
-            )
+            .llm_control("Full control over POP3 responses (+OK, -ERR, STAT, LIST, RETR, etc.)")
             .e2e_testing("Manual TCP client with line-based protocol testing")
             .build()
     }

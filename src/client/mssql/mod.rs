@@ -3,10 +3,10 @@ pub mod actions;
 
 pub use actions::MssqlClientProtocol;
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mssql::actions::{
     MSSQL_CLIENT_CONNECTED_EVENT, MSSQL_CLIENT_ERROR_EVENT, MSSQL_CLIENT_QUERY_RESULT_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

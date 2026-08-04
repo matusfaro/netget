@@ -38,7 +38,7 @@ async fn test_syslog_comprehensive() -> E2EResult<()> {
                         "type": "store_syslog_message"
                     }
                 ]))
-                .expect_calls(3)  // Expect 3 syslog messages
+                .expect_calls(3) // Expect 3 syslog messages
                 .and()
         });
 

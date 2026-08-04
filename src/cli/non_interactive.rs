@@ -25,10 +25,13 @@ pub async fn run_non_interactive(
     debug!("Prompt: {}", prompt);
 
     // Create application state
-    let base_url = args.openai_url.clone()
+    let base_url = args
+        .openai_url
+        .clone()
         .or_else(|| args.ollama_url.clone())
         .unwrap_or_else(|| "http://localhost:11434".to_string());
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+    let state =
+        AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
 
     // Configure rate limiter from CLI args
     let rate_limiter_config = args.build_rate_limiter_config();
@@ -41,11 +44,13 @@ pub async fn run_non_interactive(
     let is_openai = args.openai_url.is_some();
     let selected_model = if is_openai {
         // OpenAI mode: --model is required (validated in create_llm_client)
-        configured_model.ok_or_else(|| anyhow::anyhow!(
-            "--model is required when using --openai-url"
-        ))?
+        configured_model
+            .ok_or_else(|| anyhow::anyhow!("--model is required when using --openai-url"))?
     } else {
-        let ollama_url_for_model = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+        let ollama_url_for_model = args
+            .ollama_url
+            .as_deref()
+            .unwrap_or("http://localhost:11434");
         crate::llm::select_or_validate_model(configured_model, false, ollama_url_for_model)
             .await?
             .ok_or_else(|| anyhow::anyhow!("No model available"))?
@@ -251,10 +256,13 @@ pub async fn run_with_actions(
     debug!("Loading {} actions", actions.len());
 
     // Create application state
-    let base_url = args.openai_url.clone()
+    let base_url = args
+        .openai_url
+        .clone()
         .or_else(|| args.ollama_url.clone())
         .unwrap_or_else(|| "http://localhost:11434".to_string());
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+    let state =
+        AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
 
     // Configure rate limiter from CLI args
     let rate_limiter_config = args.build_rate_limiter_config();

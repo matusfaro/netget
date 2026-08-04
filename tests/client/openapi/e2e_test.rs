@@ -15,40 +15,42 @@ mod openapi_client_tests {
         // Load test OpenAPI spec from file
         let spec_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/client/openapi/test-api.yaml");
-        let spec_template = std::fs::read_to_string(&spec_path)
-            .expect("Failed to read test-api.yaml");
+        let spec_template =
+            std::fs::read_to_string(&spec_path).expect("Failed to read test-api.yaml");
 
         // Start an HTTP server to act as the OpenAPI backend
-        let server_config = NetGetConfig::new("Listen on port 0 via HTTP. Respond to GET /users with user list.")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Listen on port")
-                    .and_instruction_containing("HTTP")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "HTTP",
-                            "instruction": "Respond to GET /users with user list"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Server receives GET /users request
-                    .on_event("http_request")
-                    .and_event_data_contains("uri", "/users")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "send_http_response",
-                            "status": 200,
-                            "headers": {"Content-Type": "application/json"},
-                            "body": "[{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let server_config = NetGetConfig::new(
+            "Listen on port 0 via HTTP. Respond to GET /users with user list.",
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("HTTP")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "instruction": "Respond to GET /users with user list"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives GET /users request
+                .on_event("http_request")
+                .and_event_data_contains("uri", "/users")
+                .respond_with_actions(json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "[{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(server_config).await?;
 
@@ -125,8 +127,8 @@ mod openapi_client_tests {
         // Load test OpenAPI spec from file
         let spec_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/client/openapi/test-api.yaml");
-        let spec_template = std::fs::read_to_string(&spec_path)
-            .expect("Failed to read test-api.yaml");
+        let spec_template =
+            std::fs::read_to_string(&spec_path).expect("Failed to read test-api.yaml");
 
         // Start an HTTP server
         let server_config = NetGetConfig::new("Listen on port 0 via HTTP. Respond to GET /users/123")
@@ -164,43 +166,41 @@ mod openapi_client_tests {
         // Inject actual port into spec
         let openapi_spec = spec_template.replace("{port}", &server.port.to_string());
 
-        let client_config = NetGetConfig::new("Get user 123 via OpenAPI")
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Get user 123")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "OpenAPI",
-                            "startup_params": {
-                                "spec": openapi_spec.clone(),
-                            },
-                            "instruction": "Execute getUser with id=123"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("openapi_client_connected")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "execute_operation",
-                            "operation_id": "getUser",
-                            "path_params": {"id": "123"},
-                            "query_params": {},
-                            "headers": {},
-                            "body": null
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("openapi_operation_response")
-                    .and_event_data_contains("operation_id", "getUser")
-                    .and_event_data_contains("status_code", "200")
-                    .respond_with_actions(json!([{"type": "disconnect"}]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let client_config = NetGetConfig::new("Get user 123 via OpenAPI").with_mock(|mock| {
+            mock.on_instruction_containing("Get user 123")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "OpenAPI",
+                        "startup_params": {
+                            "spec": openapi_spec.clone(),
+                        },
+                        "instruction": "Execute getUser with id=123"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("openapi_client_connected")
+                .respond_with_actions(json!([
+                    {
+                        "type": "execute_operation",
+                        "operation_id": "getUser",
+                        "path_params": {"id": "123"},
+                        "query_params": {},
+                        "headers": {},
+                        "body": null
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("openapi_operation_response")
+                .and_event_data_contains("operation_id", "getUser")
+                .and_event_data_contains("status_code", "200")
+                .respond_with_actions(json!([{"type": "disconnect"}]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
         tokio::time::sleep(Duration::from_secs(5)).await;

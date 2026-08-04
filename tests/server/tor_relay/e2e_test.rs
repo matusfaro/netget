@@ -9,8 +9,8 @@
 
 #[cfg(all(test, feature = "tor"))]
 mod tests {
-    use super::super::super::helpers::{self, E2EResult, NetGetConfig};
     use super::super::super::helpers::server::NetGetServer;
+    use super::super::super::helpers::{self, E2EResult, NetGetConfig};
     use serde_json::json;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -100,7 +100,7 @@ mod tests {
         sleep(Duration::from_secs(3)).await;
 
         let port = server.port;
-    // REMOVED: assert_stack_name call
+        // REMOVED: assert_stack_name call
 
         println!("✓ Tor relay started on port {}", port);
         Ok((port, server))

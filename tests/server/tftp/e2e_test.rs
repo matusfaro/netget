@@ -144,8 +144,8 @@ async fn test_tftp_read_request_with_mocks() -> E2EResult<()> {
     let mut buffer = vec![0u8; 516];
     let (n, peer_addr) = timeout(Duration::from_secs(5), client.recv_from(&mut buffer)).await??;
 
-    let (block_number, data) = parse_data_packet(&buffer[..n])
-        .expect("Failed to parse DATA packet");
+    let (block_number, data) =
+        parse_data_packet(&buffer[..n]).expect("Failed to parse DATA packet");
 
     assert_eq!(block_number, 1, "Expected block 1");
     assert_eq!(data, test_file_content, "File content mismatch");
@@ -217,8 +217,7 @@ async fn test_tftp_write_request_with_mocks() -> E2EResult<()> {
     let mut buffer = vec![0u8; 516];
     let (n, peer_addr) = timeout(Duration::from_secs(5), client.recv_from(&mut buffer)).await??;
 
-    let ack_block = parse_ack_packet(&buffer[..n])
-        .expect("Failed to parse ACK packet");
+    let ack_block = parse_ack_packet(&buffer[..n]).expect("Failed to parse ACK packet");
     assert_eq!(ack_block, 0, "Expected ACK 0");
 
     // Send DATA block 1 (final block)
@@ -227,8 +226,7 @@ async fn test_tftp_write_request_with_mocks() -> E2EResult<()> {
 
     // Receive ACK 1
     let (n, _) = timeout(Duration::from_secs(5), client.recv_from(&mut buffer)).await??;
-    let ack_block = parse_ack_packet(&buffer[..n])
-        .expect("Failed to parse ACK packet");
+    let ack_block = parse_ack_packet(&buffer[..n]).expect("Failed to parse ACK packet");
     assert_eq!(ack_block, 1, "Expected ACK 1");
 
     // Verify mocks were called as expected
@@ -239,34 +237,35 @@ async fn test_tftp_write_request_with_mocks() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_tftp_file_not_found_with_mocks() -> E2EResult<()> {
-    let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via tftp. Only serve existing files")
-        .with_mock(|mock| {
-            mock
-                // Mock startup instruction
-                .on_instruction_containing("listen")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "TFTP",
-                        "instruction": "Only serve existing files"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock tftp_read_request event - respond with error
-                .on_event("tftp_read_request")
-                .and_event_data_contains("filename", "nonexistent.txt")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_tftp_error",
-                        "error_code": 1,
-                        "error_message": "File not found"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config =
+        NetGetConfig::new("listen on port {AVAILABLE_PORT} via tftp. Only serve existing files")
+            .with_mock(|mock| {
+                mock
+                    // Mock startup instruction
+                    .on_instruction_containing("listen")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TFTP",
+                            "instruction": "Only serve existing files"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock tftp_read_request event - respond with error
+                    .on_event("tftp_read_request")
+                    .and_event_data_contains("filename", "nonexistent.txt")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tftp_error",
+                            "error_code": 1,
+                            "error_message": "File not found"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let mut server = start_netget_server(config).await?;
     let server_addr = format!("127.0.0.1:{}", server.port);
@@ -282,8 +281,8 @@ async fn test_tftp_file_not_found_with_mocks() -> E2EResult<()> {
     let mut buffer = vec![0u8; 516];
     let (n, _) = timeout(Duration::from_secs(5), client.recv_from(&mut buffer)).await??;
 
-    let (error_code, error_msg) = parse_error_packet(&buffer[..n])
-        .expect("Failed to parse ERROR packet");
+    let (error_code, error_msg) =
+        parse_error_packet(&buffer[..n]).expect("Failed to parse ERROR packet");
 
     assert_eq!(error_code, 1, "Expected error code 1 (File not found)");
     assert_eq!(error_msg, "File not found");
@@ -359,8 +358,8 @@ async fn test_tftp_multi_block_transfer_with_mocks() -> E2EResult<()> {
 
     // Receive block 1
     let (n, peer_addr) = timeout(Duration::from_secs(5), client.recv_from(&mut buffer)).await??;
-    let (block_number, data) = parse_data_packet(&buffer[..n])
-        .expect("Failed to parse DATA packet");
+    let (block_number, data) =
+        parse_data_packet(&buffer[..n]).expect("Failed to parse DATA packet");
     assert_eq!(block_number, 1);
     assert_eq!(data.len(), 512);
     received_data.extend_from_slice(&data);
@@ -371,8 +370,8 @@ async fn test_tftp_multi_block_transfer_with_mocks() -> E2EResult<()> {
 
     // Receive block 2 (final)
     let (n, _) = timeout(Duration::from_secs(5), client.recv_from(&mut buffer)).await??;
-    let (block_number, data) = parse_data_packet(&buffer[..n])
-        .expect("Failed to parse DATA packet");
+    let (block_number, data) =
+        parse_data_packet(&buffer[..n]).expect("Failed to parse DATA packet");
     assert_eq!(block_number, 2);
     assert_eq!(data.len(), 512);
     received_data.extend_from_slice(&data);

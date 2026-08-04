@@ -1,8 +1,8 @@
 //! Helper utilities for Tor integration tests
 
-use super::super::helpers::{self, NetGetConfig};
-use super::super::helpers::server::NetGetServer;
 use super::super::helpers::server::get_server_output;
+use super::super::helpers::server::NetGetServer;
+use super::super::helpers::{self, NetGetConfig};
 use anyhow::Result;
 use serde_json::json;
 use std::time::Duration;
@@ -80,7 +80,7 @@ impl TorTestNetwork {
         sleep(Duration::from_secs(3)).await;
 
         let relay_port = relay_server.port;
-    // REMOVED: assert_stack_name call
+        // REMOVED: assert_stack_name call
         println!("✓ Tor relay started on port {}", relay_port);
 
         // 3. Extract relay keys
@@ -99,46 +99,45 @@ impl TorTestNetwork {
             consensus
         );
         let consensus_copy = consensus.clone();
-        let directory_config =
-            NetGetConfig::new_no_scripts(directory_prompt)
-                .with_log_level("info")
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Directory server startup
-                        .on_instruction_containing("tor-directory")
-                        .respond_with_actions(json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "HTTP",
-                                "protocol": "TOR_DIRECTORY",
-                                "instruction": "Tor directory serving custom consensus"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Consensus request
-                        .on_event("http_request_received")
-                        .and_event_data_contains("path", "/tor/status-vote/current/consensus")
-                        .respond_with_actions(json!([
-                            {
-                                "type": "http_response",
-                                "status_code": 200,
-                                "headers": {
-                                    "Content-Type": "text/plain"
-                                },
-                                "body": consensus_copy
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let directory_config = NetGetConfig::new_no_scripts(directory_prompt)
+            .with_log_level("info")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Directory server startup
+                    .on_instruction_containing("tor-directory")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "TOR_DIRECTORY",
+                            "instruction": "Tor directory serving custom consensus"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Consensus request
+                    .on_event("http_request_received")
+                    .and_event_data_contains("path", "/tor/status-vote/current/consensus")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "text/plain"
+                            },
+                            "body": consensus_copy
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
         let directory_server = helpers::start_netget_server(directory_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start directory: {}", e))?;
 
         let directory_port = directory_server.port;
-    // REMOVED: assert_stack_name call
+        // REMOVED: assert_stack_name call
         println!("✓ Tor directory started on port {}", directory_port);
 
         // Wait a moment for authority key log messages to be captured
@@ -163,9 +162,13 @@ impl TorTestNetwork {
     /// Shutdown the test network
     pub async fn shutdown(mut self) -> Result<()> {
         // Verify mock expectations before shutdown
-        self.relay.verify_mocks().await
+        self.relay
+            .verify_mocks()
+            .await
             .map_err(|e| anyhow::anyhow!("Relay mock verification failed: {}", e))?;
-        self.directory.verify_mocks().await
+        self.directory
+            .verify_mocks()
+            .await
             .map_err(|e| anyhow::anyhow!("Directory mock verification failed: {}", e))?;
 
         self.relay

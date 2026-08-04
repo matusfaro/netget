@@ -278,32 +278,33 @@ mod usb_msc_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_msc_eject_disk() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB mass storage device. Eject the disk after 1 second.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mass storage")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-MassStorage",
-                                "instruction": "Eject disk after attachment"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Device attached
-                        .on_event("usb_msc_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Create a USB mass storage device. Eject the disk after 1 second.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("USB mass storage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "USB-MassStorage",
+                        "instruction": "Eject disk after attachment"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Device attached
+                .on_event("usb_msc_attached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -322,42 +323,43 @@ mod usb_msc_e2e {
     #[tokio::test]
     #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_msc_detach() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB mass storage device. Log when device is detached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mass storage")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-MassStorage",
-                                "instruction": "Log when detached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Device attached
-                        .on_event("usb_msc_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 3: Device detached
-                        .on_event("usb_msc_detached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "show_message",
-                                "message": "Mass storage device detached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Create a USB mass storage device. Log when device is detached.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("USB mass storage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "USB-MassStorage",
+                        "instruction": "Log when detached"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Device attached
+                .on_event("usb_msc_attached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Device detached
+                .on_event("usb_msc_detached")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "show_message",
+                        "message": "Mass storage device detached"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 

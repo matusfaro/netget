@@ -214,7 +214,10 @@ async fn example_test_dns_startup_llm_mode() -> E2EResult<()> {
     let port = server.port;
 
     assert!(port > 0, "Server should have started on a port");
-    println!("✓ DNS server started successfully on port {} using LLM mode", port);
+    println!(
+        "✓ DNS server started successfully on port {} using LLM mode",
+        port
+    );
 
     // Verify by making a query
     let address: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
@@ -284,7 +287,7 @@ async fn example_test_dns_multiple_query_types() -> E2EResult<()> {
                             "domain": domain,
                             "ip": "93.184.216.34",
                             "ttl": 300
-                        }])
+                        }]),
                     }
                 })
                 .and()
@@ -303,7 +306,9 @@ async fn example_test_dns_multiple_query_types() -> E2EResult<()> {
 
     // Test A record
     let name = Name::from_str("example.com.")?;
-    let response = client.query(name.clone(), DNSClass::IN, RecordType::A).await?;
+    let response = client
+        .query(name.clone(), DNSClass::IN, RecordType::A)
+        .await?;
     assert!(!response.answers().is_empty(), "Expected A record response");
     println!("✓ A record query succeeded");
 
@@ -313,7 +318,10 @@ async fn example_test_dns_multiple_query_types() -> E2EResult<()> {
     tokio::spawn(bg2);
 
     let response2 = client2.query(name, DNSClass::IN, RecordType::TXT).await?;
-    assert!(!response2.answers().is_empty(), "Expected TXT record response");
+    assert!(
+        !response2.answers().is_empty(),
+        "Expected TXT record response"
+    );
     println!("✓ TXT record query succeeded");
 
     server.verify_mocks().await?;

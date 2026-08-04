@@ -264,7 +264,10 @@ fn test_all_startup_examples_are_valid() {
         );
     }
 
-    println!("\n✓ All {} protocols have valid startup examples!", protocol_count);
+    println!(
+        "\n✓ All {} protocols have valid startup examples!",
+        protocol_count
+    );
 }
 
 #[test]

@@ -227,7 +227,8 @@ async fn test_mqtt_client_wildcards() -> Result<(), Box<dyn std::error::Error>> 
         ClientId::new(0), // overwritten by add_client with the real allocated id
         "localhost:1883".to_string(),
         "MQTT".to_string(),
-        "Subscribe to 'sensors/#' to receive all sensor data. Count the messages received.".to_string(),
+        "Subscribe to 'sensors/#' to receive all sensor data. Count the messages received."
+            .to_string(),
     );
     client.startup_params = Some(serde_json::json!({
         "client_id": "netget-wildcard-test",
@@ -310,7 +311,8 @@ async fn test_mqtt_client_retained() -> Result<(), Box<dyn std::error::Error>> {
         ClientId::new(0), // overwritten by add_client with the real allocated id
         "localhost:1883".to_string(),
         "MQTT".to_string(),
-        "Subscribe to 'retained/status'. You should immediately receive the retained message.".to_string(),
+        "Subscribe to 'retained/status'. You should immediately receive the retained message."
+            .to_string(),
     );
     client.startup_params = Some(serde_json::json!({
         "client_id": "netget-retained-test",

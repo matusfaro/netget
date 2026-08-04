@@ -28,10 +28,8 @@ fn unknown_actions(
     available_actions: &[ActionDefinition],
     model_actions: &[serde_json::Value],
 ) -> Vec<String> {
-    let valid_action_names: BTreeSet<String> = available_actions
-        .iter()
-        .map(|a| a.name.clone())
-        .collect();
+    let valid_action_names: BTreeSet<String> =
+        available_actions.iter().map(|a| a.name.clone()).collect();
 
     model_actions
         .iter()
@@ -185,8 +183,7 @@ async fn test_global_task_actions_match_prompt() {
 
     let selected_mode = state.get_selected_scripting_mode().await;
     let scripting_env = state.get_scripting_env().await;
-    let mut task_actions =
-        get_user_input_common_actions(selected_mode, &scripting_env, true, true);
+    let mut task_actions = get_user_input_common_actions(selected_mode, &scripting_env, true, true);
     task_actions.extend(get_all_tool_actions(state.get_web_search_mode().await));
 
     // Mirror of `PromptBuilder::filter_actions_by_scripting_mode` at name level: with

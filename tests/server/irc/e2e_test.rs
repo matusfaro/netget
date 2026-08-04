@@ -20,44 +20,43 @@ async fn test_irc_welcome() -> E2EResult<()> {
         respond with IRC welcome numeric 001: ':servername 001 nickname :Welcome to the IRC Network'";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("irc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "IRC",
-                        "instruction": "IRC server - respond with welcome (001) after NICK and USER"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: IRC message received (NICK command)
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "NICK")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: IRC message received (USER command)
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "USER")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testserver 001 testuser :Welcome to the IRC Network"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("irc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IRC",
+                    "instruction": "IRC server - respond with welcome (001) after NICK and USER"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: IRC message received (NICK command)
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "NICK")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: IRC message received (USER command)
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "USER")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_irc_message",
+                    "message": ":testserver 001 testuser :Welcome to the IRC Network"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -108,10 +107,7 @@ async fn test_irc_welcome() -> E2EResult<()> {
         }
     }
 
-    assert!(
-        received_welcome,
-        "Should receive IRC 001 welcome message"
-    );
+    assert!(received_welcome, "Should receive IRC 001 welcome message");
 
     // Verify mock expectations were met
     server.verify_mocks().await?;
@@ -131,34 +127,33 @@ async fn test_irc_ping_pong() -> E2EResult<()> {
         respond with PONG using the same token. Format: 'PONG :token'";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("irc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "IRC",
-                        "instruction": "IRC server - respond to PING with PONG"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: IRC data received (PING command)
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "PING")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": "PONG :1234567890"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("irc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IRC",
+                    "instruction": "IRC server - respond to PING with PONG"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: IRC data received (PING command)
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "PING")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_irc_message",
+                    "message": "PONG :1234567890"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -221,54 +216,53 @@ async fn test_irc_join_channel() -> E2EResult<()> {
         respond with ':nickname JOIN #channel' to confirm the join";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("irc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "IRC",
-                        "instruction": "IRC server - confirm channel joins"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: NICK command
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "NICK")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: USER command
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "USER")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: JOIN command
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "JOIN")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testuser JOIN #test"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("irc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IRC",
+                    "instruction": "IRC server - confirm channel joins"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: NICK command
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "NICK")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: USER command
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "USER")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: JOIN command
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "JOIN")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_irc_message",
+                    "message": ":testuser JOIN #test"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -308,10 +302,7 @@ async fn test_irc_join_channel() -> E2EResult<()> {
         }
     }
 
-    assert!(
-        received_join,
-        "Should receive JOIN confirmation"
-    );
+    assert!(received_join, "Should receive JOIN confirmation");
 
     // Verify mock expectations were met
     server.verify_mocks().await?;
@@ -331,54 +322,53 @@ async fn test_irc_privmsg() -> E2EResult<()> {
         echo it back as 'PRIVMSG sender :message'";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("irc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "IRC",
-                        "instruction": "IRC server - echo private messages"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: NICK command
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "NICK")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: USER command
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "USER")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: PRIVMSG command
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "PRIVMSG")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": "PRIVMSG testuser :Hello IRC"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("irc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IRC",
+                    "instruction": "IRC server - echo private messages"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: NICK command
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "NICK")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: USER command
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "USER")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: PRIVMSG command
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "PRIVMSG")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_irc_message",
+                    "message": "PRIVMSG testuser :Hello IRC"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -418,10 +408,7 @@ async fn test_irc_privmsg() -> E2EResult<()> {
         }
     }
 
-    assert!(
-        received_privmsg,
-        "Should receive PRIVMSG response"
-    );
+    assert!(received_privmsg, "Should receive PRIVMSG response");
 
     // Verify mock expectations were met
     server.verify_mocks().await?;
@@ -441,45 +428,44 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
         Send welcome message (001) to each client that connects with NICK and USER";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("irc")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "IRC",
-                        "instruction": "IRC server - send welcome to all clients"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2-7: 3 clients × (NICK + USER) = 6 events
-                // We expect NICK command (respond with wait_for_more)
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "NICK")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(3)
-                .and()
-                // We expect USER command (respond with 001 welcome)
-                .on_event("irc_message_received")
-                .and_event_data_contains("message", "USER")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testserver 001 testuser :Welcome to the IRC Network"
-                    }
-                ]))
-                .expect_calls(3)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("irc")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IRC",
+                    "instruction": "IRC server - send welcome to all clients"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2-7: 3 clients × (NICK + USER) = 6 events
+            // We expect NICK command (respond with wait_for_more)
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "NICK")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(3)
+            .and()
+            // We expect USER command (respond with 001 welcome)
+            .on_event("irc_message_received")
+            .and_event_data_contains("message", "USER")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_irc_message",
+                    "message": ":testserver 001 testuser :Welcome to the IRC Network"
+                }
+            ]))
+            .expect_calls(3)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

@@ -253,7 +253,8 @@ mod snmp_client_tests {
         // Verify client handles timeout
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("timeout")) || output.iter().any(|l| l.contains("error")),
+            output.iter().any(|l| l.contains("timeout"))
+                || output.iter().any(|l| l.contains("error")),
             "Client should show timeout or error. Output: {:?}",
             output
         );

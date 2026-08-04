@@ -21,33 +21,32 @@ async fn test_pop3_greeting() -> E2EResult<()> {
         '+OK POP3 server ready'";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock: Server startup (only match initial user prompt)
-                .on_prompt_containing("listen on port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "pop3",
-                        "instruction": "Send POP3 greeting when client connects"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock: Client connects (CONNECTION_ESTABLISHED command)
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_greeting",
-                        "message": "POP3 server ready"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock: Server startup (only match initial user prompt)
+            .on_prompt_containing("listen on port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "pop3",
+                    "instruction": "Send POP3 greeting when client connects"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock: Client connects (CONNECTION_ESTABLISHED command)
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_greeting",
+                    "message": "POP3 server ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -103,55 +102,54 @@ async fn test_pop3_authentication() -> E2EResult<()> {
         When client sends PASS command, respond with '+OK logged in'";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (only match initial user prompt)
-                .on_prompt_containing("listen on port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "pop3",
-                        "instruction": "Handle USER and PASS commands"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connects - send greeting
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_greeting",
-                        "message": "POP3 ready"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: USER command received
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "USER alice")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_ok",
-                        "message": "user accepted"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: PASS command received
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "PASS secret")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_ok",
-                        "message": "logged in"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (only match initial user prompt)
+            .on_prompt_containing("listen on port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "pop3",
+                    "instruction": "Handle USER and PASS commands"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connects - send greeting
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_greeting",
+                    "message": "POP3 ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: USER command received
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "USER alice")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_ok",
+                    "message": "user accepted"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: PASS command received
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "PASS secret")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_ok",
+                    "message": "logged in"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -230,54 +228,53 @@ async fn test_pop3_stat() -> E2EResult<()> {
         When client sends STAT, respond with '+OK 3 1024' (3 messages, 1024 bytes total)";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (only match initial user prompt)
-                .on_prompt_containing("listen on port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "pop3",
-                        "instruction": "Handle USER, PASS, and STAT commands"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connects - send greeting
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_greeting",
-                        "message": "POP3 ready"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: STAT command received (must come before generic mock)
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "STAT")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_stat",
-                        "message_count": 3,
-                        "total_size": 1024
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4-5: USER and PASS commands (generic catch-all)
-                .on_event("pop3_command")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_ok"
-                    }
-                ]))
-                .expect_calls(2)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (only match initial user prompt)
+            .on_prompt_containing("listen on port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "pop3",
+                    "instruction": "Handle USER, PASS, and STAT commands"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connects - send greeting
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_greeting",
+                    "message": "POP3 ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: STAT command received (must come before generic mock)
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "STAT")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_stat",
+                    "message_count": 3,
+                    "total_size": 1024
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4-5: USER and PASS commands (generic catch-all)
+            .on_event("pop3_command")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_ok"
+                }
+            ]))
+            .expect_calls(2)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -346,47 +343,46 @@ async fn test_pop3_quit() -> E2EResult<()> {
         When client sends QUIT, respond with '+OK goodbye' and close connection";
 
     // Start the server with mocks
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (only match initial user prompt)
-                .on_prompt_containing("listen on port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "pop3",
-                        "instruction": "Handle QUIT command"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connects - send greeting
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_greeting",
-                        "message": "POP3 ready"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: QUIT command received
-                .on_event("pop3_command")
-                .and_event_data_contains("command", "QUIT")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_pop3_ok",
-                        "message": "goodbye"
-                    },
-                    {
-                        "type": "close_connection"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (only match initial user prompt)
+            .on_prompt_containing("listen on port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "pop3",
+                    "instruction": "Handle QUIT command"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connects - send greeting
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_greeting",
+                    "message": "POP3 ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: QUIT command received
+            .on_event("pop3_command")
+            .and_event_data_contains("command", "QUIT")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_pop3_ok",
+                    "message": "goodbye"
+                },
+                {
+                    "type": "close_connection"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

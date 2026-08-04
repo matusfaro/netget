@@ -242,7 +242,7 @@ impl Protocol for OspfClientProtocol {
                     "neighbors": [],
                     "destination": "multicast"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_database_description".to_string(),
@@ -301,7 +301,7 @@ impl Protocol for OspfClientProtocol {
                     "master": true,
                     "destination": "192.168.1.2"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_link_state_request".to_string(),
@@ -332,7 +332,7 @@ impl Protocol for OspfClientProtocol {
                     "area_id": "0.0.0.0",
                     "destination": "192.168.1.2"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -341,7 +341,7 @@ impl Protocol for OspfClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }

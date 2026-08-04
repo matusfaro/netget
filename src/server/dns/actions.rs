@@ -264,8 +264,8 @@ impl DnsProtocol {
         let ip = required_str(&action, "ip")?;
         let ttl = ttl_of(&action);
 
-        let ipv4 = Ipv4Addr::from_str(ip)
-            .with_context(|| format!("Invalid IPv4 address: '{ip}'"))?;
+        let ipv4 =
+            Ipv4Addr::from_str(ip).with_context(|| format!("Invalid IPv4 address: '{ip}'"))?;
 
         let (mut message, name) =
             new_response(query_id, domain, RecordType::A, ResponseCode::NoError)?;
@@ -283,8 +283,8 @@ impl DnsProtocol {
         let ip = required_str(&action, "ip")?;
         let ttl = ttl_of(&action);
 
-        let ipv6 = Ipv6Addr::from_str(ip)
-            .with_context(|| format!("Invalid IPv6 address: '{ip}'"))?;
+        let ipv6 =
+            Ipv6Addr::from_str(ip).with_context(|| format!("Invalid IPv6 address: '{ip}'"))?;
 
         let (mut message, name) =
             new_response(query_id, domain, RecordType::AAAA, ResponseCode::NoError)?;
@@ -328,7 +328,10 @@ impl DnsProtocol {
         let exchange = required_str(&action, "exchange")?;
         let ttl = ttl_of(&action);
 
-        let preference_raw = action.get("preference").and_then(|v| v.as_u64()).unwrap_or(10);
+        let preference_raw = action
+            .get("preference")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10);
         let preference = u16::try_from(preference_raw).map_err(|_| {
             anyhow::anyhow!("'preference' must be in the range 0-65535, got {preference_raw}")
         })?;
@@ -373,8 +376,7 @@ impl DnsProtocol {
             None => RecordType::A,
         };
 
-        let (message, _name) =
-            new_response(query_id, domain, query_type, ResponseCode::NXDomain)?;
+        let (message, _name) = new_response(query_id, domain, query_type, ResponseCode::NXDomain)?;
 
         finish_response(message)
     }
@@ -594,7 +596,9 @@ fn send_dns_mx_response_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("DNS MX {domain} -> {exchange} (pref={preference})")
-                .with_debug("DNS MX response: {domain} -> {exchange} (pref={preference}, TTL={ttl})"),
+                .with_debug(
+                    "DNS MX response: {domain} -> {exchange} (pref={preference}, TTL={ttl})",
+                ),
         ),
     }
 }
@@ -712,10 +716,7 @@ fn ignore_query_action() -> ActionDefinition {
         example: json!({
             "type": "ignore_query"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("DNS ignore_query"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("DNS ignore_query")),
     }
 }
 

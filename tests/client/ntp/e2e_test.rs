@@ -70,32 +70,33 @@ mod ntp_client_tests {
     #[tokio::test]
     async fn test_ntp_client_stratum_analysis() -> E2EResult<()> {
         // Use pool.ntp.org which should return stratum 2-3
-        let client_config =
-            NetGetConfig::new("Query pool.ntp.org:123 and report the stratum level.")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Query pool.ntp.org")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": "pool.ntp.org:123",
-                            "protocol": "NTP",
-                            "instruction": "Query NTP server and report stratum"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: NTP response received
-                    .on_event("ntp_response_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_at_most(1)
-                    .and()
-            });
+        let client_config = NetGetConfig::new(
+            "Query pool.ntp.org:123 and report the stratum level.",
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Query pool.ntp.org")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "pool.ntp.org:123",
+                        "protocol": "NTP",
+                        "instruction": "Query NTP server and report stratum"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: NTP response received
+                .on_event("ntp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 

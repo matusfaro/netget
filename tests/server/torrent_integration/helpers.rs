@@ -1,7 +1,7 @@
 //! Helper utilities for BitTorrent integration tests
 
-use super::super::helpers::{self, NetGetConfig};
 use super::super::helpers::server::NetGetServer;
+use super::super::helpers::{self, NetGetConfig};
 use anyhow::Result;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -36,7 +36,7 @@ impl BitTorrentTestNetwork {
 
         sleep(Duration::from_secs(2)).await;
 
-    // REMOVED: assert_stack_name call
+        // REMOVED: assert_stack_name call
         println!("✓ Tracker started on port {}", tracker_server.port);
 
         // 2. Start NetGet DHT (UDP-based)
@@ -52,7 +52,7 @@ impl BitTorrentTestNetwork {
 
         sleep(Duration::from_secs(2)).await;
 
-    // REMOVED: assert_stack_name call
+        // REMOVED: assert_stack_name call
         println!("✓ DHT started on port {}", dht_server.port);
 
         // 3. Start NetGet Peer/Seeder (TCP-based)
@@ -74,7 +74,7 @@ impl BitTorrentTestNetwork {
 
         sleep(Duration::from_secs(2)).await;
 
-    // REMOVED: assert_stack_name call
+        // REMOVED: assert_stack_name call
         println!("✓ Peer/Seeder started on port {}", peer_server.port);
 
         println!("\n✅ BitTorrent Test Network Setup Complete!");

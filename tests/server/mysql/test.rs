@@ -22,46 +22,45 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
         Other queries use mysql_ok_response affected_rows=0.";
 
     // Start the server
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open MySQL")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MySQL",
-                        "instruction": "Handle MySQL queries with appropriate responses"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
-                .on_event("mysql_query")
-                .and_event_data_contains("query", "SELECT @@")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mysql_query_response",
-                        "columns": [{"name": "value", "type": "VARCHAR"}],
-                        "rows": [["1000"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: SELECT 1 query
-                .on_event("mysql_query")
-                .and_event_data_contains("query", "SELECT 1")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mysql_query_response",
-                        "columns": [{"name": "result", "type": "INT"}],
-                        "rows": [[1]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open MySQL")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MySQL",
+                    "instruction": "Handle MySQL queries with appropriate responses"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
+            .on_event("mysql_query")
+            .and_event_data_contains("query", "SELECT @@")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mysql_query_response",
+                    "columns": [{"name": "value", "type": "VARCHAR"}],
+                    "rows": [["1000"]]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: SELECT 1 query
+            .on_event("mysql_query")
+            .and_event_data_contains("query", "SELECT 1")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mysql_query_response",
+                    "columns": [{"name": "result", "type": "INT"}],
+                    "rows": [[1]]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -135,53 +134,52 @@ async fn test_mysql_multi_row_query() -> E2EResult<()> {
         For SELECT @@* queries use mysql_query_response columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. \
         Other queries use mysql_ok_response affected_rows=0.";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open MySQL")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MySQL",
-                        "instruction": "Handle MySQL queries with multi-row response"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
-                .on_event("mysql_query")
-                .and_event_data_contains("query", "SELECT @@")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mysql_query_response",
-                        "columns": [{"name": "value", "type": "VARCHAR"}],
-                        "rows": [["1000"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: SELECT * FROM users query
-                .on_event("mysql_query")
-                .and_event_data_contains("query", "SELECT * FROM users")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mysql_query_response",
-                        "columns": [
-                            {"name": "id", "type": "INT"},
-                            {"name": "name", "type": "VARCHAR"}
-                        ],
-                        "rows": [
-                            ["1", "Alice"],
-                            ["2", "Bob"],
-                            ["3", "Charlie"]
-                        ]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open MySQL")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MySQL",
+                    "instruction": "Handle MySQL queries with multi-row response"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
+            .on_event("mysql_query")
+            .and_event_data_contains("query", "SELECT @@")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mysql_query_response",
+                    "columns": [{"name": "value", "type": "VARCHAR"}],
+                    "rows": [["1000"]]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: SELECT * FROM users query
+            .on_event("mysql_query")
+            .and_event_data_contains("query", "SELECT * FROM users")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mysql_query_response",
+                    "columns": [
+                        {"name": "id", "type": "INT"},
+                        {"name": "name", "type": "VARCHAR"}
+                    ],
+                    "rows": [
+                        ["1", "Alice"],
+                        ["2", "Bob"],
+                        ["3", "Charlie"]
+                    ]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
@@ -223,45 +221,44 @@ async fn test_mysql_create_table() -> E2EResult<()> {
         columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. For CREATE/INSERT/UPDATE queries, \
         use mysql_ok_response affected_rows=1. For other SELECT queries use mysql_ok_response affected_rows=0.";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open MySQL")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "MySQL",
-                        "instruction": "Handle MySQL DDL queries"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
-                .on_event("mysql_query")
-                .and_event_data_contains("query", "SELECT @@")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mysql_query_response",
-                        "columns": [{"name": "value", "type": "VARCHAR"}],
-                        "rows": [["1000"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: CREATE TABLE query
-                .on_event("mysql_query")
-                .and_event_data_contains("query", "CREATE TABLE")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "mysql_ok_response",
-                        "affected_rows": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open MySQL")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "MySQL",
+                    "instruction": "Handle MySQL DDL queries"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
+            .on_event("mysql_query")
+            .and_event_data_contains("query", "SELECT @@")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mysql_query_response",
+                    "columns": [{"name": "value", "type": "VARCHAR"}],
+                    "rows": [["1000"]]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: CREATE TABLE query
+            .on_event("mysql_query")
+            .and_event_data_contains("query", "CREATE TABLE")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "mysql_ok_response",
+                    "affected_rows": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);

@@ -18,48 +18,47 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
         For authorization requests, approve all and return code 'AUTH_xyz123'. \
         For token requests with valid code, return access token 'ACCESS_token_456' with 1-hour expiry and refresh token 'REFRESH_token_789'.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Authorization request - MUST BE FIRST (most specific)
-                .on_event("oauth2_authorize")
-                .and_event_data_contains("client_id", "testapp")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "oauth2_authorize_response",
-                        "code": "AUTH_xyz123",
-                        "state": "random_state_123"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Token request - MUST BE SECOND (most specific)
-                .on_event("oauth2_token")
-                .and_event_data_contains("grant_type", "authorization_code")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "oauth2_token_response",
-                        "access_token": "ACCESS_token_456",
-                        "token_type": "Bearer",
-                        "expires_in": 3600,
-                        "refresh_token": "REFRESH_token_789"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Server startup - MUST BE LAST (less specific)
-                .on_instruction_containing("Open oauth2")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OAuth2",
-                        "instruction": "Handle OAuth2 authorization code flow"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Authorization request - MUST BE FIRST (most specific)
+            .on_event("oauth2_authorize")
+            .and_event_data_contains("client_id", "testapp")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "oauth2_authorize_response",
+                    "code": "AUTH_xyz123",
+                    "state": "random_state_123"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Token request - MUST BE SECOND (most specific)
+            .on_event("oauth2_token")
+            .and_event_data_contains("grant_type", "authorization_code")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "oauth2_token_response",
+                    "access_token": "ACCESS_token_456",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "refresh_token": "REFRESH_token_789"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("Open oauth2")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OAuth2",
+                    "instruction": "Handle OAuth2 authorization code flow"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -206,36 +205,35 @@ async fn test_oauth2_client_credentials_flow() -> E2EResult<()> {
     let prompt = "Open oauth2 on port {AVAILABLE_PORT}. Accept client 'service' with secret 'service_secret'. \
         For token requests with grant_type=client_credentials, return access token 'SERVICE_token_123' with scope 'api:read api:write'.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open OAuth2 server
-                .on_instruction_containing("Open oauth2")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OAuth2",
-                        "instruction": "Handle OAuth2 client credentials flow"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Token request (POST /token with client_credentials)
-                .on_event("oauth2_token")
-                .and_event_data_contains("grant_type", "client_credentials")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_token_response",
-                        "access_token": "SERVICE_token_123",
-                        "token_type": "Bearer",
-                        "expires_in": 3600,
-                        "scope": "api:read api:write"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open OAuth2 server
+            .on_instruction_containing("Open oauth2")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OAuth2",
+                    "instruction": "Handle OAuth2 client credentials flow"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Token request (POST /token with client_credentials)
+            .on_event("oauth2_token")
+            .and_event_data_contains("grant_type", "client_credentials")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_token_response",
+                    "access_token": "SERVICE_token_123",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "scope": "api:read api:write"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -309,46 +307,45 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
         if token starts with 'VALID_', return active=true with scope 'read write' and client_id 'testapp'. \
         Otherwise return active=false.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Valid token introspection - MUST BE FIRST (most specific)
-                .on_event("oauth2_introspect")
-                .and_event_data_contains("token", "VALID_token_123")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "oauth2_introspect_response",
-                        "active": true,
-                        "scope": "read write",
-                        "client_id": "testapp"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Invalid token introspection - MUST BE SECOND (most specific)
-                .on_event("oauth2_introspect")
-                .and_event_data_contains("token", "INVALID_token_xyz")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "oauth2_introspect_response",
-                        "active": false
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Server startup - MUST BE LAST (less specific)
-                .on_instruction_containing("Open oauth2")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OAuth2",
-                        "instruction": "Handle OAuth2 token introspection"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Valid token introspection - MUST BE FIRST (most specific)
+            .on_event("oauth2_introspect")
+            .and_event_data_contains("token", "VALID_token_123")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "oauth2_introspect_response",
+                    "active": true,
+                    "scope": "read write",
+                    "client_id": "testapp"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Invalid token introspection - MUST BE SECOND (most specific)
+            .on_event("oauth2_introspect")
+            .and_event_data_contains("token", "INVALID_token_xyz")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "oauth2_introspect_response",
+                    "active": false
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("Open oauth2")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OAuth2",
+                    "instruction": "Handle OAuth2 token introspection"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -463,31 +460,30 @@ async fn test_oauth2_token_revocation() -> E2EResult<()> {
 
     let prompt = "Open oauth2 on port {AVAILABLE_PORT}. For revocation requests, always succeed and return 200 OK.";
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: User command to open OAuth2 server
-                .on_instruction_containing("Open oauth2")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OAuth2",
-                        "instruction": "Handle OAuth2 token revocation"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Revocation request
-                .on_event("oauth2_revoke")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_revoke_response"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: User command to open OAuth2 server
+            .on_instruction_containing("Open oauth2")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "OAuth2",
+                    "instruction": "Handle OAuth2 token revocation"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Revocation request
+            .on_event("oauth2_revoke")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_revoke_response"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);

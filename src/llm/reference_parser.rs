@@ -62,8 +62,7 @@ pub fn extract_references(text: &str) -> Result<(String, HashMap<String, String>
 
         // Skip if this opening tag is inside a JSON string (preceded by quote)
         // This handles placeholders like "<script001>" vs actual blocks <script001>
-        let is_in_string = opening_start > 0 &&
-            text.as_bytes()[opening_start - 1] == b'"';
+        let is_in_string = opening_start > 0 && text.as_bytes()[opening_start - 1] == b'"';
         if is_in_string {
             continue;
         }
@@ -77,7 +76,11 @@ pub fn extract_references(text: &str) -> Result<(String, HashMap<String, String>
             // Extract content between tags
             let content = text[opening_end..abs_closing_pos].trim().to_string();
 
-            debug!("Extracted reference (standard): <{}> ({} chars)", tag_name, content.len());
+            debug!(
+                "Extracted reference (standard): <{}> ({} chars)",
+                tag_name,
+                content.len()
+            );
             refs.insert(tag_name.to_string(), content);
             blocks_to_remove.push((opening_start, closing_end));
             continue;
@@ -92,7 +95,11 @@ pub fn extract_references(text: &str) -> Result<(String, HashMap<String, String>
             // Extract content between tags
             let content = text[opening_end..abs_closing_pos].trim().to_string();
 
-            debug!("Extracted reference (simplified): <{}> ({} chars)", tag_name, content.len());
+            debug!(
+                "Extracted reference (simplified): <{}> ({} chars)",
+                tag_name,
+                content.len()
+            );
             refs.insert(tag_name.to_string(), content);
             blocks_to_remove.push((opening_start, closing_end));
         }
@@ -190,7 +197,10 @@ print("hello")
         eprintln!("Refs: {:?}", refs);
 
         assert_eq!(refs.len(), 1);
-        assert_eq!(refs.get("script001").unwrap(), "import json\nprint(\"hello\")");
+        assert_eq!(
+            refs.get("script001").unwrap(),
+            "import json\nprint(\"hello\")"
+        );
         assert!(cleaned.contains(r#"{"actions""#));
         // Check that the XML block (with closing tag) is removed, not the placeholder
         assert!(!cleaned.contains("</script001>"));
@@ -209,7 +219,10 @@ print("hello")
         let (cleaned, refs) = extract_references(input).unwrap();
 
         assert_eq!(refs.len(), 1);
-        assert_eq!(refs.get("script001").unwrap(), "import json\nprint(\"hello\")");
+        assert_eq!(
+            refs.get("script001").unwrap(),
+            "import json\nprint(\"hello\")"
+        );
     }
 
     #[test]
@@ -234,7 +247,10 @@ config content
     #[test]
     fn test_resolve_references() {
         let mut refs = HashMap::new();
-        refs.insert("script001".to_string(), "import json\nprint(\"hello\")".to_string());
+        refs.insert(
+            "script001".to_string(),
+            "import json\nprint(\"hello\")".to_string(),
+        );
 
         let json = r#"{"actions":[{"code":"<script001>"}]}"#;
         let resolved = resolve_references(json, &refs);
@@ -251,7 +267,9 @@ config content
         // HTML tags should NOT be matched (no digits)
         assert!(!contains_references("<body>"));
         assert!(!contains_references("<html>"));
-        assert!(!contains_references(r#"{"body": "<html><body>Hello</body></html>"}"#));
+        assert!(!contains_references(
+            r#"{"body": "<html><body>Hello</body></html>"}"#
+        ));
     }
 
     #[test]

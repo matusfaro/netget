@@ -246,11 +246,7 @@ pub fn build_prompt(base_stack: &str, port: u16, instructions: &str) -> String {
 /// }
 /// ```
 #[allow(dead_code)]
-pub async fn with_timeout<F, T>(
-    test_name: &str,
-    timeout: Duration,
-    test_fn: F,
-) -> E2EResult<T>
+pub async fn with_timeout<F, T>(test_name: &str, timeout: Duration, test_fn: F) -> E2EResult<T>
 where
     F: Future<Output = E2EResult<T>>,
 {

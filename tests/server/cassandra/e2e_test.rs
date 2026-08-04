@@ -5,10 +5,10 @@
 
 #[cfg(all(test, feature = "cassandra"))]
 mod e2e_cassandra {
-    use crate::helpers::{start_netget_server, E2EResult, NetGetConfig, with_cassandra_timeout};
+    use crate::helpers::{start_netget_server, with_cassandra_timeout, E2EResult, NetGetConfig};
+    use std::num::NonZeroUsize;
     use std::time::Duration;
     use tokio::time::sleep;
-    use std::num::NonZeroUsize;
 
     // Import Scylla types from their module paths
     use scylla::client::session::Session;
@@ -83,7 +83,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect to Cassandra");
@@ -185,7 +185,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect to Cassandra");
@@ -194,14 +194,11 @@ mod e2e_cassandra {
 
         // Execute SELECT query
         println!("  [TEST] Executing: SELECT * FROM users");
-        let rows = with_cassandra_timeout(
-            session
-                .query_unpaged("SELECT * FROM users", &[])
-        )
-        .await
-        .expect("Query failed")
-        .into_rows_result()
-        .expect("Should have rows");
+        let rows = with_cassandra_timeout(session.query_unpaged("SELECT * FROM users", &[]))
+            .await
+            .expect("Query failed")
+            .into_rows_result()
+            .expect("Should have rows");
 
         println!(
             "  [TEST] ✓ Query executed, {} rows returned",
@@ -298,7 +295,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect to Cassandra");
@@ -307,11 +304,8 @@ mod e2e_cassandra {
 
         // Execute query that should fail
         println!("  [TEST] Executing: SELECT * FROM nonexistent");
-        let result = with_cassandra_timeout(
-            session
-                .query_unpaged("SELECT * FROM nonexistent", &[])
-        )
-        .await;
+        let result =
+            with_cassandra_timeout(session.query_unpaged("SELECT * FROM nonexistent", &[])).await;
 
         // Should receive an error
         assert!(result.is_err(), "Query should fail with error");
@@ -337,56 +331,55 @@ mod e2e_cassandra {
                      For 'SELECT count(*) FROM users', return columns=[{name:'count',type:'int'}] rows=[[5]]. \
                      For 'SELECT * FROM users WHERE id=1', return columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] rows=[[1,'Alice']].";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
-                    .on_event("cassandra_options")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_supported"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 2: STARTUP frame to complete connection (2 connections)
-                    .on_event("cassandra_startup")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_ready"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 3: Catch-all for ALL queries (returns generic data for all queries)
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [
-                                {"name": "count", "type": "int"}
-                            ],
-                            "rows": [
-                                [5]
-                            ]
-                        }
-                    ]))
-                    .expect_calls(5)
-                    .and()
-                    // Mock 4: Server startup (LAST - fallback for initial user command)
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle multiple queries"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
+                .on_event("cassandra_options")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_supported"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 2: STARTUP frame to complete connection (2 connections)
+                .on_event("cassandra_startup")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_ready"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 3: Catch-all for ALL queries (returns generic data for all queries)
+                .on_event("cassandra_query")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [
+                            {"name": "count", "type": "int"}
+                        ],
+                        "rows": [
+                            [5]
+                        ]
+                    }
+                ]))
+                .expect_calls(5)
+                .and()
+                // Mock 4: Server startup (LAST - fallback for initial user command)
+                .on_instruction_containing("Cassandra")
+                .and_instruction_containing("CQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Cassandra",
+                        "instruction": "Handle multiple queries"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 
@@ -401,7 +394,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect to Cassandra");
@@ -410,28 +403,24 @@ mod e2e_cassandra {
 
         // First query
         println!("  [TEST] Executing: SELECT count(*) FROM users");
-        let rows1 = with_cassandra_timeout(
-            session
-                .query_unpaged("SELECT count(*) FROM users", &[])
-        )
-        .await
-        .expect("First query failed")
-        .into_rows_result()
-        .expect("Should have rows");
+        let rows1 =
+            with_cassandra_timeout(session.query_unpaged("SELECT count(*) FROM users", &[]))
+                .await
+                .expect("First query failed")
+                .into_rows_result()
+                .expect("Should have rows");
 
         assert!(rows1.rows_num() > 0, "Should receive count result");
         println!("  [TEST] ✓ First query successful");
 
         // Second query
         println!("  [TEST] Executing: SELECT * FROM users WHERE id=1");
-        let rows2 = with_cassandra_timeout(
-            session
-                .query_unpaged("SELECT * FROM users WHERE id=1", &[])
-        )
-        .await
-        .expect("Second query failed")
-        .into_rows_result()
-        .expect("Should have rows");
+        let rows2 =
+            with_cassandra_timeout(session.query_unpaged("SELECT * FROM users WHERE id=1", &[]))
+                .await
+                .expect("Second query failed")
+                .into_rows_result()
+                .expect("Should have rows");
 
         assert!(rows2.rows_num() > 0, "Should receive user data");
         println!("  [TEST] ✓ Second query successful");
@@ -456,56 +445,55 @@ mod e2e_cassandra {
                      When receiving any SELECT query, respond with: \
                      columns=[{name:'value',type:'int'}] rows=[[42]]";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: OPTIONS frame during connection (3 concurrent clients × 2 connections each = 6)
-                    .on_event("cassandra_options")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_supported"
-                        }
-                    ]))
-                    .expect_calls(6)
-                    .and()
-                    // Mock 2: STARTUP frame to complete connection (3 concurrent clients × 2 connections = 6)
-                    .on_event("cassandra_startup")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_ready"
-                        }
-                    ]))
-                    .expect_calls(6)
-                    .and()
-                    // Mock 3: Catch-all for ALL queries (3 user queries + system queries from 3 clients)
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [
-                                {"name": "value", "type": "int"}
-                            ],
-                            "rows": [
-                                [42]
-                            ]
-                        }
-                    ]))
-                    .expect_calls(12)
-                    .and()
-                    // Mock 4: Server startup (LAST - fallback for initial user command)
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "When receiving any SELECT query, respond with value 42"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: OPTIONS frame during connection (3 concurrent clients × 2 connections each = 6)
+                .on_event("cassandra_options")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_supported"
+                    }
+                ]))
+                .expect_calls(6)
+                .and()
+                // Mock 2: STARTUP frame to complete connection (3 concurrent clients × 2 connections = 6)
+                .on_event("cassandra_startup")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_ready"
+                    }
+                ]))
+                .expect_calls(6)
+                .and()
+                // Mock 3: Catch-all for ALL queries (3 user queries + system queries from 3 clients)
+                .on_event("cassandra_query")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [
+                            {"name": "value", "type": "int"}
+                        ],
+                        "rows": [
+                            [42]
+                        ]
+                    }
+                ]))
+                .expect_calls(12)
+                .and()
+                // Mock 4: Server startup (LAST - fallback for initial user command)
+                .on_instruction_containing("Cassandra")
+                .and_instruction_containing("CQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Cassandra",
+                        "instruction": "When receiving any SELECT query, respond with value 42"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 
@@ -525,19 +513,16 @@ mod e2e_cassandra {
                     SessionBuilder::new()
                         .known_node(&uri_clone)
                         .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                        .build()
+                        .build(),
                 )
                 .await
                 .expect("Failed to connect");
 
-                let rows = with_cassandra_timeout(
-                    session
-                        .query_unpaged("SELECT value", &[])
-                )
-                .await
-                .expect("Query failed")
-                .into_rows_result()
-                .expect("Should have rows");
+                let rows = with_cassandra_timeout(session.query_unpaged("SELECT value", &[]))
+                    .await
+                    .expect("Query failed")
+                    .into_rows_result()
+                    .expect("Should have rows");
 
                 assert!(rows.rows_num() > 0, "Should receive result");
                 println!("  [TEST] ✓ Connection {} completed successfully", i + 1);
@@ -572,84 +557,83 @@ mod e2e_cassandra {
                      When receiving EXECUTE with parameter '1', respond with: \
                      columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] rows=[[1,'Alice']]";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
-                    .on_event("cassandra_options")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_supported"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 2: STARTUP frame to complete connection (2 connections)
-                    .on_event("cassandra_startup")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_ready"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 3: PREPARE received (Scylla prepares once, not per connection)
-                    .on_event("cassandra_prepare")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_prepared",
-                            "params": [
-                                {"type": "int"}
-                            ],
-                            "columns": [
-                                {"name": "id", "type": "int"},
-                                {"name": "name", "type": "varchar"}
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: EXECUTE received
-                    .on_event("cassandra_execute")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [
-                                {"name": "id", "type": "int"},
-                                {"name": "name", "type": "varchar"}
-                            ],
-                            "rows": [
-                                [1, "Alice"]
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 5: Catch-all for system queries
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
-                        }
-                    ]))
-                    .expect_calls(3)
-                    .and()
-                    // Mock 6: Server startup (LAST - fallback for initial user command)
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle prepared statements"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
+                .on_event("cassandra_options")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_supported"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 2: STARTUP frame to complete connection (2 connections)
+                .on_event("cassandra_startup")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_ready"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 3: PREPARE received (Scylla prepares once, not per connection)
+                .on_event("cassandra_prepare")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_prepared",
+                        "params": [
+                            {"type": "int"}
+                        ],
+                        "columns": [
+                            {"name": "id", "type": "int"},
+                            {"name": "name", "type": "varchar"}
+                        ]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: EXECUTE received
+                .on_event("cassandra_execute")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [
+                            {"name": "id", "type": "int"},
+                            {"name": "name", "type": "varchar"}
+                        ],
+                        "rows": [
+                            [1, "Alice"]
+                        ]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: Catch-all for system queries
+                .on_event("cassandra_query")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [],
+                        "rows": []
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+                // Mock 6: Server startup (LAST - fallback for initial user command)
+                .on_instruction_containing("Cassandra")
+                .and_instruction_containing("CQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Cassandra",
+                        "instruction": "Handle prepared statements"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 
@@ -664,7 +648,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect to Cassandra");
@@ -673,25 +657,19 @@ mod e2e_cassandra {
 
         // Prepare statement
         println!("  [TEST] Preparing: SELECT * FROM users WHERE id = ?");
-        let prepared = with_cassandra_timeout(
-            session
-                .prepare("SELECT * FROM users WHERE id = ?")
-        )
-        .await
-        .expect("Failed to prepare statement");
+        let prepared = with_cassandra_timeout(session.prepare("SELECT * FROM users WHERE id = ?"))
+            .await
+            .expect("Failed to prepare statement");
 
         println!("  [TEST] ✓ Statement prepared");
 
         // Execute with parameter
         println!("  [TEST] Executing with parameter: 1");
-        let rows = with_cassandra_timeout(
-            session
-                .execute_unpaged(&prepared, (1,))
-        )
-        .await
-        .expect("Execute failed")
-        .into_rows_result()
-        .expect("Should have rows");
+        let rows = with_cassandra_timeout(session.execute_unpaged(&prepared, (1,)))
+            .await
+            .expect("Execute failed")
+            .into_rows_result()
+            .expect("Should have rows");
 
         println!("  [TEST] ✓ Executed, {} rows returned", rows.rows_num());
 
@@ -720,84 +698,83 @@ mod e2e_cassandra {
                      For PREPARE 'SELECT count(*) FROM users', respond with columns=[{name:'count',type:'int'}]. \
                      For EXECUTE with any params, respond with appropriate test data.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
-                    .on_event("cassandra_options")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_supported"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 2: STARTUP frame to complete connection (2 connections)
-                    .on_event("cassandra_startup")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_ready"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 3: PREPARE calls (2 prepare statements, each called once)
-                    .on_event("cassandra_prepare")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_prepared",
-                            "params": [
-                                {"type": "int"}
-                            ],
-                            "columns": [
-                                {"name": "id", "type": "int"},
-                                {"name": "name", "type": "varchar"}
-                            ]
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 4: EXECUTE calls (3 total: stmt1 with param 1, stmt2, stmt1 with param 2)
-                    .on_event("cassandra_execute")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [
-                                {"name": "id", "type": "int"},
-                                {"name": "name", "type": "varchar"}
-                            ],
-                            "rows": [
-                                [1, "Alice"]
-                            ]
-                        }
-                    ]))
-                    .expect_calls(3)
-                    .and()
-                    // Mock 5: Catch-all for system queries
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
-                        }
-                    ]))
-                    .expect_calls(3)
-                    .and()
-                    // Mock 6: Server startup (LAST - fallback for initial user command)
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle multiple prepared statements"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
+                .on_event("cassandra_options")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_supported"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 2: STARTUP frame to complete connection (2 connections)
+                .on_event("cassandra_startup")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_ready"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 3: PREPARE calls (2 prepare statements, each called once)
+                .on_event("cassandra_prepare")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_prepared",
+                        "params": [
+                            {"type": "int"}
+                        ],
+                        "columns": [
+                            {"name": "id", "type": "int"},
+                            {"name": "name", "type": "varchar"}
+                        ]
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 4: EXECUTE calls (3 total: stmt1 with param 1, stmt2, stmt1 with param 2)
+                .on_event("cassandra_execute")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [
+                            {"name": "id", "type": "int"},
+                            {"name": "name", "type": "varchar"}
+                        ],
+                        "rows": [
+                            [1, "Alice"]
+                        ]
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+                // Mock 5: Catch-all for system queries
+                .on_event("cassandra_query")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [],
+                        "rows": []
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+                // Mock 6: Server startup (LAST - fallback for initial user command)
+                .on_instruction_containing("Cassandra")
+                .and_instruction_containing("CQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Cassandra",
+                        "instruction": "Handle multiple prepared statements"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 
@@ -811,7 +788,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect");
@@ -820,56 +797,41 @@ mod e2e_cassandra {
 
         // Prepare first statement
         println!("  [TEST] Preparing statement 1: SELECT * FROM users WHERE id = ?");
-        let prepared1 = with_cassandra_timeout(
-            session
-                .prepare("SELECT * FROM users WHERE id = ?")
-        )
-        .await
-        .expect("Failed to prepare first statement");
+        let prepared1 = with_cassandra_timeout(session.prepare("SELECT * FROM users WHERE id = ?"))
+            .await
+            .expect("Failed to prepare first statement");
 
         println!("  [TEST] ✓ Statement 1 prepared");
 
         // Prepare second statement
         println!("  [TEST] Preparing statement 2: SELECT count(*) FROM users");
-        let prepared2 = with_cassandra_timeout(
-            session
-                .prepare("SELECT count(*) FROM users")
-        )
-        .await
-        .expect("Failed to prepare second statement");
+        let prepared2 = with_cassandra_timeout(session.prepare("SELECT count(*) FROM users"))
+            .await
+            .expect("Failed to prepare second statement");
 
         println!("  [TEST] ✓ Statement 2 prepared");
 
         // Execute first statement
         println!("  [TEST] Executing statement 1 with param: 1");
-        let _rows1 = with_cassandra_timeout(
-            session
-                .execute_unpaged(&prepared1, (1,))
-        )
-        .await
-        .expect("Execute 1 failed");
+        let _rows1 = with_cassandra_timeout(session.execute_unpaged(&prepared1, (1,)))
+            .await
+            .expect("Execute 1 failed");
 
         println!("  [TEST] ✓ Statement 1 executed");
 
         // Execute second statement
         println!("  [TEST] Executing statement 2");
-        let _rows2 = with_cassandra_timeout(
-            session
-                .execute_unpaged(&prepared2, ())
-        )
-        .await
-        .expect("Execute 2 failed");
+        let _rows2 = with_cassandra_timeout(session.execute_unpaged(&prepared2, ()))
+            .await
+            .expect("Execute 2 failed");
 
         println!("  [TEST] ✓ Statement 2 executed");
 
         // Execute first statement again with different param
         println!("  [TEST] Executing statement 1 again with param: 2");
-        let _rows3 = with_cassandra_timeout(
-            session
-                .execute_unpaged(&prepared1, (2,))
-        )
-        .await
-        .expect("Execute 3 failed");
+        let _rows3 = with_cassandra_timeout(session.execute_unpaged(&prepared1, (2,)))
+            .await
+            .expect("Execute 3 failed");
 
         println!("  [TEST] ✓ Statement 1 re-executed with different parameter");
 
@@ -893,75 +855,74 @@ mod e2e_cassandra {
                      When receiving PREPARE with 2 parameters, respond with columns=[{name:'id',type:'int'}]. \
                      When receiving EXECUTE with wrong parameter count, respond with error_code=0x2200 message='Parameter count mismatch'.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
-                    .on_event("cassandra_options")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_supported"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 2: STARTUP frame to complete connection (2 connections)
-                    .on_event("cassandra_startup")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_ready"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 3: PREPARE received (Scylla prepares once, not per connection)
-                    .on_event("cassandra_prepare")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_prepared",
-                            "columns": [
-                                {"name": "id", "type": "int"}
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: EXECUTE with wrong param count (validation happens before LLM call)
-                    .on_event("cassandra_execute")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_error",
-                            "error_code": 0x2200,
-                            "message": "Parameter count mismatch"
-                        }
-                    ]))
-                    .expect_calls(0)
-                    .and()
-                    // Mock 5: Catch-all for system queries
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
-                        }
-                    ]))
-                    .expect_calls(3)
-                    .and()
-                    // Mock 6: Server startup (LAST - fallback for initial user command)
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle prepared statement parameter validation"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
+                .on_event("cassandra_options")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_supported"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 2: STARTUP frame to complete connection (2 connections)
+                .on_event("cassandra_startup")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_ready"
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 3: PREPARE received (Scylla prepares once, not per connection)
+                .on_event("cassandra_prepare")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_prepared",
+                        "columns": [
+                            {"name": "id", "type": "int"}
+                        ]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: EXECUTE with wrong param count (validation happens before LLM call)
+                .on_event("cassandra_execute")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_error",
+                        "error_code": 0x2200,
+                        "message": "Parameter count mismatch"
+                    }
+                ]))
+                .expect_calls(0)
+                .and()
+                // Mock 5: Catch-all for system queries
+                .on_event("cassandra_query")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "cassandra_result_rows",
+                        "columns": [],
+                        "rows": []
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+                // Mock 6: Server startup (LAST - fallback for initial user command)
+                .on_instruction_containing("Cassandra")
+                .and_instruction_containing("CQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Cassandra",
+                        "instruction": "Handle prepared statement parameter validation"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 
@@ -975,7 +936,7 @@ mod e2e_cassandra {
             SessionBuilder::new()
                 .known_node(&uri)
                 .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-                .build()
+                .build(),
         )
         .await
         .expect("Failed to connect");
@@ -985,8 +946,7 @@ mod e2e_cassandra {
         // Prepare statement with 2 parameters
         println!("  [TEST] Preparing: SELECT * FROM users WHERE id = ? AND name = ?");
         let prepared = with_cassandra_timeout(
-            session
-                .prepare("SELECT * FROM users WHERE id = ? AND name = ?")
+            session.prepare("SELECT * FROM users WHERE id = ? AND name = ?"),
         )
         .await
         .expect("Failed to prepare statement");
@@ -995,10 +955,7 @@ mod e2e_cassandra {
 
         // Try to execute with only 1 parameter (should fail)
         println!("  [TEST] Executing with wrong parameter count (1 instead of 2)");
-        let result = with_cassandra_timeout(
-            session.execute_unpaged(&prepared, (1,))
-        )
-        .await;
+        let result = with_cassandra_timeout(session.execute_unpaged(&prepared, (1,))).await;
 
         // Should receive an error
         assert!(

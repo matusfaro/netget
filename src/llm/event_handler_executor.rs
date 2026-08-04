@@ -64,7 +64,10 @@ pub async fn try_execute_event_handler(
     match handler_type {
         EventHandlerType::Llm { instruction } => {
             // LLM handler explicitly configured with instruction
-            debug!("LLM handler configured for event '{}' with instruction: {}", event_type_id, instruction);
+            debug!(
+                "LLM handler configured for event '{}' with instruction: {}",
+                event_type_id, instruction
+            );
             // TODO: Pass instruction to LLM call (currently just falls back to default LLM)
             Ok(EventHandlerResult::FallbackToLlm)
         }
@@ -276,7 +279,10 @@ async fn execute_static_handler(
                 event_type_id, e
             );
             return Err(e).with_context(|| {
-                format!("Static handler for event '{}' could not be rendered", event_type_id)
+                format!(
+                    "Static handler for event '{}' could not be rendered",
+                    event_type_id
+                )
             });
         }
     };

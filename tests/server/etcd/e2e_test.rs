@@ -49,166 +49,164 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
 "#;
 
     // Use test helpers to start server with mocks
-    let server = start_netget_server(
-        NetGetConfig::new(prompt).with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (open_server action)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("etcd")
-                .and_instruction_containing("KV operations")
-                .respond_with_actions(json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ETCD",
-                        "instruction": "Handle all etcd KV operations with revision tracking"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: First PUT /config/database
-                .on_event("etcd_put_request")
-                .and_event_data_contains("key", "/config/database")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_put_response",
-                        "revision": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: First GET /config/database (returns value)
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/config/database")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [
-                            {
-                                "key": "/config/database",
-                                "value": "localhost:5432",
-                                "create_revision": 1,
-                                "mod_revision": 1,
-                                "version": 1,
-                                "lease": 0
-                            }
-                        ],
-                        "more": false,
-                        "count": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: GET /nonexistent (returns empty)
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/nonexistent")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [],
-                        "more": false,
-                        "count": 0
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: PUT /config/timeout
-                .on_event("etcd_put_request")
-                .and_event_data_contains("key", "/config/timeout")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_put_response",
-                        "revision": 2
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 6: PUT /config/max_connections
-                .on_event("etcd_put_request")
-                .and_event_data_contains("key", "/config/max_connections")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_put_response",
-                        "revision": 3
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 7: PUT /other/key
-                .on_event("etcd_put_request")
-                .and_event_data_contains("key", "/other/key")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_put_response",
-                        "revision": 4
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 8: GET /config/timeout after delete (returns empty) - MUST BE BEFORE range query
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/config/timeout")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [],
-                        "more": false,
-                        "count": 0
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 9: Range query /config/ (returns multiple keys) - MUST BE AFTER exact key matches
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/config/")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [
-                            {
-                                "key": "/config/database",
-                                "value": "localhost:5432",
-                                "create_revision": 1,
-                                "mod_revision": 1,
-                                "version": 1,
-                                "lease": 0
-                            },
-                            {
-                                "key": "/config/max_connections",
-                                "value": "100",
-                                "create_revision": 3,
-                                "mod_revision": 3,
-                                "version": 1,
-                                "lease": 0
-                            },
-                            {
-                                "key": "/config/timeout",
-                                "value": "30",
-                                "create_revision": 2,
-                                "mod_revision": 2,
-                                "version": 1,
-                                "lease": 0
-                            }
-                        ],
-                        "more": false,
-                        "count": 3
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 10: DELETE /config/timeout
-                .on_event("etcd_delete_request")
-                .and_event_data_contains("key", "/config/timeout")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_delete_range_response",
-                        "deleted": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        }),
-    )
+    let server = start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (open_server action)
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("etcd")
+            .and_instruction_containing("KV operations")
+            .respond_with_actions(json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "ETCD",
+                    "instruction": "Handle all etcd KV operations with revision tracking"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: First PUT /config/database
+            .on_event("etcd_put_request")
+            .and_event_data_contains("key", "/config/database")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_put_response",
+                    "revision": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: First GET /config/database (returns value)
+            .on_event("etcd_range_request")
+            .and_event_data_contains("key", "/config/database")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_range_response",
+                    "kvs": [
+                        {
+                            "key": "/config/database",
+                            "value": "localhost:5432",
+                            "create_revision": 1,
+                            "mod_revision": 1,
+                            "version": 1,
+                            "lease": 0
+                        }
+                    ],
+                    "more": false,
+                    "count": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: GET /nonexistent (returns empty)
+            .on_event("etcd_range_request")
+            .and_event_data_contains("key", "/nonexistent")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_range_response",
+                    "kvs": [],
+                    "more": false,
+                    "count": 0
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: PUT /config/timeout
+            .on_event("etcd_put_request")
+            .and_event_data_contains("key", "/config/timeout")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_put_response",
+                    "revision": 2
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 6: PUT /config/max_connections
+            .on_event("etcd_put_request")
+            .and_event_data_contains("key", "/config/max_connections")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_put_response",
+                    "revision": 3
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 7: PUT /other/key
+            .on_event("etcd_put_request")
+            .and_event_data_contains("key", "/other/key")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_put_response",
+                    "revision": 4
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 8: GET /config/timeout after delete (returns empty) - MUST BE BEFORE range query
+            .on_event("etcd_range_request")
+            .and_event_data_contains("key", "/config/timeout")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_range_response",
+                    "kvs": [],
+                    "more": false,
+                    "count": 0
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 9: Range query /config/ (returns multiple keys) - MUST BE AFTER exact key matches
+            .on_event("etcd_range_request")
+            .and_event_data_contains("key", "/config/")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_range_response",
+                    "kvs": [
+                        {
+                            "key": "/config/database",
+                            "value": "localhost:5432",
+                            "create_revision": 1,
+                            "mod_revision": 1,
+                            "version": 1,
+                            "lease": 0
+                        },
+                        {
+                            "key": "/config/max_connections",
+                            "value": "100",
+                            "create_revision": 3,
+                            "mod_revision": 3,
+                            "version": 1,
+                            "lease": 0
+                        },
+                        {
+                            "key": "/config/timeout",
+                            "value": "30",
+                            "create_revision": 2,
+                            "mod_revision": 2,
+                            "version": 1,
+                            "lease": 0
+                        }
+                    ],
+                    "more": false,
+                    "count": 3
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 10: DELETE /config/timeout
+            .on_event("etcd_delete_request")
+            .and_event_data_contains("key", "/config/timeout")
+            .respond_with_actions(json!([
+                {
+                    "type": "etcd_delete_range_response",
+                    "deleted": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
     .await?;
     let port = server.port;
 

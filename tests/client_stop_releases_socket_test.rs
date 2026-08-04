@@ -121,15 +121,9 @@ async fn stopping_tcp_client_closes_its_connection() {
     let llm = OllamaClient::new("http://127.0.0.1:1");
     let (status_tx, _status_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    TcpClient::connect_with_llm_actions(
-        addr.to_string(),
-        llm,
-        state.clone(),
-        status_tx,
-        client_id,
-    )
-    .await
-    .expect("tcp client should connect");
+    TcpClient::connect_with_llm_actions(addr.to_string(), llm, state.clone(), status_tx, client_id)
+        .await
+        .expect("tcp client should connect");
 
     let (mut peer, _) = accepted
         .await

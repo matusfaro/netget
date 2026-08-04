@@ -111,7 +111,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "path": "/myapp/config",
                     "data": "configuration_data"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_data".to_string(),
@@ -126,7 +126,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "type": "get_data",
                     "path": "/myapp/config"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "set_data".to_string(),
@@ -150,7 +150,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "path": "/myapp/config",
                     "data": "new_configuration_data"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "delete_znode".to_string(),
@@ -165,7 +165,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "type": "delete_znode",
                     "path": "/myapp/config"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_children".to_string(),
@@ -180,7 +180,7 @@ impl Protocol for ZookeeperClientProtocol {
                     "type": "get_children",
                     "path": "/myapp"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -194,7 +194,7 @@ impl Protocol for ZookeeperClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -203,7 +203,7 @@ impl Protocol for ZookeeperClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -214,9 +214,21 @@ impl Protocol for ZookeeperClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("zookeeper_connected", "Triggered when ZooKeeper client connects", json!({"type": "placeholder", "event_id": "zookeeper_connected"})),
-            EventType::new("zookeeper_data_received", "Triggered when ZooKeeper client receives data", json!({"type": "placeholder", "event_id": "zookeeper_data_received"})),
-            EventType::new("zookeeper_children_received", "Triggered when ZooKeeper client receives children list", json!({"type": "placeholder", "event_id": "zookeeper_children_received"})),
+            EventType::new(
+                "zookeeper_connected",
+                "Triggered when ZooKeeper client connects",
+                json!({"type": "placeholder", "event_id": "zookeeper_connected"}),
+            ),
+            EventType::new(
+                "zookeeper_data_received",
+                "Triggered when ZooKeeper client receives data",
+                json!({"type": "placeholder", "event_id": "zookeeper_data_received"}),
+            ),
+            EventType::new(
+                "zookeeper_children_received",
+                "Triggered when ZooKeeper client receives children list",
+                json!({"type": "placeholder", "event_id": "zookeeper_children_received"}),
+            ),
         ]
     }
 
@@ -225,7 +237,12 @@ impl Protocol for ZookeeperClientProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["zookeeper", "zk", "zookeeper client", "connect to zookeeper"]
+        vec![
+            "zookeeper",
+            "zk",
+            "zookeeper client",
+            "connect to zookeeper",
+        ]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

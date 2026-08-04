@@ -403,9 +403,7 @@ fn process_s3_action_result(
 
                     Ok(builder
                         .body(Full::new(Bytes::from(content)))
-                        .unwrap_or_else(|_| {
-                            Response::new(Full::new(Bytes::new()))
-                        }))
+                        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))))
                 }
                 "s3_object_list" => {
                     // Send list of objects as XML

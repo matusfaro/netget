@@ -1,13 +1,13 @@
 //! ZooKeeper server implementation
 pub mod actions;
 
+use crate::console_debug;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::console_debug;
 use actions::{ZookeeperProtocol, ZOOKEEPER_REQUEST_EVENT};
 use anyhow::Result;
 use std::net::SocketAddr;
@@ -56,7 +56,10 @@ impl ZookeeperServer {
         let actual_addr = listener.local_addr()?;
 
         info!("ZooKeeper server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] ZooKeeper server listening on {}", actual_addr));
+        let _ = status_tx.send(format!(
+            "[INFO] ZooKeeper server listening on {}",
+            actual_addr
+        ));
 
         let server = Arc::new(ZookeeperServer::new(
             llm_client,
@@ -188,9 +191,7 @@ impl ZookeeperServer {
                     // Execute actions
                     for result in execution_result.protocol_results {
                         match result {
-                            ActionResult::Custom { name, data }
-                                if name == "zookeeper_response" =>
-                            {
+                            ActionResult::Custom { name, data } if name == "zookeeper_response" => {
                                 if let Some(response_hex) =
                                     data.get("response_hex").and_then(|v| v.as_str())
                                 {
@@ -260,7 +261,8 @@ impl ZookeeperServer {
 
         // Try to extract path (if present)
         let path = if payload.len() > 12 {
-            let path_len = i32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]) as usize;
+            let path_len =
+                i32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]) as usize;
             if payload.len() >= 12 + path_len {
                 String::from_utf8_lossy(&payload[12..12 + path_len]).to_string()
             } else {

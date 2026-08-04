@@ -110,7 +110,7 @@ impl Protocol for ArpClientProtocol {
                     "sender_ip": "192.168.1.100",
                     "target_ip": "192.168.1.1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_arp_reply".to_string(),
@@ -148,7 +148,7 @@ impl Protocol for ArpClientProtocol {
                     "target_mac": "11:22:33:44:55:66",
                     "target_ip": "192.168.1.1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "stop_capture".to_string(),
@@ -157,7 +157,7 @@ impl Protocol for ArpClientProtocol {
                 example: json!({
                     "type": "stop_capture"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -192,7 +192,7 @@ impl Protocol for ArpClientProtocol {
                     "sender_ip": "192.168.1.100",
                     "target_ip": "192.168.1.1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_arp_reply".to_string(),
@@ -230,7 +230,7 @@ impl Protocol for ArpClientProtocol {
                     "target_mac": "11:22:33:44:55:66",
                     "target_ip": "192.168.1.1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -239,7 +239,7 @@ impl Protocol for ArpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -248,8 +248,16 @@ impl Protocol for ArpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("arp_client_started", "Triggered when ARP client starts capturing", json!({"type": "wait_for_more"})),
-            EventType::new("arp_response_received", "Triggered when ARP packet is received", json!({"type": "send_arp_reply", "sender_mac": "aa:bb:cc:dd:ee:ff", "sender_ip": "192.168.1.100", "target_mac": "11:22:33:44:55:66", "target_ip": "192.168.1.1"})),
+            EventType::new(
+                "arp_client_started",
+                "Triggered when ARP client starts capturing",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "arp_response_received",
+                "Triggered when ARP packet is received",
+                json!({"type": "send_arp_reply", "sender_mac": "aa:bb:cc:dd:ee:ff", "sender_ip": "192.168.1.100", "target_mac": "11:22:33:44:55:66", "target_ip": "192.168.1.1"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -117,8 +117,12 @@ impl UsbMscHandler {
     pub fn get_disk_info(&self) -> Option<(u32, u32)> {
         // Use tokio runtime to get disk info
         let disk = self.disk_image.clone();
-        tokio::runtime::Handle::current()
-            .block_on(async { Some((disk.read().await.total_sectors(), disk.read().await.bytes_per_sector())) })
+        tokio::runtime::Handle::current().block_on(async {
+            Some((
+                disk.read().await.total_sectors(),
+                disk.read().await.bytes_per_sector(),
+            ))
+        })
     }
 
     /// Reset BOT state

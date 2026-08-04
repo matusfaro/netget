@@ -26,9 +26,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use actions::{
-    WEBRTC_MESSAGE_RECEIVED_EVENT, WEBRTC_PEER_CONNECTED_EVENT,
-};
+use actions::{WEBRTC_MESSAGE_RECEIVED_EVENT, WEBRTC_PEER_CONNECTED_EVENT};
 
 /// Unique identifier for a WebRTC peer
 pub type PeerId = String;
@@ -344,10 +342,8 @@ impl WebRtcServerData {
                     );
                     match state {
                         RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                            let _ = status_tx.send(format!(
-                                "[SERVER] WebRTC peer {} disconnected",
-                                peer_id
-                            ));
+                            let _ = status_tx
+                                .send(format!("[SERVER] WebRTC peer {} disconnected", peer_id));
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                             // Remove peer from map
@@ -434,9 +430,7 @@ impl WebRtcServerData {
     /// Send a message to a specific peer
     pub async fn send_to_peer(&self, peer_id: &str, message: String) -> Result<()> {
         let peers_lock = self.peers.lock().await;
-        let peer_data = peers_lock
-            .get(peer_id)
-            .context("Peer not found")?;
+        let peer_data = peers_lock.get(peer_id).context("Peer not found")?;
 
         if let Some(dc) = &peer_data.data_channel {
             dc.send_text(message).await?;
@@ -480,7 +474,9 @@ impl WebRtcServer {
         server_id: ServerId,
     ) -> Result<SocketAddr> {
         info!("WebRTC server (action-based) initializing");
-        let _ = status_tx.send("[INFO] WebRTC server ready to accept peer connections (paste SDP offers)".to_string());
+        let _ = status_tx.send(
+            "[INFO] WebRTC server ready to accept peer connections (paste SDP offers)".to_string(),
+        );
 
         // Create server data
         let server_data = Arc::new(WebRtcServerData::new()?);

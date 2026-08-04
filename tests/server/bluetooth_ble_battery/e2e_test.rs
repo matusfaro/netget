@@ -71,33 +71,31 @@ async fn test_battery_level_update() -> E2EResult<()> {
     let prompt = "Act as a BLE battery service. Start with 100% battery (hex: 64), then after 2 seconds update to 90% (hex: 5A). Advertise as 'NetGet-Battery-Drain'.";
 
     // Start the server with mocks
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Act as a BLE battery service")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BLUETOOTH_BLE_BATTERY",
-                            "instruction": "Create battery service with updates",
-                            "startup_params": {
-                                "device_name": "NetGet-Battery-Drain",
-                                "initial_level": 100
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Server started event - battery service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Act as a BLE battery service")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BLUETOOTH_BLE_BATTERY",
+                    "instruction": "Create battery service with updates",
+                    "startup_params": {
+                        "device_name": "NetGet-Battery-Drain",
+                        "initial_level": 100
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server started event - battery service auto-configures
+            .on_event("bluetooth_ble_started")
+            .respond_with_actions(serde_json::json!([]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     println!("✓ Battery service started with dynamic level");
 

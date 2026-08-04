@@ -224,7 +224,12 @@ async fn handle_openai_request(
             }
 
             // Build HTTP response from action results
-            build_openai_response(execution_result.protocol_results, &method, &path, &status_tx)
+            build_openai_response(
+                execution_result.protocol_results,
+                &method,
+                &path,
+                &status_tx,
+            )
         }
         Err(e) => {
             error!("LLM call failed: {}", e);
@@ -260,10 +265,7 @@ fn build_openai_response(
         if let ActionResult::Custom { name, data } = result {
             if name == "openai_response" {
                 // Extract response data
-                let status = data
-                    .get("status")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(200) as u16;
+                let status = data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
 
                 let headers = data
                     .get("headers")

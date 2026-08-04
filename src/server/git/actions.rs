@@ -146,7 +146,9 @@ impl Protocol for GitProtocol {
                 log_template: Some(
                     LogTemplate::new()
                         .with_info("-> {refs_len} refs advertised")
-                        .with_debug("Git advertise refs: {refs_len} refs, capabilities={capabilities}"),
+                        .with_debug(
+                            "Git advertise refs: {refs_len} refs, capabilities={capabilities}",
+                        ),
                 ),
             },
             ActionDefinition {

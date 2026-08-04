@@ -731,44 +731,48 @@ pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// HTTP response event - triggered when proxy receives HTTP response from upstream server
 pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("proxy_http_response", "HTTP response received from upstream server", json!({"type": "placeholder", "event_id": "proxy_http_response"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "status_code".to_string(),
-                type_hint: "number".to_string(),
-                description: "HTTP status code (200, 404, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "url".to_string(),
-                type_hint: "string".to_string(),
-                description: "Original request URL".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "headers".to_string(),
-                type_hint: "object".to_string(),
-                description: "Response headers as key-value pairs".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "body".to_string(),
-                type_hint: "string".to_string(),
-                description: "Response body (may be truncated for large responses)".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            handle_response_pass_action(),
-            handle_response_block_action(),
-            handle_response_modify_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("Proxy {client_ip} response {status_code}")
-                .with_debug("HTTP proxy response {status_code} from {url}")
-                .with_trace("Proxy: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "proxy_http_response",
+        "HTTP response received from upstream server",
+        json!({"type": "placeholder", "event_id": "proxy_http_response"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "status_code".to_string(),
+            type_hint: "number".to_string(),
+            description: "HTTP status code (200, 404, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Original request URL".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "headers".to_string(),
+            type_hint: "object".to_string(),
+            description: "Response headers as key-value pairs".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Response body (may be truncated for large responses)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        handle_response_pass_action(),
+        handle_response_block_action(),
+        handle_response_modify_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("Proxy {client_ip} response {status_code}")
+            .with_debug("HTTP proxy response {status_code} from {url}")
+            .with_trace("Proxy: {json_pretty(.)}"),
+    )
 });
 
 /// HTTPS connection event - triggered when proxy receives CONNECT request

@@ -106,7 +106,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::git::GitClientProtocol::new()));
 
         #[cfg(feature = "zookeeper")]
-        self.register(Arc::new(crate::client::zookeeper::ZookeeperClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::zookeeper::ZookeeperClientProtocol::new(),
+        ));
 
         #[cfg(feature = "grpc")]
         self.register(Arc::new(crate::client::grpc::GrpcClientProtocol::new()));
@@ -179,7 +181,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::mysql::MysqlClientProtocol::new()));
 
         #[cfg(feature = "mongodb")]
-        self.register(Arc::new(crate::client::mongodb::MongodbClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::mongodb::MongodbClientProtocol::new(),
+        ));
 
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::client::nfs::NfsClientProtocol::new()));
@@ -236,7 +240,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::icmp::IcmpClientProtocol::new()));
 
         #[cfg(feature = "couchdb")]
-        self.register(Arc::new(crate::client::couchdb::CouchDbClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::couchdb::CouchDbClientProtocol::new(),
+        ));
 
         // TFTP client temporarily disabled - API fixes needed
         // #[cfg(feature = "tftp")]

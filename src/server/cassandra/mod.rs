@@ -301,7 +301,8 @@ impl CassandraServer {
                 // Client wants to register for server events
                 // We don't support server events, but respond with READY to acknowledge
                 debug!("Client registering for events (not supported, acknowledging anyway)");
-                let _ = status_tx.send("[DEBUG] Cassandra: Client registered for events (no-op)".to_string());
+                let _ = status_tx
+                    .send("[DEBUG] Cassandra: Client registered for events (no-op)".to_string());
                 self.send_ready(frame.stream_id, stream, status_tx).await?;
                 Ok(true)
             }
@@ -875,10 +876,7 @@ impl CassandraServer {
                             .and_then(|v| v.as_array())
                             .cloned()
                             .unwrap_or_default();
-                        let params = data
-                            .get("params")
-                            .and_then(|v| v.as_array())
-                            .cloned();
+                        let params = data.get("params").and_then(|v| v.as_array()).cloned();
                         self.send_prepared(
                             frame.stream_id,
                             statement_id,
@@ -1151,7 +1149,7 @@ impl CassandraServer {
 
         // Partition key count (protocol v4+)
         body.extend_from_slice(&0u32.to_be_bytes()); // No PK indexes (token routing not supported)
-        // Note: pk_indexes would follow here if pk_count > 0
+                                                     // Note: pk_indexes would follow here if pk_count > 0
 
         // Global keyspace and table for parameters
         body.extend_from_slice(&(keyspace.len() as u16).to_be_bytes());
@@ -1223,7 +1221,10 @@ impl CassandraServer {
             body.extend_from_slice(&type_code.to_be_bytes());
         }
 
-        trace!("PREPARED response body hex (first 200 bytes): {}", hex::encode(&body[..std::cmp::min(200, body.len())]));
+        trace!(
+            "PREPARED response body hex (first 200 bytes): {}",
+            hex::encode(&body[..std::cmp::min(200, body.len())])
+        );
 
         let response = Envelope {
             version: Version::V4,
@@ -1242,7 +1243,8 @@ impl CassandraServer {
         trace!("Sent RESULT (Prepared) response ({} bytes)", bytes.len());
         let _ = status_tx.send(format!(
             "[TRACE] Cassandra → RESULT (Prepared: {} params, {} bytes)",
-            param_count, bytes.len()
+            param_count,
+            bytes.len()
         ));
 
         Ok(())

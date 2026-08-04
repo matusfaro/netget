@@ -73,7 +73,7 @@ impl Protocol for RedisClientProtocol {
                     "type": "execute_redis_command",
                     "command": "GET mykey"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -82,7 +82,7 @@ impl Protocol for RedisClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -108,8 +108,16 @@ impl Protocol for RedisClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("redis_connected", "Triggered when Redis client connects to server", json!({"type": "placeholder", "event_id": "redis_connected"})),
-            EventType::new("redis_response_received", "Triggered when Redis client receives a response", json!({"type": "placeholder", "event_id": "redis_response_received"})),
+            EventType::new(
+                "redis_connected",
+                "Triggered when Redis client connects to server",
+                json!({"type": "placeholder", "event_id": "redis_connected"}),
+            ),
+            EventType::new(
+                "redis_response_received",
+                "Triggered when Redis client receives a response",
+                json!({"type": "placeholder", "event_id": "redis_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

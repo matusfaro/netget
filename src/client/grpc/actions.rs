@@ -21,7 +21,7 @@ pub static GRPC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "service": "calculator.Calculator",
             "method": "Add",
             "request": {"a": 5, "b": 3}
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -49,7 +49,7 @@ pub static GRPC_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
             "service": "calculator.Calculator",
             "method": "Multiply",
             "request": {"a": 2, "b": 3}
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -80,7 +80,7 @@ pub static GRPC_CLIENT_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "gRPC error received from server",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -178,7 +178,7 @@ impl Protocol for GrpcClientProtocol {
                     "request": {"a": 5, "b": 3},
                     "metadata": {"auth-token": "secret"}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -187,7 +187,7 @@ impl Protocol for GrpcClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -228,7 +228,7 @@ impl Protocol for GrpcClientProtocol {
                     "method": "Multiply",
                     "request": {"a": 2, "b": 3}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -237,7 +237,7 @@ impl Protocol for GrpcClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -246,9 +246,21 @@ impl Protocol for GrpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("grpc_connected", "Triggered when gRPC client connects to server", json!({"type": "placeholder", "event_id": "grpc_connected"})),
-            EventType::new("grpc_response_received", "Triggered when gRPC client receives a response", json!({"type": "placeholder", "event_id": "grpc_response_received"})),
-            EventType::new("grpc_error", "Triggered when gRPC client receives an error", json!({"type": "placeholder", "event_id": "grpc_error"})),
+            EventType::new(
+                "grpc_connected",
+                "Triggered when gRPC client connects to server",
+                json!({"type": "placeholder", "event_id": "grpc_connected"}),
+            ),
+            EventType::new(
+                "grpc_response_received",
+                "Triggered when gRPC client receives a response",
+                json!({"type": "placeholder", "event_id": "grpc_response_received"}),
+            ),
+            EventType::new(
+                "grpc_error",
+                "Triggered when gRPC client receives an error",
+                json!({"type": "placeholder", "event_id": "grpc_error"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

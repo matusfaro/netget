@@ -135,7 +135,7 @@ impl Protocol for TorrentTrackerClientProtocol {
                     "left": 1024000,
                     "event": "started"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "tracker_scrape".to_string(),
@@ -150,7 +150,7 @@ impl Protocol for TorrentTrackerClientProtocol {
                     "type": "tracker_scrape",
                     "info_hash": "%12%34%56%78%90%AB%CD%EF%12%34%56%78%90%AB%CD%EF%12%34%56%78"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -159,7 +159,7 @@ impl Protocol for TorrentTrackerClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -171,8 +171,16 @@ impl Protocol for TorrentTrackerClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tracker_announce_response", "Received announce response from tracker", json!({"type": "placeholder", "event_id": "tracker_announce_response"})),
-            EventType::new("tracker_scrape_response", "Received scrape response from tracker", json!({"type": "placeholder", "event_id": "tracker_scrape_response"})),
+            EventType::new(
+                "tracker_announce_response",
+                "Received announce response from tracker",
+                json!({"type": "placeholder", "event_id": "tracker_announce_response"}),
+            ),
+            EventType::new(
+                "tracker_scrape_response",
+                "Received scrape response from tracker",
+                json!({"type": "placeholder", "event_id": "tracker_scrape_response"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -16,19 +16,27 @@ use std::sync::LazyLock;
 
 /// AMQP client connected event
 pub static AMQP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("amqp_connected", "AMQP client connected to broker", json!({"type": "placeholder", "event_id": "amqp_connected"})).with_parameters(vec![
-        Parameter {
-            name: "remote_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Remote broker address".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "amqp_connected",
+        "AMQP client connected to broker",
+        json!({"type": "placeholder", "event_id": "amqp_connected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "remote_addr".to_string(),
+        type_hint: "string".to_string(),
+        description: "Remote broker address".to_string(),
+        required: true,
+    }])
 });
 
 /// AMQP client channel opened event
 pub static AMQP_CLIENT_CHANNEL_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("amqp_channel_opened", "AMQP channel opened", json!({"type": "placeholder", "event_id": "amqp_channel_opened"})).with_parameters(vec![Parameter {
+    EventType::new(
+        "amqp_channel_opened",
+        "AMQP channel opened",
+        json!({"type": "placeholder", "event_id": "amqp_channel_opened"}),
+    )
+    .with_parameters(vec![Parameter {
         name: "channel_id".to_string(),
         type_hint: "number".to_string(),
         description: "Channel ID".to_string(),
@@ -38,7 +46,12 @@ pub static AMQP_CLIENT_CHANNEL_OPENED_EVENT: LazyLock<EventType> = LazyLock::new
 
 /// AMQP client message received event
 pub static AMQP_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("amqp_message_received", "Message received from queue", json!({"type": "placeholder", "event_id": "amqp_message_received"})).with_parameters(vec![
+    EventType::new(
+        "amqp_message_received",
+        "Message received from queue",
+        json!({"type": "placeholder", "event_id": "amqp_message_received"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "queue_name".to_string(),
             type_hint: "string".to_string(),
@@ -74,7 +87,7 @@ impl Protocol for AmqpClientProtocol {
                 example: json!({
                     "type": "open_channel"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -83,7 +96,7 @@ impl Protocol for AmqpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -211,9 +224,7 @@ impl Client for AmqpClientProtocol {
     }
 
     fn execute_action(&self, action: Value) -> Result<ClientActionResult> {
-        let action_type = action["type"]
-            .as_str()
-            .context("Missing action type")?;
+        let action_type = action["type"].as_str().context("Missing action type")?;
 
         match action_type {
             "open_channel" => Ok(ClientActionResult::Custom {

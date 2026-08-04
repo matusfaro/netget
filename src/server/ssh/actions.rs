@@ -243,7 +243,6 @@ impl SshProtocol {
         debug!("SSH shell response: {}", response);
         Ok(ActionResult::Output(response.as_bytes().to_vec()))
     }
-
 }
 
 fn send_ssh_data_action() -> ActionDefinition {
@@ -286,10 +285,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("SSH waiting for more data"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("SSH waiting for more data")),
     }
 }
 
@@ -553,8 +549,8 @@ pub static SSH_AUTH_DECISION_ACTION: LazyLock<ActionDefinition> =
     });
 
 /// SSH shell response action constant
-pub static SSH_SHELL_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static SSH_SHELL_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "ssh_shell_response".to_string(),
         description: "Write the output of a shell command to the client's terminal. Answers the \
             ssh_shell_command event. Produce what the real command would print (ls, pwd, cat, \
@@ -582,8 +578,7 @@ pub static SSH_SHELL_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new
                 .with_debug("SSH ssh_shell_response: {output_bytes}B")
                 .with_trace("SSH response: {preview(response,200)}"),
         ),
-    }
-});
+    });
 
 /// SSH close connection action constant
 pub static SSH_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
@@ -618,7 +613,7 @@ pub static SSH_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "ssh_auth_decision",
             "allowed": true
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -665,7 +660,7 @@ pub static SSH_BANNER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "ssh_send_banner",
             "banner": "Welcome to NetGet SSH Server!\n"
-        })
+        }),
     )
     // No parameters - banner is shown before any data is available
     .with_action(SSH_SEND_BANNER_ACTION.clone())
@@ -688,7 +683,7 @@ pub static SSH_SHELL_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "ssh_shell_response",
             "response": "/home/user\n"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -769,7 +764,7 @@ pub static SFTP_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Absolute path being operated on. For handle-based operations \
                 (readdir, read, fstat) this is the path the handle was opened with, resolved for \
                 you"
-                .to_string(),
+            .to_string(),
             required: true,
         },
         Parameter {

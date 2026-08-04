@@ -432,7 +432,8 @@ mod irc_client_tests {
         // Verify client received and processed messages
         let output = client.get_output().await;
         assert!(
-            output.iter().any(|l| l.contains("PRIVMSG")) || output.iter().any(|l| l.contains("message")),
+            output.iter().any(|l| l.contains("PRIVMSG"))
+                || output.iter().any(|l| l.contains("message")),
             "Client should show received message. Output: {:?}",
             output
         );

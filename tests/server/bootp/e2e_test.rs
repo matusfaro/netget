@@ -23,36 +23,39 @@ When receiving BOOTREQUEST:
 "#;
 
     // Start BOOTP server with mocks
-    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: BOOTP request received (bootp_request event) - MUST COME FIRST for specificity
-                .on_event("bootp_request")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bootp_reply",
-                        "assigned_ip": "192.168.1.100",
-                        "server_ip": "192.168.1.1",
-                        "boot_file": "boot/pxeboot.n12",
-                        "server_hostname": "bootserver"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("via BOOTP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,  // Port 0 = OS assigns available port automatically
-                        "base_stack": "BOOTP",
-                        "instruction": instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(format!(
+        "Listen on port {{AVAILABLE_PORT}} via BOOTP. {}",
+        instruction
+    ))
+    .with_mock(|mock| {
+        mock
+            // Mock 1: BOOTP request received (bootp_request event) - MUST COME FIRST for specificity
+            .on_event("bootp_request")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_reply",
+                    "assigned_ip": "192.168.1.100",
+                    "server_ip": "192.168.1.1",
+                    "boot_file": "boot/pxeboot.n12",
+                    "server_hostname": "bootserver"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server startup (user command)
+            .on_instruction_containing("Listen on port")
+            .and_instruction_containing("via BOOTP")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,  // Port 0 = OS assigns available port automatically
+                    "base_stack": "BOOTP",
+                    "instruction": instruction
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
 
@@ -200,36 +203,39 @@ When receiving BOOTREQUEST:
 "#;
 
     // Start BOOTP server with mocks
-    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: BOOTP request received (bootp_request event) - MUST COME FIRST for specificity
-                .on_event("bootp_request")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bootp_reply",
-                        "assigned_ip": "10.0.0.100",
-                        "server_ip": "10.0.0.1",
-                        "boot_file": "tftp/netboot.img",
-                        "server_hostname": "netboot.example.com"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("via BOOTP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,  // Port 0 = OS assigns available port automatically
-                        "base_stack": "BOOTP",
-                        "instruction": instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(format!(
+        "Listen on port {{AVAILABLE_PORT}} via BOOTP. {}",
+        instruction
+    ))
+    .with_mock(|mock| {
+        mock
+            // Mock 1: BOOTP request received (bootp_request event) - MUST COME FIRST for specificity
+            .on_event("bootp_request")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_reply",
+                    "assigned_ip": "10.0.0.100",
+                    "server_ip": "10.0.0.1",
+                    "boot_file": "tftp/netboot.img",
+                    "server_hostname": "netboot.example.com"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server startup (user command)
+            .on_instruction_containing("Listen on port")
+            .and_instruction_containing("via BOOTP")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,  // Port 0 = OS assigns available port automatically
+                    "base_stack": "BOOTP",
+                    "instruction": instruction
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
 
@@ -322,36 +328,39 @@ Use server IP 192.168.1.1 for all responses.
 "#;
 
     // Start BOOTP server with mocks
-    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: BOOTP request received (bootp_request event) for specific MAC - MUST COME FIRST for specificity
-                .on_event("bootp_request")
-                .and_event_data_contains("client_mac", "001122334455")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bootp_reply",
-                        "assigned_ip": "192.168.1.50",
-                        "server_ip": "192.168.1.1",
-                        "boot_file": "linux/vmlinuz"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("via BOOTP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,  // Port 0 = OS assigns available port automatically
-                        "base_stack": "BOOTP",
-                        "instruction": instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(format!(
+        "Listen on port {{AVAILABLE_PORT}} via BOOTP. {}",
+        instruction
+    ))
+    .with_mock(|mock| {
+        mock
+            // Mock 1: BOOTP request received (bootp_request event) for specific MAC - MUST COME FIRST for specificity
+            .on_event("bootp_request")
+            .and_event_data_contains("client_mac", "001122334455")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_reply",
+                    "assigned_ip": "192.168.1.50",
+                    "server_ip": "192.168.1.1",
+                    "boot_file": "linux/vmlinuz"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server startup (user command)
+            .on_instruction_containing("Listen on port")
+            .and_instruction_containing("via BOOTP")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,  // Port 0 = OS assigns available port automatically
+                    "base_stack": "BOOTP",
+                    "instruction": instruction
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
 

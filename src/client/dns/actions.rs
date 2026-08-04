@@ -32,40 +32,43 @@ pub static DNS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DNS client response received event
 pub static DNS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dns_response_received", "DNS response received from server", json!({"type": "placeholder", "event_id": "dns_response_received"})).with_parameters(
-        vec![
-            Parameter {
-                name: "query_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "DNS query transaction ID".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "domain".to_string(),
-                type_hint: "string".to_string(),
-                description: "Domain name queried".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "query_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "DNS query type (A, AAAA, MX, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "answers".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of answer records".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "response_code".to_string(),
-                type_hint: "string".to_string(),
-                description: "DNS response code (NOERROR, NXDOMAIN, SERVFAIL, etc.)".to_string(),
-                required: true,
-            },
-        ],
+    EventType::new(
+        "dns_response_received",
+        "DNS response received from server",
+        json!({"type": "placeholder", "event_id": "dns_response_received"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "query_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "DNS query transaction ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "domain".to_string(),
+            type_hint: "string".to_string(),
+            description: "Domain name queried".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "query_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "DNS query type (A, AAAA, MX, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "answers".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of answer records".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "response_code".to_string(),
+            type_hint: "string".to_string(),
+            description: "DNS response code (NOERROR, NXDOMAIN, SERVFAIL, etc.)".to_string(),
+            required: true,
+        },
+    ])
 });
 
 /// DNS client protocol action handler
@@ -118,7 +121,7 @@ impl Protocol for DnsClientProtocol {
                     "query_type": "A",
                     "recursion_desired": true
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -127,7 +130,7 @@ impl Protocol for DnsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -161,7 +164,7 @@ impl Protocol for DnsClientProtocol {
                     "domain": "mail.example.com",
                     "query_type": "A"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -170,7 +173,7 @@ impl Protocol for DnsClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -179,8 +182,16 @@ impl Protocol for DnsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("dns_connected", "Triggered when DNS client connects to server", json!({"type": "placeholder", "event_id": "dns_connected"})),
-            EventType::new("dns_response_received", "Triggered when DNS client receives a response", json!({"type": "placeholder", "event_id": "dns_response_received"})),
+            EventType::new(
+                "dns_connected",
+                "Triggered when DNS client connects to server",
+                json!({"type": "placeholder", "event_id": "dns_connected"}),
+            ),
+            EventType::new(
+                "dns_response_received",
+                "Triggered when DNS client receives a response",
+                json!({"type": "placeholder", "event_id": "dns_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

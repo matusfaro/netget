@@ -18,37 +18,35 @@ async fn test_jsonrpc_basic_method_call() -> E2EResult<()> {
         When clients call method 'add' with params [a, b], return their sum. \
         When clients call 'greet' with param name, return 'Hello, <name>!'.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("Open JSON-RPC")
-                    .and_instruction_containing("port")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "jsonrpc",
-                            "instruction": "JSON-RPC 2.0 server with add and greet methods"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: JSON-RPC method call received (jsonrpc_method_call event)
-                    .on_event("jsonrpc_method_call")
-                    .and_event_data_contains("method", "add")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "jsonrpc_success",
-                            "result": 8,
-                            "id": 1
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("Open JSON-RPC")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "jsonrpc",
+                    "instruction": "JSON-RPC 2.0 server with add and greet methods"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: JSON-RPC method call received (jsonrpc_method_call event)
+            .on_event("jsonrpc_method_call")
+            .and_event_data_contains("method", "add")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "jsonrpc_success",
+                    "result": 8,
+                    "id": 1
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -146,36 +144,34 @@ async fn test_jsonrpc_notification() -> E2EResult<()> {
     let prompt = "Open JSON-RPC on port {AVAILABLE_PORT}. This is a JSON-RPC 2.0 server. \
         Handle notifications (requests without 'id') by logging them but not sending responses.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("Open JSON-RPC")
-                    .and_instruction_containing("port")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "jsonrpc",
-                            "instruction": "JSON-RPC 2.0 server handling notifications"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: JSON-RPC notification received (jsonrpc_method_call event with id=null)
-                    .on_event("jsonrpc_method_call")
-                    .and_event_data_contains("method", "log_event")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "show_message",
-                            "message": "Logged notification"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("Open JSON-RPC")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "jsonrpc",
+                    "instruction": "JSON-RPC 2.0 server handling notifications"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: JSON-RPC notification received (jsonrpc_method_call event with id=null)
+            .on_event("jsonrpc_method_call")
+            .and_event_data_contains("method", "log_event")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "show_message",
+                    "message": "Logged notification"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -231,46 +227,44 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
         Handle batch requests by processing each method call and returning results in an array. \
         For method 'echo', return the first parameter as the result.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("Open JSON-RPC")
-                    .and_instruction_containing("port")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "jsonrpc",
-                            "instruction": "JSON-RPC 2.0 server with batch support and echo method"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2-4: Three batch requests (jsonrpc_method_call event x3)
-                    // Note: ID matching - the id field is a JSON number, so we just match on method
-                    .on_event("jsonrpc_method_call")
-                    .and_event_data_contains("method", "echo")
-                    .respond_with_actions_from_event(|event_data| {
-                        let id = event_data["id"].as_u64().unwrap_or(0);
-                        let params = &event_data["params"];
-                        let result = if let Some(arr) = params.as_array() {
-                            arr.first().cloned().unwrap_or(json!(""))
-                        } else {
-                            json!("")
-                        };
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("Open JSON-RPC")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "jsonrpc",
+                    "instruction": "JSON-RPC 2.0 server with batch support and echo method"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2-4: Three batch requests (jsonrpc_method_call event x3)
+            // Note: ID matching - the id field is a JSON number, so we just match on method
+            .on_event("jsonrpc_method_call")
+            .and_event_data_contains("method", "echo")
+            .respond_with_actions_from_event(|event_data| {
+                let id = event_data["id"].as_u64().unwrap_or(0);
+                let params = &event_data["params"];
+                let result = if let Some(arr) = params.as_array() {
+                    arr.first().cloned().unwrap_or(json!(""))
+                } else {
+                    json!("")
+                };
 
-                        serde_json::json!([{
-                            "type": "jsonrpc_success",
-                            "result": result,
-                            "id": id
-                        }])
-                    })
-                    .expect_calls(3)
-                    .and()
+                serde_json::json!([{
+                    "type": "jsonrpc_success",
+                    "result": result,
+                    "id": id
+                }])
             })
-    ).await?;
+            .expect_calls(3)
+            .and()
+    }))
+    .await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -339,38 +333,36 @@ async fn test_jsonrpc_method_not_found() -> E2EResult<()> {
     let prompt = "Open JSON-RPC on port {AVAILABLE_PORT}. This is a JSON-RPC 2.0 server. \
         When clients call unknown methods, return error code -32601 (Method not found).";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("Open JSON-RPC")
-                    .and_instruction_containing("port")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "jsonrpc",
-                            "instruction": "JSON-RPC 2.0 server that returns error for unknown methods"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: JSON-RPC request with unknown method (jsonrpc_method_call event)
-                    .on_event("jsonrpc_method_call")
-                    .and_event_data_contains("method", "this_method_does_not_exist")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "jsonrpc_error",
-                            "code": -32601,
-                            "message": "Method not found",
-                            "id": 99
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("Open JSON-RPC")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "jsonrpc",
+                    "instruction": "JSON-RPC 2.0 server that returns error for unknown methods"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: JSON-RPC request with unknown method (jsonrpc_method_call event)
+            .on_event("jsonrpc_method_call")
+            .and_event_data_contains("method", "this_method_does_not_exist")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "jsonrpc_error",
+                    "code": -32601,
+                    "message": "Method not found",
+                    "id": 99
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;

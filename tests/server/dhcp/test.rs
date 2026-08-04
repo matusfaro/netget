@@ -8,8 +8,8 @@
 // Helper module imported from parent
 
 use super::super::super::helpers::{self, E2EResult};
-use tokio::net::UdpSocket;
 use std::time::Duration;
+use tokio::net::UdpSocket;
 
 /// Create a basic DHCP DISCOVER message
 fn create_dhcp_discover(transaction_id: u32) -> Vec<u8> {
@@ -160,7 +160,11 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
     let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
 
     let discover_packet = create_dhcp_discover(0x12345678);
-    println!("Sending DHCP DISCOVER ({} bytes) to {}...", discover_packet.len(), server_addr);
+    println!(
+        "Sending DHCP DISCOVER ({} bytes) to {}...",
+        discover_packet.len(),
+        server_addr
+    );
     println!("Client socket bound to: {}", socket.local_addr()?);
 
     let sent_bytes = socket.send_to(&discover_packet, server_addr).await?;
@@ -168,10 +172,8 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
 
     // Wait for DHCP OFFER response
     let mut buffer = vec![0u8; 1024];
-    let timeout_result = tokio::time::timeout(
-        Duration::from_secs(5),
-        socket.recv_from(&mut buffer)
-    ).await;
+    let timeout_result =
+        tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
 
     match timeout_result {
         Ok(Ok((n, from_addr))) => {
@@ -270,15 +272,17 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
         }
     }
 
-    println!("Sending DHCP REQUEST ({} bytes) to {}...", request_packet.len(), server_addr);
+    println!(
+        "Sending DHCP REQUEST ({} bytes) to {}...",
+        request_packet.len(),
+        server_addr
+    );
     socket.send_to(&request_packet, server_addr).await?;
 
     // Wait for DHCP ACK response
     let mut buffer = vec![0u8; 1024];
-    let timeout_result = tokio::time::timeout(
-        Duration::from_secs(5),
-        socket.recv_from(&mut buffer)
-    ).await;
+    let timeout_result =
+        tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
 
     match timeout_result {
         Ok(Ok((n, from_addr))) => {
@@ -361,15 +365,16 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
     let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
 
     let discover_packet = create_dhcp_discover(0xAABBCCDD);
-    println!("Sending DHCP DISCOVER with options request to {}...", server_addr);
+    println!(
+        "Sending DHCP DISCOVER with options request to {}...",
+        server_addr
+    );
     socket.send_to(&discover_packet, server_addr).await?;
 
     // Wait for response
     let mut buffer = vec![0u8; 1024];
-    let timeout_result = tokio::time::timeout(
-        Duration::from_secs(5),
-        socket.recv_from(&mut buffer)
-    ).await;
+    let timeout_result =
+        tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
 
     match timeout_result {
         Ok(Ok((n, _))) => {

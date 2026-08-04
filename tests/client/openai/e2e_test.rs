@@ -70,7 +70,7 @@ mod openai_client_tests {
     async fn test_openai_client_with_model_selection_with_mocks() -> E2EResult<()> {
         // Client with specific model selection
         let client_config = NetGetConfig::new(
-            "Connect to OpenAI with key 'sk-test-key' using model gpt-4 and ask: 'What is 2+2?'"
+            "Connect to OpenAI with key 'sk-test-key' using model gpt-4 and ask: 'What is 2+2?'",
         )
         .with_mock(|mock| {
             mock
@@ -164,7 +164,7 @@ mod openai_client_tests {
     async fn test_openai_client_custom_parameters_with_mocks() -> E2EResult<()> {
         // Client with custom parameters (organization)
         let client_config = NetGetConfig::new(
-            "Connect to OpenAI with key 'sk-test-key' and organization 'org-test' and ask: 'Hello'"
+            "Connect to OpenAI with key 'sk-test-key' and organization 'org-test' and ask: 'Hello'",
         )
         .with_mock(|mock| {
             mock

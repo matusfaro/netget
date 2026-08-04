@@ -86,46 +86,49 @@ pub static DC_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
 
 /// DC client search result received event
 pub static DC_CLIENT_SEARCH_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_client_search_result", "Received search result from hub", json!({"type": "placeholder", "event_id": "dc_client_search_result"})).with_parameters(
-        vec![
-            Parameter {
-                name: "source".to_string(),
-                type_hint: "string".to_string(),
-                description: "User who has the file".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "filename".to_string(),
-                type_hint: "string".to_string(),
-                description: "File name".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "size".to_string(),
-                type_hint: "number".to_string(),
-                description: "File size in bytes".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "free_slots".to_string(),
-                type_hint: "number".to_string(),
-                description: "Available download slots".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "total_slots".to_string(),
-                type_hint: "number".to_string(),
-                description: "Total download slots".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "hub_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Hub name where file is located".to_string(),
-                required: false,
-            },
-        ],
+    EventType::new(
+        "dc_client_search_result",
+        "Received search result from hub",
+        json!({"type": "placeholder", "event_id": "dc_client_search_result"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "source".to_string(),
+            type_hint: "string".to_string(),
+            description: "User who has the file".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "filename".to_string(),
+            type_hint: "string".to_string(),
+            description: "File name".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "size".to_string(),
+            type_hint: "number".to_string(),
+            description: "File size in bytes".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "free_slots".to_string(),
+            type_hint: "number".to_string(),
+            description: "Available download slots".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "total_slots".to_string(),
+            type_hint: "number".to_string(),
+            description: "Total download slots".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "hub_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hub name where file is located".to_string(),
+            required: false,
+        },
+    ])
 });
 
 /// DC client user list received event
@@ -145,7 +148,12 @@ pub static DC_CLIENT_USERLIST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DC client hub info received event
 pub static DC_CLIENT_HUBINFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_client_hubinfo_received", "Received hub information", json!({"type": "placeholder", "event_id": "dc_client_hubinfo_received"})).with_parameters(vec![
+    EventType::new(
+        "dc_client_hubinfo_received",
+        "Received hub information",
+        json!({"type": "placeholder", "event_id": "dc_client_hubinfo_received"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "hub_name".to_string(),
             type_hint: "string".to_string(),
@@ -163,14 +171,17 @@ pub static DC_CLIENT_HUBINFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DC client kicked event
 pub static DC_CLIENT_KICKED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_client_kicked", "Client was kicked from hub", json!({"type": "placeholder", "event_id": "dc_client_kicked"})).with_parameters(vec![
-        Parameter {
-            name: "nickname".to_string(),
-            type_hint: "string".to_string(),
-            description: "Nickname that was kicked".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "dc_client_kicked",
+        "Client was kicked from hub",
+        json!({"type": "placeholder", "event_id": "dc_client_kicked"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "nickname".to_string(),
+        type_hint: "string".to_string(),
+        description: "Nickname that was kicked".to_string(),
+        required: true,
+    }])
 });
 
 /// DC client redirect event
@@ -503,10 +514,7 @@ impl Client for DcClientProtocol {
                     .get("size_restricted")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let min_size = action
-                    .get("min_size")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let min_size = action.get("min_size").and_then(|v| v.as_u64()).unwrap_or(0);
 
                 Ok(ClientActionResult::Custom {
                     name: "dc_search".to_string(),

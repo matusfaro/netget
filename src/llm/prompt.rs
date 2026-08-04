@@ -297,7 +297,10 @@ You used action name(s) that are not in the Available Actions list. This is NOT 
             .map(|(action_json, error)| {
                 let action_str = serde_json::to_string_pretty(action_json)
                     .unwrap_or_else(|_| action_json.to_string());
-                format!("**Action:**\n```json\n{}\n```\n**Error:** {}", action_str, error)
+                format!(
+                    "**Action:**\n```json\n{}\n```\n**Error:** {}",
+                    action_str, error
+                )
             })
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -619,13 +622,14 @@ Check the action definition in "Available Actions" for required parameters and p
         let scripting_env = state.get_scripting_env().await;
 
         // Check if documentation has been fetched (for prompt guidance, not action enablement)
-        let has_documentation = conversation_history.as_ref()
+        let has_documentation = conversation_history
+            .as_ref()
             .map(|history| {
-                history.contains("read_documentation") ||
-                history.contains("read_server_documentation") ||
-                history.contains("read_client_documentation") ||
-                history.contains("Server Protocol:") ||
-                history.contains("Client Protocol:")
+                history.contains("read_documentation")
+                    || history.contains("read_server_documentation")
+                    || history.contains("read_client_documentation")
+                    || history.contains("Server Protocol:")
+                    || history.contains("Client Protocol:")
             })
             .unwrap_or(false);
 
@@ -876,7 +880,10 @@ Understand what the user wants and respond with the appropriate actions to make 
             .field("servers", &servers_data)
             .optional_field("active_server", active_server_data)
             .field("web_search_enabled", web_search_enabled)
-            .field("can_bind_privileged_ports", system_caps.can_bind_privileged_ports)
+            .field(
+                "can_bind_privileged_ports",
+                system_caps.can_bind_privileged_ports,
+            )
             .field("has_raw_socket_access", system_caps.has_raw_socket_access)
             .build();
 
@@ -885,7 +892,10 @@ Understand what the user wants and respond with the appropriate actions to make 
             .render_json("feedback/main", &data)
             .unwrap_or_else(|e| {
                 tracing::error!("Failed to render feedback template: {}", e);
-                format!("# Error\n\nFailed to render feedback prompt template: {}", e)
+                format!(
+                    "# Error\n\nFailed to render feedback prompt template: {}",
+                    e
+                )
             })
     }
 

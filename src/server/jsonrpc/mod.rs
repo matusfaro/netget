@@ -500,9 +500,10 @@ async fn call_llm_for_method(
     // perfectly reasonable response that leads with show_message or update_memory
     // used to be rejected as a "non-JSON-RPC action" and turned into -32603. The
     // protocol's own documentation and its notification test both used that shape.
-    let response = llm_result.protocol_results.iter().find_map(|result| {
-        collect_jsonrpc_response(result)
-    });
+    let response = llm_result
+        .protocol_results
+        .iter()
+        .find_map(|result| collect_jsonrpc_response(result));
 
     let Some(mut response) = response else {
         return Ok(json!({
@@ -521,10 +522,7 @@ async fn call_llm_for_method(
     // invents an id would otherwise produce a reply the client cannot match, and
     // over keep-alive that failure is silent.
     if let Some(obj) = response.as_object_mut() {
-        obj.insert(
-            "id".to_string(),
-            request_id.clone().unwrap_or(Value::Null),
-        );
+        obj.insert("id".to_string(), request_id.clone().unwrap_or(Value::Null));
         obj.insert("jsonrpc".to_string(), Value::String("2.0".to_string()));
     }
 

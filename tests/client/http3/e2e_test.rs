@@ -53,44 +53,44 @@ mod http3_client_tests {
             "Connect to 127.0.0.1:{} via HTTP/3. Send a GET request to / and read the response.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("HTTP/3")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "HTTP3",
-                            "instruction": "Send GET request to / and read response"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected
-                    .on_event("http3_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_request",
-                            "method": "GET",
-                            "path": "/",
-                            "headers": {},
-                            "body": ""
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Client receives response
-                    .on_event("http_response_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("HTTP/3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "HTTP3",
+                        "instruction": "Send GET request to / and read response"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("http3_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_request",
+                        "method": "GET",
+                        "path": "/",
+                        "headers": {},
+                        "body": ""
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response
+                .on_event("http_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 

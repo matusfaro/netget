@@ -103,12 +103,7 @@ pub struct DatabaseInstance {
 impl DatabaseInstance {
     /// Create a new database instance
     #[cfg(feature = "sqlite")]
-    pub fn new(
-        id: DatabaseId,
-        name: String,
-        path: String,
-        owner: DatabaseOwner,
-    ) -> Self {
+    pub fn new(id: DatabaseId, name: String, path: String, owner: DatabaseOwner) -> Self {
         Self {
             id,
             name,
@@ -166,10 +161,11 @@ impl DatabaseInstance {
             }
 
             // Get row count
-            let row_count: u64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM '{}'", table_name), [], |row| {
-                    row.get(0)
-                })?;
+            let row_count: u64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM '{}'", table_name),
+                [],
+                |row| row.get(0),
+            )?;
 
             self.tables.push(TableSchema {
                 name: table_name,
@@ -231,8 +227,8 @@ pub struct DatabaseConnection {
 impl DatabaseConnection {
     /// Create a new database connection
     pub fn new(instance: DatabaseInstance) -> Result<Self> {
-        let conn = Connection::open(&instance.path)
-            .context("Failed to open database connection")?;
+        let conn =
+            Connection::open(&instance.path).context("Failed to open database connection")?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -266,11 +262,8 @@ impl DatabaseConnection {
         if is_select {
             // Execute SELECT query
             let mut stmt = conn.prepare(sql)?;
-            let column_names: Vec<String> = stmt
-                .column_names()
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            let column_names: Vec<String> =
+                stmt.column_names().iter().map(|s| s.to_string()).collect();
 
             let mut rows = Vec::new();
             let mut query_rows = stmt.query([])?;
@@ -283,12 +276,10 @@ impl DatabaseConnection {
                         rusqlite::types::ValueRef::Integer(i) => {
                             serde_json::Value::Number(i.into())
                         }
-                        rusqlite::types::ValueRef::Real(f) => {
-                            serde_json::Value::Number(
-                                serde_json::Number::from_f64(f)
-                                    .unwrap_or_else(|| serde_json::Number::from(0)),
-                            )
-                        }
+                        rusqlite::types::ValueRef::Real(f) => serde_json::Value::Number(
+                            serde_json::Number::from_f64(f)
+                                .unwrap_or_else(|| serde_json::Number::from(0)),
+                        ),
                         rusqlite::types::ValueRef::Text(t) => {
                             serde_json::Value::String(String::from_utf8_lossy(t).to_string())
                         }
@@ -452,7 +443,10 @@ impl DatabaseManager {
 
     /// Get all database instances
     pub fn get_all_instances(&self) -> Vec<&DatabaseInstance> {
-        self.connections.values().map(|conn| conn.instance()).collect()
+        self.connections
+            .values()
+            .map(|conn| conn.instance())
+            .collect()
     }
 
     /// Execute a query on a database
@@ -472,8 +466,7 @@ impl DatabaseManager {
         if !conn.instance().is_memory() {
             let path = PathBuf::from(&conn.instance().path);
             if path.exists() {
-                std::fs::remove_file(&path)
-                    .context("Failed to delete database file")?;
+                std::fs::remove_file(&path).context("Failed to delete database file")?;
             }
         }
 

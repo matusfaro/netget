@@ -12,32 +12,31 @@ use std::time::Duration;
 #[tokio::test]
 #[ignore = "Requires root/admin privileges to create TUN interface"]
 async fn test_wireguard_handshake_detection() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start a WireGuard VPN honeypot on port 0")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("WireGuard")
-                .and_instruction_containing("honeypot")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WIREGUARD",
-                        "instruction": "Log WireGuard packets as honeypot"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Packet received (wireguard_packet_received event)
-                .on_event("wireguard_packet_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "log_packet"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new("Start a WireGuard VPN honeypot on port 0").with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("WireGuard")
+            .and_instruction_containing("honeypot")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "WIREGUARD",
+                    "instruction": "Log WireGuard packets as honeypot"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Packet received (wireguard_packet_received event)
+            .on_event("wireguard_packet_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "log_packet"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 
@@ -98,32 +97,33 @@ async fn test_wireguard_handshake_detection() -> E2EResult<()> {
 #[tokio::test]
 #[ignore = "Requires root/admin privileges to create TUN interface"]
 async fn test_wireguard_multiple_packet_types() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start a WireGuard honeypot on port 0 that logs all packet types")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("WireGuard")
-                .and_instruction_containing("honeypot")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WIREGUARD",
-                        "instruction": "Log all WireGuard packet types"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2-4: Three packet types received
-                .on_event("wireguard_packet_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "log_packet"
-                    }
-                ]))
-                .expect_calls(3)  // HandshakeInit, HandshakeResponse, Data
-                .and()
-        });
+    let config =
+        NetGetConfig::new("Start a WireGuard honeypot on port 0 that logs all packet types")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("WireGuard")
+                    .and_instruction_containing("honeypot")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WIREGUARD",
+                            "instruction": "Log all WireGuard packet types"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2-4: Three packet types received
+                    .on_event("wireguard_packet_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "log_packet"
+                        }
+                    ]))
+                    .expect_calls(3) // HandshakeInit, HandshakeResponse, Data
+                    .and()
+            });
 
     let server = start_netget_server(config).await?;
 
@@ -173,32 +173,31 @@ async fn test_wireguard_multiple_packet_types() -> E2EResult<()> {
 #[tokio::test]
 #[ignore = "Requires root/admin privileges to create TUN interface"]
 async fn test_wireguard_concurrent_connections() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start a WireGuard VPN honeypot on port 0")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("WireGuard")
-                .and_instruction_containing("honeypot")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "WIREGUARD",
-                        "instruction": "Log WireGuard packets"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2-4: Three concurrent handshakes
-                .on_event("wireguard_packet_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "log_packet"
-                    }
-                ]))
-                .expect_calls(3)
-                .and()
-        });
+    let config = NetGetConfig::new("Start a WireGuard VPN honeypot on port 0").with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("WireGuard")
+            .and_instruction_containing("honeypot")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "WIREGUARD",
+                    "instruction": "Log WireGuard packets"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2-4: Three concurrent handshakes
+            .on_event("wireguard_packet_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "log_packet"
+                }
+            ]))
+            .expect_calls(3)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
 

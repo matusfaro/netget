@@ -11,8 +11,8 @@
 // Helper module imported from parent
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
-use tokio::net::UdpSocket;
 use std::time::Duration;
+use tokio::net::UdpSocket;
 
 #[tokio::test]
 async fn test_udp_echo_server() -> E2EResult<()> {
@@ -53,7 +53,9 @@ async fn test_udp_echo_server() -> E2EResult<()> {
     // Send test data
     let test_data = b"Hello UDP";
     println!("Sending: {:?}", std::str::from_utf8(test_data).unwrap());
-    socket.send_to(test_data, format!("127.0.0.1:{}", server.port)).await?;
+    socket
+        .send_to(test_data, format!("127.0.0.1:{}", server.port))
+        .await?;
 
     // Wait for response with timeout
     let mut buffer = vec![0u8; 1024];

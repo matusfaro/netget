@@ -114,7 +114,7 @@ impl Protocol for OllamaClientProtocol {
                     "prompt": "What is the capital of France?",
                     "model": "llama2"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_chat_request".to_string(),
@@ -140,7 +140,7 @@ impl Protocol for OllamaClientProtocol {
                     ],
                     "model": "llama2"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "list_models".to_string(),
@@ -149,7 +149,7 @@ impl Protocol for OllamaClientProtocol {
                 example: json!({
                     "type": "list_models"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "generate_embeddings".to_string(),
@@ -173,7 +173,7 @@ impl Protocol for OllamaClientProtocol {
                     "prompt": "Hello world",
                     "model": "llama2"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -182,7 +182,7 @@ impl Protocol for OllamaClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -212,7 +212,7 @@ impl Protocol for OllamaClientProtocol {
                     "prompt": "Tell me more",
                     "model": "llama2"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -221,7 +221,7 @@ impl Protocol for OllamaClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -230,7 +230,7 @@ impl Protocol for OllamaClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }

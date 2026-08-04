@@ -14,32 +14,28 @@ async fn test_remote_service_startup() -> E2EResult<()> {
 
     let server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(
-            NetGetConfig::new(prompt)
-                .with_mock(|mock| {
-                    mock
-                        .on_instruction_containing("Act as a BLE remote")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "BLUETOOTH_BLE_REMOTE",
-                                "instruction": "Create remote control HID service",
-                                "startup_params": {
-                                    "device_name": "NetGet-Remote"
-                            }
-                                    
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
+        helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("Act as a BLE remote")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BLUETOOTH_BLE_REMOTE",
+                        "instruction": "Create remote control HID service",
+                        "startup_params": {
+                            "device_name": "NetGet-Remote"
+                    }
+
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
                 // Mock 2: Server started event - service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-        )
+                .on_event("bluetooth_ble_started")
+                .respond_with_actions(serde_json::json!([]))
+                .expect_calls(1)
+                .and()
+        })),
     )
     .await
     .map_err(|_| "Server startup timeout")??;

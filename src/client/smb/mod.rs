@@ -10,11 +10,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::smb::actions::{
     SMB_CLIENT_CONNECTED_EVENT, SMB_CLIENT_DIR_LISTED_EVENT, SMB_CLIENT_ERROR_EVENT,
     SMB_CLIENT_FILE_READ_EVENT, SMB_CLIENT_FILE_WRITTEN_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};

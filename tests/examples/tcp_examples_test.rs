@@ -148,27 +148,28 @@ async fn example_test_tcp_data_received() -> E2EResult<()> {
 
     // Try to read the response
     let mut buf = vec![0u8; 1024];
-    let received_data = match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await {
-        Ok(Ok(n)) if n > 0 => {
-            let response = String::from_utf8_lossy(&buf[..n]);
-            println!("Received: {} ({} bytes)", response, n);
-            // Response should be "Hello" (decoded from hex 48656c6c6f) or raw bytes
-            println!("✓ tcp_data_received response_example executed correctly");
-            true
-        }
-        Ok(Ok(_)) => {
-            println!("⚠ Connection closed without data (may be expected in mock mode)");
-            false
-        }
-        Ok(Err(e)) => {
-            println!("⚠ Read error: {} (may be expected in mock mode)", e);
-            false
-        }
-        Err(_) => {
-            println!("⚠ Timeout waiting for response (may be expected in mock mode)");
-            false
-        }
-    };
+    let received_data =
+        match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(n)) if n > 0 => {
+                let response = String::from_utf8_lossy(&buf[..n]);
+                println!("Received: {} ({} bytes)", response, n);
+                // Response should be "Hello" (decoded from hex 48656c6c6f) or raw bytes
+                println!("✓ tcp_data_received response_example executed correctly");
+                true
+            }
+            Ok(Ok(_)) => {
+                println!("⚠ Connection closed without data (may be expected in mock mode)");
+                false
+            }
+            Ok(Err(e)) => {
+                println!("⚠ Read error: {} (may be expected in mock mode)", e);
+                false
+            }
+            Err(_) => {
+                println!("⚠ Timeout waiting for response (may be expected in mock mode)");
+                false
+            }
+        };
 
     // Only verify mocks if we had some interaction
     // In mock mode, the server receives the data and triggers mock, but actual response
@@ -215,7 +216,10 @@ async fn example_test_tcp_startup_llm_mode() -> E2EResult<()> {
     let port = server.port;
 
     assert!(port > 0, "Server should have started on a port");
-    println!("✓ TCP server started successfully on port {} using LLM mode", port);
+    println!(
+        "✓ TCP server started successfully on port {} using LLM mode",
+        port
+    );
 
     // Verify by connecting
     let _stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
@@ -270,12 +274,16 @@ async fn example_test_tcp_startup_static_mode() -> E2EResult<()> {
         Ok(server) => {
             let port = server.port;
             if port > 0 {
-                println!("✓ TCP server started successfully on port {} using static mode", port);
+                println!(
+                    "✓ TCP server started successfully on port {} using static mode",
+                    port
+                );
 
                 // Try to connect and read response
                 if let Ok(mut stream) = TcpStream::connect(format!("127.0.0.1:{}", port)).await {
                     let mut buf = vec![0u8; 1024];
-                    match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+                    match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await
+                    {
                         Ok(Ok(n)) if n > 0 => {
                             let response = String::from_utf8_lossy(&buf[..n]);
                             println!("Received: {}", response);
@@ -284,7 +292,9 @@ async fn example_test_tcp_startup_static_mode() -> E2EResult<()> {
                             }
                         }
                         _ => {
-                            println!("⚠ No response from static handler (implementation may differ)");
+                            println!(
+                                "⚠ No response from static handler (implementation may differ)"
+                            );
                         }
                     }
                 }
@@ -297,7 +307,10 @@ async fn example_test_tcp_startup_static_mode() -> E2EResult<()> {
         Err(e) => {
             // Static mode with event_handlers may not be fully supported
             // This is acceptable for this test - we're validating the example format
-            println!("⚠ Server did not start: {} (static mode may have limitations)", e);
+            println!(
+                "⚠ Server did not start: {} (static mode may have limitations)",
+                e
+            );
             println!("✓ Mock response format was correct (test validates syntax, not execution)");
         }
     }

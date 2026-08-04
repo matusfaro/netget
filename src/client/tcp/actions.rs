@@ -31,7 +31,12 @@ pub static TCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// TCP client data received event
 pub static TCP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tcp_data_received", "Data received from TCP server", json!({"type": "placeholder", "event_id": "tcp_data_received"})).with_parameters(vec![
+    EventType::new(
+        "tcp_data_received",
+        "Data received from TCP server",
+        json!({"type": "placeholder", "event_id": "tcp_data_received"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "data_hex".to_string(),
             type_hint: "string".to_string(),
@@ -68,7 +73,8 @@ impl Protocol for TcpClientProtocol {
         vec![
             ActionDefinition {
                 name: "send_tcp_data".to_string(),
-                description: "Send raw TCP data to the server (UTF-8 string or hex-encoded)".to_string(),
+                description: "Send raw TCP data to the server (UTF-8 string or hex-encoded)"
+                    .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "data".to_string(),
@@ -79,7 +85,8 @@ impl Protocol for TcpClientProtocol {
                     Parameter {
                         name: "data_hex".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Hexadecimal encoded data to send (for binary data)".to_string(),
+                        description: "Hexadecimal encoded data to send (for binary data)"
+                            .to_string(),
                         required: false,
                     },
                 ],
@@ -87,7 +94,7 @@ impl Protocol for TcpClientProtocol {
                     "type": "send_tcp_data",
                     "data": "Hello World"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -96,7 +103,7 @@ impl Protocol for TcpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -104,7 +111,9 @@ impl Protocol for TcpClientProtocol {
         vec![
             ActionDefinition {
                 name: "send_tcp_data".to_string(),
-                description: "Send TCP data in response to received data (UTF-8 string or hex-encoded)".to_string(),
+                description:
+                    "Send TCP data in response to received data (UTF-8 string or hex-encoded)"
+                        .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "data".to_string(),
@@ -115,7 +124,8 @@ impl Protocol for TcpClientProtocol {
                     Parameter {
                         name: "data_hex".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Hexadecimal encoded data to send (for binary data)".to_string(),
+                        description: "Hexadecimal encoded data to send (for binary data)"
+                            .to_string(),
                         required: false,
                     },
                 ],
@@ -123,7 +133,7 @@ impl Protocol for TcpClientProtocol {
                     "type": "send_tcp_data",
                     "data": "Hello World"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -132,7 +142,7 @@ impl Protocol for TcpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -141,8 +151,16 @@ impl Protocol for TcpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tcp_connected", "Triggered when TCP client connects to server", json!({"type": "placeholder", "event_id": "tcp_connected"})),
-            EventType::new("tcp_data_received", "Triggered when TCP client receives data from server", json!({"type": "placeholder", "event_id": "tcp_data_received"})),
+            EventType::new(
+                "tcp_connected",
+                "Triggered when TCP client connects to server",
+                json!({"type": "placeholder", "event_id": "tcp_connected"}),
+            ),
+            EventType::new(
+                "tcp_data_received",
+                "Triggered when TCP client receives data from server",
+                json!({"type": "placeholder", "event_id": "tcp_data_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

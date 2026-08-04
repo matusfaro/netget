@@ -35,7 +35,7 @@ pub enum ActionExecutionError {
     /// Documentation required before opening server/client
     /// This error includes the documentation content to show the LLM
     DocumentationRequired {
-        action_type: String,  // "open_server" or "open_client"
+        action_type: String, // "open_server" or "open_client"
         protocol: String,
         documentation: String,
         original_action: serde_json::Value,
@@ -73,9 +73,7 @@ impl fmt::Display for ActionExecutionError {
             Self::Fatal(e) => write!(f, "Fatal error: {}", e),
             #[cfg(feature = "sqlite")]
             Self::SqlError {
-                database_id,
-                error,
-                ..
+                database_id, error, ..
             } => {
                 write!(f, "SQL error in database {}: {}", database_id, error)
             }
@@ -241,7 +239,8 @@ CRITICAL: Make sure all required fields are included with valid values."#,
                     action_type,
                     parameter_name,
                     error_message,
-                    serde_json::to_string_pretty(original_action).unwrap_or_else(|_| format!("{:?}", original_action)),
+                    serde_json::to_string_pretty(original_action)
+                        .unwrap_or_else(|_| format!("{:?}", original_action)),
                     action_type
                 )
             }

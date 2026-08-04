@@ -5,9 +5,7 @@
 
 #[cfg(all(test, feature = "rip"))]
 mod e2e_rip {
-    use crate::helpers::{
-        start_netget_server, with_client_timeout, E2EResult, NetGetConfig,
-    };
+    use crate::helpers::{start_netget_server, with_client_timeout, E2EResult, NetGetConfig};
     use tokio::net::UdpSocket;
     use tokio::time::{timeout, Duration};
 
@@ -238,46 +236,45 @@ mod e2e_rip {
             - 10.20.30.0/24 with metric 1 \
             - 172.30.0.0/16 with metric 8";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("listen")
-                    .and_instruction_containing("rip")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "RIP",
-                            "instruction": "RIP server - advertise specified routes"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: RIP request received
-                    .on_event("rip_request")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_rip_response",
-                            "routes": [
-                                {
-                                    "ip_address": "10.20.30.0",
-                                    "subnet_mask": "255.255.255.0",
-                                    "next_hop": "0.0.0.0",
-                                    "metric": 1
-                                },
-                                {
-                                    "ip_address": "172.30.0.0",
-                                    "subnet_mask": "255.255.0.0",
-                                    "next_hop": "0.0.0.0",
-                                    "metric": 8
-                                }
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen")
+                .and_instruction_containing("rip")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "RIP",
+                        "instruction": "RIP server - advertise specified routes"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: RIP request received
+                .on_event("rip_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_rip_response",
+                        "routes": [
+                            {
+                                "ip_address": "10.20.30.0",
+                                "subnet_mask": "255.255.255.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 1
+                            },
+                            {
+                                "ip_address": "172.30.0.0",
+                                "subnet_mask": "255.255.0.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 8
+                            }
+                        ]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 
@@ -349,58 +346,57 @@ mod e2e_rip {
             - 172.20.0.0/16 with metric 15 (15 hops away, maximum reachable) \
             - 192.168.99.0/24 with metric 16 (unreachable/withdrawn)";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("listen")
-                    .and_instruction_containing("rip")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "RIP",
-                            "instruction": "RIP server - advertise routes with various metrics"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: RIP request received
-                    .on_event("rip_request")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_rip_response",
-                            "routes": [
-                                {
-                                    "ip_address": "192.168.100.0",
-                                    "subnet_mask": "255.255.255.0",
-                                    "next_hop": "0.0.0.0",
-                                    "metric": 1
-                                },
-                                {
-                                    "ip_address": "10.10.0.0",
-                                    "subnet_mask": "255.255.0.0",
-                                    "next_hop": "0.0.0.0",
-                                    "metric": 5
-                                },
-                                {
-                                    "ip_address": "172.20.0.0",
-                                    "subnet_mask": "255.255.0.0",
-                                    "next_hop": "0.0.0.0",
-                                    "metric": 15
-                                },
-                                {
-                                    "ip_address": "192.168.99.0",
-                                    "subnet_mask": "255.255.255.0",
-                                    "next_hop": "0.0.0.0",
-                                    "metric": 16
-                                }
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen")
+                .and_instruction_containing("rip")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "RIP",
+                        "instruction": "RIP server - advertise routes with various metrics"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: RIP request received
+                .on_event("rip_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_rip_response",
+                        "routes": [
+                            {
+                                "ip_address": "192.168.100.0",
+                                "subnet_mask": "255.255.255.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 1
+                            },
+                            {
+                                "ip_address": "10.10.0.0",
+                                "subnet_mask": "255.255.0.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 5
+                            },
+                            {
+                                "ip_address": "172.20.0.0",
+                                "subnet_mask": "255.255.0.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 15
+                            },
+                            {
+                                "ip_address": "192.168.99.0",
+                                "subnet_mask": "255.255.255.0",
+                                "next_hop": "0.0.0.0",
+                                "metric": 16
+                            }
+                        ]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(config).await?;
 

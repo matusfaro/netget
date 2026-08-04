@@ -20,7 +20,7 @@ pub static MONGODB_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
             "type": "find_documents",
             "collection": "users",
             "filter": {}
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -45,7 +45,7 @@ pub static MONGODB_CLIENT_RESULT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
         "Query result received from MongoDB server",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -117,7 +117,7 @@ impl Protocol for MongodbClientProtocol {
                     "filter": {"age": {"$gte": 18}},
                     "limit": 10
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "insert_document".to_string(),
@@ -141,7 +141,7 @@ impl Protocol for MongodbClientProtocol {
                     "collection": "users",
                     "document": {"name": "Alice", "age": 30}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "update_documents".to_string(),
@@ -172,7 +172,7 @@ impl Protocol for MongodbClientProtocol {
                     "filter": {"name": "Alice"},
                     "update": {"$set": {"age": 31}}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "delete_documents".to_string(),
@@ -196,7 +196,7 @@ impl Protocol for MongodbClientProtocol {
                     "collection": "users",
                     "filter": {"age": {"$lt": 18}}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -205,7 +205,7 @@ impl Protocol for MongodbClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -234,7 +234,7 @@ impl Protocol for MongodbClientProtocol {
                     "collection": "logs",
                     "filter": {}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -243,7 +243,7 @@ impl Protocol for MongodbClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -494,7 +494,10 @@ impl Client for MongodbClientProtocol {
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown MongoDB client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown MongoDB client action: {}",
+                action_type
+            )),
         }
     }
 }

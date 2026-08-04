@@ -160,7 +160,7 @@ impl Protocol for OpenAiClientProtocol {
                     ],
                     "model": "gpt-3.5-turbo"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_embedding_request".to_string(),
@@ -185,7 +185,7 @@ impl Protocol for OpenAiClientProtocol {
                     "input": "The quick brown fox",
                     "model": "text-embedding-ada-002"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -194,7 +194,7 @@ impl Protocol for OpenAiClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -234,8 +234,16 @@ impl Protocol for OpenAiClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("openai_connected", "Triggered when OpenAI client is initialized", json!({"type": "placeholder", "event_id": "openai_connected"})),
-            EventType::new("openai_response_received", "Triggered when OpenAI client receives a response", json!({"type": "placeholder", "event_id": "openai_response_received"})),
+            EventType::new(
+                "openai_connected",
+                "Triggered when OpenAI client is initialized",
+                json!({"type": "placeholder", "event_id": "openai_connected"}),
+            ),
+            EventType::new(
+                "openai_response_received",
+                "Triggered when OpenAI client receives a response",
+                json!({"type": "placeholder", "event_id": "openai_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

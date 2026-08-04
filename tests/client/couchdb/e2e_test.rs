@@ -13,28 +13,30 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_couchdb_client_connect() -> E2EResult<()> {
     // Start CouchDB server
-    let server_config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
-        .with_mock(|mock| {
-            mock.on_instruction_containing("Listen for CouchDB")
-                .respond_with_actions(json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "CouchDB",
-                        "instruction": "Handle CouchDB protocol events"
-                    }
-                ]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "server_info")
-                .respond_with_actions(json!([{
-                    "type": "send_server_info",
-                    "version": "3.5.1",
-                    "uuid": "test-uuid",
-                    "vendor_name": "NetGet LLM CouchDB"
-                }]))
-                .and()
-        });
+    let server_config = NetGetConfig::new(
+        "Listen for CouchDB connections on port {AVAILABLE_PORT}",
+    )
+    .with_mock(|mock| {
+        mock.on_instruction_containing("Listen for CouchDB")
+            .respond_with_actions(json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "CouchDB",
+                    "instruction": "Handle CouchDB protocol events"
+                }
+            ]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "server_info")
+            .respond_with_actions(json!([{
+                "type": "send_server_info",
+                "version": "3.5.1",
+                "uuid": "test-uuid",
+                "vendor_name": "NetGet LLM CouchDB"
+            }]))
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -75,49 +77,51 @@ async fn test_couchdb_client_connect() -> E2EResult<()> {
 #[tokio::test]
 async fn test_couchdb_client_database_operations() -> E2EResult<()> {
     // Start CouchDB server
-    let server_config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
-        .with_mock(|mock| {
-            mock.on_instruction_containing("Listen for CouchDB")
-                .respond_with_actions(json!([{
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "CouchDB",
-                    "instruction": "Handle CouchDB protocol events"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "server_info")
-                .respond_with_actions(json!([{
-                    "type": "send_server_info",
-                    "version": "3.5.1"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "db_create")
-                .and_event_data_contains("database", "testdb")
-                .respond_with_actions(json!([{
-                    "type": "send_couchdb_response",
-                    "status_code": 201,
-                    "body": "{\"ok\": true}"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "all_dbs")
-                .respond_with_actions(json!([{
-                    "type": "send_all_dbs",
-                    "databases": ["testdb"]
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "db_delete")
-                .and_event_data_contains("database", "testdb")
-                .respond_with_actions(json!([{
-                    "type": "send_couchdb_response",
-                    "status_code": 200,
-                    "body": "{\"ok\": true}"
-                }]))
-                .and()
-        });
+    let server_config = NetGetConfig::new(
+        "Listen for CouchDB connections on port {AVAILABLE_PORT}",
+    )
+    .with_mock(|mock| {
+        mock.on_instruction_containing("Listen for CouchDB")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "CouchDB",
+                "instruction": "Handle CouchDB protocol events"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "server_info")
+            .respond_with_actions(json!([{
+                "type": "send_server_info",
+                "version": "3.5.1"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "db_create")
+            .and_event_data_contains("database", "testdb")
+            .respond_with_actions(json!([{
+                "type": "send_couchdb_response",
+                "status_code": 201,
+                "body": "{\"ok\": true}"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "all_dbs")
+            .respond_with_actions(json!([{
+                "type": "send_all_dbs",
+                "databases": ["testdb"]
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "db_delete")
+            .and_event_data_contains("database", "testdb")
+            .respond_with_actions(json!([{
+                "type": "send_couchdb_response",
+                "status_code": 200,
+                "body": "{\"ok\": true}"
+            }]))
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -178,63 +182,65 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
 #[tokio::test]
 async fn test_couchdb_client_document_crud() -> E2EResult<()> {
     // Start CouchDB server
-    let server_config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
-        .with_mock(|mock| {
-            mock.on_instruction_containing("Listen for CouchDB")
-                .respond_with_actions(json!([{
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "CouchDB",
-                    "instruction": "Handle CouchDB protocol events"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "server_info")
-                .respond_with_actions(json!([{
-                    "type": "send_server_info",
-                    "version": "3.5.1"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "db_info")
-                .and_event_data_contains("database", "testdb")
-                .respond_with_actions(json!([{
-                    "type": "send_db_info",
-                    "db_name": "testdb",
-                    "doc_count": 0,
-                    "update_seq": "0"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_put")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_doc_response",
-                    "success": true,
-                    "doc_id": "user1",
-                    "rev": "1-abc123"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_get")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_doc_get_response",
-                    "doc_id": "user1",
-                    "rev": "1-abc123",
-                    "body": "{\"name\": \"Alice\", \"age\": 30}"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_delete")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_couchdb_response",
-                    "status_code": 200,
-                    "body": "{\"ok\": true}"
-                }]))
-                .and()
-        });
+    let server_config = NetGetConfig::new(
+        "Listen for CouchDB connections on port {AVAILABLE_PORT}",
+    )
+    .with_mock(|mock| {
+        mock.on_instruction_containing("Listen for CouchDB")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "CouchDB",
+                "instruction": "Handle CouchDB protocol events"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "server_info")
+            .respond_with_actions(json!([{
+                "type": "send_server_info",
+                "version": "3.5.1"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "db_info")
+            .and_event_data_contains("database", "testdb")
+            .respond_with_actions(json!([{
+                "type": "send_db_info",
+                "db_name": "testdb",
+                "doc_count": 0,
+                "update_seq": "0"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "doc_put")
+            .and_event_data_contains("doc_id", "user1")
+            .respond_with_actions(json!([{
+                "type": "send_doc_response",
+                "success": true,
+                "doc_id": "user1",
+                "rev": "1-abc123"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "doc_get")
+            .and_event_data_contains("doc_id", "user1")
+            .respond_with_actions(json!([{
+                "type": "send_doc_get_response",
+                "doc_id": "user1",
+                "rev": "1-abc123",
+                "body": "{\"name\": \"Alice\", \"age\": 30}"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "doc_delete")
+            .and_event_data_contains("doc_id", "user1")
+            .respond_with_actions(json!([{
+                "type": "send_couchdb_response",
+                "status_code": 200,
+                "body": "{\"ok\": true}"
+            }]))
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -310,66 +316,68 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
 #[tokio::test]
 async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
     // Start CouchDB server
-    let server_config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
-        .with_mock(|mock| {
-            mock.on_instruction_containing("Listen for CouchDB")
-                .respond_with_actions(json!([{
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "CouchDB",
-                    "instruction": "Handle CouchDB protocol events"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "server_info")
-                .respond_with_actions(json!([{
-                    "type": "send_server_info",
-                    "version": "3.5.1"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "db_info")
-                .and_event_data_contains("database", "testdb")
-                .respond_with_actions(json!([{
-                    "type": "send_db_info",
-                    "db_name": "testdb",
-                    "doc_count": 0,
-                    "update_seq": "0"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_put")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_doc_response",
-                    "success": false,
-                    "doc_id": "user1",
-                    "rev": "2-current",
-                    "error": "conflict",
-                    "reason": "Document update conflict"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_get")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_doc_get_response",
-                    "doc_id": "user1",
-                    "rev": "2-current",
-                    "body": "{\"name\": \"Alice\", \"age\": 31}"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_put")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_doc_response",
-                    "success": true,
-                    "doc_id": "user1",
-                    "rev": "3-updated"
-                }]))
-                .and()
-        });
+    let server_config = NetGetConfig::new(
+        "Listen for CouchDB connections on port {AVAILABLE_PORT}",
+    )
+    .with_mock(|mock| {
+        mock.on_instruction_containing("Listen for CouchDB")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "CouchDB",
+                "instruction": "Handle CouchDB protocol events"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "server_info")
+            .respond_with_actions(json!([{
+                "type": "send_server_info",
+                "version": "3.5.1"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "db_info")
+            .and_event_data_contains("database", "testdb")
+            .respond_with_actions(json!([{
+                "type": "send_db_info",
+                "db_name": "testdb",
+                "doc_count": 0,
+                "update_seq": "0"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "doc_put")
+            .and_event_data_contains("doc_id", "user1")
+            .respond_with_actions(json!([{
+                "type": "send_doc_response",
+                "success": false,
+                "doc_id": "user1",
+                "rev": "2-current",
+                "error": "conflict",
+                "reason": "Document update conflict"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "doc_get")
+            .and_event_data_contains("doc_id", "user1")
+            .respond_with_actions(json!([{
+                "type": "send_doc_get_response",
+                "doc_id": "user1",
+                "rev": "2-current",
+                "body": "{\"name\": \"Alice\", \"age\": 31}"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "doc_put")
+            .and_event_data_contains("doc_id", "user1")
+            .respond_with_actions(json!([{
+                "type": "send_doc_response",
+                "success": true,
+                "doc_id": "user1",
+                "rev": "3-updated"
+            }]))
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -436,57 +444,59 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
 #[tokio::test]
 async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
     // Start CouchDB server
-    let server_config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
-        .with_mock(|mock| {
-            mock.on_instruction_containing("Listen for CouchDB")
-                .respond_with_actions(json!([{
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "CouchDB",
-                    "instruction": "Handle CouchDB protocol events"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "server_info")
-                .respond_with_actions(json!([{
-                    "type": "send_server_info",
-                    "version": "3.5.1"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "db_info")
-                .and_event_data_contains("database", "testdb")
-                .respond_with_actions(json!([{
-                    "type": "send_db_info",
-                    "db_name": "testdb",
-                    "doc_count": 0,
-                    "update_seq": "0"
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "bulk_docs")
-                .respond_with_actions(json!([{
-                    "type": "send_bulk_docs_response",
-                    "results": [
-                        {"ok": true, "id": "doc1", "rev": "1-abc"},
-                        {"ok": true, "id": "doc2", "rev": "1-def"},
-                        {"ok": true, "id": "doc3", "rev": "1-ghi"}
-                    ]
-                }]))
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "all_docs")
-                .respond_with_actions(json!([{
-                    "type": "send_all_docs_response",
-                    "total_rows": 3,
-                    "rows": [
-                        {"id": "doc1", "key": "doc1", "value": {"rev": "1-abc"}},
-                        {"id": "doc2", "key": "doc2", "value": {"rev": "1-def"}},
-                        {"id": "doc3", "key": "doc3", "value": {"rev": "1-ghi"}}
-                    ]
-                }]))
-                .and()
-        });
+    let server_config = NetGetConfig::new(
+        "Listen for CouchDB connections on port {AVAILABLE_PORT}",
+    )
+    .with_mock(|mock| {
+        mock.on_instruction_containing("Listen for CouchDB")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "CouchDB",
+                "instruction": "Handle CouchDB protocol events"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "server_info")
+            .respond_with_actions(json!([{
+                "type": "send_server_info",
+                "version": "3.5.1"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "db_info")
+            .and_event_data_contains("database", "testdb")
+            .respond_with_actions(json!([{
+                "type": "send_db_info",
+                "db_name": "testdb",
+                "doc_count": 0,
+                "update_seq": "0"
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "bulk_docs")
+            .respond_with_actions(json!([{
+                "type": "send_bulk_docs_response",
+                "results": [
+                    {"ok": true, "id": "doc1", "rev": "1-abc"},
+                    {"ok": true, "id": "doc2", "rev": "1-def"},
+                    {"ok": true, "id": "doc3", "rev": "1-ghi"}
+                ]
+            }]))
+            .and()
+            .on_event("couchdb_request")
+            .and_event_data_contains("operation", "all_docs")
+            .respond_with_actions(json!([{
+                "type": "send_all_docs_response",
+                "total_rows": 3,
+                "rows": [
+                    {"id": "doc1", "key": "doc1", "value": {"rev": "1-abc"}},
+                    {"id": "doc2", "key": "doc2", "value": {"rev": "1-def"}},
+                    {"id": "doc3", "key": "doc3", "value": {"rev": "1-ghi"}}
+                ]
+            }]))
+            .and()
+    });
 
     let server = start_netget_server(server_config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;

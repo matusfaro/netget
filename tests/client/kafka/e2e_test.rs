@@ -14,23 +14,25 @@ mod kafka_client_tests {
     #[tokio::test]
     async fn test_kafka_producer_send_message() -> E2EResult<()> {
         // Start a Kafka server first
-        let server_config = NetGetConfig::new("Start a Kafka broker on port {AVAILABLE_PORT}. Accept all messages.")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Kafka broker")
-                    .and_instruction_containing("port")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Kafka",
-                            "instruction": "Kafka broker - accept all messages"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let server_config = NetGetConfig::new(
+            "Start a Kafka broker on port {AVAILABLE_PORT}. Accept all messages.",
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Kafka broker")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Kafka",
+                        "instruction": "Kafka broker - accept all messages"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -80,8 +82,7 @@ mod kafka_client_tests {
 
         // Verify client connected
         assert!(
-            client.output_contains("Kafka").await
-                || client.output_contains("connected").await,
+            client.output_contains("Kafka").await || client.output_contains("connected").await,
             "Client should show Kafka producer connection. Output: {:?}",
             client.get_output().await
         );
@@ -106,8 +107,7 @@ mod kafka_client_tests {
         // Start a Kafka server first
         let server_config = NetGetConfig::new("Start a Kafka broker on port {AVAILABLE_PORT}.")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Kafka broker")
+                mock.on_instruction_containing("Kafka broker")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -167,8 +167,7 @@ mod kafka_client_tests {
 
         // Verify client connected as consumer
         assert!(
-            client.output_contains("Kafka").await
-                || client.output_contains("connected").await,
+            client.output_contains("Kafka").await || client.output_contains("connected").await,
             "Client should show Kafka consumer connection. Output: {:?}",
             client.get_output().await
         );
@@ -193,8 +192,7 @@ mod kafka_client_tests {
         // Start a Kafka server first
         let server_config = NetGetConfig::new("Start a Kafka broker on port {AVAILABLE_PORT}.")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Kafka broker")
+                mock.on_instruction_containing("Kafka broker")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -320,8 +318,7 @@ mod kafka_client_tests {
         // Start a Kafka server first
         let server_config = NetGetConfig::new("Start a Kafka broker on port {AVAILABLE_PORT}.")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Kafka broker")
+                mock.on_instruction_containing("Kafka broker")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -342,8 +339,7 @@ mod kafka_client_tests {
             server.port
         ))
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("Connect to")
+            mock.on_instruction_containing("Connect to")
                 .and_instruction_containing("Kafka")
                 .respond_with_actions(serde_json::json!([
                     {

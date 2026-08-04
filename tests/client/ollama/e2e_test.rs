@@ -318,25 +318,25 @@ mod ollama_client_tests {
         // Test with explicit endpoint with mocks
         let client_config =
             NetGetConfig::new("Connect to Ollama API at http://localhost:11434 and list models")
-            .with_mock(|mock| {
-                mock
-                    // Mock: Client startup with custom endpoint
-                    .on_instruction_containing("Ollama")
-                    .and_instruction_containing("localhost:11434")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": "localhost:11434",
-                            "protocol": "Ollama",
-                            "instruction": "List models",
-                            "startup_params": {
-                                "base_url": "http://localhost:11434"
+                .with_mock(|mock| {
+                    mock
+                        // Mock: Client startup with custom endpoint
+                        .on_instruction_containing("Ollama")
+                        .and_instruction_containing("localhost:11434")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_client",
+                                "remote_addr": "localhost:11434",
+                                "protocol": "Ollama",
+                                "instruction": "List models",
+                                "startup_params": {
+                                    "base_url": "http://localhost:11434"
+                                }
                             }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let client = start_netget_client(client_config).await?;
 
@@ -400,25 +400,25 @@ mod ollama_client_tests {
         // Use an invalid endpoint with mocks
         let client_config =
             NetGetConfig::new("Connect to Ollama at http://localhost:99999 and list models")
-            .with_mock(|mock| {
-                mock
-                    // Mock: Client startup (will fail to connect)
-                    .on_instruction_containing("Ollama")
-                    .and_instruction_containing("99999")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": "localhost:99999",
-                            "protocol": "Ollama",
-                            "instruction": "List models",
-                            "startup_params": {
-                                "base_url": "http://localhost:99999"
+                .with_mock(|mock| {
+                    mock
+                        // Mock: Client startup (will fail to connect)
+                        .on_instruction_containing("Ollama")
+                        .and_instruction_containing("99999")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_client",
+                                "remote_addr": "localhost:99999",
+                                "protocol": "Ollama",
+                                "instruction": "List models",
+                                "startup_params": {
+                                    "base_url": "http://localhost:99999"
+                                }
                             }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let client = start_netget_client(client_config).await?;
 

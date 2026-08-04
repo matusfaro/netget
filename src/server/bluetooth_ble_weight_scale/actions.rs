@@ -11,7 +11,12 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static WEIGHT_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("weight_measurement", "Weight measurement updated", json!({"type": "placeholder", "event_id": "weight_measurement"})).with_parameters(vec![
+    EventType::new(
+        "weight_measurement",
+        "Weight measurement updated",
+        json!({"type": "placeholder", "event_id": "weight_measurement"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "weight_kg".to_string(),
             type_hint: "number".to_string(),
@@ -42,15 +47,14 @@ impl BluetoothBleWeightScaleProtocol {
 
 impl Protocol for BluetoothBleWeightScaleProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Weight scale device name for advertising (default: NetGet-WeightScale)".to_string(),
-                required: false,
-                example: json!("NetGet-WeightScale"),
-            },
-        ]
+        vec![ParameterDefinition {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Weight scale device name for advertising (default: NetGet-WeightScale)"
+                .to_string(),
+            required: false,
+            example: json!("NetGet-WeightScale"),
+        }]
     }
     fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
         vec![
@@ -117,7 +121,9 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
                 log_template: Some(
                     LogTemplate::new()
                         .with_info("-> BLE weight scale user {user_id}: {weight_kg} kg")
-                        .with_debug("BLE weight scale multi_user: user_id={user_id}, weight_kg={weight_kg}"),
+                        .with_debug(
+                            "BLE weight scale multi_user: user_id={user_id}, weight_kg={weight_kg}",
+                        ),
                 ),
             },
         ]

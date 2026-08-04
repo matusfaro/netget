@@ -4,8 +4,8 @@
 //! "byte index N is not a char boundary" on LLM-controlled strings.
 
 use netget::utils::{
-    truncate_for_llm, truncate_for_log, truncate_str, truncate_with_notice, truncate_with_suffix,
-    truncate::TRUNCATION_MARKER,
+    truncate::TRUNCATION_MARKER, truncate_for_llm, truncate_for_log, truncate_str,
+    truncate_with_notice, truncate_with_suffix,
 };
 
 // --- ASCII, shorter than the limit -----------------------------------------
@@ -37,7 +37,10 @@ fn ascii_longer_than_limit_is_cut() {
         truncate_for_llm("hello world", 5),
         format!("hello{}", TRUNCATION_MARKER)
     );
-    assert_eq!(truncate_with_suffix("hello world", 5, "[cut]"), "hello[cut]");
+    assert_eq!(
+        truncate_with_suffix("hello world", 5, "[cut]"),
+        "hello[cut]"
+    );
 }
 
 // --- Multi-byte character straddling the boundary --------------------------

@@ -15,46 +15,48 @@ async fn test_dot_client_basic_query() -> E2EResult<()> {
     println!("\n=== E2E Test: DoT Client Basic Query with Mocks ===");
 
     // Create a DoT client that queries dns.google:853
-    let client_config = NetGetConfig::new("Connect to dns.google:853 via DoT. Query example.com A record and show me the IP address.")
-        .with_log_level("info")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup (user command)
-                .on_instruction_containing("Connect to")
-                .and_instruction_containing("DoT")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "dns.google:853",
-                        "protocol": "DoT",
-                        "instruction": "Query example.com A record and show the IP"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connected (dot_connected event)
-                .on_event("dot_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_query",
-                        "domain": "example.com",
-                        "query_type": "A",
-                        "recursive": true
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Response received (dot_response_received event)
-                .on_event("dot_response_received")
-                .and_event_data_contains("response_code", "NOERROR")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let client_config = NetGetConfig::new(
+        "Connect to dns.google:853 via DoT. Query example.com A record and show me the IP address.",
+    )
+    .with_log_level("info")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Client startup (user command)
+            .on_instruction_containing("Connect to")
+            .and_instruction_containing("DoT")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "dns.google:853",
+                    "protocol": "DoT",
+                    "instruction": "Query example.com A record and show the IP"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected (dot_connected event)
+            .on_event("dot_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_query",
+                    "domain": "example.com",
+                    "query_type": "A",
+                    "recursive": true
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Response received (dot_response_received event)
+            .on_event("dot_response_received")
+            .and_event_data_contains("response_code", "NOERROR")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut client = crate::helpers::netget::start_netget(client_config).await?;
 
@@ -92,67 +94,69 @@ async fn test_dot_client_multiple_queries() -> E2EResult<()> {
     println!("\n=== E2E Test: DoT Client Multiple Queries with Mocks ===");
 
     // Create a DoT client that queries multiple record types
-    let client_config = NetGetConfig::new("Connect to 1.1.1.1:853 via DoT. Query example.com for A, AAAA, and MX records.")
-        .with_log_level("info")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                .on_instruction_containing("Connect to")
-                .and_instruction_containing("DoT")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "1.1.1.1:853",
-                        "protocol": "DoT",
-                        "instruction": "Query example.com for A, AAAA, and MX records"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connected - send A query
-                .on_event("dot_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_query",
-                        "domain": "example.com",
-                        "query_type": "A"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: A response - send AAAA query
-                .on_event("dot_response_received")
-                .and_event_data_contains("response_code", "NOERROR")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_query",
-                        "domain": "example.com",
-                        "query_type": "AAAA"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: AAAA response - send MX query
-                .on_event("dot_response_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_query",
-                        "domain": "example.com",
-                        "query_type": "MX"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: MX response - done
-                .on_event("dot_response_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let client_config = NetGetConfig::new(
+        "Connect to 1.1.1.1:853 via DoT. Query example.com for A, AAAA, and MX records.",
+    )
+    .with_log_level("info")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("Connect to")
+            .and_instruction_containing("DoT")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "1.1.1.1:853",
+                    "protocol": "DoT",
+                    "instruction": "Query example.com for A, AAAA, and MX records"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected - send A query
+            .on_event("dot_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_query",
+                    "domain": "example.com",
+                    "query_type": "A"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: A response - send AAAA query
+            .on_event("dot_response_received")
+            .and_event_data_contains("response_code", "NOERROR")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_query",
+                    "domain": "example.com",
+                    "query_type": "AAAA"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: AAAA response - send MX query
+            .on_event("dot_response_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_query",
+                    "domain": "example.com",
+                    "query_type": "MX"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: MX response - done
+            .on_event("dot_response_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut client = crate::helpers::netget::start_netget(client_config).await?;
 
@@ -161,7 +165,10 @@ async fn test_dot_client_multiple_queries() -> E2EResult<()> {
 
     // Verify multiple queries in output
     let output = client.get_output().await;
-    let query_count = output.iter().filter(|line| line.contains("query") || line.contains("Query")).count();
+    let query_count = output
+        .iter()
+        .filter(|line| line.contains("query") || line.contains("Query"))
+        .count();
     assert!(query_count >= 3, "Should have at least 3 queries in output");
 
     println!("✅ DoT client sent multiple queries successfully");

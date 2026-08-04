@@ -11,32 +11,29 @@ async fn test_cycling_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE cycling speed and cadence sensor. Create the Cycling Speed and Cadence Service (UUID: 00001816-0000-1000-8000-00805f9b34fb). Set speed to 25 km/h, cadence to 90 RPM. Advertise as 'NetGet-Cycling'.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Act as a BLE")
-                    .and_instruction_containing("cycling speed and cadence sensor")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BLUETOOTH_BLE_CYCLING",
-                            "instruction": "Create cycling service",
-                            "startup_params": {
-                                "device_name": "NetGet-Cycling"
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("Act as a BLE")
+            .and_instruction_containing("cycling speed and cadence sensor")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BLUETOOTH_BLE_CYCLING",
+                    "instruction": "Create cycling service",
+                    "startup_params": {
+                        "device_name": "NetGet-Cycling"
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
             // Mock 2: Server started event - service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+            .on_event("bluetooth_ble_started")
+            .respond_with_actions(serde_json::json!([]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     println!("✓ Cycling service started");
     tokio::time::sleep(Duration::from_secs(2)).await;

@@ -11,7 +11,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, Semaphore, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{debug, info, warn};
 
 /// Source of the LLM request
@@ -117,18 +117,14 @@ impl RateLimiter {
         if config.max_concurrent != current_config.max_concurrent {
             info!(
                 "Concurrency limit changed from {} to {} - recreating semaphore",
-                current_config.max_concurrent,
-                config.max_concurrent
+                current_config.max_concurrent, config.max_concurrent
             );
 
             // Replace the semaphore with a new one
             let mut semaphore = self.semaphore.write().await;
             *semaphore = Arc::new(Semaphore::new(config.max_concurrent));
 
-            debug!(
-                "Semaphore recreated with {} permits",
-                config.max_concurrent
-            );
+            debug!("Semaphore recreated with {} permits", config.max_concurrent);
         }
 
         *current_config = config;
@@ -228,10 +224,7 @@ impl RateLimiter {
     ///
     /// Returns a permit guard that must be held for the duration of the LLM call.
     /// The permit is automatically released when the guard is dropped.
-    pub async fn acquire_permit(
-        &self,
-        source: RequestSource,
-    ) -> Result<RateLimiterPermit> {
+    pub async fn acquire_permit(&self, source: RequestSource) -> Result<RateLimiterPermit> {
         // Update stats
         {
             let mut stats = self.stats.lock().await;
@@ -269,7 +262,10 @@ impl RateLimiter {
                     let config = self.config.read().await;
                     warn!(
                         "Discarding network event: Token limit ({}/{} tokens in {}s window)",
-                        self.token_usage.lock().await.iter()
+                        self.token_usage
+                            .lock()
+                            .await
+                            .iter()
                             .map(|u| u.input_tokens + u.output_tokens)
                             .sum::<u64>(),
                         config.token_limit.unwrap_or(0),
@@ -289,7 +285,9 @@ impl RateLimiter {
                 // For user requests, wait for permit
                 debug!("Waiting for concurrency permit (user request)");
                 let semaphore = self.semaphore.read().await;
-                Arc::clone(&*semaphore).acquire_owned().await
+                Arc::clone(&*semaphore)
+                    .acquire_owned()
+                    .await
                     .context("Failed to acquire semaphore permit")?
             }
             RequestSource::Network => {
@@ -343,6 +341,8 @@ pub struct RateLimiterPermit {
 impl RateLimiterPermit {
     /// Record token usage for this request
     pub async fn record_usage(&self, input_tokens: u64, output_tokens: u64) {
-        self.rate_limiter.record_token_usage(input_tokens, output_tokens).await;
+        self.rate_limiter
+            .record_token_usage(input_tokens, output_tokens)
+            .await;
     }
 }

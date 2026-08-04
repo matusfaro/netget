@@ -228,8 +228,7 @@ mod svn_e2e_test {
         let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via SVN")
             .with_log_level("info")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Listen on port")
+                mock.on_instruction_containing("Listen on port")
                     .and_instruction_containing("SVN")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -301,8 +300,7 @@ mod svn_e2e_test {
         let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via SVN")
             .with_log_level("info")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Listen on port")
+                mock.on_instruction_containing("Listen on port")
                     .and_instruction_containing("SVN")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -375,8 +373,7 @@ mod svn_e2e_test {
         let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via SVN")
             .with_log_level("debug")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Listen on port")
+                mock.on_instruction_containing("Listen on port")
                     .and_instruction_containing("SVN")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -422,9 +419,7 @@ mod svn_e2e_test {
         let _response = send_svn_command(&addr, "( get-latest-rev )").await;
 
         // Verify the server logged the incoming connection
-        server
-            .wait_for_log("SVN client connected from", 5)
-            .await?;
+        server.wait_for_log("SVN client connected from", 5).await?;
 
         println!("✓ SVN connection stats test passed");
 

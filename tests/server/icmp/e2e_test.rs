@@ -119,10 +119,14 @@ You are an ICMP echo server. When you receive echo requests:
                 .and_event_data_contains("sequence", "1")
                 .respond_with_actions_from_event(|event_data| {
                     let source_ip = event_data["source_ip"].as_str().unwrap_or("127.0.0.1");
-                    let identifier = event_data["identifier"].as_str()
-                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(1234);
-                    let sequence = event_data["sequence"].as_str()
-                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(1);
+                    let identifier = event_data["identifier"]
+                        .as_str()
+                        .and_then(|s| s.parse::<u16>().ok())
+                        .unwrap_or(1234);
+                    let sequence = event_data["sequence"]
+                        .as_str()
+                        .and_then(|s| s.parse::<u16>().ok())
+                        .unwrap_or(1);
                     let payload_hex = event_data["payload_hex"].as_str().unwrap_or("");
 
                     serde_json::json!([{
@@ -142,10 +146,14 @@ You are an ICMP echo server. When you receive echo requests:
                 .and_event_data_contains("sequence", "2")
                 .respond_with_actions_from_event(|event_data| {
                     let source_ip = event_data["source_ip"].as_str().unwrap_or("127.0.0.1");
-                    let identifier = event_data["identifier"].as_str()
-                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(5678);
-                    let sequence = event_data["sequence"].as_str()
-                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(2);
+                    let identifier = event_data["identifier"]
+                        .as_str()
+                        .and_then(|s| s.parse::<u16>().ok())
+                        .unwrap_or(5678);
+                    let sequence = event_data["sequence"]
+                        .as_str()
+                        .and_then(|s| s.parse::<u16>().ok())
+                        .unwrap_or(2);
                     let payload_hex = event_data["payload_hex"].as_str().unwrap_or("");
 
                     serde_json::json!([{
@@ -199,7 +207,10 @@ You are an ICMP echo server. When you receive echo requests:
                             let reply_seq = echo_reply.get_sequence_number();
                             let reply_payload = echo_reply.payload();
 
-                            println!("  Received Echo Reply: identifier={}, sequence={}", reply_id, reply_seq);
+                            println!(
+                                "  Received Echo Reply: identifier={}, sequence={}",
+                                reply_id, reply_seq
+                            );
 
                             // Verify it matches our request
                             if reply_id == 1234 && reply_seq == 1 && reply_payload == payload1 {
@@ -250,7 +261,10 @@ You are an ICMP echo server. When you receive echo requests:
                             let reply_seq = echo_reply.get_sequence_number();
                             let reply_payload = echo_reply.payload();
 
-                            println!("  Received Echo Reply: identifier={}, sequence={}", reply_id, reply_seq);
+                            println!(
+                                "  Received Echo Reply: identifier={}, sequence={}",
+                                reply_id, reply_seq
+                            );
 
                             if reply_id == 5678 && reply_seq == 2 && reply_payload == payload2 {
                                 println!("  ✓ Echo Reply matches request");
@@ -283,8 +297,14 @@ You are an ICMP echo server. When you receive echo requests:
 
         // Print summary
         println!("\n=== Test Summary ===");
-        println!("Test 1 (id=1234, seq=1): {}", if reply_found { "✓ PASS" } else { "✗ FAIL" });
-        println!("Test 2 (id=5678, seq=2): {}", if reply_found2 { "✓ PASS" } else { "✗ FAIL" });
+        println!(
+            "Test 1 (id=1234, seq=1): {}",
+            if reply_found { "✓ PASS" } else { "✗ FAIL" }
+        );
+        println!(
+            "Test 2 (id=5678, seq=2): {}",
+            if reply_found2 { "✓ PASS" } else { "✗ FAIL" }
+        );
         println!("Mock verification: ✓ PASS");
 
         // At least one test should pass (loopback ICMP can be unreliable)

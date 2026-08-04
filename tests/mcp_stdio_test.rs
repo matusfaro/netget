@@ -112,14 +112,9 @@ async fn call_list_protocols_returns_tcp() {
     let client = connect().await;
 
     let mut params = CallToolRequestParams::new("list_protocols");
-    params.arguments = serde_json::json!({ "type": "server" })
-        .as_object()
-        .cloned();
+    params.arguments = serde_json::json!({ "type": "server" }).as_object().cloned();
 
-    let result = client
-        .call_tool(params)
-        .await
-        .expect("call list_protocols");
+    let result = client.call_tool(params).await.expect("call list_protocols");
 
     assert_ne!(result.is_error, Some(true), "tool reported an error");
 
@@ -429,8 +424,8 @@ async fn send_first_produces_a_greeting_banner() {
         .await
         .expect("tcp connect");
     let mut buf = vec![0u8; 64];
-    let quiet = tokio::time::timeout(std::time::Duration::from_millis(1500), sock.read(&mut buf))
-        .await;
+    let quiet =
+        tokio::time::timeout(std::time::Duration::from_millis(1500), sock.read(&mut buf)).await;
     assert!(
         quiet.is_err(),
         "server sent data without send_first: {:?}",
@@ -475,7 +470,12 @@ async fn client_tools_manage_a_real_connection() {
     // The tools are advertised.
     let tools = client.list_all_tools().await.expect("list tools");
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    for expected in ["start_client", "stop_client", "list_clients", "client_status"] {
+    for expected in [
+        "start_client",
+        "stop_client",
+        "list_clients",
+        "client_status",
+    ] {
         assert!(
             names.contains(&expected),
             "expected tool '{}' in {:?}",
@@ -503,8 +503,9 @@ async fn client_tools_manage_a_real_connection() {
         text
     );
 
-    assert!(text_of(&call(&client, "list_clients", serde_json::json!({})).await)
-        .contains("No clients"));
+    assert!(
+        text_of(&call(&client, "list_clients", serde_json::json!({})).await).contains("No clients")
+    );
 
     // Something to connect to.
     let started = call(

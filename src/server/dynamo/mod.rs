@@ -287,7 +287,10 @@ async fn handle_dynamo_request_with_llm(
 /// model sees; this is the belt-and-braces path.
 fn build_dynamo_response(status: u16, body: String) -> Response<Full<Bytes>> {
     let status = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
-        error!("Invalid DynamoDB status code {}, sending 500 instead", status);
+        error!(
+            "Invalid DynamoDB status code {}, sending 500 instead",
+            status
+        );
         hyper::StatusCode::INTERNAL_SERVER_ERROR
     });
 

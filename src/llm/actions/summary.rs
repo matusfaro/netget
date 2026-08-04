@@ -55,7 +55,10 @@ fn summarize_common_action(action: &CommonAction) -> String {
             } else {
                 "default".to_string()
             };
-            format!("open_server: {} {} \"{}\"", protocol, binding, instr_preview)
+            format!(
+                "open_server: {} {} \"{}\"",
+                protocol, binding, instr_preview
+            )
         }
         CommonAction::CloseServer { server_id } => {
             format!("close_server: #{}", server_id)
@@ -148,7 +151,11 @@ fn summarize_common_action(action: &CommonAction) -> String {
             owner,
             schema_ddl,
         } => {
-            let storage_type = if *is_memory { "in-memory" } else { "file-based" };
+            let storage_type = if *is_memory {
+                "in-memory"
+            } else {
+                "file-based"
+            };
             let owner_display = owner.as_deref().unwrap_or("auto");
             format!(
                 "create_database: {} ({}, owner: {}, schema: {})",

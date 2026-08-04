@@ -61,10 +61,7 @@ mod usb_serial_e2e {
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        assert!(
-            server.is_running(),
-            "USB serial server should be running"
-        );
+        assert!(server.is_running(), "USB serial server should be running");
 
         println!("✅ USB serial server started and ready for attachment");
 

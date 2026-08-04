@@ -26,8 +26,8 @@ use super::theme::ColorPalette;
 
 // Layout constants for multi-column footer
 const INPUTS_LEFT_MARGIN: u16 = 6;
-const INPUTS_COLUMN_WIDTH: u16 = 22;  // Reduced from 30 to fit three columns in 80-char terminal
-const COLUMN_MARGIN: u16 = 2;  // Reduced from 4 to save space
+const INPUTS_COLUMN_WIDTH: u16 = 22; // Reduced from 30 to fit three columns in 80-char terminal
+const COLUMN_MARGIN: u16 = 2; // Reduced from 4 to save space
 
 /// Pending web approval request
 pub struct PendingApproval {
@@ -339,7 +339,10 @@ impl StickyFooter {
         let usage_height = if self.show_usage_stats { 3 } else { 0 };
 
         // Return the max of all columns (or 0 if all empty)
-        inputs_height.max(servers_height).max(clients_height).max(usage_height)
+        inputs_height
+            .max(servers_height)
+            .max(clients_height)
+            .max(usage_height)
     }
 
     /// Calculate lines needed for input (or approval prompt if pending)
@@ -728,10 +731,7 @@ impl StickyFooter {
             }
 
             // Add global tasks
-            let global_tasks: Vec<_> = tasks
-                .iter()
-                .filter(|t| t.scope == "Global")
-                .collect();
+            let global_tasks: Vec<_> = tasks.iter().filter(|t| t.scope == "Global").collect();
             servers_height += global_tasks.len() as u16;
         }
 
@@ -750,7 +750,10 @@ impl StickyFooter {
             return Ok(start_line);
         }
 
-        let total_height = inputs_height.max(servers_height).max(clients_height).max(usage_height);
+        let total_height = inputs_height
+            .max(servers_height)
+            .max(clients_height)
+            .max(usage_height);
         let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
         let clients_column_start = servers_column_start + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
         // Usage shares the same column position as clients (third column)
@@ -983,10 +986,8 @@ impl StickyFooter {
                     }
 
                     // After all servers, render global tasks
-                    let global_tasks: Vec<_> = tasks
-                        .iter()
-                        .filter(|t| t.scope == "Global")
-                        .collect();
+                    let global_tasks: Vec<_> =
+                        tasks.iter().filter(|t| t.scope == "Global").collect();
 
                     if content_line_idx < global_tasks.len() as u16 {
                         let task = global_tasks[content_line_idx as usize];
@@ -1093,10 +1094,12 @@ impl StickyFooter {
                             format!("{}", t)
                         }
                     };
-                    let text = format!("L:{} {}/{}",
+                    let text = format!(
+                        "L:{} {}/{}",
                         llm_calls,
                         format_tokens(input_tokens),
-                        format_tokens(output_tokens));
+                        format_tokens(output_tokens)
+                    );
                     execute!(
                         stdout,
                         cursor::MoveTo(usage_column_start, current_line),

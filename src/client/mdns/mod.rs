@@ -11,11 +11,11 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mdns::actions::{
     MDNS_CLIENT_CONNECTED_EVENT, MDNS_CLIENT_SERVICE_FOUND_EVENT,
     MDNS_CLIENT_SERVICE_RESOLVED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;

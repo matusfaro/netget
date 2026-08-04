@@ -454,10 +454,7 @@ fn wait_for_more_action() -> ActionDefinition {
         example: json!({
             "type": "wait_for_more"
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_debug("FTP waiting for more data"),
-        ),
+        log_template: Some(LogTemplate::new().with_debug("FTP waiting for more data")),
     }
 }
 

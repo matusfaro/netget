@@ -139,7 +139,9 @@ mod whois_e2e_test {
 
         let response = send_whois_query(&addr, "nonexistent-xyz123.com").await;
         assert!(
-            response.contains("not found") || response.contains("Error") || response.contains("error"),
+            response.contains("not found")
+                || response.contains("Error")
+                || response.contains("error"),
             "Response should indicate domain not found: {}",
             response
         );
@@ -212,7 +214,11 @@ mod whois_e2e_test {
             .unwrap()
             .unwrap();
         let response1 = String::from_utf8_lossy(&buf[..n1]).to_string();
-        assert!(response1.contains("example.com"), "response1: {}", response1);
+        assert!(
+            response1.contains("example.com"),
+            "response1: {}",
+            response1
+        );
 
         stream.write_all(b"example.org\r\n").await.unwrap();
         let n2 = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf))
@@ -220,7 +226,11 @@ mod whois_e2e_test {
             .unwrap()
             .unwrap();
         let response2 = String::from_utf8_lossy(&buf[..n2]).to_string();
-        assert!(response2.contains("example.org"), "response2: {}", response2);
+        assert!(
+            response2.contains("example.org"),
+            "response2: {}",
+            response2
+        );
 
         println!("✓ Multiple WHOIS queries test passed");
 
@@ -238,8 +248,7 @@ mod whois_e2e_test {
         let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via whois")
             .with_log_level("debug")
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("listen on port")
+                mock.on_instruction_containing("listen on port")
                     .and_instruction_containing("whois")
                     .respond_with_actions(serde_json::json!([
                         {

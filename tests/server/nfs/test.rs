@@ -29,21 +29,19 @@ async fn test_nfs_server_start() -> E2EResult<()> {
     // PROMPT: Basic NFS server
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Provide NFSv3 filesystem with export /data";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("nfs")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "NFS",
-                        "instruction": "Provide NFSv3 filesystem with export /data"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Provide NFSv3 filesystem with export /data"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the NFS server
     let mut server = helpers::start_netget_server(server_config).await?;
@@ -74,21 +72,19 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
     // PROMPT: NFS server that accepts connections
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Accept NFS client connections";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("nfs")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "NFS",
-                        "instruction": "Accept NFS client connections"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Accept NFS client connections"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the NFS server
     let server = helpers::start_netget_server(server_config).await?;
@@ -148,21 +144,19 @@ async fn test_nfs_multiple_connections() -> E2EResult<()> {
     let prompt =
         "listen on port {AVAILABLE_PORT} using nfs stack. Support multiple concurrent NFS clients";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("nfs")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "NFS",
-                        "instruction": "Support multiple concurrent NFS clients"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Support multiple concurrent NFS clients"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the NFS server
     let server = helpers::start_netget_server(server_config).await?;
@@ -210,21 +204,19 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     let prompt =
         "listen on port {AVAILABLE_PORT} using nfs stack. Handle connection lifecycle events";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("nfs")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "NFS",
-                        "instruction": "Handle connection lifecycle events"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Handle connection lifecycle events"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the NFS server
     let server = helpers::start_netget_server(server_config).await?;
@@ -265,21 +257,19 @@ async fn test_nfs_port_configuration() -> E2EResult<()> {
     // PROMPT: NFS on custom port
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Standard NFS v3 service";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("nfs")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "NFS",
-                        "instruction": "Standard NFS v3 service"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Standard NFS v3 service"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the NFS server
     let server = helpers::start_netget_server(server_config).await?;
@@ -307,21 +297,19 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     // PROMPT: NFS server with graceful shutdown
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Support clean shutdown";
 
-    let server_config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("nfs")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "NFS",
-                        "instruction": "Support clean shutdown"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Support clean shutdown"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     // Start the NFS server
     let server = helpers::start_netget_server(server_config).await?;

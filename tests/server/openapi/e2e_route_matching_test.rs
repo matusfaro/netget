@@ -14,7 +14,8 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
     let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
     // Create prompt
-    let prompt = "Start OpenAPI server on port {AVAILABLE_PORT} with comprehensive route matching test spec";
+    let prompt =
+        "Start OpenAPI server on port {AVAILABLE_PORT} with comprehensive route matching test spec";
 
     let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
         mock.on_instruction_containing("Start OpenAPI server")
@@ -196,7 +197,8 @@ async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
     let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
     // Create prompt
-    let prompt = "Start OpenAPI server on port {AVAILABLE_PORT} with LLM override for 404/405 errors";
+    let prompt =
+        "Start OpenAPI server on port {AVAILABLE_PORT} with LLM override for 404/405 errors";
 
     let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
         mock.on_instruction_containing("Start OpenAPI server")

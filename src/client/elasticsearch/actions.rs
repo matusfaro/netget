@@ -20,7 +20,7 @@ pub static ELASTICSEARCH_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock:
             "type": "search",
             "index": "users",
             "query": {"match_all": {}}
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "cluster_url".to_string(),
@@ -40,7 +40,7 @@ pub static ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> =
                 "type": "index_document",
                 "index": "logs",
                 "document": {"level": "info", "message": "Search executed"}
-            })
+            }),
         )
         .with_parameters(vec![
             Parameter {
@@ -136,7 +136,7 @@ impl Protocol for ElasticsearchClientProtocol {
                         "age": 30
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "search".to_string(),
@@ -164,7 +164,7 @@ impl Protocol for ElasticsearchClientProtocol {
                         }
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_document".to_string(),
@@ -188,7 +188,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "users",
                     "id": "1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "delete_document".to_string(),
@@ -212,7 +212,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "users",
                     "id": "1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "bulk_operation".to_string(),
@@ -241,7 +241,7 @@ impl Protocol for ElasticsearchClientProtocol {
                         }
                     ]
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -250,7 +250,7 @@ impl Protocol for ElasticsearchClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -278,7 +278,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "logs",
                     "document": {"level": "info", "message": "Search executed"}
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "search".to_string(),
@@ -302,7 +302,7 @@ impl Protocol for ElasticsearchClientProtocol {
                     "index": "users",
                     "query": {"match_all": {}}
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -311,8 +311,16 @@ impl Protocol for ElasticsearchClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("elasticsearch_connected", "Triggered when Elasticsearch client is initialized", json!({"type": "placeholder", "event_id": "elasticsearch_connected"})),
-            EventType::new("elasticsearch_response_received", "Triggered when Elasticsearch client receives a response", json!({"type": "placeholder", "event_id": "elasticsearch_response_received"})),
+            EventType::new(
+                "elasticsearch_connected",
+                "Triggered when Elasticsearch client is initialized",
+                json!({"type": "placeholder", "event_id": "elasticsearch_connected"}),
+            ),
+            EventType::new(
+                "elasticsearch_response_received",
+                "Triggered when Elasticsearch client receives a response",
+                json!({"type": "placeholder", "event_id": "elasticsearch_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

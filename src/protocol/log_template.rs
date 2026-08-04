@@ -284,8 +284,7 @@ mod tests {
             "status": 200
         });
 
-        let template = LogTemplate::new()
-            .with_info("{method} {path} -> {status}");
+        let template = LogTemplate::new().with_info("{method} {path} -> {status}");
 
         let result = template.render(LogLevel::Info, &data);
         assert_eq!(result, Some("GET /api/users -> 200".to_string()));
@@ -300,8 +299,7 @@ mod tests {
             }
         });
 
-        let template = LogTemplate::new()
-            .with_debug("Content-Type: {headers.content_type}");
+        let template = LogTemplate::new().with_debug("Content-Type: {headers.content_type}");
 
         let result = template.render(LogLevel::Debug, &data);
         assert_eq!(result, Some("Content-Type: application/json".to_string()));
@@ -326,8 +324,7 @@ mod tests {
     fn test_json_pretty() {
         let data = json!({"x": 1, "y": 2});
 
-        let template = LogTemplate::new()
-            .with_trace("Data: {json_pretty(.)}");
+        let template = LogTemplate::new().with_trace("Data: {json_pretty(.)}");
 
         let result = template.render(LogLevel::Trace, &data);
         assert!(result.is_some());
@@ -340,8 +337,7 @@ mod tests {
             "long_text": "This is a very long text that should be truncated for display purposes"
         });
 
-        let template = LogTemplate::new()
-            .with_info("{preview(long_text,20)}");
+        let template = LogTemplate::new().with_info("{preview(long_text,20)}");
 
         let result = template.render(LogLevel::Info, &data);
         assert_eq!(result, Some("This is a very long ...".to_string()));
@@ -353,8 +349,7 @@ mod tests {
             "data": "Hello"
         });
 
-        let template = LogTemplate::new()
-            .with_trace("Hex: {hex(data)}");
+        let template = LogTemplate::new().with_trace("Hex: {hex(data)}");
 
         let result = template.render(LogLevel::Trace, &data);
         assert_eq!(result, Some("Hex: 48656c6c6f".to_string()));
@@ -366,8 +361,7 @@ mod tests {
             "method": "GET"
         });
 
-        let template = LogTemplate::new()
-            .with_info("{method} {missing_field}");
+        let template = LogTemplate::new().with_info("{method} {missing_field}");
 
         let result = template.render(LogLevel::Info, &data);
         assert_eq!(result, Some("GET ".to_string()));

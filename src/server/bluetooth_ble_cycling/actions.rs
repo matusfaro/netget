@@ -11,7 +11,12 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static CYCLING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("cycling_measurement", "Cycling speed/cadence updated", json!({"type": "placeholder", "event_id": "cycling_measurement"})).with_parameters(vec![
+    EventType::new(
+        "cycling_measurement",
+        "Cycling speed/cadence updated",
+        json!({"type": "placeholder", "event_id": "cycling_measurement"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "speed_kmh".to_string(),
             type_hint: "number".to_string(),
@@ -28,7 +33,9 @@ pub static CYCLING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE cycling: {speed_kmh} km/h, {cadence_rpm} RPM")
-            .with_debug("BLE cycling measurement: speed={speed_kmh} km/h, cadence={cadence_rpm} RPM")
+            .with_debug(
+                "BLE cycling measurement: speed={speed_kmh} km/h, cadence={cadence_rpm} RPM",
+            )
             .with_trace("BLE cycling event: {json_pretty(.)}"),
     )
 });
@@ -42,15 +49,14 @@ impl BluetoothBleCyclingProtocol {
 
 impl Protocol for BluetoothBleCyclingProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Cycling device name for advertising (default: NetGet-Cycling)".to_string(),
-                required: false,
-                example: json!("MyBike"),
-            },
-        ]
+        vec![ParameterDefinition {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Cycling device name for advertising (default: NetGet-Cycling)"
+                .to_string(),
+            required: false,
+            example: json!("MyBike"),
+        }]
     }
     fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
         vec![

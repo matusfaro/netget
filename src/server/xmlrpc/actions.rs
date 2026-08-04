@@ -104,10 +104,7 @@ impl XmlRpcProtocol {
             .and_then(|v| v.as_i64())
             .unwrap_or(-32603);
         let code = i32::try_from(code_i64).map_err(|_| {
-            anyhow::anyhow!(
-                "fault_code {} does not fit in an XML-RPC <int>",
-                code_i64
-            )
+            anyhow::anyhow!("fault_code {} does not fit in an XML-RPC <int>", code_i64)
         })?;
 
         let message = action

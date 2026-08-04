@@ -127,7 +127,7 @@ impl Protocol for DataLinkClientProtocol {
                     "type": "inject_frame",
                     "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -136,7 +136,7 @@ impl Protocol for DataLinkClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -145,8 +145,16 @@ impl Protocol for DataLinkClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("datalink_frame_injected", "Triggered when frame is successfully injected", json!({"type": "wait_for_more"})),
-            EventType::new("datalink_frame_captured", "Triggered when frame is captured in promiscuous mode", json!({"type": "inject_frame", "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"})),
+            EventType::new(
+                "datalink_frame_injected",
+                "Triggered when frame is successfully injected",
+                json!({"type": "wait_for_more"}),
+            ),
+            EventType::new(
+                "datalink_frame_captured",
+                "Triggered when frame is captured in promiscuous mode",
+                json!({"type": "inject_frame", "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

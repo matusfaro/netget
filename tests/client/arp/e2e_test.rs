@@ -30,26 +30,25 @@ mod arp_client_tests {
         println!("🔍 Using network interface: {}", interface);
 
         // Start ARP client on loopback interface with mocks
-        let client_config = NetGetConfig::new(format!(
-            "Monitor ARP traffic on interface {}",
-            interface
-        ))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup (user command)
-                .on_instruction_containing("Monitor ARP traffic")
-                .and_instruction_containing("interface")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": interface,
-                        "protocol": "ARP",
-                        "instruction": "Monitor ARP traffic"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let client_config =
+            NetGetConfig::new(format!("Monitor ARP traffic on interface {}", interface)).with_mock(
+                |mock| {
+                    mock
+                        // Mock 1: Client startup (user command)
+                        .on_instruction_containing("Monitor ARP traffic")
+                        .and_instruction_containing("interface")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_client",
+                                "remote_addr": interface,
+                                "protocol": "ARP",
+                                "instruction": "Monitor ARP traffic"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                },
+            );
 
         let mut client = start_netget_client(client_config).await?;
 

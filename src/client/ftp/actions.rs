@@ -83,7 +83,7 @@ impl Protocol for FtpClientProtocol {
                     "type": "send_ftp_command",
                     "command": "USER anonymous"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -92,7 +92,7 @@ impl Protocol for FtpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -112,7 +112,7 @@ impl Protocol for FtpClientProtocol {
                     "type": "send_ftp_command",
                     "command": "PASS guest@example.com"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -121,7 +121,7 @@ impl Protocol for FtpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }

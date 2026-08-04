@@ -92,10 +92,7 @@ pub async fn generate_and_stream_ascii_banner(
     // Build the prompt with randomly selected concepts
     let prompt = format!(
         r#"Generate a small ASCII art illustration depicting network concepts like {}, {}, {}, {}. Output ONLY the ASCII art inside markdown formatting with three backticks, NO explanations, NO blank lines before the art, and NO additional text. Start immediately with the first line of ASCII art. Do not iterate on the art, output the first idea even if not correct."#,
-        selected_concepts[0],
-        selected_concepts[1],
-        selected_concepts[2],
-        selected_concepts[3]
+        selected_concepts[0], selected_concepts[1], selected_concepts[2], selected_concepts[3]
     );
 
     // Create generation request

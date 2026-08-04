@@ -48,10 +48,7 @@ mod tcp_client_tests {
 
         // Wait for server to be listening (no sleep needed)
         server
-            .wait_for_pattern(
-                patterns::TCP_SERVER_LISTENING,
-                Duration::from_secs(5),
-            )
+            .wait_for_pattern(patterns::TCP_SERVER_LISTENING, Duration::from_secs(5))
             .await?;
 
         // Now start a TCP client that connects to this server with mocks
@@ -59,32 +56,32 @@ mod tcp_client_tests {
             "Connect to 127.0.0.1:{} via TCP. Send 'HELLO' and wait for response.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup (user command)
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("TCP")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "TCP",
-                            "instruction": "Send HELLO and wait for echo"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected (tcp_connected event)
-                    .on_event("tcp_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_tcp_data",
-                            "data": "HELLO" // UTF-8 string
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup (user command)
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("TCP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "TCP",
+                        "instruction": "Send HELLO and wait for echo"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected (tcp_connected event)
+                .on_event("tcp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": "HELLO" // UTF-8 string
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
 
@@ -93,7 +90,7 @@ mod tcp_client_tests {
             .wait_for_patterns(
                 &[
                     patterns::TCP_CLIENT_CONNECTED, // Client connected
-                    patterns::TCP_CLIENT_SENT,       // Client sent HELLO
+                    patterns::TCP_CLIENT_SENT,      // Client sent HELLO
                 ],
                 Duration::from_secs(5),
             )
@@ -101,10 +98,7 @@ mod tcp_client_tests {
 
         // Wait for server to receive and process the data
         server
-            .wait_for_pattern(
-                patterns::TCP_SERVER_RECEIVED,
-                Duration::from_secs(5),
-            )
+            .wait_for_pattern(patterns::TCP_SERVER_RECEIVED, Duration::from_secs(5))
             .await?;
 
         println!("✅ TCP client connected to server and sent data successfully");
@@ -128,40 +122,37 @@ mod tcp_client_tests {
         // Start a simple TCP server with mocks
         let server_config =
             NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Log all incoming data.")
-            .with_mock(|mock| {
-                mock
-                    // Mock: Server startup
-                    .on_instruction_containing("TCP")
-                    .and_instruction_containing("Log")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "TCP",
-                            "instruction": "Log all data"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock: Server receives data
-                    .on_event("tcp_data_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+                .with_mock(|mock| {
+                    mock
+                        // Mock: Server startup
+                        .on_instruction_containing("TCP")
+                        .and_instruction_containing("Log")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "TCP",
+                                "instruction": "Log all data"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock: Server receives data
+                        .on_event("tcp_data_received")
+                        .respond_with_actions(serde_json::json!([
+                            {
+                                "type": "wait_for_more"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                });
 
         let server = start_netget_server(server_config).await?;
 
         // Wait for server to be listening
         server
-            .wait_for_pattern(
-                patterns::TCP_SERVER_LISTENING,
-                Duration::from_secs(5),
-            )
+            .wait_for_pattern(patterns::TCP_SERVER_LISTENING, Duration::from_secs(5))
             .await?;
 
         // Client that sends specific data based on LLM instruction with mocks
@@ -201,10 +192,7 @@ mod tcp_client_tests {
         // Wait for client to connect and send data
         client
             .wait_for_patterns(
-                &[
-                    patterns::TCP_CLIENT_CONNECTED,
-                    patterns::TCP_CLIENT_SENT,
-                ],
+                &[patterns::TCP_CLIENT_CONNECTED, patterns::TCP_CLIENT_SENT],
                 Duration::from_secs(5),
             )
             .await?;

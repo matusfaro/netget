@@ -157,39 +157,38 @@ mod e2e_bgp {
              After receiving a KEEPALIVE, send a KEEPALIVE back to complete the peering. \
              Transition to Established state.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("listen on port")
-                    .and_instruction_containing("bgp")
-                    .and_instruction_containing("AS 65001")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BGP",
-                            "instruction": "BGP router AS 65001, router ID 192.168.1.1"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPEN message received (bgp_open_received event)
-                    .on_event("bgp_open")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_open",
-                            "my_as": 65001,
-                            "hold_time": 180,
-                            "router_id": "192.168.1.1"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "BGP router AS 65001, router ID 192.168.1.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: OPEN message received (bgp_open_received event)
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_open",
+                        "my_as": 65001,
+                        "hold_time": 180,
+                        "router_id": "192.168.1.1"
+                    },
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
 
@@ -267,36 +266,35 @@ mod e2e_bgp {
              If you receive an invalid OPEN message (e.g., wrong version), \
              send a NOTIFICATION message with error code 2 (OPEN Message Error), subcode 1 (Unsupported Version Number).";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_instruction_containing("listen on port")
-                    .and_instruction_containing("bgp")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BGP",
-                            "instruction": "BGP router AS 65001"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Invalid OPEN received (bgp_open_received event)
-                    // LLM may choose to send NOTIFICATION or accept the invalid version
-                    .on_event("bgp_open")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_notification",
-                            "error_code": 2,
-                            "error_subcode": 1,
-                            "data": ""
-                        }
-                    ]))
-                    .expect_at_most(1)  // May or may not be called depending on validation
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("bgp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "BGP router AS 65001"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Invalid OPEN received (bgp_open_received event)
+                // LLM may choose to send NOTIFICATION or accept the invalid version
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_notification",
+                        "error_code": 2,
+                        "error_subcode": 1,
+                        "data": ""
+                    }
+                ]))
+                .expect_at_most(1) // May or may not be called depending on validation
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -363,38 +361,37 @@ mod e2e_bgp {
              Establish BGP peering normally. After peering is established, \
              respond to KEEPALIVE messages with KEEPALIVE messages.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("listen on port")
-                    .and_instruction_containing("bgp")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BGP",
-                            "instruction": "BGP router AS 65001"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPEN received - respond with OPEN
-                    .on_event("bgp_open")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_open",
-                            "my_as": 65001,
-                            "hold_time": 180,
-                            "router_id": "192.168.1.1"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("bgp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "BGP router AS 65001"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: OPEN received - respond with OPEN
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_open",
+                        "my_as": 65001,
+                        "hold_time": 180,
+                        "router_id": "192.168.1.1"
+                    },
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -464,38 +461,37 @@ mod e2e_bgp {
              Establish BGP peering normally. If you receive a NOTIFICATION with error code 6 (Cease), \
              acknowledge it by closing the connection gracefully.";
 
-        let config = NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("listen on port")
-                    .and_instruction_containing("bgp")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BGP",
-                            "instruction": "BGP router AS 65001"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPEN received - respond with OPEN
-                    .on_event("bgp_open")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_open",
-                            "my_as": 65001,
-                            "hold_time": 180,
-                            "router_id": "192.168.1.1"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("bgp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "BGP router AS 65001"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: OPEN received - respond with OPEN
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_open",
+                        "my_as": 65001,
+                        "hold_time": 180,
+                        "router_id": "192.168.1.1"
+                    },
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;

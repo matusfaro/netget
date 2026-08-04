@@ -13,32 +13,29 @@ async fn test_thermometer_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE thermometer. Create the Health Thermometer Service (UUID: 00001809-0000-1000-8000-00805f9b34fb) with Temperature Measurement characteristic (UUID: 00002a1c-0000-1000-8000-00805f9b34fb). Set temperature to 36.6°C. Advertise as 'NetGet-Thermometer'.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Act as a BLE thermometer")
-                    .and_instruction_containing("Health Thermometer Service")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BLUETOOTH_BLE_THERMOMETER",
-                            "instruction": "Create thermometer service at 36.6°C",
-                            "startup_params": {
-                                "device_name": "NetGet-Thermometer"
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("Act as a BLE thermometer")
+            .and_instruction_containing("Health Thermometer Service")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BLUETOOTH_BLE_THERMOMETER",
+                    "instruction": "Create thermometer service at 36.6°C",
+                    "startup_params": {
+                        "device_name": "NetGet-Thermometer"
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
             // Mock 2: Server started event - service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+            .on_event("bluetooth_ble_started")
+            .respond_with_actions(serde_json::json!([]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     println!("✓ Thermometer service started");
     tokio::time::sleep(Duration::from_secs(2)).await;

@@ -258,12 +258,15 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
     // PROMPT: Tell the LLM to provide network interface statistics
     // Get an available port first
     let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via snmp. Provide interface statistics: \
+    let prompt = format!(
+        "listen on port {} via snmp. Provide interface statistics: \
         1.3.6.1.2.1.2.2.1.1.1 = 1 (ifIndex), \
         1.3.6.1.2.1.2.2.1.2.1 = 'eth0' (ifDescr), \
         1.3.6.1.2.1.2.2.1.3.1 = 6 (ifType: ethernetCsmacd), \
         1.3.6.1.2.1.2.2.1.5.1 = 1000000000 (ifSpeed: 1 Gbps), \
-        1.3.6.1.2.1.2.2.1.8.1 = 1 (ifOperStatus: up)", port);
+        1.3.6.1.2.1.2.2.1.8.1 = 1 (ifOperStatus: up)",
+        port
+    );
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
@@ -383,10 +386,13 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
     // PROMPT: Tell the LLM to support custom enterprise MIB
     // Get an available port first
     let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via snmp. Support custom enterprise OID tree 1.3.6.1.4.1.99999: \
+    let prompt = format!(
+        "listen on port {} via snmp. Support custom enterprise OID tree 1.3.6.1.4.1.99999: \
         1.3.6.1.4.1.99999.1.1.0 = 'Custom Application v1.0', \
         1.3.6.1.4.1.99999.1.2.0 = 42 (counter), \
-        1.3.6.1.4.1.99999.1.3.0 = 'active' (status)", port);
+        1.3.6.1.4.1.99999.1.3.0 = 'active' (status)",
+        port
+    );
 
     // Start the server with mocks
     let server = helpers::start_netget_server(

@@ -36,7 +36,10 @@ fn interp_err(value: Value, event: Value) -> String {
 
 #[test]
 fn whole_string_reference_preserves_number_type() {
-    let out = interp(json!({"query_id": "{{event.query_id}}"}), json!({"query_id": 4660}));
+    let out = interp(
+        json!({"query_id": "{{event.query_id}}"}),
+        json!({"query_id": 4660}),
+    );
 
     assert_eq!(out["query_id"], json!(4660));
     assert!(
@@ -79,7 +82,10 @@ fn whole_string_reference_preserves_every_json_type() {
     assert_eq!(out["text"], json!("hello"));
     assert!(out["list"].is_array() && out["list"] == json!([1, 2, 3]));
     assert!(out["obj"].is_object() && out["obj"] == json!({"a": 1}));
-    assert_eq!(out["whole"], event, "`{{{{event}}}}` yields the whole payload");
+    assert_eq!(
+        out["whole"], event,
+        "`{{{{event}}}}` yields the whole payload"
+    );
 }
 
 #[test]
@@ -113,7 +119,10 @@ fn embedded_reference_produces_a_string() {
 #[test]
 fn embedded_non_string_values_render_in_json_form() {
     let event = json!({"n": 42, "flag": false, "nothing": null, "obj": {"a": 1}});
-    assert_eq!(interp(json!("n=@{{event.n}}@"), event.clone()), json!("n=@42@"));
+    assert_eq!(
+        interp(json!("n=@{{event.n}}@"), event.clone()),
+        json!("n=@42@")
+    );
     assert_eq!(
         interp(json!("flag=@{{event.flag}}@"), event.clone()),
         json!("flag=@false@")
@@ -210,7 +219,10 @@ fn missing_field_errors_and_names_the_field_and_alternatives() {
         json!({"query_id": 1, "domain": "example.com"}),
     );
 
-    assert!(msg.contains("{{event.querid}}"), "must quote the reference: {msg}");
+    assert!(
+        msg.contains("{{event.querid}}"),
+        "must quote the reference: {msg}"
+    );
     assert!(msg.contains("querid"), "must name the missing field: {msg}");
     assert!(
         msg.contains("query_id") && msg.contains("domain"),
@@ -224,22 +236,34 @@ fn missing_nested_field_reports_the_resolved_prefix() {
         json!("{{event.headers.hsot}}"),
         json!({"headers": {"host": "h", "accept": "*/*"}}),
     );
-    assert!(msg.contains("event.headers"), "must report where it got to: {msg}");
+    assert!(
+        msg.contains("event.headers"),
+        "must report where it got to: {msg}"
+    );
     assert!(msg.contains("hsot"), "must name the missing segment: {msg}");
-    assert!(msg.contains("host") && msg.contains("accept"), "must list siblings: {msg}");
+    assert!(
+        msg.contains("host") && msg.contains("accept"),
+        "must list siblings: {msg}"
+    );
 }
 
 #[test]
 fn indexing_a_scalar_errors_clearly() {
     let msg = interp_err(json!("{{event.query_id.sub}}"), json!({"query_id": 5}));
-    assert!(msg.contains("number"), "must say what the value actually is: {msg}");
+    assert!(
+        msg.contains("number"),
+        "must say what the value actually is: {msg}"
+    );
     assert!(msg.contains("sub"), "must name the bad segment: {msg}");
 }
 
 #[test]
 fn out_of_range_array_index_errors() {
     let msg = interp_err(json!("{{event.list.5}}"), json!({"list": [1, 2]}));
-    assert!(msg.contains("indices: 0..1"), "must state the valid range: {msg}");
+    assert!(
+        msg.contains("indices: 0..1"),
+        "must state the valid range: {msg}"
+    );
 }
 
 #[test]
@@ -251,7 +275,12 @@ fn reference_without_event_data_errors_instead_of_nulling() {
 
 #[test]
 fn malformed_paths_are_rejected() {
-    for bad in ["{{event.}}", "{{event..x}}", "{{event.a..b}}", "{{event.a.}}"] {
+    for bad in [
+        "{{event.}}",
+        "{{event..x}}",
+        "{{event.a..b}}",
+        "{{event.a.}}",
+    ] {
         let err = interpolate_value(&json!(bad), Some(&json!({"a": 1})))
             .expect_err(&format!("`{bad}` must be rejected"));
         assert!(err.to_string().contains("segment") || err.to_string().contains("empty"));
@@ -261,7 +290,10 @@ fn malformed_paths_are_rejected() {
 #[test]
 fn validate_catches_malformed_references_without_an_event() {
     let handler = EventHandlerType::static_response(vec![json!({"id": "{{event.}}"})]);
-    assert!(handler.validate().is_err(), "parse-time validation must reject `{{{{event.}}}}`");
+    assert!(
+        handler.validate().is_err(),
+        "parse-time validation must reject `{{{{event.}}}}`"
+    );
 
     let ok = EventHandlerType::static_response(vec![json!({"id": "{{event.query_id}}"})]);
     assert!(
@@ -270,7 +302,9 @@ fn validate_catches_malformed_references_without_an_event() {
     );
 
     // Non-static handlers have nothing to validate.
-    assert!(EventHandlerType::script("python", "{{ not a template }}").validate().is_ok());
+    assert!(EventHandlerType::script("python", "{{ not a template }}")
+        .validate()
+        .is_ok());
     assert!(EventHandlerType::llm("answer politely").validate().is_ok());
 }
 
@@ -323,24 +357,34 @@ fn literal_braces_are_untouched() {
 #[test]
 fn unclosed_reference_is_left_alone() {
     let actions = vec![json!({"body": "{{event.query_id"})];
-    assert_eq!(interpolate_actions(&actions, Some(&json!({}))).unwrap(), actions);
+    assert_eq!(
+        interpolate_actions(&actions, Some(&json!({}))).unwrap(),
+        actions
+    );
     assert!(validate_event_references(&actions[0]).is_ok());
 }
 
 #[test]
 fn contains_event_reference_detects_only_event_rooted_refs() {
     assert!(contains_event_reference(&json!({"a": "{{event.x}}"})));
-    assert!(contains_event_reference(&json!(["x", {"b": ["{{ event }}"]}])));
+    assert!(contains_event_reference(
+        &json!(["x", {"b": ["{{ event }}"]}])
+    ));
     assert!(contains_event_reference(&json!({"{{event.k}}": "v"})));
     assert!(!contains_event_reference(&json!({"a": "{{ message }}"})));
     assert!(!contains_event_reference(&json!({"a": "{{eventual.x}}"})));
-    assert!(!contains_event_reference(&json!({"a": 1, "b": [true, null]})));
+    assert!(!contains_event_reference(
+        &json!({"a": 1, "b": [true, null]})
+    ));
 }
 
 #[test]
 fn triple_brace_resolves_the_inner_reference_and_keeps_the_outer_braces() {
     // `{{{event.n}}}` is `{` + `{{event.n}}` + `}`; no Handlebars triple-stash semantics.
-    assert_eq!(interp(json!("{{{event.n}}}"), json!({"n": 5})), json!("{5}"));
+    assert_eq!(
+        interp(json!("{{{event.n}}}"), json!({"n": 5})),
+        json!("{5}")
+    );
 }
 
 #[test]
@@ -372,11 +416,16 @@ fn dns_static_handler() -> EventHandlerConfig {
 #[test]
 fn dns_static_handler_echoes_the_clients_random_query_id() {
     let config = dns_static_handler();
-    let handler = config.find_handler("dns_query").expect("handler must match");
+    let handler = config
+        .find_handler("dns_query")
+        .expect("handler must match");
     let EventHandlerType::Static { actions } = handler else {
         panic!("expected a static handler");
     };
-    assert!(handler.validate().is_ok(), "handler must pass parse-time validation");
+    assert!(
+        handler.validate().is_ok(),
+        "handler must pass parse-time validation"
+    );
 
     // Two different clients, two different randomly-chosen transaction ids.
     for query_id in [0x1234u64, 0xBEEF, 0, 65535] {
@@ -404,7 +453,11 @@ fn dns_static_handler_echoes_the_clients_random_query_id() {
         );
         assert_eq!(action["domain"], json!("example.com"));
         assert_eq!(action["ip"], json!("93.184.216.34"));
-        assert_eq!(action["ttl"], json!(300), "untouched fields keep their value and type");
+        assert_eq!(
+            action["ttl"],
+            json!(300),
+            "untouched fields keep their value and type"
+        );
     }
 }
 
@@ -478,7 +531,9 @@ async fn executor_fails_loudly_on_a_typod_field() {
             "query_id": "{{event.queryid}}"
         })]),
     ));
-    state.set_event_handler_config(server_id, Some(config)).await;
+    state
+        .set_event_handler_config(server_id, Some(config))
+        .await;
 
     let outcome = try_execute_event_handler(
         &state,
@@ -497,5 +552,8 @@ async fn executor_fails_loudly_on_a_typod_field() {
 
     let chain = format!("{err:#}");
     assert!(chain.contains("queryid"), "{chain}");
-    assert!(chain.contains("query_id"), "must list the real field: {chain}");
+    assert!(
+        chain.contains("query_id"),
+        "must list the real field: {chain}"
+    );
 }

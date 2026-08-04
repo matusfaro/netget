@@ -11,32 +11,29 @@ async fn test_data_stream_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE data stream service. Create a custom service for streaming sensor data with characteristics for data packets and stream control. Advertise as 'NetGet-DataStream'.";
 
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Act as a BLE data stream")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "BLUETOOTH_BLE_DATA_STREAM",
-                            "instruction": "Create data stream service",
-                            "startup_params": {
-                                "device_name": "NetGet-DataStream"
-                            }
-                                
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("Act as a BLE data stream")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BLUETOOTH_BLE_DATA_STREAM",
+                    "instruction": "Create data stream service",
+                    "startup_params": {
+                        "device_name": "NetGet-DataStream"
+                    }
+
+                }
+            ]))
+            .expect_calls(1)
+            .and()
             // Mock 2: Server started event - service auto-configures
-                    .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+            .on_event("bluetooth_ble_started")
+            .respond_with_actions(serde_json::json!([]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     println!("✓ Data stream service started");
     tokio::time::sleep(Duration::from_secs(2)).await;

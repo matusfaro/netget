@@ -4,9 +4,9 @@ mod helpers;
 
 #[cfg(all(test, feature = "tcp"))]
 mod minimal_test {
-    use serde_json::json;
     use crate::helpers::common::E2EResult;
     use crate::helpers::netget::NetGetConfig;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_mock_server_minimal() -> E2EResult<()> {
@@ -14,10 +14,9 @@ mod minimal_test {
 
         // Test that the mock LLM integration works by starting a simple TCP server
         let config = NetGetConfig::new("Start a TCP server on port 0")
-            .with_log_level("debug")  // More verbose logging
+            .with_log_level("debug") // More verbose logging
             .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("TCP")
+                mock.on_instruction_containing("TCP")
                     .and_instruction_containing("server")
                     .respond_with_actions(json!([
                         {

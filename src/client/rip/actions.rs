@@ -13,48 +13,54 @@ use std::sync::LazyLock;
 
 /// RIP client connected event
 pub static RIP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rip_connected", "RIP client connected to router", json!({"type": "placeholder", "event_id": "rip_connected"})).with_parameters(vec![
-        Parameter {
-            name: "remote_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "RIP router address".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "rip_connected",
+        "RIP client connected to router",
+        json!({"type": "placeholder", "event_id": "rip_connected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "remote_addr".to_string(),
+        type_hint: "string".to_string(),
+        description: "RIP router address".to_string(),
+        required: true,
+    }])
 });
 
 /// RIP client response received event
 pub static RIP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rip_response_received", "RIP response received from router", json!({"type": "placeholder", "event_id": "rip_response_received"})).with_parameters(
-        vec![
-            Parameter {
-                name: "version".to_string(),
-                type_hint: "number".to_string(),
-                description: "RIP version (1 or 2)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "command".to_string(),
-                type_hint: "string".to_string(),
-                description: "RIP command (request or response)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "route_count".to_string(),
-                type_hint: "number".to_string(),
-                description: "Number of routes in response".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "routes".to_string(),
-                type_hint: "array".to_string(),
-                description:
-                    "Array of route entries with ip_address, subnet_mask, next_hop, and metric"
-                        .to_string(),
-                required: true,
-            },
-        ],
+    EventType::new(
+        "rip_response_received",
+        "RIP response received from router",
+        json!({"type": "placeholder", "event_id": "rip_response_received"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "version".to_string(),
+            type_hint: "number".to_string(),
+            description: "RIP version (1 or 2)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "RIP command (request or response)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "route_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of routes in response".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "routes".to_string(),
+            type_hint: "array".to_string(),
+            description:
+                "Array of route entries with ip_address, subnet_mask, next_hop, and metric"
+                    .to_string(),
+            required: true,
+        },
+    ])
 });
 
 /// RIP client protocol action handler
@@ -89,7 +95,7 @@ impl Protocol for RipClientProtocol {
                     "type": "send_rip_request",
                     "version": 2
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -98,7 +104,7 @@ impl Protocol for RipClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -117,7 +123,7 @@ impl Protocol for RipClientProtocol {
                     "type": "send_rip_request",
                     "version": 2
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -126,7 +132,7 @@ impl Protocol for RipClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -135,8 +141,16 @@ impl Protocol for RipClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("rip_connected", "Triggered when RIP client connects to router", json!({"type": "placeholder", "event_id": "rip_connected"})),
-            EventType::new("rip_response_received", "Triggered when RIP client receives routing table response", json!({"type": "placeholder", "event_id": "rip_response_received"})),
+            EventType::new(
+                "rip_connected",
+                "Triggered when RIP client connects to router",
+                json!({"type": "placeholder", "event_id": "rip_connected"}),
+            ),
+            EventType::new(
+                "rip_response_received",
+                "Triggered when RIP client receives routing table response",
+                json!({"type": "placeholder", "event_id": "rip_response_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

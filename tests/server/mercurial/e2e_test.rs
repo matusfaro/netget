@@ -30,45 +30,43 @@ Return the following capabilities (one per line):
 Always respond quickly with these standard capabilities."#;
 
     // Start server with mocks
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup (user command)
-                    .on_prompt_containing("listen on port")
-                    .and_prompt_containing("mercurial")
-                    .and_prompt_containing("capabilities")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Mercurial",
-                            "instruction": "Mercurial server with capabilities"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Network event - capabilities request
-                    .on_prompt_containing("Mercurial client is requesting capabilities")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "hg_capabilities",
-                            "capabilities": [
-                                "batch",
-                                "branchmap",
-                                "getbundle",
-                                "httpheader=1024",
-                                "known",
-                                "lookup",
-                                "pushkey",
-                                "unbundle=HG10GZ,HG10BZ,HG10UN"
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_prompt_containing("listen on port")
+            .and_prompt_containing("mercurial")
+            .and_prompt_containing("capabilities")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Mercurial",
+                    "instruction": "Mercurial server with capabilities"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Network event - capabilities request
+            .on_prompt_containing("Mercurial client is requesting capabilities")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "hg_capabilities",
+                    "capabilities": [
+                        "batch",
+                        "branchmap",
+                        "getbundle",
+                        "httpheader=1024",
+                        "known",
+                        "lookup",
+                        "pushkey",
+                        "unbundle=HG10GZ,HG10BZ,HG10UN"
+                    ]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);

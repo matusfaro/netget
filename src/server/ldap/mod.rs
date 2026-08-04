@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::console_error;
 #[cfg(feature = "ldap")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "ldap")]
@@ -19,7 +20,6 @@ use crate::protocol::Event;
 use crate::server::LdapProtocol;
 #[cfg(feature = "ldap")]
 use crate::state::app_state::AppState;
-use crate::console_error;
 #[cfg(feature = "ldap")]
 use actions::{LDAP_BIND_EVENT, LDAP_SEARCH_EVENT, LDAP_UNBIND_EVENT};
 

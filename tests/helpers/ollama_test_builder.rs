@@ -1,12 +1,11 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use netget::llm::{OllamaClient, prompt::PromptBuilder};
+use netget::llm::{prompt::PromptBuilder, OllamaClient};
 use netget::protocol::Event;
 use netget::scripting::{
-    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
-    execute_script_async,
+    execute_script_async, ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
 };
 use netget::state::app_state::AppState;
 use netget::state::ServerId;
@@ -26,13 +25,18 @@ fn json_contains_expected(expected: &Value, actual: &Value) -> bool {
         (Value::Object(exp_map), Value::Object(act_map)) => {
             // All expected keys must be present in actual with matching values
             exp_map.iter().all(|(key, exp_val)| {
-                act_map.get(key).map_or(false, |act_val| json_contains_expected(exp_val, act_val))
+                act_map
+                    .get(key)
+                    .map_or(false, |act_val| json_contains_expected(exp_val, act_val))
             })
         }
         (Value::Array(exp_arr), Value::Array(act_arr)) => {
             // Arrays must match exactly in length and content
             exp_arr.len() == act_arr.len()
-                && exp_arr.iter().zip(act_arr.iter()).all(|(e, a)| json_contains_expected(e, a))
+                && exp_arr
+                    .iter()
+                    .zip(act_arr.iter())
+                    .all(|(e, a)| json_contains_expected(e, a))
         }
         // For primitives, use exact equality
         _ => expected == actual,
@@ -140,7 +144,10 @@ impl OllamaTestBuilder {
 
         // Update or create prompt context
         match &mut self.prompt_context {
-            Some(PromptContext::UserInput { server_documentation, .. }) => {
+            Some(PromptContext::UserInput {
+                server_documentation,
+                ..
+            }) => {
                 // Append to existing documentation if any
                 if let Some(existing) = server_documentation {
                     existing.push_str("\n");
@@ -178,7 +185,10 @@ impl OllamaTestBuilder {
 
         // Update or create prompt context
         match &mut self.prompt_context {
-            Some(PromptContext::UserInput { client_documentation, .. }) => {
+            Some(PromptContext::UserInput {
+                client_documentation,
+                ..
+            }) => {
                 // Append to existing documentation if any
                 if let Some(existing) = client_documentation {
                     existing.push_str("\n");
@@ -222,7 +232,8 @@ impl OllamaTestBuilder {
 
     /// Expect specific action type
     pub fn expect_action_type(mut self, action_type: impl Into<String>) -> Self {
-        self.expectations.push(Expectation::ActionType(action_type.into()));
+        self.expectations
+            .push(Expectation::ActionType(action_type.into()));
         self
     }
 
@@ -236,7 +247,11 @@ impl OllamaTestBuilder {
     }
 
     /// Expect field contains substring
-    pub fn expect_field_contains(mut self, field: impl Into<String>, substring: impl Into<String>) -> Self {
+    pub fn expect_field_contains(
+        mut self,
+        field: impl Into<String>,
+        substring: impl Into<String>,
+    ) -> Self {
         self.expectations.push(Expectation::FieldContains {
             field: field.into(),
             substring: substring.into(),
@@ -245,7 +260,11 @@ impl OllamaTestBuilder {
     }
 
     /// Expect field matches regex
-    pub fn expect_field_matches(mut self, field: impl Into<String>, pattern: impl Into<String>) -> Self {
+    pub fn expect_field_matches(
+        mut self,
+        field: impl Into<String>,
+        pattern: impl Into<String>,
+    ) -> Self {
         self.expectations.push(Expectation::FieldMatches {
             field: field.into(),
             pattern: pattern.into(),
@@ -255,7 +274,8 @@ impl OllamaTestBuilder {
 
     /// Expect exact protocol match
     pub fn expect_protocol(mut self, protocol: impl Into<String>) -> Self {
-        self.expectations.push(Expectation::Protocol(protocol.into()));
+        self.expectations
+            .push(Expectation::Protocol(protocol.into()));
         self
     }
 
@@ -273,7 +293,8 @@ impl OllamaTestBuilder {
 
     /// Expect script handler with specific language
     pub fn expect_script_with_language(mut self, language: impl Into<String>) -> Self {
-        self.expectations.push(Expectation::ScriptWithLanguage(language.into()));
+        self.expectations
+            .push(Expectation::ScriptWithLanguage(language.into()));
         self
     }
 
@@ -320,21 +341,27 @@ impl OllamaTestBuilder {
         });
 
         // Get model from env var or use default (7B balances speed and capability for tests)
-        let model = self.model
+        let model = self
+            .model
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
             .unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
 
         println!("Testing with model: {}", model);
 
         // Build prompt based on context using real prompt generation
-        let prompt_context = self.prompt_context
+        let prompt_context = self
+            .prompt_context
             .ok_or_else(|| anyhow!("No prompt context set"))?;
 
         // Create a minimal AppState for testing (no servers, default settings)
         let state = AppState::new();
 
         let prompt = match prompt_context {
-            PromptContext::UserInput { user_message, server_documentation, client_documentation } => {
+            PromptContext::UserInput {
+                user_message,
+                server_documentation,
+                client_documentation,
+            } => {
                 // Build conversation history from documentation if provided
                 // This simulates the LLM having previously requested documentation
                 let mut conversation_history_parts = Vec::new();
@@ -374,12 +401,16 @@ impl OllamaTestBuilder {
                 // Combine system prompt with user message
                 format!("{}\n\n# User Input\n\n{}", system_prompt, user_message)
             }
-            PromptContext::NetworkRequest { event, instruction, server_id } => {
+            PromptContext::NetworkRequest {
+                event,
+                instruction,
+                server_id,
+            } => {
                 // Create a dummy server for testing so the instruction can be set
                 let dummy_server = netget::state::server::ServerInstance::new(
                     server_id,
-                    8080,  // Dummy port
-                    "tcp".to_string(),  // Dummy protocol
+                    8080,              // Dummy port
+                    "tcp".to_string(), // Dummy protocol
                     instruction.clone(),
                 );
                 state.add_server_with_id(dummy_server).await;
@@ -390,9 +421,7 @@ impl OllamaTestBuilder {
 
                 // Use real prompt generation for network events
                 let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
-                    &state,
-                    server_id,
-                    actions,
+                    &state, server_id, actions,
                 )
                 .await;
 
@@ -428,7 +457,10 @@ impl OllamaTestBuilder {
         let actions = parse_actions_from_response(&response)
             .context("Failed to parse actions from LLM response")?;
 
-        println!("Parsed actions: {}", serde_json::to_string_pretty(&actions)?);
+        println!(
+            "Parsed actions: {}",
+            serde_json::to_string_pretty(&actions)?
+        );
 
         // Run expectations
         let mut passed = Vec::new();
@@ -505,7 +537,8 @@ fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
         .unwrap_or_else(|_| (trimmed.to_string(), std::collections::HashMap::new()));
 
     // Try parsing directly as {"actions": [...]} format (real netget format)
-    let actions = if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(&json_only) {
+    let actions = if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(&json_only)
+    {
         if let Some(actions) = action_response.get("actions").and_then(|a| a.as_array()) {
             Some(actions.clone())
         } else {
@@ -514,7 +547,10 @@ fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
     } else if let Some(json_str) = extract_json_from_markdown(&json_only) {
         // Try to extract JSON from markdown code block
         if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(&json_str) {
-            action_response.get("actions").and_then(|a| a.as_array()).cloned()
+            action_response
+                .get("actions")
+                .and_then(|a| a.as_array())
+                .cloned()
         } else {
             None
         }
@@ -541,7 +577,10 @@ fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
         if depth == 0 && end_pos > start {
             let json_str = &json_only[start..=end_pos];
             if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(json_str) {
-                action_response.get("actions").and_then(|a| a.as_array()).cloned()
+                action_response
+                    .get("actions")
+                    .and_then(|a| a.as_array())
+                    .cloned()
             } else {
                 None
             }
@@ -567,7 +606,10 @@ fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
             // Convert to JSON string, resolve references, parse back
             if let Ok(action_json) = serde_json::to_string(&resolved_action) {
                 if netget::llm::reference_parser::contains_references(&action_json) {
-                    let resolved_json = netget::llm::reference_parser::resolve_references(&action_json, &references);
+                    let resolved_json = netget::llm::reference_parser::resolve_references(
+                        &action_json,
+                        &references,
+                    );
                     if let Ok(new_action) = serde_json::from_str(&resolved_json) {
                         resolved_action = new_action;
                     }
@@ -635,9 +677,9 @@ fn extract_json_from_markdown(text: &str) -> Option<String> {
 /// Find the primary action with the expected type from an array of actions.
 /// This allows LLMs to return extra actions (like show_message) without failing.
 fn find_action_by_type<'a>(actions: &'a [Value], expected_type: &str) -> Option<&'a Value> {
-    actions.iter().find(|action| {
-        action["type"].as_str() == Some(expected_type)
-    })
+    actions
+        .iter()
+        .find(|action| action["type"].as_str() == Some(expected_type))
 }
 
 /// Get the primary action for validation - either the one matching expected type or first action
@@ -662,14 +704,20 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             if let Some(_action) = find_action_by_type(actions, expected_type) {
                 Ok(())
             } else {
-                let actual_types: Vec<&str> = actions.iter()
-                    .filter_map(|a| a["type"].as_str())
-                    .collect();
+                let actual_types: Vec<&str> =
+                    actions.iter().filter_map(|a| a["type"].as_str()).collect();
                 eprintln!("\n❌ Action Type Not Found:");
                 eprintln!("   Expected: '{}'", expected_type);
                 eprintln!("   Found types: {:?}", actual_types);
-                eprintln!("   All actions:\n{}", serde_json::to_string_pretty(actions).unwrap_or_default());
-                bail!("Expected action type '{}', but found: {:?}", expected_type, actual_types);
+                eprintln!(
+                    "   All actions:\n{}",
+                    serde_json::to_string_pretty(actions).unwrap_or_default()
+                );
+                bail!(
+                    "Expected action type '{}', but found: {:?}",
+                    expected_type,
+                    actual_types
+                );
             }
         }
 
@@ -686,12 +734,23 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 }
             }
             // No match found - report error with first action that has the field
-            let action = actions.iter().find(|a| a.get(field).is_some()).unwrap_or(&actions[0]);
+            let action = actions
+                .iter()
+                .find(|a| a.get(field).is_some())
+                .unwrap_or(&actions[0]);
             let actual_value = action.get(field);
             eprintln!("\n❌ Field Exact Match:");
             eprintln!("   Field:    '{}'", field);
-            eprintln!("   Expected:\n{}", serde_json::to_string_pretty(value).unwrap_or_default());
-            eprintln!("   Actual:\n{}", actual_value.map(|v| serde_json::to_string_pretty(v).unwrap_or_default()).unwrap_or_else(|| "<missing>".to_string()));
+            eprintln!(
+                "   Expected:\n{}",
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            );
+            eprintln!(
+                "   Actual:\n{}",
+                actual_value
+                    .map(|v| serde_json::to_string_pretty(v).unwrap_or_default())
+                    .unwrap_or_else(|| "<missing>".to_string())
+            );
             bail!(
                 "Field '{}': expected {}, no matching action found",
                 field,
@@ -706,14 +765,23 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             // Search all actions for one containing the substring
             for action in actions {
                 if let Some(actual_value) = action.get(field).and_then(|v| v.as_str()) {
-                    if actual_value.to_lowercase().contains(&substring.to_lowercase()) {
+                    if actual_value
+                        .to_lowercase()
+                        .contains(&substring.to_lowercase())
+                    {
                         return Ok(());
                     }
                 }
             }
             // No match found - report error
-            let action = actions.iter().find(|a| a.get(field).is_some()).unwrap_or(&actions[0]);
-            let actual_value = action.get(field).and_then(|v| v.as_str()).unwrap_or("<missing or not string>");
+            let action = actions
+                .iter()
+                .find(|a| a.get(field).is_some())
+                .unwrap_or(&actions[0]);
+            let actual_value = action
+                .get(field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing or not string>");
             eprintln!("\n❌ Field Contains:");
             eprintln!("   Field:           '{}'", field);
             eprintln!("   Expected substr: '{}' (case-insensitive)", substring);
@@ -739,8 +807,14 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 }
             }
             // No match found - report error
-            let action = actions.iter().find(|a| a.get(field).is_some()).unwrap_or(&actions[0]);
-            let actual_value = action.get(field).and_then(|v| v.as_str()).unwrap_or("<missing or not string>");
+            let action = actions
+                .iter()
+                .find(|a| a.get(field).is_some())
+                .unwrap_or(&actions[0]);
+            let actual_value = action
+                .get(field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing or not string>");
             eprintln!("\n❌ Field Regex Match Failed:");
             eprintln!("   Field:    '{}'", field);
             eprintln!("   Pattern:  '{}'", pattern);
@@ -759,7 +833,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             // Search all actions for one with the expected protocol
             for action in actions {
                 // Check for both "base_stack" (new API) and "protocol" (old API for backwards compatibility)
-                if let Some(actual_protocol) = action.get("base_stack")
+                if let Some(actual_protocol) = action
+                    .get("base_stack")
                     .or_else(|| action.get("protocol"))
                     .and_then(|v| v.as_str())
                 {
@@ -769,8 +844,13 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 }
             }
             // No match found - report error
-            let actual_protocols: Vec<&str> = actions.iter()
-                .filter_map(|a| a.get("base_stack").or_else(|| a.get("protocol")).and_then(|v| v.as_str()))
+            let actual_protocols: Vec<&str> = actions
+                .iter()
+                .filter_map(|a| {
+                    a.get("base_stack")
+                        .or_else(|| a.get("protocol"))
+                        .and_then(|v| v.as_str())
+                })
                 .collect();
             eprintln!("\n❌ Protocol/Base Stack Not Found:");
             eprintln!("   Expected: '{}'", expected_protocol);
@@ -797,7 +877,9 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 }
 
                 // Check for new API format: "event_handlers" array with static handler
-                if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                if let Some(event_handlers) =
+                    action.get("event_handlers").and_then(|v| v.as_array())
+                {
                     for event_handler in event_handlers {
                         if let Some(handler) = event_handler.get("handler") {
                             if handler.get("type").and_then(|v| v.as_str()) == Some("static") {
@@ -809,7 +891,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             }
 
             eprintln!("\n❌ No Static Handler Found:");
-            eprintln!("   All actions: {}", serde_json::to_string_pretty(actions).unwrap_or_default());
+            eprintln!(
+                "   All actions: {}",
+                serde_json::to_string_pretty(actions).unwrap_or_default()
+            );
             bail!("Action does not have a static handler (checked both 'handler' and 'event_handlers' fields)");
         }
 
@@ -827,13 +912,16 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 }
 
                 // Check for new API format: "event_handlers" array
-                if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                if let Some(event_handlers) =
+                    action.get("event_handlers").and_then(|v| v.as_array())
+                {
                     for event_handler in event_handlers {
                         if let Some(handler) = event_handler.get("handler") {
-                            if handler.get("type").and_then(|v| v.as_str()) == Some("script") ||
-                               handler.get("script").is_some() ||
-                               handler.get("code").is_some() ||
-                               handler.get("language").is_some() {
+                            if handler.get("type").and_then(|v| v.as_str()) == Some("script")
+                                || handler.get("script").is_some()
+                                || handler.get("code").is_some()
+                                || handler.get("language").is_some()
+                            {
                                 return Ok(());
                             }
                         }
@@ -842,7 +930,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             }
 
             eprintln!("\n❌ No Script Handler Found:");
-            eprintln!("   All actions: {}", serde_json::to_string_pretty(actions).unwrap_or_default());
+            eprintln!(
+                "   All actions: {}",
+                serde_json::to_string_pretty(actions).unwrap_or_default()
+            );
             bail!("Action does not have a script handler (checked both 'handler' and 'event_handlers' fields)");
         }
 
@@ -855,7 +946,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             // Try to find script language in old API format (top-level handler)
             let actual_lang = if let Some(handler) = action.get("handler") {
                 if handler.get("script").is_some() || handler.get("code").is_some() {
-                    handler.get("language")
+                    handler
+                        .get("language")
                         .and_then(|l| l.as_str())
                         .map(|s| s.to_string())
                 } else {
@@ -868,14 +960,18 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             // If not found in old format, try new API format (event_handlers array)
             let actual_lang = if let Some(lang) = actual_lang {
                 Some(lang)
-            } else if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+            } else if let Some(event_handlers) =
+                action.get("event_handlers").and_then(|v| v.as_array())
+            {
                 let mut found_lang = None;
                 for event_handler in event_handlers {
                     if let Some(handler) = event_handler.get("handler") {
-                        if handler.get("type").and_then(|v| v.as_str()) == Some("script") ||
-                           handler.get("script").is_some() ||
-                           handler.get("code").is_some() {
-                            found_lang = handler.get("language")
+                        if handler.get("type").and_then(|v| v.as_str()) == Some("script")
+                            || handler.get("script").is_some()
+                            || handler.get("code").is_some()
+                        {
+                            found_lang = handler
+                                .get("language")
                                 .and_then(|l| l.as_str())
                                 .map(|s| s.to_string());
                             break;
@@ -908,7 +1004,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             Ok(())
         }
 
-        Expectation::ScriptTest { input_event, expected_actions } => {
+        Expectation::ScriptTest {
+            input_event,
+            expected_actions,
+        } => {
             if actions.is_empty() {
                 bail!("No actions returned");
             }
@@ -916,20 +1015,34 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
 
             // Try to find script code in old API format (top-level handler)
             let (script_code, language_str) = if let Some(handler) = action.get("handler") {
-                let code = handler.get("script").or_else(|| handler.get("code"))
+                let code = handler
+                    .get("script")
+                    .or_else(|| handler.get("code"))
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string());
-                let lang = handler.get("language").and_then(|l| l.as_str()).unwrap_or("python");
+                let lang = handler
+                    .get("language")
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("python");
                 if let Some(code) = code {
                     (code, lang)
                 } else {
                     // Try new API format
-                    if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                    if let Some(event_handlers) =
+                        action.get("event_handlers").and_then(|v| v.as_array())
+                    {
                         let mut found_script = None;
                         for event_handler in event_handlers {
                             if let Some(handler) = event_handler.get("handler") {
-                                if let Some(code) = handler.get("code").or_else(|| handler.get("script")).and_then(|s| s.as_str()) {
-                                    let lang = handler.get("language").and_then(|l| l.as_str()).unwrap_or("python");
+                                if let Some(code) = handler
+                                    .get("code")
+                                    .or_else(|| handler.get("script"))
+                                    .and_then(|s| s.as_str())
+                                {
+                                    let lang = handler
+                                        .get("language")
+                                        .and_then(|l| l.as_str())
+                                        .unwrap_or("python");
                                     found_script = Some((code.to_string(), lang));
                                     break;
                                 }
@@ -940,13 +1053,22 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                         bail!("Action does not have a script handler");
                     }
                 }
-            } else if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+            } else if let Some(event_handlers) =
+                action.get("event_handlers").and_then(|v| v.as_array())
+            {
                 // Try new API format directly
                 let mut found_script = None;
                 for event_handler in event_handlers {
                     if let Some(handler) = event_handler.get("handler") {
-                        if let Some(code) = handler.get("code").or_else(|| handler.get("script")).and_then(|s| s.as_str()) {
-                            let lang = handler.get("language").and_then(|l| l.as_str()).unwrap_or("python");
+                        if let Some(code) = handler
+                            .get("code")
+                            .or_else(|| handler.get("script"))
+                            .and_then(|s| s.as_str())
+                        {
+                            let lang = handler
+                                .get("language")
+                                .and_then(|l| l.as_str())
+                                .unwrap_or("python");
                             found_script = Some((code.to_string(), lang));
                             break;
                         }
@@ -979,7 +1101,7 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                     instruction: "test".to_string(),
                 },
                 connection: None,
-                event: input_event.data.clone(),  // Direct event data (no wrapper)
+                event: input_event.data.clone(), // Direct event data (no wrapper)
             };
 
             // Execute the script
@@ -992,7 +1114,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 eprintln!("\n❌ Script Action Count Mismatch:");
                 eprintln!("   Expected: {} actions", expected_actions.len());
                 eprintln!("   Actual:   {} actions", response.actions.len());
-                eprintln!("   Actual actions: {}", serde_json::to_string_pretty(&response.actions).unwrap_or_default());
+                eprintln!(
+                    "   Actual actions: {}",
+                    serde_json::to_string_pretty(&response.actions).unwrap_or_default()
+                );
                 bail!(
                     "Expected {} actions from script, got {}",
                     expected_actions.len(),
@@ -1000,13 +1125,23 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 );
             }
 
-            for (i, (expected, actual)) in expected_actions.iter().zip(response.actions.iter()).enumerate() {
+            for (i, (expected, actual)) in expected_actions
+                .iter()
+                .zip(response.actions.iter())
+                .enumerate()
+            {
                 // Use flexible comparison that allows extra fields in actual
                 // This accommodates valid LLM variations (e.g., adding headers to HTTP responses)
                 if !json_contains_expected(expected, actual) {
                     eprintln!("\n❌ Script Action {} Mismatch:", i);
-                    eprintln!("   Expected (must be subset of actual): {}", serde_json::to_string_pretty(expected).unwrap_or_default());
-                    eprintln!("   Actual:   {}", serde_json::to_string_pretty(actual).unwrap_or_default());
+                    eprintln!(
+                        "   Expected (must be subset of actual): {}",
+                        serde_json::to_string_pretty(expected).unwrap_or_default()
+                    );
+                    eprintln!(
+                        "   Actual:   {}",
+                        serde_json::to_string_pretty(actual).unwrap_or_default()
+                    );
                     bail!(
                         "Script action {} mismatch:\nExpected (must be subset of actual): {}\nActual: {}",
                         i,
@@ -1023,8 +1158,7 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             if actions.is_empty() {
                 bail!("No actions returned");
             }
-            validator(&actions[0])
-                .with_context(|| format!("Custom validation '{}' failed", name))
+            validator(&actions[0]).with_context(|| format!("Custom validation '{}' failed", name))
         }
     }
 }

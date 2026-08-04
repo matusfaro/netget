@@ -412,9 +412,7 @@ async fn execute_with_command(
         Ok::<Vec<u8>, std::io::Error>(buf)
     };
 
-    let interaction = async {
-        tokio::join!(write_fut, stdout_fut, stderr_fut, child.wait())
-    };
+    let interaction = async { tokio::join!(write_fut, stdout_fut, stderr_fut, child.wait()) };
 
     let joined = tokio::time::timeout(timeout, interaction).await;
 

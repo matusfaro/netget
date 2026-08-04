@@ -11,7 +11,12 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static RUNNING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("running_measurement", "Running speed/cadence updated", json!({"type": "placeholder", "event_id": "running_measurement"})).with_parameters(vec![
+    EventType::new(
+        "running_measurement",
+        "Running speed/cadence updated",
+        json!({"type": "placeholder", "event_id": "running_measurement"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "pace_min_km".to_string(),
             type_hint: "number".to_string(),
@@ -28,7 +33,9 @@ pub static RUNNING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE running: {pace_min_km} min/km, {cadence_spm} SPM")
-            .with_debug("BLE running measurement: pace={pace_min_km} min/km, cadence={cadence_spm} SPM")
+            .with_debug(
+                "BLE running measurement: pace={pace_min_km} min/km, cadence={cadence_spm} SPM",
+            )
             .with_trace("BLE running event: {json_pretty(.)}"),
     )
 });
@@ -42,15 +49,14 @@ impl BluetoothBleRunningProtocol {
 
 impl Protocol for BluetoothBleRunningProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Running sensor device name for advertising (default: NetGet-Running)".to_string(),
-                required: false,
-                example: json!("NetGet-Running"),
-            },
-        ]
+        vec![ParameterDefinition {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Running sensor device name for advertising (default: NetGet-Running)"
+                .to_string(),
+            required: false,
+            example: json!("NetGet-Running"),
+        }]
     }
     fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
         vec![

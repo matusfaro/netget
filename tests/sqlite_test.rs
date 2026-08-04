@@ -583,9 +583,7 @@ async fn test_query_result_format() -> Result<()> {
         .await?;
 
     // Execute SELECT and check format
-    let result = state
-        .execute_sql(db_id, "SELECT * FROM formats")
-        .await?;
+    let result = state.execute_sql(db_id, "SELECT * FROM formats").await?;
 
     let formatted = result.format();
     // Format creates a table with columns separated by " | "
@@ -599,7 +597,10 @@ async fn test_query_result_format() -> Result<()> {
 
     // Execute INSERT and check format
     let result = state
-        .execute_sql(db_id, "INSERT INTO formats (name, value) VALUES ('Third', 3.5)")
+        .execute_sql(
+            db_id,
+            "INSERT INTO formats (name, value) VALUES ('Third', 3.5)",
+        )
         .await?;
 
     let formatted = result.format();

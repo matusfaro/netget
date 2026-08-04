@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::console_debug;
 #[cfg(feature = "smtp")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "smtp")]
@@ -19,7 +20,6 @@ use crate::protocol::Event;
 use crate::server::SmtpProtocol;
 #[cfg(feature = "smtp")]
 use crate::state::app_state::AppState;
-use crate::console_debug;
 #[cfg(feature = "smtp")]
 use actions::SMTP_COMMAND_EVENT;
 #[cfg(feature = "smtp")]

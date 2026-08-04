@@ -5,9 +5,9 @@
 
 #[cfg(all(test, feature = "amqp"))]
 mod amqp_client_tests {
-    use crate::helpers::*;
     use crate::helpers::client::start_netget_client;
     use crate::helpers::netget::NetGetConfig;
+    use crate::helpers::*;
     use std::time::Duration;
 
     /// Test AMQP client can connect to a broker
@@ -134,29 +134,29 @@ mod amqp_client_tests {
         for prompt in amqp_prompts {
             println!("Testing client prompt: {}", prompt);
 
-            let client_config = NetGetConfig::new(prompt)
-                .with_mock(|mock| {
-                    mock
-                        // Mock: Client startup - should detect AMQP and try to connect
-                        .on_any()
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_client",
-                                "remote_addr": "localhost:5672",
-                                "protocol": "AMQP",
-                                "instruction": "Connect to AMQP broker"
-                            }
-                        ]))
-                        // .expect_calls(1)
-                        .and()
-                });
+            let client_config = NetGetConfig::new(prompt).with_mock(|mock| {
+                mock
+                    // Mock: Client startup - should detect AMQP and try to connect
+                    .on_any()
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": "localhost:5672",
+                            "protocol": "AMQP",
+                            "instruction": "Connect to AMQP broker"
+                        }
+                    ]))
+                    // .expect_calls(1)
+                    .and()
+            });
 
             // Try to start client (may fail to connect, but protocol should be detected)
             match start_netget_client(client_config).await {
                 Ok(client) => {
                     // Check protocol was detected as AMQP
                     assert!(
-                        client.output_contains("AMQP").await || client.output_contains("amqp").await,
+                        client.output_contains("AMQP").await
+                            || client.output_contains("amqp").await,
                         "AMQP protocol should be detected from prompt '{}'",
                         prompt
                     );

@@ -354,7 +354,9 @@ fn send_greeting_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> SVN greeting v{min_version}-{max_version}")
-                .with_debug("SVN greeting: version={min_version}-{max_version}, mechanisms={mechanisms}"),
+                .with_debug(
+                    "SVN greeting: version={min_version}-{max_version}, mechanisms={mechanisms}",
+                ),
         ),
     }
 }
@@ -488,7 +490,7 @@ pub static SVN_GREETING_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "type": "send_svn_greeting",
             "min_version": 2,
             "max_version": 2
-        })
+        }),
     )
     .with_parameters(vec![])
     .with_actions(vec![send_greeting_action(), close_connection_action()])
@@ -501,40 +503,44 @@ pub static SVN_GREETING_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SVN command event - triggered when client sends a command
 pub static SVN_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("svn_command", "SVN client sent a protocol command", json!({"type": "placeholder", "event_id": "svn_command"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "command_line".to_string(),
-                type_hint: "string".to_string(),
-                description: "The full command line received".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "command".to_string(),
-                type_hint: "string".to_string(),
-                description: "The parsed command name".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "args".to_string(),
-                type_hint: "array".to_string(),
-                description: "Command arguments".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![
-            send_success_action(),
-            send_failure_action(),
-            send_list_action(),
-            send_response_action(),
-            close_connection_action(),
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} SVN {command} ({duration_ms}ms)")
-                .with_debug("SVN command from {client_ip}: {command}")
-                .with_trace("SVN command: {command_line}"),
-        )
+    EventType::new(
+        "svn_command",
+        "SVN client sent a protocol command",
+        json!({"type": "placeholder", "event_id": "svn_command"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "command_line".to_string(),
+            type_hint: "string".to_string(),
+            description: "The full command line received".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "command".to_string(),
+            type_hint: "string".to_string(),
+            description: "The parsed command name".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "args".to_string(),
+            type_hint: "array".to_string(),
+            description: "Command arguments".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        send_success_action(),
+        send_failure_action(),
+        send_list_action(),
+        send_response_action(),
+        close_connection_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} SVN {command} ({duration_ms}ms)")
+            .with_debug("SVN command from {client_ip}: {command}")
+            .with_trace("SVN command: {command_line}"),
+    )
 });
 
 pub fn get_svn_event_types() -> Vec<EventType> {

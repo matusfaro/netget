@@ -34,50 +34,49 @@ When a client requests package metadata for "express", return this JSON:
 
 For any other package, return a 404 error with: {"error": "Package not found"}"#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open NPM registry")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP",
-                        "instruction": "NPM registry - serve package metadata"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: HTTP request for express package
-                .on_event("http_request")
-                .and_event_data_contains("uri", "/express")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {"Content-Type": "application/json"},
-                        "body": json!({
-                            "name": "express",
-                            "version": "4.18.2",
-                            "description": "Fast, unopinionated, minimalist web framework",
-                            "main": "index.js",
-                            "keywords": ["framework", "web", "http"],
-                            "license": "MIT",
-                            "dist": {
-                                "tarball": "http://localhost:0/express/-/express-4.18.2.tgz"
-                            }
-                        }).to_string()
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open NPM registry")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "HTTP",
+                    "instruction": "NPM registry - serve package metadata"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: HTTP request for express package
+            .on_event("http_request")
+            .and_event_data_contains("uri", "/express")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json!({
+                        "name": "express",
+                        "version": "4.18.2",
+                        "description": "Fast, unopinionated, minimalist web framework",
+                        "main": "index.js",
+                        "keywords": ["framework", "web", "http"],
+                        "license": "MIT",
+                        "dist": {
+                            "tarball": "http://localhost:0/express/-/express-4.18.2.tgz"
+                        }
+                    }).to_string()
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -158,39 +157,38 @@ async fn test_npm_package_not_found() -> E2EResult<()> {
     let prompt = r#"Open NPM registry on port {AVAILABLE_PORT}.
 When a client requests any package, return a 404 error with JSON: {"error": "Package not found"}"#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open NPM registry")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP",
-                        "instruction": "NPM registry - return 404 for all packages"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: HTTP request for non-existent package
-                .on_event("http_request")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 404,
-                        "headers": {"Content-Type": "application/json"},
-                        "body": json!({"error": "Package not found"}).to_string()
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open NPM registry")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "HTTP",
+                    "instruction": "NPM registry - return 404 for all packages"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: HTTP request for non-existent package
+            .on_event("http_request")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status": 404,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json!({"error": "Package not found"}).to_string()
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -376,7 +374,7 @@ For any other package, return 404 error."#,
 
     let mut server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;
@@ -520,61 +518,60 @@ When a client requests search at /-/v1/search?text=express, return:
 
 For any other search query, return empty results: {"objects": [], "total": 0}"#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Open NPM registry")
-                .and_instruction_containing("port")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP",
-                        "instruction": "NPM registry - handle search requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Search request
-                .on_event("http_request")
-                .and_event_data_contains("uri", "/search")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {"Content-Type": "application/json"},
-                        "body": json!({
-                            "objects": [
-                                {
-                                    "package": {
-                                        "name": "express",
-                                        "version": "4.18.2",
-                                        "description": "Fast, unopinionated, minimalist web framework",
-                                        "keywords": ["framework", "web", "http"]
-                                    },
-                                    "score": {
-                                        "final": 0.95,
-                                        "detail": {
-                                            "quality": 0.9,
-                                            "popularity": 0.98,
-                                            "maintenance": 0.97
-                                        }
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Open NPM registry")
+            .and_instruction_containing("port")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "HTTP",
+                    "instruction": "NPM registry - handle search requests"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Search request
+            .on_event("http_request")
+            .and_event_data_contains("uri", "/search")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": json!({
+                        "objects": [
+                            {
+                                "package": {
+                                    "name": "express",
+                                    "version": "4.18.2",
+                                    "description": "Fast, unopinionated, minimalist web framework",
+                                    "keywords": ["framework", "web", "http"]
+                                },
+                                "score": {
+                                    "final": 0.95,
+                                    "detail": {
+                                        "quality": 0.9,
+                                        "popularity": 0.98,
+                                        "maintenance": 0.97
                                     }
                                 }
-                            ],
-                            "total": 1,
-                            "time": "Mon Jan 01 2024 00:00:00 GMT+0000"
-                        }).to_string()
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+                            }
+                        ],
+                        "total": 1,
+                        "time": "Mon Jan 01 2024 00:00:00 GMT+0000"
+                    }).to_string()
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = timeout(
         Duration::from_secs(30),
-        helpers::start_netget_server(config)
+        helpers::start_netget_server(config),
     )
     .await
     .map_err(|_| "Server startup timeout")??;

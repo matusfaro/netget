@@ -266,14 +266,20 @@ fn decode_object_content(content: &str, action: &Value) -> Result<String> {
         "utf8" => Ok(engine.encode(content.as_bytes())),
         "base64" => {
             // Tolerate the whitespace and line wrapping models often emit.
-            let cleaned: String = content.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-            engine.decode(cleaned.as_bytes()).map(|_| cleaned).map_err(|e| {
-                anyhow::anyhow!(
-                    "Invalid base64 in 'content': {e}. Use standard base64 with padding, e.g. \
+            let cleaned: String = content
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace())
+                .collect();
+            engine
+                .decode(cleaned.as_bytes())
+                .map(|_| cleaned)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid base64 in 'content': {e}. Use standard base64 with padding, e.g. \
                      \"SGVsbG8=\" for the 5 bytes 'Hello'. To send this string as literal text, \
                      omit 'encoding' or set it to \"utf8\"."
-                )
-            })
+                    )
+                })
         }
         other => Err(anyhow::anyhow!(
             "Invalid 'encoding' value {other:?}. Valid values are \"utf8\" (default, send the \

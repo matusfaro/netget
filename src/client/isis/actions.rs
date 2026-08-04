@@ -106,7 +106,11 @@ impl Protocol for IsisClientProtocol {
         "IS-IS"
     }
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new("isis_pdu_received", "Triggered when an IS-IS PDU is captured from the network", json!({"type": "wait_for_more"}))]
+        vec![EventType::new(
+            "isis_pdu_received",
+            "Triggered when an IS-IS PDU is captured from the network",
+            json!({"type": "wait_for_more"}),
+        )]
     }
     fn stack_name(&self) -> &'static str {
         "ETH>LLC/SNAP>IS-IS"

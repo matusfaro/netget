@@ -135,10 +135,7 @@ async fn test_couchdb_database_operations() -> E2EResult<()> {
     assert_eq!(body["doc_count"], 0);
 
     // Delete database
-    let resp = client
-        .delete(format!("{}/testdb", base_url))
-        .send()
-        .await?;
+    let resp = client.delete(format!("{}/testdb", base_url)).send().await?;
     assert_eq!(resp.status(), 200);
 
     test_state.verify_mocks().await?;
@@ -375,10 +372,7 @@ async fn test_couchdb_bulk_operations() -> E2EResult<()> {
     assert_eq!(body.as_array().unwrap().len(), 2);
 
     // All docs
-    let resp = client
-        .get(format!("{}/_all_docs", base_url))
-        .send()
-        .await?;
+    let resp = client.get(format!("{}/_all_docs", base_url)).send().await?;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["total_rows"], 2);
@@ -530,10 +524,7 @@ async fn test_couchdb_changes_feed() -> E2EResult<()> {
     let base_url = format!("http://127.0.0.1:{}/testdb", port);
 
     // Get changes
-    let resp = client
-        .get(format!("{}/_changes", base_url))
-        .send()
-        .await?;
+    let resp = client.get(format!("{}/_changes", base_url)).send().await?;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["last_seq"], "2-def");

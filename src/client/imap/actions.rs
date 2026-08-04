@@ -19,7 +19,7 @@ pub static IMAP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "select_mailbox",
             "mailbox": "INBOX"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -45,7 +45,7 @@ pub static IMAP_CLIENT_MAILBOX_SELECTED_EVENT: LazyLock<EventType> = LazyLock::n
         json!({
             "type": "search_messages",
             "criteria": "UNSEEN"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -77,7 +77,7 @@ pub static IMAP_CLIENT_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new
         json!({
             "type": "fetch_message",
             "message_id": "1"
-        })
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "message_ids".to_string(),
@@ -94,36 +94,34 @@ pub static IMAP_CLIENT_MESSAGE_FETCHED_EVENT: LazyLock<EventType> = LazyLock::ne
         "Message fetched from IMAP server",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
-    .with_parameters(
-        vec![
-            Parameter {
-                name: "message_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Message sequence number or UID".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "subject".to_string(),
-                type_hint: "string".to_string(),
-                description: "Email subject".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "from".to_string(),
-                type_hint: "string".to_string(),
-                description: "Email sender".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "body".to_string(),
-                type_hint: "string".to_string(),
-                description: "Email body content".to_string(),
-                required: false,
-            },
-        ],
-    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Message sequence number or UID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "subject".to_string(),
+            type_hint: "string".to_string(),
+            description: "Email subject".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "from".to_string(),
+            type_hint: "string".to_string(),
+            description: "Email sender".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Email body content".to_string(),
+            required: false,
+        },
+    ])
 });
 
 /// IMAP client protocol action handler
@@ -283,7 +281,7 @@ impl Protocol for ImapClientProtocol {
                     "type": "fetch_message",
                     "message_id": "1"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -292,7 +290,7 @@ impl Protocol for ImapClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -301,10 +299,26 @@ impl Protocol for ImapClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("imap_connected", "Triggered when IMAP client connects and authenticates", json!({"type": "placeholder", "event_id": "imap_connected"})),
-            EventType::new("imap_mailbox_selected", "Triggered when a mailbox is selected", json!({"type": "placeholder", "event_id": "imap_mailbox_selected"})),
-            EventType::new("imap_search_results", "Triggered when search results are received", json!({"type": "placeholder", "event_id": "imap_search_results"})),
-            EventType::new("imap_message_fetched", "Triggered when a message is fetched", json!({"type": "placeholder", "event_id": "imap_message_fetched"})),
+            EventType::new(
+                "imap_connected",
+                "Triggered when IMAP client connects and authenticates",
+                json!({"type": "placeholder", "event_id": "imap_connected"}),
+            ),
+            EventType::new(
+                "imap_mailbox_selected",
+                "Triggered when a mailbox is selected",
+                json!({"type": "placeholder", "event_id": "imap_mailbox_selected"}),
+            ),
+            EventType::new(
+                "imap_search_results",
+                "Triggered when search results are received",
+                json!({"type": "placeholder", "event_id": "imap_search_results"}),
+            ),
+            EventType::new(
+                "imap_message_fetched",
+                "Triggered when a message is fetched",
+                json!({"type": "placeholder", "event_id": "imap_message_fetched"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

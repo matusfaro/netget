@@ -51,41 +51,41 @@ mod redis_client_tests {
             "Connect to 127.0.0.1:{} via Redis. Send PING command and read response.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("Redis")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "Redis",
-                            "instruction": "Send PING command"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Redis connected event
-                    .on_event("redis_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "execute_redis_command",
-                            "command": "PING"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Redis response received
-                    .on_event("redis_response_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("Redis")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "Redis",
+                        "instruction": "Send PING command"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Redis connected event
+                .on_event("redis_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "execute_redis_command",
+                        "command": "PING"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Redis response received
+                .on_event("redis_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
 
@@ -157,32 +157,32 @@ mod redis_client_tests {
     #[tokio::test]
     async fn test_redis_client_llm_controlled_commands_with_mocks() -> E2EResult<()> {
         // Start a simple Redis server with mocks
-        let server_config =
-            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via Redis. Log all incoming commands.")
-                .with_mock(|mock| {
-                    mock
-                        .on_instruction_containing("Listen on port")
-                        .and_instruction_containing("via Redis")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "Redis",
-                                "instruction": "Log all incoming commands"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        .on_event("redis_command")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "redis_simple_string",
-                                "value": "OK"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via Redis. Log all incoming commands.",
+        )
+        .with_mock(|mock| {
+            mock.on_instruction_containing("Listen on port")
+                .and_instruction_containing("via Redis")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Redis",
+                        "instruction": "Log all incoming commands"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("redis_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_simple_string",
+                        "value": "OK"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let server = start_netget_server(server_config).await?;
 
@@ -193,30 +193,29 @@ mod redis_client_tests {
             "Connect to 127.0.0.1:{} via Redis. Execute SET key1 'value1' command.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("Redis")
-                    .and_instruction_containing("SET")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "Redis",
-                            "instruction": "Execute SET key1 'value1'"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("redis_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "execute_redis_command",
-                            "command": "SET key1 'value1'"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock.on_instruction_containing("Redis")
+                .and_instruction_containing("SET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "Redis",
+                        "instruction": "Execute SET key1 'value1'"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("redis_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "execute_redis_command",
+                        "command": "SET key1 'value1'"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
 
@@ -244,8 +243,9 @@ mod redis_client_tests {
     #[ignore]
     async fn test_redis_client_llm_controlled_commands() -> E2EResult<()> {
         // Start a simple Redis server
-        let server_config =
-            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via Redis. Log all incoming commands.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via Redis. Log all incoming commands.",
+        );
 
         let server = start_netget_server(server_config).await?;
 

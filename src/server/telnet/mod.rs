@@ -101,8 +101,10 @@ impl TelnetServer {
                             // Telnet has no connect-time event at all and cannot show a
                             // login banner or prompt.
                             if send_first {
-                                let event =
-                                    Event::new(&TELNET_CONNECTION_OPENED_EVENT, serde_json::json!({}));
+                                let event = Event::new(
+                                    &TELNET_CONNECTION_OPENED_EVENT,
+                                    serde_json::json!({}),
+                                );
                                 match call_llm(
                                     &llm_clone,
                                     &state_clone,

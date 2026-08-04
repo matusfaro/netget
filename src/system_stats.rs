@@ -1,7 +1,7 @@
 //! System statistics monitoring
 
-use sysinfo::{System, RefreshKind, CpuRefreshKind, MemoryRefreshKind};
 use std::sync::Arc;
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use tokio::sync::RwLock;
 
 #[cfg(feature = "gpu")]
@@ -138,15 +138,27 @@ impl SystemStatsMonitor {
                     // gfxinfo returns 0 for unsupported/unavailable stats
                     let gpu_usage = {
                         let load = info.load_pct();
-                        if load > 0 { Some(load as f32) } else { None }
+                        if load > 0 {
+                            Some(load as f32)
+                        } else {
+                            None
+                        }
                     };
                     let gpu_memory_used = {
                         let used = info.used_vram();
-                        if used > 0 { Some(used) } else { None }
+                        if used > 0 {
+                            Some(used)
+                        } else {
+                            None
+                        }
                     };
                     let gpu_memory_total = {
                         let total = info.total_vram();
-                        if total > 0 { Some(total) } else { None }
+                        if total > 0 {
+                            Some(total)
+                        } else {
+                            None
+                        }
                     };
 
                     (gpu_usage, gpu_memory_used, gpu_memory_total)

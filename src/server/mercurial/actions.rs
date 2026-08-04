@@ -82,7 +82,9 @@ impl Protocol for MercurialProtocol {
                 log_template: Some(
                     LogTemplate::new()
                         .with_info("Mercurial repository '{name}' created")
-                        .with_debug("Mercurial create repository: name={name}, branch={default_branch}"),
+                        .with_debug(
+                            "Mercurial create repository: name={name}, branch={default_branch}",
+                        ),
                 ),
             },
             ActionDefinition {
@@ -228,7 +230,9 @@ impl Protocol for MercurialProtocol {
                 log_template: Some(
                     LogTemplate::new()
                         .with_info("-> bundle sent ({bundle_type})")
-                        .with_debug("Mercurial send bundle: type={bundle_type}, size={bundle_data_len}B"),
+                        .with_debug(
+                            "Mercurial send bundle: type={bundle_type}, size={bundle_data_len}B",
+                        ),
                 ),
             },
             ActionDefinition {

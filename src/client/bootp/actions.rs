@@ -13,46 +13,52 @@ use std::sync::LazyLock;
 
 /// BOOTP client connected event (sent when UDP socket is bound and ready)
 pub static BOOTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bootp_connected", "BOOTP client ready to send requests", json!({"type": "placeholder", "event_id": "bootp_connected"})).with_parameters(vec![
-        Parameter {
-            name: "server_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "BOOTP/DHCP server address".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "bootp_connected",
+        "BOOTP client ready to send requests",
+        json!({"type": "placeholder", "event_id": "bootp_connected"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "server_addr".to_string(),
+        type_hint: "string".to_string(),
+        description: "BOOTP/DHCP server address".to_string(),
+        required: true,
+    }])
 });
 
 /// BOOTP reply received event
 pub static BOOTP_REPLY_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bootp_reply_received", "BOOTP reply received from server", json!({"type": "placeholder", "event_id": "bootp_reply_received"})).with_parameters(
-        vec![
-            Parameter {
-                name: "assigned_ip".to_string(),
-                type_hint: "string".to_string(),
-                description: "IP address assigned by BOOTP server (yiaddr)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "server_ip".to_string(),
-                type_hint: "string".to_string(),
-                description: "BOOTP server IP address (siaddr)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "boot_filename".to_string(),
-                type_hint: "string".to_string(),
-                description: "Boot file name (e.g., 'pxelinux.0')".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "gateway_ip".to_string(),
-                type_hint: "string".to_string(),
-                description: "Gateway IP address (giaddr)".to_string(),
-                required: false,
-            },
-        ],
+    EventType::new(
+        "bootp_reply_received",
+        "BOOTP reply received from server",
+        json!({"type": "placeholder", "event_id": "bootp_reply_received"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "assigned_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "IP address assigned by BOOTP server (yiaddr)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "server_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "BOOTP server IP address (siaddr)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "boot_filename".to_string(),
+            type_hint: "string".to_string(),
+            description: "Boot file name (e.g., 'pxelinux.0')".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "gateway_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "Gateway IP address (giaddr)".to_string(),
+            required: false,
+        },
+    ])
 });
 
 /// BOOTP client protocol action handler
@@ -92,7 +98,7 @@ impl Protocol for BootpClientProtocol {
                     "client_mac": "00:11:22:33:44:55",
                     "broadcast": true
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -101,7 +107,7 @@ impl Protocol for BootpClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -129,7 +135,7 @@ impl Protocol for BootpClientProtocol {
                     "client_mac": "00:11:22:33:44:55",
                     "broadcast": true
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -138,7 +144,7 @@ impl Protocol for BootpClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -147,8 +153,16 @@ impl Protocol for BootpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("bootp_connected", "Triggered when BOOTP client is ready", json!({"type": "placeholder", "event_id": "bootp_connected"})),
-            EventType::new("bootp_reply_received", "Triggered when BOOTP reply is received from server", json!({"type": "placeholder", "event_id": "bootp_reply_received"})),
+            EventType::new(
+                "bootp_connected",
+                "Triggered when BOOTP client is ready",
+                json!({"type": "placeholder", "event_id": "bootp_connected"}),
+            ),
+            EventType::new(
+                "bootp_reply_received",
+                "Triggered when BOOTP reply is received from server",
+                json!({"type": "placeholder", "event_id": "bootp_reply_received"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

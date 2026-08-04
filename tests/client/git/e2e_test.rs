@@ -23,42 +23,41 @@ async fn test_git_clone() -> E2EResult<()> {
         clone_path.display()
     );
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup (user command)
-                .on_instruction_containing("Connect via Git")
-                .and_instruction_containing("clone")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": "https://github.com/rust-lang/rustlings.git",
-                        "protocol": "Git",
-                        "instruction": format!("Clone repository to {}", clone_path.display())
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connected (git_connected event)
-                .on_event("git_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "git_clone",
-                        "target_path": clone_path.display().to_string()
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Clone completed (git_operation_complete event)
-                .on_event("git_operation_complete")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Client startup (user command)
+            .on_instruction_containing("Connect via Git")
+            .and_instruction_containing("clone")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "https://github.com/rust-lang/rustlings.git",
+                    "protocol": "Git",
+                    "instruction": format!("Clone repository to {}", clone_path.display())
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected (git_connected event)
+            .on_event("git_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "git_clone",
+                    "target_path": clone_path.display().to_string()
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Clone completed (git_operation_complete event)
+            .on_event("git_operation_complete")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut client = start_netget_client(config).await?;
 
@@ -98,42 +97,41 @@ async fn test_git_log() -> E2EResult<()> {
         repo_path.display()
     );
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                .on_instruction_containing("Connect via Git")
-                .and_instruction_containing("commits")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": repo_path.display().to_string(),
-                        "protocol": "Git",
-                        "instruction": "Show last 5 commits"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Client connected
-                .on_event("git_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "git_log",
-                        "limit": 5
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Operation complete
-                .on_event("git_operation_complete")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("Connect via Git")
+            .and_instruction_containing("commits")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": repo_path.display().to_string(),
+                    "protocol": "Git",
+                    "instruction": "Show last 5 commits"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected
+            .on_event("git_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "git_log",
+                    "limit": 5
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Operation complete
+            .on_event("git_operation_complete")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "wait_for_more"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut client = start_netget_client(config).await?;
 

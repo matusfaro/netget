@@ -17,11 +17,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::oauth2::actions::{
     OAUTH2_CLIENT_CONNECTED_EVENT, OAUTH2_DEVICE_CODE_EVENT, OAUTH2_ERROR_EVENT,
     OAUTH2_TOKEN_OBTAINED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;

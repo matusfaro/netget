@@ -141,7 +141,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "age": {"N": "30"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "get_item".to_string(),
@@ -169,7 +169,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "id": {"S": "user123"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "query".to_string(),
@@ -202,7 +202,7 @@ impl Protocol for DynamoDbClientProtocol {
                         ":id": {"S": "user123"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "scan".to_string(),
@@ -235,7 +235,7 @@ impl Protocol for DynamoDbClientProtocol {
                         ":min_age": {"N": "21"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "update_item".to_string(),
@@ -277,7 +277,7 @@ impl Protocol for DynamoDbClientProtocol {
                         ":age": {"N": "31"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "delete_item".to_string(),
@@ -303,7 +303,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "id": {"S": "user123"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -312,7 +312,7 @@ impl Protocol for DynamoDbClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -343,7 +343,7 @@ impl Protocol for DynamoDbClientProtocol {
                         "name": {"S": "Bob"}
                     }
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "query".to_string(),
@@ -367,7 +367,7 @@ impl Protocol for DynamoDbClientProtocol {
                     "table_name": "Users",
                     "key_condition_expression": "id = :id"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -376,8 +376,16 @@ impl Protocol for DynamoDbClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("dynamodb_connected", "Triggered when DynamoDB client is initialized", json!({"type": "put_item", "table_name": "Users", "item": {"id": {"S": "user456"}, "name": {"S": "Bob"}}})),
-            EventType::new("dynamodb_response_received", "Triggered when DynamoDB client receives a response", json!({"type": "query", "table_name": "Users", "key_condition_expression": "id = :id"})),
+            EventType::new(
+                "dynamodb_connected",
+                "Triggered when DynamoDB client is initialized",
+                json!({"type": "put_item", "table_name": "Users", "item": {"id": {"S": "user456"}, "name": {"S": "Bob"}}}),
+            ),
+            EventType::new(
+                "dynamodb_response_received",
+                "Triggered when DynamoDB client receives a response",
+                json!({"type": "query", "table_name": "Users", "key_condition_expression": "id = :id"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

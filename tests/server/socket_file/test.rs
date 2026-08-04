@@ -115,39 +115,37 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
     let prompt = "Create socket file at /tmp/netget-test-ping.sock. When you receive 'PING', respond with 'PONG\\n'";
 
     // Start the server with mocks
-    let server = helpers::start_netget_server(
-        NetGetConfig::new(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("socket file")
-                    .and_instruction_containing("netget-test-ping.sock")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SOCKET_FILE",
-                            "instruction": "When you receive 'PING', respond with 'PONG\\n'",
-                            "startup_params": {
-                                "socket_path": "./tmp/netget-test-ping.sock"
-                            }
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: PING received
-                    .on_event("socket_file_data_received")
-                    .and_event_data_contains("data", "PING")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_socket_data",
-                            "data": "PONG\n"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("socket file")
+            .and_instruction_containing("netget-test-ping.sock")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SOCKET_FILE",
+                    "instruction": "When you receive 'PING', respond with 'PONG\\n'",
+                    "startup_params": {
+                        "socket_path": "./tmp/netget-test-ping.sock"
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: PING received
+            .on_event("socket_file_data_received")
+            .and_event_data_contains("data", "PING")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_socket_data",
+                    "data": "PONG\n"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     println!("Server started with socket file");
 
     // Wait a bit for socket file to be created

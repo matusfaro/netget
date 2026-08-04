@@ -39,11 +39,7 @@ static MQTT_CLIENTS: LazyLock<Mutex<HashMap<(u32, String), mpsc::UnboundedSender
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Record a connected client's writer so actions can address it by client id.
-pub fn register_client(
-    server_id: ServerId,
-    client_id: &str,
-    tx: mpsc::UnboundedSender<Vec<u8>>,
-) {
+pub fn register_client(server_id: ServerId, client_id: &str, tx: mpsc::UnboundedSender<Vec<u8>>) {
     if let Ok(mut map) = MQTT_CLIENTS.lock() {
         map.insert((server_id.as_u32(), client_id.to_string()), tx);
     }
@@ -475,7 +471,12 @@ impl Protocol for MqttProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["mqtt", "mosquitto", "iot messaging", "message queue telemetry"]
+        vec![
+            "mqtt",
+            "mosquitto",
+            "iot messaging",
+            "message queue telemetry",
+        ]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
@@ -653,7 +654,9 @@ pub fn mqtt_connack_action() -> ActionDefinition {
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> MQTT CONNACK rc={return_code}")
-                .with_debug("MQTT mqtt_connack: rc={return_code} session_present={session_present}"),
+                .with_debug(
+                    "MQTT mqtt_connack: rc={return_code} session_present={session_present}",
+                ),
         ),
     }
 }

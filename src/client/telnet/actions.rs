@@ -30,22 +30,25 @@ pub static TELNET_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
 
 /// Telnet client data received event
 pub static TELNET_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("telnet_data_received", "Data received from Telnet server", json!({"type": "placeholder", "event_id": "telnet_data_received"})).with_parameters(
-        vec![
-            Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "The text data received (Telnet commands stripped)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "raw_hex".to_string(),
-                type_hint: "string".to_string(),
-                description: "Raw data including Telnet commands (as hex)".to_string(),
-                required: false,
-            },
-        ],
+    EventType::new(
+        "telnet_data_received",
+        "Data received from Telnet server",
+        json!({"type": "placeholder", "event_id": "telnet_data_received"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "The text data received (Telnet commands stripped)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "raw_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Raw data including Telnet commands (as hex)".to_string(),
+            required: false,
+        },
+    ])
 });
 
 /// Telnet option negotiation event
@@ -105,7 +108,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_command",
                     "command": "ls -la"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_text".to_string(),
@@ -120,7 +123,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_text",
                     "text": "yes"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -129,7 +132,7 @@ impl Protocol for TelnetClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -148,7 +151,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_command",
                     "command": "whoami"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "send_text".to_string(),
@@ -163,7 +166,7 @@ impl Protocol for TelnetClientProtocol {
                     "type": "send_text",
                     "text": "password123"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "wait_for_more".to_string(),
@@ -172,7 +175,7 @@ impl Protocol for TelnetClientProtocol {
                 example: json!({
                     "type": "wait_for_more"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -181,9 +184,21 @@ impl Protocol for TelnetClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("telnet_connected", "Triggered when Telnet client connects to server", json!({"type": "placeholder", "event_id": "telnet_connected"})),
-            EventType::new("telnet_data_received", "Triggered when Telnet client receives data from server", json!({"type": "placeholder", "event_id": "telnet_data_received"})),
-            EventType::new("telnet_option_negotiated", "Triggered when Telnet option negotiation occurs", json!({"type": "placeholder", "event_id": "telnet_option_negotiated"})),
+            EventType::new(
+                "telnet_connected",
+                "Triggered when Telnet client connects to server",
+                json!({"type": "placeholder", "event_id": "telnet_connected"}),
+            ),
+            EventType::new(
+                "telnet_data_received",
+                "Triggered when Telnet client receives data from server",
+                json!({"type": "placeholder", "event_id": "telnet_data_received"}),
+            ),
+            EventType::new(
+                "telnet_option_negotiated",
+                "Triggered when Telnet option negotiation occurs",
+                json!({"type": "placeholder", "event_id": "telnet_option_negotiated"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

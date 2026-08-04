@@ -66,7 +66,10 @@ pub async fn start_easy_protocol(
         .generate_startup_action(user_instruction.clone(), port)
         .context("Failed to generate startup action")?;
 
-    info!("Generated startup action: {}", serde_json::to_string_pretty(&action)?);
+    info!(
+        "Generated startup action: {}",
+        serde_json::to_string_pretty(&action)?
+    );
 
     // Execute the startup action (open_server or open_client)
     match execute_startup_action(&action, &state, &llm_client).await {
@@ -76,26 +79,18 @@ pub async fn start_easy_protocol(
                 if let Some(server_id) = underlying_id.as_u64() {
                     let server_id = crate::state::ServerId::new(server_id as u32);
                     state.link_server_to_easy(server_id, easy_id).await;
-                    info!(
-                        "Linked easy instance {} to server {}",
-                        easy_id, server_id
-                    );
+                    info!("Linked easy instance {} to server {}", easy_id, server_id);
                 }
             } else if action["type"] == "open_client" {
                 if let Some(client_id) = underlying_id.as_u64() {
                     let client_id = crate::state::ClientId::new(client_id as u32);
                     state.link_client_to_easy(client_id, easy_id).await;
-                    info!(
-                        "Linked easy instance {} to client {}",
-                        easy_id, client_id
-                    );
+                    info!("Linked easy instance {} to client {}", easy_id, client_id);
                 }
             }
 
             // Update status to Running
-            state
-                .update_easy_status(easy_id, EasyStatus::Running)
-                .await;
+            state.update_easy_status(easy_id, EasyStatus::Running).await;
 
             Ok(easy_id)
         }
@@ -115,9 +110,9 @@ async fn execute_startup_action(
     state: &Arc<AppState>,
     _llm_client: &Arc<OllamaClient>,
 ) -> Result<JsonValue> {
-    let action_type = action["type"].as_str().ok_or_else(|| {
-        anyhow::anyhow!("Startup action missing 'type' field")
-    })?;
+    let action_type = action["type"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Startup action missing 'type' field"))?;
 
     match action_type {
         "open_server" => {
@@ -127,7 +122,8 @@ async fn execute_startup_action(
                 .ok_or_else(|| anyhow::anyhow!("Missing 'protocol' field"))?;
             let port = action["port"]
                 .as_u64()
-                .ok_or_else(|| anyhow::anyhow!("Missing 'port' field"))? as u16;
+                .ok_or_else(|| anyhow::anyhow!("Missing 'port' field"))?
+                as u16;
             let instruction = action["instruction"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("Missing 'instruction' field"))?;
@@ -138,10 +134,10 @@ async fn execute_startup_action(
             // Call server_startup to create the server
             let server_id = crate::cli::server_startup::start_server_from_action(
                 &state,
-                None,        // mac_address
-                None,        // interface
-                None,        // host
-                Some(port),  // port
+                None,       // mac_address
+                None,       // interface
+                None,       // host
+                Some(port), // port
                 protocol,
                 false, // send_first
                 None,  // initial_memory
@@ -159,7 +155,9 @@ async fn execute_startup_action(
         }
         "open_client" => {
             // Not implemented yet - would need similar approach for clients
-            Err(anyhow::anyhow!("open_client not yet supported for easy protocols"))
+            Err(anyhow::anyhow!(
+                "open_client not yet supported for easy protocols"
+            ))
         }
         _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
     }

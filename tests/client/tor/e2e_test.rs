@@ -55,34 +55,34 @@ mod tor_client_tests {
             "Connect via Tor to example.com:80 using local relay at 127.0.0.1:{}",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 3: Client startup with directory_server parameter
-                    .on_instruction_containing("Connect via Tor")
-                    .and_instruction_containing("local relay")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": "example.com:80",
-                            "protocol": "Tor",
-                            "instruction": "Bootstrap from local relay",
-                            "startup_params": {
-                                "directory_server": format!("127.0.0.1:{}", server.port)
-                            }
+        .with_mock(|mock| {
+            mock
+                // Mock 3: Client startup with directory_server parameter
+                .on_instruction_containing("Connect via Tor")
+                .and_instruction_containing("local relay")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "example.com:80",
+                        "protocol": "Tor",
+                        "instruction": "Bootstrap from local relay",
+                        "startup_params": {
+                            "directory_server": format!("127.0.0.1:{}", server.port)
                         }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: LLM responds to bootstrap completion (optional)
-                    .on_event("tor_bootstrap_complete")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_at_least(0)  // Optional - may not fire in test timeframe
-                    .and()
-            });
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: LLM responds to bootstrap completion (optional)
+                .on_event("tor_bootstrap_complete")
+                .respond_with_actions(json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_at_least(0) // Optional - may not fire in test timeframe
+                .and()
+        });
 
         let client = start_netget_client(client_config).await?;
 
@@ -125,5 +125,4 @@ mod tor_client_tests {
 
         Ok(())
     }
-
 }

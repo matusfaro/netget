@@ -161,15 +161,18 @@ impl NetGetConfig {
         let config_path = Self::config_file_path()?;
 
         if !config_path.exists() {
-            debug!("Config file not found, using defaults: {}", config_path.display());
+            debug!(
+                "Config file not found, using defaults: {}",
+                config_path.display()
+            );
             return Ok(Self::default());
         }
 
-        let contents = std::fs::read_to_string(&config_path)
-            .context("Failed to read config file")?;
+        let contents =
+            std::fs::read_to_string(&config_path).context("Failed to read config file")?;
 
-        let config: NetGetConfig = toml::from_str(&contents)
-            .context("Failed to parse config file")?;
+        let config: NetGetConfig =
+            toml::from_str(&contents).context("Failed to parse config file")?;
 
         debug!("Loaded config from: {}", config_path.display());
         Ok(config)
@@ -181,15 +184,12 @@ impl NetGetConfig {
 
         // Ensure parent directory exists
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create config directory")?;
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
 
-        let contents = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
-        std::fs::write(&config_path, contents)
-            .context("Failed to write config file")?;
+        std::fs::write(&config_path, contents).context("Failed to write config file")?;
 
         debug!("Saved config to: {}", config_path.display());
         Ok(())
@@ -197,8 +197,7 @@ impl NetGetConfig {
 
     /// Get path to config file (~/.netget/config.toml)
     pub fn config_file_path() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .context("Cannot find home directory")?;
+        let home = dirs::home_dir().context("Cannot find home directory")?;
         Ok(home.join(".netget").join("config.toml"))
     }
 
@@ -209,8 +208,7 @@ impl NetGetConfig {
 
     /// Ensure models directory exists
     pub fn ensure_models_dir(&self) -> Result<PathBuf> {
-        std::fs::create_dir_all(&self.models_dir)
-            .context("Failed to create models directory")?;
+        std::fs::create_dir_all(&self.models_dir).context("Failed to create models directory")?;
         Ok(self.models_dir.clone())
     }
 

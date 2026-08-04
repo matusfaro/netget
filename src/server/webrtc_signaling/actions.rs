@@ -152,9 +152,21 @@ impl Protocol for WebRtcSignalingProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webrtc_signaling_peer_connected", "Triggered when a peer registers with the signaling server", json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_connected"})),
-            EventType::new("webrtc_signaling_peer_disconnected", "Triggered when a peer disconnects from the signaling server", json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_disconnected"})),
-            EventType::new("webrtc_signaling_message_received", "Triggered when a signaling message is received", json!({"type": "placeholder", "event_id": "webrtc_signaling_message_received"})),
+            EventType::new(
+                "webrtc_signaling_peer_connected",
+                "Triggered when a peer registers with the signaling server",
+                json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_connected"}),
+            ),
+            EventType::new(
+                "webrtc_signaling_peer_disconnected",
+                "Triggered when a peer disconnects from the signaling server",
+                json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_disconnected"}),
+            ),
+            EventType::new(
+                "webrtc_signaling_message_received",
+                "Triggered when a signaling message is received",
+                json!({"type": "placeholder", "event_id": "webrtc_signaling_message_received"}),
+            ),
         ]
     }
 

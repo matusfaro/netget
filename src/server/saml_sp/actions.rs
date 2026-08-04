@@ -512,7 +512,7 @@ pub static SAML_SP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 "email": "john.doe@example.com",
                 "role": "user"
             }
-        })
+        }),
     )
     .with_log_template(
         LogTemplate::new()

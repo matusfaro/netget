@@ -9,8 +9,8 @@
 
 pub mod actions;
 
-use crate::client::nfc::actions::*;
 use crate::client::llm_budget::call_llm_for_client;
+use crate::client::nfc::actions::*;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;

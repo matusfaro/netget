@@ -11,14 +11,17 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static TEMPERATURE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("temperature_updated", "Temperature was updated", json!({"type": "placeholder", "event_id": "temperature_updated"})).with_parameters(vec![
-        Parameter {
-            name: "celsius".to_string(),
-            type_hint: "number".to_string(),
-            description: "Temperature in Celsius".to_string(),
-            required: true,
-        },
-    ])
+    EventType::new(
+        "temperature_updated",
+        "Temperature was updated",
+        json!({"type": "placeholder", "event_id": "temperature_updated"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "celsius".to_string(),
+        type_hint: "number".to_string(),
+        description: "Temperature in Celsius".to_string(),
+        required: true,
+    }])
     .with_log_template(
         LogTemplate::new()
             .with_info("BLE thermometer: {celsius}°C")
@@ -36,15 +39,14 @@ impl BluetoothBleThermometerProtocol {
 
 impl Protocol for BluetoothBleThermometerProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Thermometer device name for advertising (default: NetGet-Thermometer)".to_string(),
-                required: false,
-                example: json!("NetGet-Thermometer"),
-            },
-        ]
+        vec![ParameterDefinition {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Thermometer device name for advertising (default: NetGet-Thermometer)"
+                .to_string(),
+            required: false,
+            example: json!("NetGet-Thermometer"),
+        }]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![ActionDefinition {

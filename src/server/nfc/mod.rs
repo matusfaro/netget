@@ -16,8 +16,8 @@
 pub mod actions;
 
 use crate::llm::action_helper::call_llm;
-use crate::llm::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::server::nfc::actions::*;
 use crate::state::app_state::AppState;
@@ -35,13 +35,13 @@ pub use actions::NfcServerProtocol;
 /// Virtual NFC tag state
 struct VirtualNfcTag {
     #[allow(dead_code)]
-    atr: String,                         // Answer to Reset
+    atr: String, // Answer to Reset
     #[allow(dead_code)]
-    uid: String,                         // Tag UID
+    uid: String, // Tag UID
     #[allow(dead_code)]
-    tag_type: String,                    // Tag type
+    tag_type: String, // Tag type
     #[allow(dead_code)]
-    ndef_records: Vec<Value>,            // NDEF message records
+    ndef_records: Vec<Value>, // NDEF message records
     #[allow(dead_code)]
     selected_application: Option<String>, // Currently selected application ID
 }
@@ -90,10 +90,7 @@ impl NfcServer {
                 hex::encode(random_bytes)
             });
 
-        info!(
-            "Virtual NFC tag: type={}, UID={}",
-            tag_type, uid
-        );
+        info!("Virtual NFC tag: type={}, UID={}", tag_type, uid);
         let _ = status_tx.send(format!(
             "Virtual NFC tag started: type={}, UID={}",
             tag_type, uid

@@ -160,8 +160,16 @@ impl Protocol for SyslogClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("syslog_connected", "Triggered when syslog client connects to server", json!({"type": "placeholder", "event_id": "syslog_connected"})),
-            EventType::new("syslog_message_sent", "Triggered when syslog message is sent", json!({"type": "placeholder", "event_id": "syslog_message_sent"})),
+            EventType::new(
+                "syslog_connected",
+                "Triggered when syslog client connects to server",
+                json!({"type": "placeholder", "event_id": "syslog_connected"}),
+            ),
+            EventType::new(
+                "syslog_message_sent",
+                "Triggered when syslog message is sent",
+                json!({"type": "placeholder", "event_id": "syslog_message_sent"}),
+            ),
         ]
     }
     fn stack_name(&self) -> &'static str {

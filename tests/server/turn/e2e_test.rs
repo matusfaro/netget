@@ -60,7 +60,9 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -191,7 +193,9 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -278,7 +282,9 @@ async fn test_turn_create_permission() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -370,7 +376,9 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
 
     // Create multiple clients
     for i in 0..3 {
-        let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+        let client = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind client socket");
 
         let request = build_turn_allocate_request_with_tid(&[i; 12]);
         client
@@ -396,7 +404,6 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
     }
 
     println!("✓ Multiple allocations successful");
-
 
     // Verify mocks
     test_state.verify_mocks().await?;
@@ -428,7 +435,9 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -468,7 +477,6 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
         }
     }
 
-
     // Verify mocks
     test_state.verify_mocks().await?;
     test_state.stop().await?;
@@ -493,7 +501,9 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -530,7 +540,6 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
         }
     }
 
-
     // Verify mocks
     test_state.verify_mocks().await?;
     test_state.stop().await?;
@@ -561,7 +570,9 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -611,7 +622,6 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
         }
     }
 
-
     // Verify mocks
     test_state.verify_mocks().await?;
     test_state.stop().await?;
@@ -640,7 +650,9 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -689,7 +701,6 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
         }
     }
 
-
     // Verify mocks
     test_state.verify_mocks().await?;
     test_state.stop().await?;
@@ -718,7 +729,9 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -785,7 +798,6 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
         }
     }
 
-
     // Verify mocks
     test_state.verify_mocks().await?;
     test_state.stop().await?;
@@ -816,7 +828,9 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -890,7 +904,6 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
             panic!("Timeout waiting for response");
         }
     }
-
 
     // Verify mocks
     test_state.verify_mocks().await?;

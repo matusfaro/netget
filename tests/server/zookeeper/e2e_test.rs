@@ -71,8 +71,7 @@ fn parse_response_header(data: &[u8]) -> Option<(i32, i32, i64, i32)> {
     let length = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
     let xid = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
     let zxid = i64::from_be_bytes([
-        data[8], data[9], data[10], data[11],
-        data[12], data[13], data[14], data[15],
+        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
     ]);
     let error_code = i32::from_be_bytes([data[16], data[17], data[18], data[19]]);
 
@@ -88,37 +87,36 @@ async fn test_zookeeper_get_data() -> E2EResult<()> {
 When clients read /config/database, return the string 'postgres://localhost:5432'.
 Return zxid=100, error_code=0 (success)."#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: getData request - MUST BE FIRST (most specific)
-                .on_event("zookeeper_request")
-                .and_event_data_contains("operation", "getData")
-                .and_event_data_contains("path", "/config/database")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "zookeeper_response",
-                        "xid": 1,
-                        "zxid": 100,
-                        "error_code": 0,
-                        "data_hex": hex::encode("postgres://localhost:5432")
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server startup - MUST BE LAST (less specific)
-                .on_instruction_containing("ZooKeeper")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ZooKeeper",
-                        "instruction": "Return database config"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: getData request - MUST BE FIRST (most specific)
+            .on_event("zookeeper_request")
+            .and_event_data_contains("operation", "getData")
+            .and_event_data_contains("path", "/config/database")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "zookeeper_response",
+                    "xid": 1,
+                    "zxid": 100,
+                    "error_code": 0,
+                    "data_hex": hex::encode("postgres://localhost:5432")
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("ZooKeeper")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "ZooKeeper",
+                    "instruction": "Return database config"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -143,7 +141,10 @@ Return zxid=100, error_code=0 (success)."#;
             println!("Received {} bytes", n);
 
             if let Some((length, xid, zxid, error_code)) = parse_response_header(&buffer[..n]) {
-                println!("Response: length={}, xid={}, zxid={}, error_code={}", length, xid, zxid, error_code);
+                println!(
+                    "Response: length={}, xid={}, zxid={}, error_code={}",
+                    length, xid, zxid, error_code
+                );
 
                 assert_eq!(xid, 1, "XID should match request");
                 assert_eq!(error_code, 0, "Error code should be 0 (success)");
@@ -179,37 +180,36 @@ async fn test_zookeeper_get_children() -> E2EResult<()> {
 When clients request children of /services, return: ['web', 'api', 'db'].
 Return zxid=200, error_code=0 (success)."#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: getChildren request - MUST BE FIRST (most specific)
-                .on_event("zookeeper_request")
-                .and_event_data_contains("operation", "getChildren")
-                .and_event_data_contains("path", "/services")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "zookeeper_response",
-                        "xid": 2,
-                        "zxid": 200,
-                        "error_code": 0,
-                        "data_hex": "00000003000000037765620000000361706900000002646200" // Array with 3 strings
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server startup - MUST BE LAST (less specific)
-                .on_instruction_containing("ZooKeeper")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ZooKeeper",
-                        "instruction": "Return service list"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: getChildren request - MUST BE FIRST (most specific)
+            .on_event("zookeeper_request")
+            .and_event_data_contains("operation", "getChildren")
+            .and_event_data_contains("path", "/services")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "zookeeper_response",
+                    "xid": 2,
+                    "zxid": 200,
+                    "error_code": 0,
+                    "data_hex": "00000003000000037765620000000361706900000002646200" // Array with 3 strings
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("ZooKeeper")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "ZooKeeper",
+                    "instruction": "Return service list"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -234,7 +234,10 @@ Return zxid=200, error_code=0 (success)."#;
             println!("Received {} bytes", n);
 
             if let Some((length, xid, zxid, error_code)) = parse_response_header(&buffer[..n]) {
-                println!("Response: length={}, xid={}, zxid={}, error_code={}", length, xid, zxid, error_code);
+                println!(
+                    "Response: length={}, xid={}, zxid={}, error_code={}",
+                    length, xid, zxid, error_code
+                );
 
                 assert_eq!(xid, 2, "XID should match request");
                 assert_eq!(error_code, 0, "Error code should be 0 (success)");
@@ -270,37 +273,36 @@ async fn test_zookeeper_error_response() -> E2EResult<()> {
 When clients try to read /nonexistent, return error_code=-101 (no node).
 Return zxid=300."#;
 
-    let config = NetGetConfig::new(prompt)
-        .with_mock(|mock| {
-            mock
-                // Mock 1: getData request for nonexistent path - MUST BE FIRST (most specific)
-                .on_event("zookeeper_request")
-                .and_event_data_contains("operation", "getData")
-                .and_event_data_contains("path", "/nonexistent")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "zookeeper_response",
-                        "xid": 3,
-                        "zxid": 300,
-                        "error_code": -101, // NONODE error
-                        "data_hex": ""
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server startup - MUST BE LAST (less specific)
-                .on_instruction_containing("ZooKeeper")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ZooKeeper",
-                        "instruction": "Return error for missing nodes"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: getData request for nonexistent path - MUST BE FIRST (most specific)
+            .on_event("zookeeper_request")
+            .and_event_data_contains("operation", "getData")
+            .and_event_data_contains("path", "/nonexistent")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "zookeeper_response",
+                    "xid": 3,
+                    "zxid": 300,
+                    "error_code": -101, // NONODE error
+                    "data_hex": ""
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("ZooKeeper")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "ZooKeeper",
+                    "instruction": "Return error for missing nodes"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let server = start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
@@ -325,7 +327,10 @@ Return zxid=300."#;
             println!("Received {} bytes", n);
 
             if let Some((length, xid, zxid, error_code)) = parse_response_header(&buffer[..n]) {
-                println!("Response: length={}, xid={}, zxid={}, error_code={}", length, xid, zxid, error_code);
+                println!(
+                    "Response: length={}, xid={}, zxid={}, error_code={}",
+                    length, xid, zxid, error_code
+                );
 
                 assert_eq!(xid, 3, "XID should match request");
                 assert_eq!(error_code, -101, "Error code should be -101 (NONODE)");

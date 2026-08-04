@@ -21,36 +21,39 @@ When receiving BOOTREQUEST:
   - Server hostname: "bootserver"
 "#;
 
-    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", server_instruction))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("BOOTP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BOOTP",
-                        "instruction": server_instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server receives BOOTP request
-                .on_event("bootp_request")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bootp_reply",
-                        "assigned_ip": "192.168.1.100",
-                        "server_ip": "192.168.1.1",
-                        "boot_file": "boot/pxeboot.n12",
-                        "server_hostname": "bootserver"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+    let server_config = NetGetConfig::new(format!(
+        "Listen on port {{AVAILABLE_PORT}} via BOOTP. {}",
+        server_instruction
+    ))
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("Listen on port")
+            .and_instruction_containing("BOOTP")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BOOTP",
+                    "instruction": server_instruction
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Server receives BOOTP request
+            .on_event("bootp_request")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_reply",
+                    "assigned_ip": "192.168.1.100",
+                    "server_ip": "192.168.1.1",
+                    "boot_file": "boot/pxeboot.n12",
+                    "server_hostname": "bootserver"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let mut server = start_netget_server(server_config).await?;
 
@@ -191,7 +194,7 @@ async fn test_bootp_broadcast_discovery() -> E2EResult<()> {
 async fn test_bootp_no_server() -> E2EResult<()> {
     // Test client connecting to non-existent server (should start but no reply)
     let client_config = NetGetConfig::new(
-        "Connect to 192.0.2.1:67 via BOOTP. Request IP for MAC 00:11:22:33:44:55"
+        "Connect to 192.0.2.1:67 via BOOTP. Request IP for MAC 00:11:22:33:44:55",
     )
     .with_mock(|mock| {
         mock
@@ -219,7 +222,7 @@ async fn test_bootp_no_server() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // No reply expected - test will timeout waiting for reply
+        // No reply expected - test will timeout waiting for reply
     });
 
     let mut client = start_netget_client(client_config).await?;

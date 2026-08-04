@@ -52,12 +52,12 @@ mod udp_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -100,12 +100,12 @@ mod udp_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -153,12 +153,12 @@ mod udp_client_tests {
 
         // Cleanup
 
-    // Verify mocks
-    server.verify_mocks().await?;
+        // Verify mocks
+        server.verify_mocks().await?;
         server.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -216,8 +216,8 @@ mod udp_client_tests {
         server1.stop().await?;
         server2.stop().await?;
 
-    // Verify mocks
-    client.verify_mocks().await?;
+        // Verify mocks
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

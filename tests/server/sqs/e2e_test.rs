@@ -234,7 +234,10 @@ async fn test_sqs_basic_queue_operations() {
     println!("✓ All SQS basic operations passed");
 
     // Verify mock expectations were met
-    server.verify_mocks().await.expect("Mock verification failed");
+    server
+        .verify_mocks()
+        .await
+        .expect("Mock verification failed");
 
     // Cleanup
     server.stop().await.expect("Failed to stop server");
@@ -411,7 +414,10 @@ async fn test_sqs_message_visibility() {
     println!("✓ SQS visibility timeout test passed");
 
     // Verify mock expectations were met
-    server.verify_mocks().await.expect("Mock verification failed");
+    server
+        .verify_mocks()
+        .await
+        .expect("Mock verification failed");
 
     // Cleanup
     server.stop().await.expect("Failed to stop server");
@@ -493,7 +499,10 @@ async fn test_sqs_queue_not_found() {
     println!("✓ SQS error handling test passed");
 
     // Verify mock expectations were met
-    server.verify_mocks().await.expect("Mock verification failed");
+    server
+        .verify_mocks()
+        .await
+        .expect("Mock verification failed");
 
     // Cleanup
     server.stop().await.expect("Failed to stop server");

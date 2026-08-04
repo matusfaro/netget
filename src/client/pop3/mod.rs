@@ -1,9 +1,9 @@
 pub mod actions;
 
+use crate::client::llm_budget::call_llm_for_client;
 use crate::client::pop3::actions::{
     POP3_CLIENT_CONNECTED_EVENT, POP3_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;

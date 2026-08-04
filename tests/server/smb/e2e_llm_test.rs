@@ -494,25 +494,22 @@ async fn test_smb_llm_receives_events() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 0 via smb. \
                  Allow all authentication and file operations.";
 
-    let server = start_netget_server(
-        NetGetConfig::new_no_scripts(prompt)
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_any()  // Changed from on_instruction_containing
-
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SMB",
-                            "instruction": "Allow all authentication and file operations."
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            })
-    ).await?;
+    let server = start_netget_server(NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_any() // Changed from on_instruction_containing
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "SMB",
+                    "instruction": "Allow all authentication and file operations."
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify server is ready to process LLM events

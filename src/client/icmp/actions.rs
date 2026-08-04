@@ -159,12 +159,12 @@ impl Client for IcmpClientProtocol {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(1234) as u16;
 
-                let sequence = action
-                    .get("sequence")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1) as u16;
+                let sequence = action.get("sequence").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
 
-                let payload_hex = action.get("payload_hex").and_then(|v| v.as_str()).unwrap_or("");
+                let payload_hex = action
+                    .get("payload_hex")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(64) as u8;
 
@@ -208,7 +208,10 @@ impl Client for IcmpClientProtocol {
             */
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
             "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown ICMP client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown ICMP client action: {}",
+                action_type
+            )),
         }
     }
 }
@@ -335,7 +338,7 @@ pub static ICMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "identifier": 1234,
             "sequence": 1,
             "ttl": 64
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -363,7 +366,7 @@ pub static ICMP_ECHO_REPLY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "identifier": 1234,
             "sequence": 2,
             "ttl": 64
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -420,7 +423,7 @@ pub static ICMP_TIMEOUT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "identifier": 1234,
             "sequence": 2,
             "ttl": 64
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -450,7 +453,7 @@ pub static ICMP_DEST_UNREACHABLE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "ICMP Destination Unreachable received",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -478,7 +481,7 @@ pub static ICMP_TIME_EXCEEDED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "identifier": 1234,
             "sequence": 1,
             "ttl": 2
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {

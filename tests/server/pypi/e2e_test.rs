@@ -103,12 +103,9 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
             .and()
     });
 
-    let test_state = timeout(
-        Duration::from_secs(30),
-        start_netget_server(config)
-    )
-    .await
-    .map_err(|_| "Server startup timeout")??;
+    let test_state = timeout(Duration::from_secs(30), start_netget_server(config))
+        .await
+        .map_err(|_| "Server startup timeout")??;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -130,7 +127,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                 .arg("5")
                 .arg(&base_url_clone)
                 .output()
-        })
+        }),
     )
     .await
     .map_err(|_| "curl timeout")??
@@ -160,7 +157,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                 .arg("5")
                 .arg(&hello_url)
                 .output()
-        })
+        }),
     )
     .await
     .map_err(|_| "curl timeout")??
@@ -186,7 +183,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                 .arg("5")
                 .arg(&example_url)
                 .output()
-        })
+        }),
     )
     .await
     .map_err(|_| "curl timeout")??
@@ -224,7 +221,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                 .arg(&base_url_for_pip)
                 .env("PIP_NO_CACHE_DIR", "1")
                 .output()
-        })
+        }),
     )
     .await;
 
@@ -280,7 +277,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                 .arg("5")
                 .arg(&nonexistent_url)
                 .output()
-        })
+        }),
     )
     .await
     .map_err(|_| "curl timeout")??
@@ -357,12 +354,9 @@ Use scripting mode for zero LLM calls after setup.
             .and()
     });
 
-    let test_state = timeout(
-        Duration::from_secs(30),
-        start_netget_server(config)
-    )
-    .await
-    .map_err(|_| "Server startup timeout")??;
+    let test_state = timeout(Duration::from_secs(30), start_netget_server(config))
+        .await
+        .map_err(|_| "Server startup timeout")??;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let base_url = format!("http://127.0.0.1:{}/simple/", test_state.port);
@@ -379,7 +373,7 @@ Use scripting mode for zero LLM calls after setup.
                 .arg("5")
                 .arg(&base_url)
                 .output()
-        })
+        }),
     )
     .await
     .map_err(|_| "curl timeout")??

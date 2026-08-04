@@ -128,34 +128,34 @@ mod http2_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via HTTP/2. Log all incoming requests.",
         )
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Listen on port")
-                    .and_instruction_containing("HTTP/2")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "HTTP2",
-                            "instruction": "Log all incoming requests"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Server receives custom header request
-                    .on_event("http_request_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_response",
-                            "status": 200,
-                            "headers": {},
-                            "body": "Request logged"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("HTTP/2")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Log all incoming requests"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives custom header request
+                .on_event("http_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {},
+                        "body": "Request logged"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -166,45 +166,45 @@ mod http2_client_tests {
             "Connect to http://127.0.0.1:{} via HTTP/2 and send a GET request with custom headers.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("HTTP/2")
-                    .and_instruction_containing("custom headers")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "HTTP2",
-                            "instruction": "Send GET request with custom headers"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected - send request with custom headers
-                    .on_event("http_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_request",
-                            "method": "GET",
-                            "path": "/",
-                            "headers": {"X-Custom-Header": "test-value"},
-                            "body": ""
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Client receives response
-                    .on_event("http_response_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("HTTP/2")
+                .and_instruction_containing("custom headers")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "HTTP2",
+                        "instruction": "Send GET request with custom headers"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected - send request with custom headers
+                .on_event("http_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_request",
+                        "method": "GET",
+                        "path": "/",
+                        "headers": {"X-Custom-Header": "test-value"},
+                        "body": ""
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response
+                .on_event("http_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -234,48 +234,48 @@ mod http2_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via HTTP/2. Respond to all requests with their path.",
         )
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Listen on port")
-                    .and_instruction_containing("HTTP/2")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "HTTP2",
-                            "instruction": "Respond to all requests with their path"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Server receives /first request
-                    .on_event("http_request_received")
-                    .and_event_data_contains("path", "/first")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_response",
-                            "status": 200,
-                            "headers": {},
-                            "body": "/first"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Server receives /second request
-                    .on_event("http_request_received")
-                    .and_event_data_contains("path", "/second")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_response",
-                            "status": 200,
-                            "headers": {},
-                            "body": "/second"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("HTTP/2")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Respond to all requests with their path"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives /first request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/first")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {},
+                        "body": "/first"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Server receives /second request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/second")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {},
+                        "body": "/second"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -286,42 +286,42 @@ mod http2_client_tests {
             "Connect to http://127.0.0.1:{} via HTTP/2. Send GET requests to /first and /second.",
             server.port
         ))
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Client startup
-                    .on_instruction_containing("Connect to")
-                    .and_instruction_containing("HTTP/2")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_client",
-                            "remote_addr": format!("127.0.0.1:{}", server.port),
-                            "protocol": "HTTP2",
-                            "instruction": "Send GET requests to /first and /second"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Client connected - send first request
-                    .on_event("http_connected")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_request",
-                            "method": "GET",
-                            "path": "/first",
-                            "headers": {},
-                            "body": ""
-                        },
-                        {
-                            "type": "send_http_request",
-                            "method": "GET",
-                            "path": "/second",
-                            "headers": {},
-                            "body": ""
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("HTTP/2")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "HTTP2",
+                        "instruction": "Send GET requests to /first and /second"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected - send first request
+                .on_event("http_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_request",
+                        "method": "GET",
+                        "path": "/first",
+                        "headers": {},
+                        "body": ""
+                    },
+                    {
+                        "type": "send_http_request",
+                        "method": "GET",
+                        "path": "/second",
+                        "headers": {},
+                        "body": ""
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 

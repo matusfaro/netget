@@ -210,7 +210,10 @@ async fn test_dot_server() -> E2EResult<()> {
 
     println!("\n[Test 3] Third query - different domain...");
     let response3 = query_dot(port, "foo.example.com.", RecordType::A).await?;
-    assert!(!response3.answers().is_empty(), "Expected answer for foo.example.com A");
+    assert!(
+        !response3.answers().is_empty(),
+        "Expected answer for foo.example.com A"
+    );
     println!("✓ Got response: {:?}", response3.answers()[0]);
 
     println!("\n=== All DoT tests passed! ===");

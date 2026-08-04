@@ -11,7 +11,7 @@
 
 use super::event_trigger::EventTrigger;
 use super::mock_builder::MockLlmBuilder;
-use super::{start_netget_server, NetGetConfig, E2EResult};
+use super::{start_netget_server, E2EResult, NetGetConfig};
 use netget::llm::actions::Server;
 use netget::protocol::server_registry::registry;
 use std::collections::HashMap;
@@ -77,11 +77,7 @@ impl ProtocolExampleTest {
     /// # Arguments
     /// * `event_id` - The event type ID (e.g., "dns_query")
     /// * `correlation_field` - JSON path to the correlation field (e.g., "query_id")
-    pub fn with_dynamic_udp_mocking(
-        mut self,
-        event_id: &str,
-        correlation_field: &str,
-    ) -> Self {
+    pub fn with_dynamic_udp_mocking(mut self, event_id: &str, correlation_field: &str) -> Self {
         self.dynamic_udp_fields
             .insert(event_id.to_string(), correlation_field.to_string());
         self
@@ -141,20 +137,15 @@ impl ProtocolExampleTest {
         let mock_config = self.build_mock_config(&protocol, &event_types)?;
 
         // Create server config using LLM mode example
-        let config = NetGetConfig::new(format!(
-            "Start a {} server on port 0",
-            self.protocol_name
-        ))
-        .with_log_level(&self.log_level)
-        .with_mock(|_| mock_config);
+        let config = NetGetConfig::new(format!("Start a {} server on port 0", self.protocol_name))
+            .with_log_level(&self.log_level)
+            .with_mock(|_| mock_config);
 
         // Start server
         let server = match start_netget_server(config).await {
             Ok(s) => s,
             Err(e) => {
-                report
-                    .errors
-                    .push(format!("Failed to start server: {}", e));
+                report.errors.push(format!("Failed to start server: {}", e));
                 return Ok(report);
             }
         };
@@ -165,7 +156,9 @@ impl ProtocolExampleTest {
         // Get server address
         let server_port = server.port;
         if server_port == 0 {
-            report.errors.push("Server did not start on any port".to_string());
+            report
+                .errors
+                .push("Server did not start on any port".to_string());
             server.stop().await?;
             return Ok(report);
         }
@@ -201,16 +194,14 @@ impl ProtocolExampleTest {
                         report.event_types_tested.push(event_id.clone());
                     }
                     Ok(Err(e)) => {
-                        report.errors.push(format!(
-                            "Event '{}' trigger failed: {}",
-                            event_id, e
-                        ));
+                        report
+                            .errors
+                            .push(format!("Event '{}' trigger failed: {}", event_id, e));
                     }
                     Err(_) => {
-                        report.errors.push(format!(
-                            "Event '{}' trigger timed out",
-                            event_id
-                        ));
+                        report
+                            .errors
+                            .push(format!("Event '{}' trigger timed out", event_id));
                     }
                 }
 
@@ -221,7 +212,9 @@ impl ProtocolExampleTest {
 
         // Verify mock expectations
         if let Err(e) = server.verify_mocks().await {
-            report.errors.push(format!("Mock verification failed: {}", e));
+            report
+                .errors
+                .push(format!("Mock verification failed: {}", e));
         }
 
         // Stop server

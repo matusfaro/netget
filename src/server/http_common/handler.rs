@@ -1,7 +1,7 @@
 //! Shared HTTP request/response handling logic
 
-use crate::llm::ActionResult;
 use crate::console_trace;
+use crate::llm::ActionResult;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -30,7 +30,9 @@ pub async fn extract_request_data(
     // Extract request details first for logging
     let method = req.method().to_string();
     // Only use path+query portion (not scheme/host) for event data
-    let uri = req.uri().path_and_query()
+    let uri = req
+        .uri()
+        .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or(req.uri().path())
         .to_string();
@@ -164,8 +166,12 @@ pub fn build_safe_response(
     match builder.body(Full::new(Bytes::from(body))) {
         Ok(response) => response,
         Err(e) => {
-            error!("{}: failed to build response ({}), sending bare 500", context, e);
-            let mut fallback = Response::new(Full::new(Bytes::from_static(b"Internal Server Error")));
+            error!(
+                "{}: failed to build response ({}), sending bare 500",
+                context, e
+            );
+            let mut fallback =
+                Response::new(Full::new(Bytes::from_static(b"Internal Server Error")));
             *fallback.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
             fallback
         }
@@ -310,7 +316,8 @@ impl FilterRule {
             match (&hm.expect, value) {
                 (HeaderExpect::Present, Some(_)) => {}
                 (HeaderExpect::Contains(needle), Some(v))
-                    if v.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()) => {}
+                    if v.to_ascii_lowercase()
+                        .contains(&needle.to_ascii_lowercase()) => {}
                 _ => return false,
             }
         }
@@ -372,7 +379,8 @@ impl RequestFilter {
                     match Self::parse_rule(raw) {
                         Ok(rule) => rules.push(rule),
                         Err(e) => {
-                            let msg = format!("invalid request_filter rule #{}: {} — rule ignored", i, e);
+                            let msg =
+                                format!("invalid request_filter rule #{}: {} — rule ignored", i, e);
                             error!("{}", msg);
                             warnings.push(msg);
                         }
@@ -450,9 +458,7 @@ impl RequestFilter {
 
         let mut headers = Vec::new();
         if let Some(hdrs) = obj.get("headers") {
-            let map = hdrs
-                .as_object()
-                .ok_or("`headers` must be an object")?;
+            let map = hdrs.as_object().ok_or("`headers` must be an object")?;
             for (name, matcher) in map {
                 let expect = match matcher {
                     serde_json::Value::Bool(true) => HeaderExpect::Present,

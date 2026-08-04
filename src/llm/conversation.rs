@@ -207,21 +207,33 @@ impl ConversationHandler {
             // Remove "# Available Tools" section (text descriptions of tools)
             if let Some(start) = cleaned.find("# Available Tools") {
                 if let Some(next_section) = cleaned[start + 1..].find("\n# ") {
-                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[start + 1 + next_section..]);
+                    cleaned = format!(
+                        "{}{}",
+                        &cleaned[..start],
+                        &cleaned[start + 1 + next_section..]
+                    );
                 }
             }
 
             // Remove "# Available Actions" section (text descriptions of actions)
             if let Some(start) = cleaned.find("# Available Actions") {
                 if let Some(next_section) = cleaned[start + 1..].find("\n# ") {
-                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[start + 1 + next_section..]);
+                    cleaned = format!(
+                        "{}{}",
+                        &cleaned[..start],
+                        &cleaned[start + 1 + next_section..]
+                    );
                 }
             }
 
             // Remove "# Response Format" section (JSON format instructions)
             if let Some(start) = cleaned.find("# Response Format") {
                 if let Some(next_section) = cleaned[start + 1..].find("\n# ") {
-                    cleaned = format!("{}{}", &cleaned[..start], &cleaned[start + 1 + next_section..]);
+                    cleaned = format!(
+                        "{}{}",
+                        &cleaned[..start],
+                        &cleaned[start + 1 + next_section..]
+                    );
                 }
             }
 
@@ -501,14 +513,10 @@ impl ConversationHandler {
         const MAX_MALFORMED_ACTION_RETRIES: usize = 2;
 
         // Build set of valid action names for validation (mutable to allow updates after docs read)
-        let mut valid_action_names: std::collections::HashSet<String> = available_actions
-            .iter()
-            .map(|a| a.name.clone())
-            .collect();
-        let mut valid_action_names_list: Vec<String> = available_actions
-            .iter()
-            .map(|a| a.name.clone())
-            .collect();
+        let mut valid_action_names: std::collections::HashSet<String> =
+            available_actions.iter().map(|a| a.name.clone()).collect();
+        let mut valid_action_names_list: Vec<String> =
+            available_actions.iter().map(|a| a.name.clone()).collect();
 
         for iteration in 1..=self.max_tool_iterations {
             debug!(
@@ -527,11 +535,15 @@ impl ConversationHandler {
                 .push(Message::assistant(original_response.clone()));
 
             // Extract XML references from response (scripts, configs, large content)
-            let (json_only, references) = crate::llm::reference_parser::extract_references(&cleaned_response)
-                .context("Failed to extract XML references from response")?;
+            let (json_only, references) =
+                crate::llm::reference_parser::extract_references(&cleaned_response)
+                    .context("Failed to extract XML references from response")?;
 
             if !references.is_empty() {
-                debug!("Extracted {} XML references from LLM response", references.len());
+                debug!(
+                    "Extracted {} XML references from LLM response",
+                    references.len()
+                );
                 for (tag_name, content) in &references {
                     trace!("  Reference <{}>: {} chars", tag_name, content.len());
                 }
@@ -547,7 +559,10 @@ impl ConversationHandler {
                 // Convert to JSON string, resolve references, parse back
                 if let Ok(item_json) = serde_json::to_string(&resolved_item) {
                     if crate::llm::reference_parser::contains_references(&item_json) {
-                        let resolved_json = crate::llm::reference_parser::resolve_references(&item_json, &references);
+                        let resolved_json = crate::llm::reference_parser::resolve_references(
+                            &item_json,
+                            &references,
+                        );
                         if let Ok(new_item) = serde_json::from_str(&resolved_json) {
                             resolved_item = new_item;
                         }
@@ -631,10 +646,11 @@ impl ConversationHandler {
                 }
 
                 // Build retry prompt for unknown actions
-                let correction = crate::llm::prompt::PromptBuilder::build_unknown_action_retry_prompt(
-                    &unknown_actions,
-                    &valid_action_names_list,
-                );
+                let correction =
+                    crate::llm::prompt::PromptBuilder::build_unknown_action_retry_prompt(
+                        &unknown_actions,
+                        &valid_action_names_list,
+                    );
 
                 // Log the correction before adding to messages
                 trace!(
@@ -642,7 +658,9 @@ impl ConversationHandler {
                     unknown_action_retries + 1
                 );
                 if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send("[TRACE] → Sending correction to LLM for unknown action...".to_string());
+                    let _ = tx.send(
+                        "[TRACE] → Sending correction to LLM for unknown action...".to_string(),
+                    );
                     // Show the correction message being sent (indented and dimmed)
                     for line in crate::llm::format_indented_dimmed_lines(&correction, 8) {
                         let _ = tx.send(format!("[TRACE] {}", line));
@@ -650,7 +668,8 @@ impl ConversationHandler {
                 }
 
                 // Add the malformed response as assistant message
-                self.messages.push(Message::assistant(cleaned_response.clone()));
+                self.messages
+                    .push(Message::assistant(cleaned_response.clone()));
 
                 // Add correction as user message
                 self.messages.push(Message::user(correction));
@@ -671,17 +690,30 @@ impl ConversationHandler {
             let mut valid_regular: Vec<serde_json::Value> = Vec::new();
 
             for action in regular {
-                let action_type = action.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                let action_type = action
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("unknown");
 
                 // Skip validation for actions that don't map to CommonAction (protocol-specific actions)
                 // These will be validated later by their respective handlers
                 let is_common_action = matches!(
                     action_type,
-                    "open_server" | "open_client" | "close_server" | "close_client"
-                    | "close_all_servers" | "close_all_clients" | "update_instruction"
-                    | "change_model" | "set_memory" | "schedule_task" | "cancel_task"
-                    | "show_message" | "close_connection_by_id" | "reconnect_client"
-                    | "update_client_instruction"
+                    "open_server"
+                        | "open_client"
+                        | "close_server"
+                        | "close_client"
+                        | "close_all_servers"
+                        | "close_all_clients"
+                        | "update_instruction"
+                        | "change_model"
+                        | "set_memory"
+                        | "schedule_task"
+                        | "cancel_task"
+                        | "show_message"
+                        | "close_connection_by_id"
+                        | "reconnect_client"
+                        | "update_client_instruction"
                 );
 
                 if is_common_action {
@@ -706,15 +738,22 @@ impl ConversationHandler {
                 for (action_json, error) in &malformed_actions {
                     error!(
                         "LLM returned malformed action: {}. Error: {}. JSON: {}",
-                        action_json.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"),
+                        action_json
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("unknown"),
                         error,
-                        serde_json::to_string(action_json).unwrap_or_else(|_| action_json.to_string())
+                        serde_json::to_string(action_json)
+                            .unwrap_or_else(|_| action_json.to_string())
                     );
                 }
 
                 if let Some(ref tx) = self.status_tx {
                     for (action_json, error) in &malformed_actions {
-                        let action_type = action_json.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                        let action_type = action_json
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("unknown");
                         let _ = tx.send(format!(
                             "[ERROR] Malformed action '{}': {}",
                             action_type, error
@@ -722,7 +761,8 @@ impl ConversationHandler {
                         // Show the actual JSON that was returned
                         let _ = tx.send(format!(
                             "[ERROR]   JSON: {}",
-                            serde_json::to_string(action_json).unwrap_or_else(|_| action_json.to_string())
+                            serde_json::to_string(action_json)
+                                .unwrap_or_else(|_| action_json.to_string())
                         ));
                     }
                 }
@@ -751,9 +791,10 @@ impl ConversationHandler {
                 }
 
                 // Build retry prompt for malformed actions
-                let correction = crate::llm::prompt::PromptBuilder::build_malformed_action_retry_prompt(
-                    &malformed_actions,
-                );
+                let correction =
+                    crate::llm::prompt::PromptBuilder::build_malformed_action_retry_prompt(
+                        &malformed_actions,
+                    );
 
                 trace!(
                     "→ Sending malformed action correction and retrying (attempt {})...",
@@ -767,7 +808,8 @@ impl ConversationHandler {
                 }
 
                 // Add the malformed response as assistant message
-                self.messages.push(Message::assistant(cleaned_response.clone()));
+                self.messages
+                    .push(Message::assistant(cleaned_response.clone()));
 
                 // Add correction as user message
                 self.messages.push(Message::user(correction));
@@ -834,7 +876,10 @@ impl ConversationHandler {
                     Ok(tool_action) => {
                         info!("→ Executing tool: {}", tool_action.describe());
                         if let Some(ref tx) = self.status_tx {
-                            let _ = tx.send(format!("[INFO] → Executing tool: {}", tool_action.describe()));
+                            let _ = tx.send(format!(
+                                "[INFO] → Executing tool: {}",
+                                tool_action.describe()
+                            ));
                         }
 
                         // Track tool call in conversation state
@@ -843,8 +888,12 @@ impl ConversationHandler {
                                 ToolAction::ReadFile { .. } => "read_file",
                                 ToolAction::WebSearch { .. } => "web_search",
                                 ToolAction::ReadBaseStackDocs { .. } => "read_base_stack_docs",
-                                ToolAction::ReadServerDocumentation { .. } => "read_server_documentation",
-                                ToolAction::ReadClientDocumentation { .. } => "read_client_documentation",
+                                ToolAction::ReadServerDocumentation { .. } => {
+                                    "read_server_documentation"
+                                }
+                                ToolAction::ReadClientDocumentation { .. } => {
+                                    "read_client_documentation"
+                                }
                                 ToolAction::ReadDocumentation { .. } => "read_documentation",
                                 ToolAction::ListModels => "list_models",
                                 ToolAction::GenerateRandom { .. } => "generate_random",
@@ -882,7 +931,11 @@ impl ConversationHandler {
                             if is_read_server_docs {
                                 self.mark_protocol_docs_read(&available_actions);
                                 // Extract protocols and update AppState and ConversationState
-                                if let ToolAction::ReadServerDocumentation { protocols, protocol } = &tool_action {
+                                if let ToolAction::ReadServerDocumentation {
+                                    protocols,
+                                    protocol,
+                                } = &tool_action
+                                {
                                     let mut all_protocols = protocols.clone();
                                     if let Some(p) = protocol {
                                         if !all_protocols.contains(p) {
@@ -898,7 +951,9 @@ impl ConversationHandler {
                                         let state_clone = state.clone();
                                         let protocols_clone = all_protocols.clone();
                                         tokio::spawn(async move {
-                                            state_clone.mark_server_protocols_documented(&protocols_clone).await;
+                                            state_clone
+                                                .mark_server_protocols_documented(&protocols_clone)
+                                                .await;
                                         });
                                     }
                                 }
@@ -911,7 +966,11 @@ impl ConversationHandler {
                             if is_read_client_docs {
                                 self.mark_protocol_docs_read(&available_actions);
                                 // Extract protocols and update AppState and ConversationState
-                                if let ToolAction::ReadClientDocumentation { protocols, protocol } = &tool_action {
+                                if let ToolAction::ReadClientDocumentation {
+                                    protocols,
+                                    protocol,
+                                } = &tool_action
+                                {
                                     let mut all_protocols = protocols.clone();
                                     if let Some(p) = protocol {
                                         if !all_protocols.contains(p) {
@@ -927,7 +986,9 @@ impl ConversationHandler {
                                         let state_clone = state.clone();
                                         let protocols_clone = all_protocols.clone();
                                         tokio::spawn(async move {
-                                            state_clone.mark_client_protocols_documented(&protocols_clone).await;
+                                            state_clone
+                                                .mark_client_protocols_documented(&protocols_clone)
+                                                .await;
                                         });
                                     }
                                 }
@@ -953,7 +1014,11 @@ impl ConversationHandler {
                             if is_read_docs {
                                 self.mark_protocol_docs_read(&available_actions);
                                 // Extract protocols and update both server and client state
-                                if let ToolAction::ReadDocumentation { protocols, protocol } = &tool_action {
+                                if let ToolAction::ReadDocumentation {
+                                    protocols,
+                                    protocol,
+                                } = &tool_action
+                                {
                                     let mut all_protocols = protocols.clone();
                                     if let Some(p) = protocol {
                                         if !all_protocols.contains(p) {
@@ -970,8 +1035,12 @@ impl ConversationHandler {
                                         let state_clone = state.clone();
                                         let protocols_clone = all_protocols.clone();
                                         tokio::spawn(async move {
-                                            state_clone.mark_server_protocols_documented(&protocols_clone).await;
-                                            state_clone.mark_client_protocols_documented(&protocols_clone).await;
+                                            state_clone
+                                                .mark_server_protocols_documented(&protocols_clone)
+                                                .await;
+                                            state_clone
+                                                .mark_client_protocols_documented(&protocols_clone)
+                                                .await;
                                         });
                                     }
                                 }
@@ -980,12 +1049,16 @@ impl ConversationHandler {
                                 if !valid_action_names.contains("open_server") {
                                     valid_action_names.insert("open_server".to_string());
                                     valid_action_names_list.push("open_server".to_string());
-                                    debug!("Enabled open_server action after reading documentation");
+                                    debug!(
+                                        "Enabled open_server action after reading documentation"
+                                    );
                                 }
                                 if !valid_action_names.contains("open_client") {
                                     valid_action_names.insert("open_client".to_string());
                                     valid_action_names_list.push("open_client".to_string());
-                                    debug!("Enabled open_client action after reading documentation");
+                                    debug!(
+                                        "Enabled open_client action after reading documentation"
+                                    );
                                 }
                             }
                         }
@@ -1081,7 +1154,8 @@ impl ConversationHandler {
                     let base_stack = action.get("base_stack").and_then(|b| b.as_str());
                     format!(
                         "port={}, base_stack={}",
-                        port.map(|p| p.to_string()).unwrap_or_else(|| "auto".to_string()),
+                        port.map(|p| p.to_string())
+                            .unwrap_or_else(|| "auto".to_string()),
                         base_stack.unwrap_or("?")
                     )
                 }
@@ -1096,14 +1170,28 @@ impl ConversationHandler {
                 }
                 "close_server" => {
                     let server_id = action.get("server_id").and_then(|p| p.as_u64());
-                    format!("server_id={}", server_id.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string()))
+                    format!(
+                        "server_id={}",
+                        server_id
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "?".to_string())
+                    )
                 }
                 "update_instruction" => {
                     let instruction = action.get("instruction").and_then(|i| i.as_str());
-                    format!("instruction={}", instruction.map(|i| {
-                        let preview: String = i.chars().take(30).collect();
-                        if i.len() > 30 { format!("\"{}...\"", preview) } else { format!("\"{}\"", i) }
-                    }).unwrap_or_else(|| "?".to_string()))
+                    format!(
+                        "instruction={}",
+                        instruction
+                            .map(|i| {
+                                let preview: String = i.chars().take(30).collect();
+                                if i.len() > 30 {
+                                    format!("\"{}...\"", preview)
+                                } else {
+                                    format!("\"{}\"", i)
+                                }
+                            })
+                            .unwrap_or_else(|| "?".to_string())
+                    )
                 }
                 "show_message" => {
                     let message = action.get("message").and_then(|m| m.as_str()).unwrap_or("");
@@ -1118,7 +1206,13 @@ impl ConversationHandler {
                     // For other actions, show first few keys
                     let keys: Vec<&str> = action
                         .as_object()
-                        .map(|obj| obj.keys().filter(|k| *k != "type").take(3).map(|s| s.as_str()).collect())
+                        .map(|obj| {
+                            obj.keys()
+                                .filter(|k| *k != "type")
+                                .take(3)
+                                .map(|s| s.as_str())
+                                .collect()
+                        })
                         .unwrap_or_default();
                     if keys.is_empty() {
                         String::new()
@@ -1210,11 +1304,7 @@ impl ConversationHandler {
                     if let Some(ref tx) = self.status_tx {
                         let preview = crate::utils::truncate_for_log(&msg.content, 200);
                         // Send header line
-                        let _ = tx.send(format!(
-                            "[TRACE] ·  Message {}: [{}]",
-                            idx + 1,
-                            msg.role,
-                        ));
+                        let _ = tx.send(format!("[TRACE] ·  Message {}: [{}]", idx + 1, msg.role,));
                         // Send content indented and dimmed using the shared formatting function
                         for line in crate::llm::format_indented_dimmed_lines(&preview, 8) {
                             let _ = tx.send(format!("[TRACE] {}", line));

@@ -82,27 +82,27 @@ impl<'a> EventLogContext<'a> {
         let mut data = self.event.data.clone();
         if let Some(obj) = data.as_object_mut() {
             if let Some(addr) = self.client_addr {
-                obj.insert("client_ip".to_string(), serde_json::json!(addr.ip().to_string()));
                 obj.insert(
-                    "client_port".to_string(),
-                    serde_json::json!(addr.port()),
+                    "client_ip".to_string(),
+                    serde_json::json!(addr.ip().to_string()),
                 );
+                obj.insert("client_port".to_string(), serde_json::json!(addr.port()));
             }
             obj.insert(
                 "server_id".to_string(),
                 serde_json::json!(self.server_id.as_u32()),
             );
             if let Some(conn_id) = self.connection_id {
-                obj.insert("connection_id".to_string(), serde_json::json!(conn_id.as_u32()));
+                obj.insert(
+                    "connection_id".to_string(),
+                    serde_json::json!(conn_id.as_u32()),
+                );
             }
             obj.insert(
                 "protocol".to_string(),
                 serde_json::json!(self.protocol_name.clone()),
             );
-            obj.insert(
-                "event_id".to_string(),
-                serde_json::json!(self.event.id()),
-            );
+            obj.insert("event_id".to_string(), serde_json::json!(self.event.id()));
         }
         data
     }
@@ -174,11 +174,18 @@ impl<'a> EventLogContext<'a> {
                 .flat_map(|r| r.get_all_output())
                 .map(|o| o.len())
                 .sum();
-            obj.insert("response_bytes".to_string(), serde_json::json!(response_bytes));
+            obj.insert(
+                "response_bytes".to_string(),
+                serde_json::json!(response_bytes),
+            );
 
             // Add status from first Custom result if present
             for result in action_results {
-                if let ActionResult::Custom { name, data: custom_data } = result {
+                if let ActionResult::Custom {
+                    name,
+                    data: custom_data,
+                } = result
+                {
                     if let Some(status) = custom_data.get("status") {
                         obj.insert("status".to_string(), status.clone());
                     }
@@ -220,7 +227,9 @@ impl<'a> EventLogContext<'a> {
                     self.event.id(),
                     duration.as_millis(),
                     action_results.len(),
-                    data.get("response_bytes").and_then(|v| v.as_u64()).unwrap_or(0)
+                    data.get("response_bytes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
                 );
                 debug!("{}", fallback_msg);
                 if let Some(tx) = status_tx {

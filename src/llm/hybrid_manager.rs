@@ -58,16 +58,12 @@ impl HybridLLMManager {
     /// # Arguments
     /// * `force_embedded` - Skip Ollama and use embedded directly
     /// * `embedded_model_path` - Override embedded model path
-    pub async fn new(
-        force_embedded: bool,
-        embedded_model_path: Option<String>,
-    ) -> Result<Self> {
+    pub async fn new(force_embedded: bool, embedded_model_path: Option<String>) -> Result<Self> {
         // Load configuration
-        let mut config = NetGetConfig::load()
-            .unwrap_or_else(|e| {
-                warn!("Failed to load config, using defaults: {}", e);
-                NetGetConfig::default()
-            });
+        let mut config = NetGetConfig::load().unwrap_or_else(|e| {
+            warn!("Failed to load config, using defaults: {}", e);
+            NetGetConfig::default()
+        });
 
         // Override embedded model path if provided
         #[cfg(feature = "embedded-llm")]
@@ -131,9 +127,7 @@ impl HybridLLMManager {
 
     /// Initialize embedded backend
     #[cfg(feature = "embedded-llm")]
-    async fn init_embedded_backend(
-        config: &Arc<RwLock<NetGetConfig>>,
-    ) -> Result<ActiveBackend> {
+    async fn init_embedded_backend(config: &Arc<RwLock<NetGetConfig>>) -> Result<ActiveBackend> {
         let config_read = config.read().await;
 
         let model_path = config_read

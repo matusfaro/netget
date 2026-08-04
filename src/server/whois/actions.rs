@@ -329,25 +329,29 @@ fn close_connection_action() -> ActionDefinition {
 
 /// WHOIS query event - triggered when client sends a query
 pub static WHOIS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("whois_query", "Client sent a WHOIS domain lookup query", json!({"type": "placeholder", "event_id": "whois_query"}))
-        .with_parameters(vec![Parameter {
-            name: "query".to_string(),
-            type_hint: "string".to_string(),
-            description: "The WHOIS query string".to_string(),
-            required: true,
-        }])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("WHOIS {query}")
-                .with_debug("WHOIS query: {query}")
-                .with_trace("WHOIS: {json_pretty(.)}"),
-        )
-        .with_actions(vec![
-            send_whois_response_action(),
-            send_whois_record_action(),
-            send_error_action(),
-            close_connection_action(),
-        ])
+    EventType::new(
+        "whois_query",
+        "Client sent a WHOIS domain lookup query",
+        json!({"type": "placeholder", "event_id": "whois_query"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "query".to_string(),
+        type_hint: "string".to_string(),
+        description: "The WHOIS query string".to_string(),
+        required: true,
+    }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WHOIS {query}")
+            .with_debug("WHOIS query: {query}")
+            .with_trace("WHOIS: {json_pretty(.)}"),
+    )
+    .with_actions(vec![
+        send_whois_response_action(),
+        send_whois_record_action(),
+        send_error_action(),
+        close_connection_action(),
+    ])
 });
 
 pub fn get_whois_event_types() -> Vec<EventType> {

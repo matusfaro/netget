@@ -69,13 +69,18 @@ fn path_regex_rule() {
 #[test]
 fn header_present_and_contains() {
     // Header presence
-    let f = filter(serde_json::json!({ "request_filter": [{ "headers": { "x-internal": true } }] }));
+    let f =
+        filter(serde_json::json!({ "request_filter": [{ "headers": { "x-internal": true } }] }));
     assert!(f.allows(&req("GET", &[("x-internal", "1")]), "/"));
     assert!(!f.allows(&req("GET", &[]), "/"));
 
     // Header value contains (case-insensitive)
-    let f = filter(serde_json::json!({ "request_filter": [{ "headers": { "accept": "text/html" } }] }));
-    assert!(f.allows(&req("GET", &[("accept", "text/html,application/xhtml")]), "/"));
+    let f =
+        filter(serde_json::json!({ "request_filter": [{ "headers": { "accept": "text/html" } }] }));
+    assert!(f.allows(
+        &req("GET", &[("accept", "text/html,application/xhtml")]),
+        "/"
+    ));
     assert!(f.allows(&req("GET", &[("Accept", "TEXT/HTML")]), "/")); // name + value case-insensitive
     assert!(!f.allows(&req("GET", &[("accept", "image/png")]), "/"));
     assert!(!f.allows(&req("GET", &[]), "/"));

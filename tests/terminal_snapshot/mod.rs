@@ -915,7 +915,9 @@ mod tests {
 
         // Verify no double status lines (similar to other footer tests)
         assert!(
-            !screen.contains(" Model:None | Log:INFO <^l> | WebSearch:ON <^w> | Handler:ANY <^h>\n Model:None"),
+            !screen.contains(
+                " Model:None | Log:INFO <^l> | WebSearch:ON <^w> | Handler:ANY <^h>\n Model:None"
+            ),
             "Found double status line"
         );
 

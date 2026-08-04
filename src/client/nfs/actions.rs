@@ -18,7 +18,7 @@ pub static NFS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "NFS client successfully mounted NFS export",
         json!({
             "type": "wait_for_more"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,7 +38,12 @@ pub static NFS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// NFS client file operation result event
 pub static NFS_CLIENT_OPERATION_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("nfs_operation_result", "Result of an NFS file operation", json!({"type": "placeholder", "event_id": "nfs_operation_result"})).with_parameters(vec![
+    EventType::new(
+        "nfs_operation_result",
+        "Result of an NFS file operation",
+        json!({"type": "placeholder", "event_id": "nfs_operation_result"}),
+    )
+    .with_parameters(vec![
         Parameter {
             name: "operation".to_string(),
             type_hint: "string".to_string(),
@@ -79,7 +84,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_lookup",
                     "path": "/documents/readme.txt"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_read_file".to_string(),
@@ -110,7 +115,7 @@ impl Protocol for NfsClientProtocol {
                     "offset": 0,
                     "count": 4096
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_write_file".to_string(),
@@ -141,7 +146,7 @@ impl Protocol for NfsClientProtocol {
                     "data": "Hello, World!",
                     "offset": 0
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_list_dir".to_string(),
@@ -156,7 +161,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_list_dir",
                     "path": "/documents"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_get_attr".to_string(),
@@ -171,7 +176,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_get_attr",
                     "path": "/readme.txt"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_create_file".to_string(),
@@ -195,7 +200,7 @@ impl Protocol for NfsClientProtocol {
                     "path": "/newfile.txt",
                     "mode": 0o644
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_mkdir".to_string(),
@@ -219,7 +224,7 @@ impl Protocol for NfsClientProtocol {
                     "path": "/newdir",
                     "mode": 0o755
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_remove".to_string(),
@@ -234,7 +239,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_remove",
                     "path": "/oldfile.txt"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "nfs_rmdir".to_string(),
@@ -249,7 +254,7 @@ impl Protocol for NfsClientProtocol {
                     "type": "nfs_rmdir",
                     "path": "/olddir"
                 }),
-            log_template: None,
+                log_template: None,
             },
             ActionDefinition {
                 name: "disconnect".to_string(),
@@ -258,7 +263,7 @@ impl Protocol for NfsClientProtocol {
                 example: json!({
                     "type": "disconnect"
                 }),
-            log_template: None,
+                log_template: None,
             },
         ]
     }
@@ -281,8 +286,16 @@ impl Protocol for NfsClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("nfs_connected", "Triggered when NFS client mounts export", json!({"type": "placeholder", "event_id": "nfs_connected"})),
-            EventType::new("nfs_operation_result", "Triggered when NFS operation completes", json!({"type": "placeholder", "event_id": "nfs_operation_result"})),
+            EventType::new(
+                "nfs_connected",
+                "Triggered when NFS client mounts export",
+                json!({"type": "placeholder", "event_id": "nfs_connected"}),
+            ),
+            EventType::new(
+                "nfs_operation_result",
+                "Triggered when NFS operation completes",
+                json!({"type": "placeholder", "event_id": "nfs_operation_result"}),
+            ),
         ]
     }
 
