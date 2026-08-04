@@ -4,24 +4,25 @@ use anyhow::Result;
 use crossterm::event::PopKeyboardEnhancementFlags;
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
-use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
 use tracing::Level;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use super::Args;
+use crate::logging::RotatingFileWriter;
 
-/// Custom writer that applies bright cyan color to TRACE level logs
+/// Custom writer that applies bright cyan color to TRACE level logs.
+///
+/// Writes through a [`RotatingFileWriter`], which bounds total on-disk log
+/// size. It carries its own `Arc<Mutex<_>>` and is `Clone`, so this wrapper
+/// holds it directly rather than adding a second layer of locking.
 struct ColoredLogWriter {
-    inner: Arc<Mutex<File>>,
+    inner: RotatingFileWriter,
 }
 
 impl ColoredLogWriter {
-    fn new(file: File) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(file)),
-        }
+    fn new(file: RotatingFileWriter) -> Self {
+        Self { inner: file }
     }
 }
 
@@ -62,22 +63,22 @@ impl Write for ColoredLogWriter {
                 }
             }
 
-            self.inner.lock().unwrap().write_all(modified.as_bytes())?;
+            self.inner.write_all(modified.as_bytes())?;
             Ok(buf.len())
         } else {
-            self.inner.lock().unwrap().write(buf)
+            self.inner.write(buf)
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.inner.lock().unwrap().flush()
+        self.inner.flush()
     }
 }
 
 impl Clone for ColoredLogWriter {
     fn clone(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
+            inner: self.inner.clone(),
         }
     }
 }
@@ -88,7 +89,7 @@ struct ColoredLogWriterMaker {
 }
 
 impl ColoredLogWriterMaker {
-    fn new(file: File) -> Self {
+    fn new(file: RotatingFileWriter) -> Self {
         Self {
             writer: ColoredLogWriter::new(file),
         }
@@ -113,10 +114,10 @@ pub fn init_logging(args: &Args, is_interactive: bool) -> Result<()> {
     } else if is_interactive {
         // Interactive (TUI) mode: log to netget.log file with bright cyan color
         // Development builds default to TRACE, release builds default to INFO
-        let log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("netget.log")?;
+        // Size-bounded: rotates at DEFAULT_MAX_LOG_BYTES keeping
+        // DEFAULT_MAX_LOG_FILES generations. An existing oversized log is
+        // rotated out on first write, never truncated.
+        let log_file = RotatingFileWriter::new("netget.log")?;
 
         let colored_writer = ColoredLogWriterMaker::new(log_file);
 
