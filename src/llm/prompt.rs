@@ -340,7 +340,7 @@ Check the action definition in "Available Actions" for required parameters and p
     }
 
     /// Filter actions based on scripting mode
-    fn filter_actions_by_scripting_mode(
+    pub(crate) fn filter_actions_by_scripting_mode(
         actions: Vec<ActionDefinition>,
         has_scripting: bool,
     ) -> Vec<ActionDefinition> {

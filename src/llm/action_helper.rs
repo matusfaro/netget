@@ -686,6 +686,14 @@ pub async fn call_llm_for_feedback(
         is_open_client_enabled,
     );
 
+    // Apply the same scripting-mode filter the prompt builder applies, so the
+    // list we advertise to the model is exactly the list we validate against.
+    // (Previously an empty Vec was passed to the validator, so every action the
+    // model returned was rejected as "unknown action" and the call always failed.)
+    let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Off;
+    let feedback_actions =
+        PromptBuilder::filter_actions_by_scripting_mode(available_actions, has_scripting);
+
     // Build feedback processing prompt
     let system_prompt = PromptBuilder::build_feedback_system_prompt(
         state,
@@ -695,7 +703,7 @@ pub async fn call_llm_for_feedback(
         current_instruction,
         memory,
         feedback_entries,
-        available_actions,
+        feedback_actions.clone(),
     )
     .await;
 
@@ -745,9 +753,6 @@ pub async fn call_llm_for_feedback(
             task_name: format!("feedback-client-{}", instance_id),
         }
     };
-
-    // Feedback processing has limited actions (just update_instruction, set_memory, etc.)
-    let feedback_actions: Vec<crate::llm::actions::ActionDefinition> = Vec::new();
 
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
