@@ -12,7 +12,7 @@ use actions::{MysqlProtocol, MYSQL_QUERY_EVENT};
 use anyhow::Result;
 use async_trait::async_trait;
 use opensrv_mysql::{
-    AsyncMysqlIntermediary, AsyncMysqlShim, Column, ColumnFlags, ColumnType, InitWriter,
+    AsyncMysqlIntermediary, AsyncMysqlShim, Column, ColumnFlags, ColumnType, ErrorKind, InitWriter,
     OkResponse, ParamParser, QueryResultWriter, StatementMetaWriter, StatusFlags,
 };
 use std::io;
@@ -20,7 +20,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
+
+/// Cap on prepared statements retained per connection.
+///
+/// The map is keyed by statement id and only pruned by an explicit COM_STMT_CLOSE, so a client
+/// that PREPAREs in a loop and never closes would grow it without bound.
+const MAX_PREPARED_STATEMENTS: usize = 4096;
 
 /// MySQL server implementation
 pub struct MysqlServer {
@@ -117,6 +123,8 @@ impl MysqlServer {
                                 .await;
                         }
 
+                        let conn_state_owner = server.app_state.clone();
+                        let conn_server_id = server.server_id;
                         tokio::spawn(async move {
                             // MySQL requires split read/write streams
                             let (reader, writer) = tokio::io::split(stream);
@@ -124,6 +132,13 @@ impl MysqlServer {
                                 AsyncMysqlIntermediary::run_on(handler, reader, writer).await
                             {
                                 error!("MySQL connection error: {:?}", e);
+                            }
+                            // Mark the connection closed so it does not stay Active forever
+                            // in the server's connection map.
+                            if let Some(server_id) = conn_server_id {
+                                conn_state_owner
+                                    .close_connection_on_server(server_id, connection_id)
+                                    .await;
                             }
                         });
                     }
@@ -208,10 +223,23 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         // Store the prepared statement
         let mut next_id = self.next_stmt_id.lock().await;
         let stmt_id = *next_id;
-        *next_id += 1;
+        *next_id = next_id.wrapping_add(1);
         drop(next_id);
 
         let mut stmts = self.prepared_statements.lock().await;
+        if stmts.len() >= MAX_PREPARED_STATEMENTS {
+            drop(stmts);
+            warn!(
+                "MySQL connection {} exceeded {} prepared statements",
+                self.connection_id, MAX_PREPARED_STATEMENTS
+            );
+            return info
+                .error(
+                    ErrorKind::ER_MAX_PREPARED_STMT_COUNT_REACHED,
+                    b"Can't create more than max_prepared_stmt_count statements",
+                )
+                .await;
+        }
         stmts.insert(stmt_id, query.to_string());
         drop(stmts);
 
@@ -322,6 +350,14 @@ impl MysqlHandler {
 
         match llm_result {
             Ok(execution_result) => {
+                // `close_this_connection` is a declared sync action, so it has to actually end
+                // the session. opensrv drives the loop for us, so the only way to stop it is to
+                // answer the current query and then return an error from the shim.
+                let close_requested = execution_result
+                    .protocol_results
+                    .iter()
+                    .any(|r| matches!(r, ActionResult::CloseConnection));
+
                 // Process action results to find MySQL responses
                 for result in execution_result.protocol_results {
                     match result {
@@ -341,36 +377,37 @@ impl MysqlHandler {
                                         .unwrap_or_default();
 
                                     // Send result set
-                                    return send_result_set(results, columns, rows).await;
+                                    return finish_query(
+                                        send_result_set(results, columns, rows).await,
+                                        close_requested,
+                                    );
                                 }
                                 "mysql_error" => {
                                     // Extract error info from JSON data
                                     let error_code = data
                                         .get("error_code")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(1064)
-                                        as u16;
+                                        .and_then(|c| u16::try_from(c).ok())
+                                        .unwrap_or(1064);
                                     let message = data
                                         .get("message")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("Unknown error");
 
-                                    // Send error - opensrv uses completed for errors too
+                                    // Send a real MySQL ERR packet. `QueryResultWriter::error`
+                                    // has existed since opensrv-mysql 0.4; the previous code
+                                    // (and the protocol docs) claimed the library could only
+                                    // send OK, which silently swallowed every LLM error.
                                     let _ = self.status_tx.send(format!(
                                         "[ERROR] MySQL error {}: {}",
                                         error_code, message
                                     ));
-                                    return results
-                                        .completed(OkResponse {
-                                            header: 0,
-                                            affected_rows: 0,
-                                            last_insert_id: 0,
-                                            status_flags: StatusFlags::empty(),
-                                            warnings: 0,
-                                            info: String::new(),
-                                            session_state_info: String::new(),
-                                        })
-                                        .await;
+                                    return finish_query(
+                                        results
+                                            .error(mysql_error_kind(error_code), message.as_bytes())
+                                            .await,
+                                        close_requested,
+                                    );
                                 }
                                 "mysql_ok" => {
                                     // Extract OK response info from JSON data
@@ -384,17 +421,20 @@ impl MysqlHandler {
                                         .unwrap_or(0);
 
                                     // Send OK response
-                                    return results
-                                        .completed(OkResponse {
-                                            header: 0,
-                                            affected_rows,
-                                            last_insert_id,
-                                            status_flags: StatusFlags::empty(),
-                                            warnings: 0,
-                                            info: String::new(),
-                                            session_state_info: String::new(),
-                                        })
-                                        .await;
+                                    return finish_query(
+                                        results
+                                            .completed(OkResponse {
+                                                header: 0,
+                                                affected_rows,
+                                                last_insert_id,
+                                                status_flags: StatusFlags::empty(),
+                                                warnings: 0,
+                                                info: String::new(),
+                                                session_state_info: String::new(),
+                                            })
+                                            .await,
+                                        close_requested,
+                                    );
                                 }
                                 _ => {
                                     // Unknown custom response, ignore
@@ -407,34 +447,90 @@ impl MysqlHandler {
                     }
                 }
 
-                // No MySQL-specific response found, return empty result set
-                results
-                    .completed(OkResponse {
-                        header: 0,
-                        affected_rows: 0,
-                        last_insert_id: 0,
-                        status_flags: StatusFlags::empty(),
-                        warnings: 0,
-                        info: String::new(),
-                        session_state_info: String::new(),
-                    })
-                    .await
+                // No response action matched. An empty OK is the least-bad answer, but it is
+                // indistinguishable from a successful no-op, so make it visible in the log.
+                warn!(
+                    "MySQL: no response action produced for query {:?}; replying with an empty OK",
+                    query
+                );
+                finish_query(
+                    results
+                        .completed(OkResponse {
+                            header: 0,
+                            affected_rows: 0,
+                            last_insert_id: 0,
+                            status_flags: StatusFlags::empty(),
+                            warnings: 0,
+                            info: String::new(),
+                            session_state_info: String::new(),
+                        })
+                        .await,
+                    close_requested,
+                )
             }
             Err(e) => {
+                // Report the failure as a MySQL error instead of a silent empty OK, so the
+                // client sees something rather than an unexplained success.
                 error!("LLM error for MySQL query: {}", e);
                 results
-                    .completed(OkResponse {
-                        header: 0,
-                        affected_rows: 0,
-                        last_insert_id: 0,
-                        status_flags: StatusFlags::empty(),
-                        warnings: 0,
-                        info: String::new(),
-                        session_state_info: String::new(),
-                    })
+                    .error(
+                        ErrorKind::ER_UNKNOWN_ERROR,
+                        format!("netget: {}", e).as_bytes(),
+                    )
                     .await
             }
         }
+    }
+}
+
+/// Map an LLM-supplied MySQL error number onto an `opensrv_mysql::ErrorKind`.
+///
+/// `ErrorKind::from(u16)` **panics** on any value that is not one of the ~886 codes it knows
+/// (`opensrv-mysql-0.7.0/src/errorcodes.rs:2807`). The number here comes straight out of model
+/// output, so calling it directly would let a hallucinated error code kill the connection task.
+/// We therefore accept the error numbers a model realistically produces and fall back to
+/// `ER_UNKNOWN_ERROR` (1105) for anything else.
+fn mysql_error_kind(code: u16) -> ErrorKind {
+    match code {
+        1044 => ErrorKind::ER_DBACCESS_DENIED_ERROR,
+        1045 => ErrorKind::ER_ACCESS_DENIED_ERROR,
+        1046 => ErrorKind::ER_NO_DB_ERROR,
+        1049 => ErrorKind::ER_BAD_DB_ERROR,
+        1050 => ErrorKind::ER_TABLE_EXISTS_ERROR,
+        1051 => ErrorKind::ER_BAD_TABLE_ERROR,
+        1052 => ErrorKind::ER_NON_UNIQ_ERROR,
+        1054 => ErrorKind::ER_BAD_FIELD_ERROR,
+        1062 => ErrorKind::ER_DUP_ENTRY,
+        1064 => ErrorKind::ER_PARSE_ERROR,
+        1065 => ErrorKind::ER_EMPTY_QUERY,
+        1136 => ErrorKind::ER_WRONG_VALUE_COUNT_ON_ROW,
+        1146 => ErrorKind::ER_NO_SUCH_TABLE,
+        1149 => ErrorKind::ER_SYNTAX_ERROR,
+        1216 => ErrorKind::ER_NO_REFERENCED_ROW,
+        1217 => ErrorKind::ER_ROW_IS_REFERENCED,
+        1364 => ErrorKind::ER_NO_DEFAULT_FOR_FIELD,
+        1451 => ErrorKind::ER_ROW_IS_REFERENCED_2,
+        1452 => ErrorKind::ER_NO_REFERENCED_ROW_2,
+        1690 => ErrorKind::ER_DATA_OUT_OF_RANGE,
+        other => {
+            warn!(
+                "MySQL: error code {} is not in opensrv-mysql's table, reporting 1105 ER_UNKNOWN_ERROR",
+                other
+            );
+            ErrorKind::ER_UNKNOWN_ERROR
+        }
+    }
+}
+
+/// Turn a successfully-written response into a connection teardown when the LLM asked for
+/// `close_this_connection`. opensrv-mysql ends the session when the shim returns an error.
+fn finish_query(result: io::Result<()>, close_requested: bool) -> io::Result<()> {
+    match result {
+        Ok(()) if close_requested => Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "MySQL connection closed by close_this_connection action",
+        )),
+        other => other,
     }
 }
 
