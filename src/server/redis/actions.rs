@@ -310,7 +310,6 @@ impl RedisProtocol {
             data: json!(null),
         })
     }
-
 }
 
 /// Action definition: Send Redis simple string response

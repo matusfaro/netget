@@ -17,7 +17,15 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
+
+/// Maximum bytes we will buffer for a single, still-incomplete RESP frame.
+///
+/// `decode()` returns `Ok(None)` while a frame is incomplete, so without this cap a client
+/// that announces a huge bulk string (`$2000000000\r\n`) and then stalls would make the
+/// connection buffer grow without bound. Real Redis caps a bulk string at 512 MB; 64 MB is
+/// far more than any LLM-authored command needs.
+const MAX_PENDING_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 /// Redis server implementation
 pub struct RedisServer {
@@ -147,7 +155,27 @@ struct RedisHandler {
 }
 
 impl RedisHandler {
-    async fn handle_connection(self, mut stream: TcpStream) -> Result<()> {
+    /// Run the connection, then always mark it closed in `AppState`.
+    ///
+    /// Without this the connection stays `Active` forever in the server's connection map,
+    /// which is what `src/server/redis/CLAUDE.md` already claimed happened but did not.
+    async fn handle_connection(self, stream: TcpStream) -> Result<()> {
+        let server_id = self.server_id;
+        let connection_id = self.connection_id;
+        let app_state = self.app_state.clone();
+
+        let result = self.run(stream).await;
+
+        if let Some(server_id) = server_id {
+            app_state
+                .close_connection_on_server(server_id, connection_id)
+                .await;
+        }
+
+        result
+    }
+
+    async fn run(self, mut stream: TcpStream) -> Result<()> {
         let protocol = Arc::new(RedisProtocol::new(
             self.connection_id,
             self.app_state.clone(),
@@ -172,6 +200,36 @@ impl RedisHandler {
             };
 
             buffer.extend_from_slice(&chunk[..n]);
+
+            if let Some(server_id) = self.server_id {
+                self.app_state
+                    .update_connection_stats(
+                        server_id,
+                        self.connection_id,
+                        Some(n as u64),
+                        None,
+                        Some(1),
+                        None,
+                    )
+                    .await;
+            }
+
+            if buffer.len() > MAX_PENDING_FRAME_BYTES {
+                error!(
+                    "Redis client {} exceeded the {} byte frame buffer limit without completing a frame; closing",
+                    self.connection_id, MAX_PENDING_FRAME_BYTES
+                );
+                let _ = self.status_tx.send(format!(
+                    "[ERROR] Redis connection {} exceeded frame buffer limit, closing",
+                    self.connection_id
+                ));
+                let _ = stream
+                    .write_all(&encode_error(
+                        "ERR Protocol error: invalid multibulk length",
+                    ))
+                    .await;
+                return Ok(());
+            }
 
             // Try to decode RESP frames
             let mut offset = 0;
@@ -209,9 +267,14 @@ impl RedisHandler {
                         )
                         .await;
 
+                        // Collect the RESP bytes the actions produced, then write once so
+                        // connection stats stay accurate and a close request still flushes
+                        // whatever the LLM asked us to say first.
+                        let mut response = Vec::new();
+                        let mut close_after_write = false;
+
                         match llm_result {
                             Ok(execution_result) => {
-                                // Process action results and encode RESP responses
                                 for result in execution_result.protocol_results {
                                     match result {
                                         ActionResult::Custom { name, data } => {
@@ -221,8 +284,9 @@ impl RedisHandler {
                                                         .get("value")
                                                         .and_then(|v| v.as_str())
                                                         .unwrap_or("");
-                                                    let resp = encode_simple_string(value);
-                                                    stream.write_all(&resp).await?;
+                                                    response.extend_from_slice(
+                                                        &encode_simple_string(value),
+                                                    );
                                                 }
                                                 "redis_bulk_string" => {
                                                     let value = data.get("value");
@@ -239,7 +303,7 @@ impl RedisHandler {
                                                     } else {
                                                         encode_null()
                                                     };
-                                                    stream.write_all(&resp).await?;
+                                                    response.extend_from_slice(&resp);
                                                 }
                                                 "redis_array" => {
                                                     let values = data
@@ -247,49 +311,88 @@ impl RedisHandler {
                                                         .and_then(|v| v.as_array())
                                                         .cloned()
                                                         .unwrap_or_default();
-                                                    let resp = encode_array(&values)?;
-                                                    stream.write_all(&resp).await?;
+                                                    response
+                                                        .extend_from_slice(&encode_array(&values));
                                                 }
                                                 "redis_integer" => {
                                                     let value = data
                                                         .get("value")
                                                         .and_then(|v| v.as_i64())
                                                         .unwrap_or(0);
-                                                    let resp = encode_integer(value);
-                                                    stream.write_all(&resp).await?;
+                                                    response
+                                                        .extend_from_slice(&encode_integer(value));
                                                 }
                                                 "redis_error" => {
                                                     let message = data
                                                         .get("message")
                                                         .and_then(|v| v.as_str())
                                                         .unwrap_or("Unknown error");
-                                                    let resp = encode_error(message);
-                                                    stream.write_all(&resp).await?;
+                                                    response
+                                                        .extend_from_slice(&encode_error(message));
                                                 }
                                                 "redis_null" => {
-                                                    let resp = encode_null();
-                                                    stream.write_all(&resp).await?;
+                                                    response.extend_from_slice(&encode_null());
                                                 }
-                                                _ => {
-                                                    // Unknown custom response, ignore
+                                                other => {
+                                                    // A Redis action that produced a result name
+                                                    // this loop does not encode would leave the
+                                                    // client hanging - make that loud.
+                                                    warn!(
+                                                        "Redis: no RESP encoding for action result '{}', client will receive nothing",
+                                                        other
+                                                    );
                                                 }
                                             }
                                         }
                                         ActionResult::CloseConnection => {
                                             debug!("Redis closing connection");
-                                            return Ok(());
+                                            close_after_write = true;
                                         }
                                         _ => {
                                             // Other action results are informational
                                         }
                                     }
                                 }
+
+                                if response.is_empty() && !close_after_write {
+                                    // Redis is strictly request/response: a command with no
+                                    // reply hangs the client until its own timeout.
+                                    warn!(
+                                        "Redis: no response action for command '{}', replying with an error",
+                                        command_str
+                                    );
+                                    response.extend_from_slice(&encode_error(
+                                        "ERR no response produced for this command",
+                                    ));
+                                }
                             }
                             Err(e) => {
                                 error!("LLM error for Redis command: {}", e);
-                                let resp = encode_error(&format!("ERR LLM error: {}", e));
-                                stream.write_all(&resp).await?;
+                                response.extend_from_slice(&encode_error(&format!(
+                                    "ERR LLM error: {}",
+                                    e
+                                )));
                             }
+                        }
+
+                        if !response.is_empty() {
+                            stream.write_all(&response).await?;
+                            if let Some(server_id) = self.server_id {
+                                self.app_state
+                                    .update_connection_stats(
+                                        server_id,
+                                        self.connection_id,
+                                        None,
+                                        Some(response.len() as u64),
+                                        None,
+                                        Some(1),
+                                    )
+                                    .await;
+                            }
+                        }
+
+                        if close_after_write {
+                            return Ok(());
                         }
 
                         offset += consumed;
@@ -359,8 +462,13 @@ fn encode_error(msg: &str) -> Vec<u8> {
     format!("-{}\r\n", msg).into_bytes()
 }
 
-/// Encode an array response
-fn encode_array(values: &[serde_json::Value]) -> Result<Vec<u8>> {
+/// Encode an array response.
+///
+/// The element mapping is part of the `redis_array` action contract documented to the LLM:
+/// strings become bulk strings, integers become RESP integers, booleans become the bulk
+/// strings `"1"`/`"0"`, null becomes a nil bulk string, and nested arrays/objects are
+/// serialized to JSON and sent as a bulk string (RESP2 has no JSON type).
+fn encode_array(values: &[serde_json::Value]) -> Vec<u8> {
     let mut result = format!("*{}\r\n", values.len()).into_bytes();
 
     for value in values {
@@ -392,5 +500,5 @@ fn encode_array(values: &[serde_json::Value]) -> Result<Vec<u8>> {
         }
     }
 
-    Ok(result)
+    result
 }

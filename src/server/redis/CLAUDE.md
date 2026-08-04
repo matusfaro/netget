@@ -1,291 +1,127 @@
 # Redis Protocol Implementation
 
-## Overview
+RESP2 server. `redis-protocol` v6.0 parses inbound frames; responses are encoded
+by hand in `mod.rs`. The LLM owns every reply — there is no key space, no
+storage, and no command dispatch table in Rust.
 
-Redis server implementing RESP2 (REdis Serialization Protocol v2) using the `redis-protocol` crate for parsing and
-manual encoding for responses. The server handles all Redis command types with full LLM control over command responses.
+**State**: Experimental — LLM-authored, not human-reviewed. Verified against
+`redis-cli` for the array/bulk/integer/nil encodings.
+**Port**: 6379 by default. **Privilege**: `None` (6379 > 1024).
+**Stack**: `ETH>IP>TCP>Redis`. **Spec**: RESP2.
 
-**Port**: 6379 (default Redis port)
-**Protocol Version**: RESP2 (Redis 2.0+)
-**Stack Representation**: `ETH>IP>TCP>REDIS`
+## What the model sees and controls
 
-## Library Choices
+**Event**: `redis_command`, one per decoded RESP frame.
 
-**redis-protocol** (v5.2):
+| Field | Notes |
+|---|---|
+| `command` | the frame flattened to a single space-separated string, e.g. `SET mykey hello` |
 
-- Chosen for robust RESP2 frame parsing
-- Provides `decode()` function for parsing RESP frames
-- `OwnedFrame` enum represents all RESP data types
-- Does NOT provide response encoding (we implement manually)
-- Limitation: No RESP3 support (Redis 6.0+)
+That string is all the model gets — arguments are not split out, and there is no
+argument-count or key field. A command whose argument contains a space is
+indistinguishable from two arguments.
 
-**Manual Response Encoding**:
+**Actions** (all sync; there are no async actions):
 
-- LLM controls all command responses through action system
-- Responses manually encoded to RESP2 format
-- Helper functions: `encode_simple_string`, `encode_bulk_string`, `encode_integer`, `encode_array`, `encode_error`,
-  `encode_null`
-- Follows RESP2 specification exactly
+| Action | Parameters | Wire form |
+|---|---|---|
+| `redis_simple_string` | `value` (required) | `+value\r\n` |
+| `redis_bulk_string` | `value` (optional; `null` ⇒ nil) | `$len\r\n…\r\n` |
+| `redis_integer` | `value` (required, i64) | `:value\r\n` |
+| `redis_array` | `values` (required, array) | `*n\r\n…` |
+| `redis_error` | `message` (required) | `-message\r\n` |
+| `redis_null` | — | `$-1\r\n` |
+| `close_this_connection` | — | flushes pending output, then closes |
 
-## Architecture Decisions
+`redis_array` element mapping, exactly as implemented in `encode_array`:
 
-### Frame-Based Processing
+| JSON element | RESP2 |
+|---|---|
+| string | bulk string |
+| integer | RESP integer (`:42\r\n`), **not** a bulk string |
+| float | bulk string of its text form |
+| `true` / `false` | bulk string `"1"` / `"0"` |
+| `null` | nil bulk string |
+| array / object | its JSON text in a bulk string |
 
-- Read data into buffer from TcpStream
-- Parse RESP frames using `redis_protocol::decode()`
-- Extract command from frame (typically Array of BulkStrings)
-- Send command to LLM via event system
-- Encode LLM response actions to RESP2 format
-- Write encoded bytes directly to TcpStream
-- Continue processing remaining frames in buffer
+Verified with `redis-cli --no-raw`: `["k1", 42, true, null, {"a":1}]` returns
+`"k1"`, `(integer) 42`, `"1"`, `(nil)`, `"{\"a\":1}"`.
 
-### Connection Handler Design
+### Failure behavior
 
-- Each connection spawns a `RedisHandler` task
-- Handler owns: connection_id, llm_client, app_state, protocol
-- Single async loop processes frames sequentially
-- No state persistence between commands (stateless)
-- Buffer management: accumulate partial frames, drain processed bytes
+- **No response action** → `-ERR no response produced for this command`. (Redis
+  is strictly request/response; staying silent would hang the client until its
+  own timeout.)
+- **LLM call fails** → `-ERR LLM error: …`.
+- **Action result the encoder does not recognise** → logged at WARN and skipped;
+  if nothing else was produced the no-response error above is sent.
+- **Undecodable RESP** → the connection is closed.
+- **Incomplete frame larger than 64 MB** (`MAX_PENDING_FRAME_BYTES`) → an error
+  is sent and the connection closed. Without this cap a client announcing
+  `$2000000000\r\n` and stalling would grow the per-connection buffer without
+  bound.
 
-### Command Execution Flow
+## Architecture
 
-1. Client sends RESP2 frame (e.g., `*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n`)
-2. Decode frame to `OwnedFrame::Array`
-3. Convert frame to command string (e.g., "GET key")
-4. Create `REDIS_COMMAND_EVENT` with command string
-5. Call LLM via `call_llm()` with event and protocol
-6. Process action results:
-    - `redis_simple_string`: Encode and send `+OK\r\n`
-    - `redis_bulk_string`: Encode and send `$5\r\nhello\r\n`
-    - `redis_integer`: Encode and send `:42\r\n`
-    - `redis_array`: Encode and send `*3\r\n$5\r\nvalue1\r\n...`
-    - `redis_error`: Encode and send `-ERR message\r\n`
-    - `redis_null`: Encode and send `$-1\r\n`
-    - `close_connection`: Close connection and exit
-7. If no action found, no response sent (client hangs)
+- `spawn_with_llm_actions` binds with `?`, so a bind failure surfaces as
+  `ServerStatus::Error` rather than a phantom `Running`, and registers the
+  accept-loop `JoinHandle` via `AppState::register_server_task()` so
+  `stop_server` releases the socket.
+- One task per connection. `handle_connection` wraps `run` so the connection is
+  always marked `Closed` in `AppState` on exit; `update_connection_stats` is
+  called for bytes/packets in both directions.
+- Read into a `Vec`, `decode()` frames off the front, drain what was consumed.
+  Multiple pipelined frames in one read are processed in order, each with its own
+  LLM call.
+- Responses for one command are accumulated into a single buffer and written
+  once, so a `close_this_connection` issued alongside a reply still flushes.
+- No per-connection state machine: commands on one connection are handled
+  strictly sequentially by the read loop, so concurrent LLM calls cannot happen.
 
-### RESP2 Encoding
+## Not implemented
 
-- **Simple Strings**: `+{value}\r\n` (status replies like OK, PONG)
-- **Bulk Strings**: `${length}\r\n{data}\r\n` (binary-safe strings)
-- **Integers**: `:{value}\r\n` (numeric responses)
-- **Arrays**: `*{count}\r\n{element1}{element2}...` (lists, sets, nested structures)
-- **Errors**: `-{message}\r\n` (error responses, start with ERR, WRONGTYPE, etc.)
-- **Null**: `$-1\r\n` (nil/null value)
+- **RESP3** — no `HELLO 3`, push messages, doubles, maps or sets.
+- **Inline commands** (`PING\r\n` typed into `nc`) — only RESP arrays decode;
+  anything else closes the connection. `redis-cli` and `redis-rs` always send
+  RESP arrays, so this only affects hand-typed sessions.
+- **AUTH / SELECT / MULTI / EXEC / WATCH** — reach the model as ordinary
+  commands with no special handling. There is no auth gate.
+- **Pub/sub**, **blocking commands** (`BLPOP`), **Lua** (`EVAL`), **cluster**,
+  **replication**, **persistence**.
+- **TLS**.
+- Server-initiated pushes: nothing can be written except in reply to a command.
 
-### Type Handling
+## Testing
 
-- JSON values from LLM converted to appropriate RESP types
-- String → Bulk String
-- Number → Integer or Bulk String
-- Boolean → Bulk String ("1" or "0")
-- Null → Null Bulk String
-- Array → RESP Array (recursive encoding)
-- Object → JSON-encoded Bulk String
+`tests/server/redis/e2e_test.rs` (declared in `tests/server/mod.rs`). Mocked by
+default:
 
-## LLM Integration
-
-### Action-Based Responses
-
-**Sync Actions** (network event context required):
-
-- `redis_simple_string`: Return status reply (OK, PONG)
-- `redis_bulk_string`: Return string value (GET, SET)
-- `redis_integer`: Return numeric value (INCR, DEL count)
-- `redis_array`: Return array of values (MGET, KEYS)
-- `redis_error`: Return error message (ERR, WRONGTYPE)
-- `redis_null`: Return nil value (nonexistent keys)
-- `close_connection`: Close connection (QUIT command)
-
-**Event Types**:
-
-- `REDIS_COMMAND_EVENT`: Fired for every command
-    - Data: `{ "command": "GET mykey" }`
-
-### Example LLM Prompts
-
-**PING command**:
-
-```
-For PING commands, use redis_simple_string with value='PONG'
+```bash
+./cargo-isolated.sh test --no-default-features --features redis \
+    --test server::redis::e2e_test -- --test-threads=100
 ```
 
-**GET/SET commands**:
+Real-client checks used during review, via `--mcp-http` with a static handler so
+no model is involved:
 
-```
-For SET commands, use redis_simple_string value='OK'
-For GET commands, use redis_bulk_string value='myvalue'
-```
-
-**Numeric commands**:
-
-```
-For INCR commands, use redis_integer value=42
-For DEL commands, use redis_integer value=1
+```bash
+netget --mcp-http 18899 &
+# start_server protocol=redis port=16379 event_handlers=[{redis_command → static redis_array}]
+redis-cli -p 16379 --no-raw KEYS '*'
 ```
 
-**Array commands**:
+## Example prompts
 
 ```
-For KEYS * commands, use redis_array values=['key1','key2','key3']
-For MGET commands, use redis_array values=['value1','value2']
+Start a Redis server on port 6379. Reply PONG to PING with redis_simple_string.
+For GET on a key you have not seen, use redis_null. For SET, reply OK.
 ```
 
-**Nonexistent keys**:
-
-```
-For GET nonexistent commands, use redis_null
-```
-
-**Error responses**:
-
-```
-For INVALID commands, use redis_error message='ERR unknown command'
-```
-
-## Connection Management
-
-### Connection Lifecycle
-
-1. Server accepts TCP connection on port 6379
-2. Create `RedisHandler` with unique `ConnectionId`
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Redis`
-4. Spawn async task running handler loop
-5. Handler processes commands until disconnect or `close_connection` action
-6. Connection marked closed in ServerInstance
-
-### State Tracking
-
-- Connection state stored in `ServerInstance.connections` HashMap
-- Tracks: remote_addr, local_addr, bytes_sent/received, packets_sent/received
-- Status: Active or Closed
-- Last activity timestamp updated per command
-
-### Concurrency
-
-- Multiple connections handled concurrently
-- Each connection has independent handler and buffer
-- No shared state between connections
-- LLM calls queued per connection via `ProtocolConnectionInfo`
-
-## Limitations
-
-### Protocol Features
-
-- **RESP2 only** - no RESP3 support (no push events, doubles, sets)
-- **No authentication** - AUTH command not implemented
-- **No database selection** - SELECT command ignored
-- **No transactions** - MULTI/EXEC not implemented
-- **No pub/sub** - PUBLISH/SUBSCRIBE not implemented
-- **No pipelining optimization** - commands processed sequentially
-- **No Lua scripting** - EVAL/EVALSHA not supported
-- **No persistence** - no RDB/AOF, data not saved
-- **No clustering** - single-node only
-- **No replication** - no master/slave
-
-### Performance
-
-- Each command triggers LLM call (unless scripting is used)
-- No command batching or optimization
-- Synchronous command processing per connection
-- Buffer allocation per connection (4KB chunks)
-
-### Error Handling
-
-- If LLM returns no action, client hangs (no response sent)
-- Unknown actions silently ignored
-- Malformed RESP frames cause connection close
-
-## Known Issues
-
-1. **No response fallback**: If LLM fails to return a valid action, no response sent to client (client hangs)
-2. **Blocking commands**: BLPOP, BRPOP would block entire connection (not suitable for single-threaded handler)
-3. **Large values**: Very large bulk strings may cause memory issues (no streaming)
-4. **Client commands**: CLIENT SETNAME, CLIENT LIST not implemented
-5. **INFO command**: Would require hardcoded server stats
-
-## Example Responses
-
-### Simple String (PING → PONG)
-
-```json
-{
-  "actions": [
-    {
-      "type": "redis_simple_string",
-      "value": "PONG"
-    }
-  ]
-}
-```
-
-### Bulk String (GET mykey)
-
-```json
-{
-  "actions": [
-    {
-      "type": "redis_bulk_string",
-      "value": "myvalue"
-    }
-  ]
-}
-```
-
-### Integer (INCR counter)
-
-```json
-{
-  "actions": [
-    {
-      "type": "redis_integer",
-      "value": 42
-    }
-  ]
-}
-```
-
-### Array (KEYS *)
-
-```json
-{
-  "actions": [
-    {
-      "type": "redis_array",
-      "values": ["key1", "key2", "key3"]
-    }
-  ]
-}
-```
-
-### Null (GET nonexistent)
-
-```json
-{
-  "actions": [
-    {
-      "type": "redis_null"
-    }
-  ]
-}
-```
-
-### Error (INVALID command)
-
-```json
-{
-  "actions": [
-    {
-      "type": "redis_error",
-      "message": "ERR unknown command"
-    }
-  ]
-}
-```
+Prefer a script or static handler for anything deterministic — every command
+otherwise costs one model round-trip.
 
 ## References
 
-- [RESP2 Protocol Specification](https://redis.io/docs/reference/protocol-spec/)
+- [RESP2 specification](https://redis.io/docs/reference/protocol-spec/)
 - [redis-protocol crate](https://docs.rs/redis-protocol/)
-- [redis-rs client](https://docs.rs/redis/) - used in tests
-- [Redis Commands Reference](https://redis.io/commands/)
+- [redis-rs](https://docs.rs/redis/) — used by the E2E tests
