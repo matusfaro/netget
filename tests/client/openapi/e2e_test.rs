@@ -19,11 +19,10 @@ mod openapi_client_tests {
             std::fs::read_to_string(&spec_path).expect("Failed to read test-api.yaml");
 
         // Start an HTTP server to act as the OpenAPI backend
-        let server_config = NetGetConfig::new(
-            "Listen on port 0 via HTTP. Respond to GET /users with user list.",
-        )
-        .with_mock(|mock| {
-            mock
+        let server_config =
+            NetGetConfig::new("Listen on port 0 via HTTP. Respond to GET /users with user list.")
+                .with_mock(|mock| {
+                    mock
                 // Mock 1: Server startup
                 .on_instruction_containing("Listen on port")
                 .and_instruction_containing("HTTP")
@@ -50,7 +49,7 @@ mod openapi_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-        });
+                });
 
         let server = start_netget_server(server_config).await?;
 
