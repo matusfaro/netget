@@ -4,9 +4,19 @@
 # This script will:
 # 1. Run the prompt tests to generate .actual.snap.md files
 # 2. Update all snapshots with the new versions
+#
+# IMPORTANT: The snapshot-comparing tests in tests/prompt/mod.rs are
+# feature-gated to `tcp,http,proxy,ssh,sqlite` (the exact combination the
+# checked-in snapshots were generated with - see the DETERMINISM HELPERS
+# comment at the top of tests/prompt/mod.rs). Regenerating with a different
+# feature set (e.g. plain `cargo test`, which defaults to `all-protocols`)
+# would bake a different, much larger protocol list into the snapshots and
+# break every other feature-set-limited run. Always regenerate with exactly
+# this feature set.
 
 SNAPSHOTS_DIR="$(dirname "$0")/snapshots"
 SCRIPT_DIR="$(dirname "$0")"
+PROMPT_FEATURES="tcp,http,proxy,ssh,sqlite"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Prompt Snapshot Update Script"
@@ -14,7 +24,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Step 1: Run tests to generate .actual.snap.md files
-echo "Step 1: Running prompt tests to generate snapshots..."
+echo "Step 1: Running prompt tests to generate snapshots (--features $PROMPT_FEATURES)..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -23,7 +33,8 @@ cd "$SCRIPT_DIR/../.."
 
 # Run tests and capture exit code
 set +e  # Don't exit on error
-cargo test --test prompt
+./cargo-isolated.sh test --no-default-features --features "$PROMPT_FEATURES" \
+    --test prompt -- --test-threads=100
 test_exit_code=$?
 set -e  # Re-enable exit on error
 

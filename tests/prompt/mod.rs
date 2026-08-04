@@ -4,18 +4,91 @@
 //! When prompts change, review the diff to ensure it's intentional.
 
 use netget::llm::actions::Protocol;
+#[allow(unused_imports)] // only used by tests gated behind the tcp+http+proxy+ssh+sqlite combo
 use netget::llm::PromptBuilder;
 use netget::state::app_state::AppState;
 use netget::state::server::{ServerInstance, ServerStatus};
 use netget::state::ServerId;
+use regex::Regex;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 #[path = "../snapshot_util.rs"]
 mod snapshot_util;
 
 const SNAPSHOT_DIR: &str = "tests/prompt/snapshots";
 
+// ============================================================================
+// DETERMINISM HELPERS
+//
+// Two independent sources of non-determinism affected this suite:
+//
+// 1. Feature-set dependence: the "Available Protocols" / "Available Base
+//    Stacks" sections and the sqlite-gated create_database/execute_sql/
+//    list_databases/delete_database actions enumerate whatever protocols
+//    happen to be compiled in. That's real, meaningful prompt content (not
+//    noise), so instead of textually normalizing it away, the snapshot-
+//    comparing tests below carry
+//    `#[cfg(all(feature = "tcp", feature = "http", feature = "proxy", feature = "ssh", feature = "sqlite"))]`
+//    to only compile under the exact feature combination the checked-in
+//    snapshots were generated with (see `tests/prompt/update_snapshots.sh`).
+//    Under any other feature set they don't exist as tests, so `cargo test`
+//    reports fewer tests rather than failures - a clean skip instead of a
+//    wall of diff noise. (E.g. the CI feature set in
+//    .github/workflows/ci.yml lacks proxy/ssh/sqlite, so these tests are
+//    absent - not failing - there; `test_json_parse_retry_prompt`,
+//    `test_unknown_action_retry_prompt`, and `test_protocol_documentation_prompt`
+//    have no such feature-sensitive content and remain ungated.)
+//
+// 2. Environment dependence: `SystemCapabilities` (src/privilege.rs) probes
+//    the *host* at runtime (root / CAP_NET_RAW / whether privileged ports
+//    are bindable), independent of feature flags. `AppState` has no setter
+//    to inject a fixed value (only `set_scripting_env` exists, no
+//    `set_system_capabilities`), so there is no seam to construct a fixed
+//    state through from this test crate. We normalize the two System
+//    Capabilities lines that embed this host-dependent text before
+//    comparing against the snapshot. See `normalize_capabilities` below.
+// ============================================================================
+
+/// Replace the host-dependent "System Capabilities" lines with a fixed
+/// placeholder so snapshot comparisons don't depend on whether the test
+/// process happens to run as root or with CAP_NET_RAW.
+///
+/// This is a workaround for a missing `src/` seam: `AppState` detects
+/// `SystemCapabilities` once at construction (`SystemCapabilities::detect()`
+/// in `AppState::new_with_options`) and exposes only `get_system_capabilities`,
+/// with no `set_system_capabilities` to inject a fixed value the way
+/// `set_scripting_env` already allows for the scripting environment. Adding
+/// that setter (mirroring `set_scripting_env` in src/state/app_state.rs) is
+/// the proper fix; until then, this text-level normalization keeps the
+/// suite deterministic regardless of who runs it.
+fn normalize_capabilities(prompt: &str) -> String {
+    static PRIVILEGED_PORTS_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^- \*\*Privileged ports \(<1024\)\*\*: .*$").unwrap());
+    static RAW_SOCKET_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^- \*\*Raw socket access\*\*: .*$").unwrap());
+
+    let prompt = PRIVILEGED_PORTS_RE.replace_all(
+        prompt,
+        "- **Privileged ports (<1024)**: <normalized: host-dependent, see normalize_capabilities>",
+    );
+    let prompt = RAW_SOCKET_RE.replace_all(
+        &prompt,
+        "- **Raw socket access**: <normalized: host-dependent, see normalize_capabilities>",
+    );
+    prompt.into_owned()
+}
+
+/// Snapshot assertion for rendered prompts: normalizes host-dependent
+/// content (see `normalize_capabilities`) before delegating to the shared
+/// snapshot utility.
+fn assert_prompt_snapshot(test_name: &str, prompt: &str) {
+    let normalized = normalize_capabilities(prompt);
+    snapshot_util::assert_snapshot(test_name, SNAPSHOT_DIR, &normalized);
+}
+
 /// Helper to create test app state with a proxy server (no scripting)
+#[allow(dead_code)] // only used by tests gated behind the tcp+http+proxy+ssh+sqlite combo
 async fn create_test_state_with_proxy() -> Arc<AppState> {
     let state = Arc::new(AppState::new());
 
@@ -51,6 +124,13 @@ async fn create_test_state_with_proxy() -> Arc<AppState> {
     state
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_user_input_prompt_proxy_server() {
     let state = create_test_state_with_proxy().await;
@@ -59,7 +139,6 @@ async fn test_user_input_prompt_proxy_server() {
     // Get proxy async actions
     #[cfg(feature = "proxy")]
     let protocol_actions = {
-        
         use netget::server::ProxyProtocol;
         let protocol = ProxyProtocol::new();
         protocol.get_async_actions(&state)
@@ -76,7 +155,7 @@ async fn test_user_input_prompt_proxy_server() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("user_input_prompt_proxy_server", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("user_input_prompt_proxy_server", &prompt);
 
     // Sanity checks
     assert!(prompt.contains("Server #1") || prompt.contains("Server"));
@@ -119,6 +198,13 @@ async fn test_user_input_prompt_proxy_server() {
     }
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_user_input_prompt() {
     // Create state WITHOUT any servers to trigger base_stack documentation
@@ -142,7 +228,7 @@ async fn test_user_input_prompt() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("user_input_prompt", &prompt);
 
     // CRITICAL: In the initial prompt (before docs are read), base stacks and scripting
     // sections are NOT shown - they only appear after documentation has been fetched.
@@ -194,6 +280,13 @@ async fn test_user_input_prompt() {
     );
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_user_input_prompt_after_docs_read() {
     // Create state and mark protocols as documented
@@ -225,8 +318,8 @@ async fn test_user_input_prompt_after_docs_read() {
         &state,
         vec![],
         None,
-        true,  // is_open_server_enabled
-        true,  // is_open_client_enabled
+        true, // is_open_server_enabled
+        true, // is_open_client_enabled
     )
     .await;
     let prompt = format!(
@@ -235,7 +328,7 @@ async fn test_user_input_prompt_after_docs_read() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("user_input_prompt_after_docs", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("user_input_prompt_after_docs", &prompt);
 
     // open_server should be ENABLED (have parameters, not marked as DISABLED)
     // The action should have a "port" parameter which is only present when enabled
@@ -274,6 +367,13 @@ async fn test_user_input_prompt_after_docs_read() {
     );
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_user_input_prompt_no_scripting() {
     // Create state WITHOUT any servers to trigger base_stack documentation
@@ -301,7 +401,7 @@ async fn test_user_input_prompt_no_scripting() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("user_input_prompt_without_scripting", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("user_input_prompt_without_scripting", &prompt);
 
     // Sanity checks - should NOT include scripting section (but scheduled_tasks param mentions scripts)
     assert!(
@@ -337,6 +437,13 @@ async fn test_user_input_prompt_no_scripting() {
     );
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_user_input_prompt_without_web_search() {
     // Create state WITHOUT any servers to trigger base_stack documentation
@@ -365,11 +472,7 @@ async fn test_user_input_prompt_without_web_search() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot(
-        "user_input_prompt_without_web_search",
-        SNAPSHOT_DIR,
-        &prompt,
-    );
+    assert_prompt_snapshot("user_input_prompt_without_web_search", &prompt);
 
     // Sanity checks - should NOT include web_search references
     assert!(
@@ -394,6 +497,13 @@ async fn test_user_input_prompt_without_web_search() {
     );
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_network_event_prompt_for_proxy() {
     let state = create_test_state_with_proxy().await;
@@ -404,7 +514,7 @@ async fn test_network_event_prompt_for_proxy() {
     #[cfg(feature = "proxy")]
     let all_actions = {
         use netget::llm::actions::get_network_event_common_actions;
-        
+
         use netget::server::ProxyProtocol;
 
         let protocol = ProxyProtocol::new();
@@ -431,7 +541,7 @@ async fn test_network_event_prompt_for_proxy() {
     let prompt = format!("{}\n\nTrigger: {}", system_prompt, event_message);
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("network_event_prompt_proxy", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("network_event_prompt_proxy", &prompt);
 
     // Sanity checks
     assert!(prompt.contains("NetGet"));
@@ -450,6 +560,13 @@ async fn test_network_event_prompt_for_proxy() {
     }
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_retry_mechanism_prompt() {
     // Test that retry mechanism includes previous error in prompt
@@ -490,7 +607,7 @@ async fn test_retry_mechanism_prompt() {
         netget::llm::PromptBuilder::build_task_execution_prompt(&state, &task, vec![]).await;
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("retry_mechanism_prompt", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("retry_mechanism_prompt", &prompt);
 
     // Sanity checks
     assert!(prompt.contains("PREVIOUS EXECUTION ERROR"));
@@ -508,7 +625,7 @@ async fn test_json_parse_retry_prompt() {
     let prompt = netget::llm::PromptBuilder::build_retry_prompt(error);
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("json_parse_retry_prompt", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("json_parse_retry_prompt", &prompt);
 
     // Sanity checks - verify key elements are present
     assert!(prompt.contains("Invalid Response Format"));
@@ -527,11 +644,13 @@ async fn test_unknown_action_retry_prompt() {
         "close_server".to_string(),
         "show_message".to_string(),
     ];
-    let prompt =
-        netget::llm::PromptBuilder::build_unknown_action_retry_prompt(&unknown_actions, &available_actions);
+    let prompt = netget::llm::PromptBuilder::build_unknown_action_retry_prompt(
+        &unknown_actions,
+        &available_actions,
+    );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("unknown_action_retry_prompt", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("unknown_action_retry_prompt", &prompt);
 
     // Sanity checks
     assert!(prompt.contains("Unknown Action"));
@@ -570,7 +689,7 @@ async fn test_protocol_documentation_prompt() {
         );
 
         // Assert snapshot
-        snapshot_util::assert_snapshot("protocol_http_documentation", SNAPSHOT_DIR, &doc);
+        assert_prompt_snapshot("protocol_http_documentation", &doc);
 
         // Sanity checks
         assert!(doc.contains("HTTP"));
@@ -602,7 +721,7 @@ async fn test_protocol_documentation_prompt() {
         );
 
         // Assert snapshot
-        snapshot_util::assert_snapshot("protocol_ssh_documentation", SNAPSHOT_DIR, &doc);
+        assert_prompt_snapshot("protocol_ssh_documentation", &doc);
 
         // Sanity checks
         assert!(doc.contains("SSH"));
@@ -666,6 +785,13 @@ async fn test_multi_protocol_documentation_examples() {
     );
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_feedback_prompt_server() {
     let state = Arc::new(AppState::new());
@@ -684,7 +810,8 @@ async fn test_feedback_prompt_server() {
         ServerId::new(1),
         8080,
         "HTTP".to_string(),
-        "You are an HTTP server. Respond to GET/POST requests with appropriate status codes.".to_string(),
+        "You are an HTTP server. Respond to GET/POST requests with appropriate status codes."
+            .to_string(),
     );
     server.status = ServerStatus::Running;
     server.memory = "request_count: 15\nerror_count: 3".to_string();
@@ -756,7 +883,7 @@ async fn test_feedback_prompt_server() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("feedback_prompt_server", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("feedback_prompt_server", &prompt);
 
     // Sanity checks
     assert!(prompt.contains("server"));
@@ -771,6 +898,13 @@ async fn test_feedback_prompt_server() {
     assert!(prompt.contains("update_instruction") || prompt.contains("Available"));
 }
 
+#[cfg(all(
+    feature = "tcp",
+    feature = "http",
+    feature = "proxy",
+    feature = "ssh",
+    feature = "sqlite"
+))]
 #[tokio::test]
 async fn test_feedback_prompt_client() {
     let state = Arc::new(AppState::new());
@@ -826,12 +960,8 @@ async fn test_feedback_prompt_client() {
     use netget::llm::actions::get_user_input_common_actions;
     let selected_mode = state.get_selected_scripting_mode().await;
     let scripting_env = state.get_scripting_env().await;
-    let available_actions = get_user_input_common_actions(
-        selected_mode,
-        &scripting_env,
-        true,
-        true,
-    );
+    let available_actions =
+        get_user_input_common_actions(selected_mode, &scripting_env, true, true);
 
     // Build feedback prompt for client
     let system_prompt = PromptBuilder::build_feedback_system_prompt(
@@ -852,7 +982,7 @@ async fn test_feedback_prompt_client() {
     );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("feedback_prompt_client", SNAPSHOT_DIR, &prompt);
+    assert_prompt_snapshot("feedback_prompt_client", &prompt);
 
     // Sanity checks
     assert!(prompt.contains("client"));

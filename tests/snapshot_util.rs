@@ -43,6 +43,8 @@ pub fn assert_snapshot(test_name: &str, snapshot_dir: &str, actual: &str) {
         // Write actual output for comparison
         fs::write(&actual_path, actual).expect("Failed to write actual snapshot");
 
+        let diff = first_diff_region(&expected, actual);
+
         // Print diff instructions
         eprintln!("\n╔══════════════════════════════════════════════════════════════╗");
         eprintln!(
@@ -59,7 +61,16 @@ pub fn assert_snapshot(test_name: &str, snapshot_dir: &str, actual: &str) {
             actual_path
         );
         eprintln!("╠══════════════════════════════════════════════════════════════╣");
-        eprintln!("║ To review the difference:                                    ║");
+        eprintln!(
+            "║ First differing region (line {}):                            ",
+            diff.first_diff_line
+        );
+        eprintln!("╠══════════════════════════════════════════════════════════════╣");
+        for line in &diff.rendered {
+            eprintln!("{}", line);
+        }
+        eprintln!("╠══════════════════════════════════════════════════════════════╣");
+        eprintln!("║ To review the full difference:                               ║");
         eprintln!("║   diff {} {}  ║", snapshot_path, actual_path);
         eprintln!("║                                                              ║");
         eprintln!("║ To accept the new snapshot:                                  ║");
@@ -67,11 +78,90 @@ pub fn assert_snapshot(test_name: &str, snapshot_dir: &str, actual: &str) {
         eprintln!("╚══════════════════════════════════════════════════════════════╝\n");
 
         panic!(
-            "Snapshot mismatch for '{}'\nExpected: {}\nActual: {}",
-            test_name, snapshot_path, actual_path
+            "Snapshot mismatch for '{}'\nExpected: {}\nActual: {}\n\nFirst differing region (line {}):\n{}",
+            test_name,
+            snapshot_path,
+            actual_path,
+            diff.first_diff_line,
+            diff.rendered.join("\n"),
         );
     } else {
         // Clean up any stale .actual.snap file
         let _ = fs::remove_file(&actual_path);
+    }
+}
+
+/// A small, self-contained rendering of the first place two snapshot texts diverge.
+struct DiffRegion {
+    /// 1-based line number of the first differing line (relative to `expected`).
+    first_diff_line: usize,
+    /// Pre-formatted `-`/`+` lines ready to print, with a couple of lines of
+    /// unchanged context before the divergence.
+    rendered: Vec<String>,
+}
+
+/// Find and render the first differing region between two snapshot texts.
+///
+/// This is intentionally a minimal line-oriented diff (not a full LCS diff):
+/// it walks both texts line-by-line until they diverge, then prints a little
+/// context plus a bounded window of the differing lines from each side. That
+/// is enough to see *where* and *how* a snapshot changed without needing to
+/// manually run `diff` on the two files.
+fn first_diff_region(expected: &str, actual: &str) -> DiffRegion {
+    const CONTEXT_LINES: usize = 2;
+    const MAX_DIFF_LINES: usize = 15;
+
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+
+    // Find the first index where the two line sequences differ.
+    let common_len = expected_lines.len().min(actual_lines.len());
+    let mut first_diff_idx = common_len;
+    for i in 0..common_len {
+        if expected_lines[i] != actual_lines[i] {
+            first_diff_idx = i;
+            break;
+        }
+    }
+
+    let mut rendered = Vec::new();
+    let context_start = first_diff_idx.saturating_sub(CONTEXT_LINES);
+    for line in expected_lines
+        .iter()
+        .take(first_diff_idx)
+        .skip(context_start)
+    {
+        rendered.push(format!("  {}", line));
+    }
+
+    let expected_end = (first_diff_idx + MAX_DIFF_LINES).min(expected_lines.len());
+    for line in &expected_lines[first_diff_idx..expected_end] {
+        rendered.push(format!("- {}", line));
+    }
+    if expected_end < expected_lines.len() {
+        rendered.push(format!(
+            "  … ({} more expected line(s) omitted)",
+            expected_lines.len() - expected_end
+        ));
+    }
+
+    let actual_end = (first_diff_idx + MAX_DIFF_LINES).min(actual_lines.len());
+    for line in &actual_lines[first_diff_idx.min(actual_lines.len())..actual_end] {
+        rendered.push(format!("+ {}", line));
+    }
+    if actual_end < actual_lines.len() {
+        rendered.push(format!(
+            "  … ({} more actual line(s) omitted)",
+            actual_lines.len() - actual_end
+        ));
+    }
+
+    if rendered.is_empty() {
+        rendered.push("  (texts differ only in trailing whitespace/newline)".to_string());
+    }
+
+    DiffRegion {
+        first_diff_line: first_diff_idx + 1,
+        rendered,
     }
 }
