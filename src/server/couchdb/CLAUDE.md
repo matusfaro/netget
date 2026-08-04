@@ -78,11 +78,12 @@ CouchDB-compatible server implementing the CouchDB HTTP/JSON REST API. The serve
 4. Detect operation from method + path (e.g., PUT + "/{db}/{docid}" → doc_put)
 5. Parse database name, document ID, and query parameters from path
 6. Create `COUCHDB_REQUEST_EVENT` with method, path, operation, body
-7. Call LLM via `call_llm()` with event and protocol
+7. Call LLM via `call_llm()` (which first tries any script/static handler, so those cost no
+   model call)
 8. Process action result:
    - `couchdb_response`: Build HTTP response with status/body/etag
 9. If no action, return default JSON `{"ok": true}`
-10. Close connection (HTTP/1.1 without keep-alive)
+10. Keep the connection open for further requests
 
 ### Operation Detection
 
@@ -163,7 +164,12 @@ HTTP Basic Authentication support:
 - **Header format**: `Authorization: Basic base64(username:password)`
 - **Validation**: Base64 decode and compare credentials
 - **Challenges**: `WWW-Authenticate: Basic realm="CouchDB"` on 401
-- **LLM awareness**: LLM receives auth status in event, can grant/deny operations
+- **LLM awareness**: the event carries `authorization` as the literal string `"***"` when a
+  header was present and `null` when it was not — deliberately redacted, so the LLM can see
+  *that* credentials were sent but cannot see them and cannot validate them. Basic-auth
+  enforcement happens in `handle_couchdb_request_with_llm` before the LLM is consulted; when
+  `enable_auth` is false every request is served unconditionally. `send_auth_required` lets
+  the LLM issue its own 401 challenge on top of that
 
 ### Changes Feed
 
@@ -203,10 +209,13 @@ Simplified replication support:
 ### Action-Based Responses
 
 **Sync Actions** (network event context required):
-- `send_couchdb_response`: Generic response with status, body, optional etag
+- `send_couchdb_response`: Generic response — `status_code` (required, rejected outside
+  100-599), `body` (required), optional `etag`
 - `send_server_info`: Server welcome/version info (GET /)
 - `send_db_info`: Database information (doc count, update_seq)
-- `send_doc_response`: Document response (GET/PUT/POST/DELETE) with revision
+- `send_doc_response`: Document response (GET/PUT/POST/DELETE) with revision. Set
+  `"created": true` on a PUT/POST that stored a document so the reply is 201 Created, as
+  real CouchDB answers; reads and deletes stay 200
 - `send_all_dbs`: List of all databases
 - `send_all_docs`: List of all documents in database
 - `send_bulk_docs_response`: Bulk operation results
@@ -237,6 +246,7 @@ body='{"ok": true}'
 ```
 For PUT /mydb/user1 with body {"name": "Alice"}, use send_doc_response with:
 success=true
+created=true
 doc_id="user1"
 rev="1-abc123"
 Remember this document in mydb: user1 = {"name": "Alice", "_id": "user1", "_rev": "1-abc123"}
@@ -302,18 +312,19 @@ For any request without valid auth (when auth enabled), use send_auth_required w
 
 1. Server accepts TCP connection on port 5984
 2. Create `ConnectionId` for tracking
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::CouchDb`
+3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::empty()` (that type is a
+   generic `serde_json::Value` wrapper, not a per-protocol enum)
 4. Spawn HTTP service handler
-5. `http1::Builder` serves single request
-6. Connection closed after response sent
+5. `http1::Builder::serve_connection` serves the connection, including keep-alive
+6. Connection closed when the client closes it
 
 ### State Tracking
 
 - Connection state stored in `ServerInstance.connections` HashMap
-- Protocol-specific: Minimal (stateless HTTP)
-- Tracks: remote_addr, local_addr, bytes_sent/received
-- Status: Active → Closed after each request
-- HTTP/1.1 without keep-alive (new connection per request)
+- No protocol-specific connection state is recorded
+- Tracks: remote_addr, local_addr. `bytes_sent`/`bytes_received` are initialised to 0 and
+  never updated
+- Status: Active → Closed when the connection ends
 
 ### Concurrency
 
@@ -329,16 +340,21 @@ For any request without valid auth (when auth enabled), use send_auth_required w
 - **No persistent storage** - data only exists in LLM conversation context
 - **Simplified authentication** - basic auth only, no cookie auth or JWT
 - **HTTP/1.1 only** - no HTTP/2 support
-- **No keep-alive** - new connection per request
-- **No streaming** - full request/response buffering (except continuous changes)
+- **No streaming** - full request/response buffering; a `continuous` changes feed is
+  answered as a single body, not streamed
 - **Simplified views** - LLM simulates MapReduce, no real JavaScript engine
 - **No reduce functions** - only map functions in views
-- **No attachments** - binary attachment support deferred
+- **No attachment actions** - `GET|PUT|DELETE /{db}/{docid}/{attachment}` *are* detected and
+  reach the LLM as `attachment_get`/`attachment_put`/`attachment_delete`, but there is no
+  action that returns binary attachment content. The only reply available is
+  `send_couchdb_response` with a JSON body, so attachment requests cannot be served
+  faithfully
 - **No Mango queries** - only views and `_all_docs`
 - **Simplified replication** - not full CouchDB replication protocol
 - **No Fauxton** - no web UI (CouchDB admin interface)
 - **No partitioned databases** - single partition only
-- **No purge** - document purging not implemented
+- **No purge action** - `POST /{db}/_purge` is detected and reaches the LLM as `purge`, but
+  has no dedicated action; answer it with `send_couchdb_response`
 
 ### Performance
 
@@ -364,7 +380,8 @@ For any request without valid auth (when auth enabled), use send_auth_required w
 4. **Continuous changes**: Streaming changes feed requires long-lived connections
 5. **Replication fidelity**: Not 100% compatible with CouchDB replication protocol
 6. **Revision hashes**: Not cryptographic - LLM generates pseudo-random strings
-7. **Attachments**: Binary data not yet supported (would need base64 encoding)
+7. **Attachments**: routed to the LLM but unanswerable — see Limitations
+8. **Basic auth comparison** is a plain `==` on the decoded credentials, not constant-time
 
 ## Example Responses
 

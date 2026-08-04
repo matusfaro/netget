@@ -234,6 +234,15 @@ fn send_doc_response_action() -> ActionDefinition {
                 required: false,
             },
             Parameter {
+                name: "created".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Set true when this request stored a document - CouchDB answers \
+                              PUT /{db}/{docid} and POST /{db} with 201 Created, not 200. Leave \
+                              it out (or false) for GET and DELETE, which answer 200"
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
                 name: "error".to_string(),
                 type_hint: "string".to_string(),
                 description: "Error type (conflict, not_found, etc.)".to_string(),
@@ -251,7 +260,8 @@ fn send_doc_response_action() -> ActionDefinition {
             "success": true,
             "doc_id": "user1",
             "rev": "1-abc123",
-            "document": {"name": "Alice", "age": 30}
+            "document": {"name": "Alice", "age": 30},
+            "created": false
         }),
         log_template: Some(
             LogTemplate::new()
@@ -483,6 +493,34 @@ fn send_auth_required_action() -> ActionDefinition {
     }
 }
 
+/// Read and validate the model-supplied `status_code`.
+///
+/// The old `as u64 as u16` cast wrapped silently, and out-of-range values reached
+/// `Response::builder().status()` where an `.unwrap()` turned them into a panic that
+/// killed the connection task. Reject them here, where the message reaches the model.
+fn parse_status_code(action: &Value) -> Result<u16> {
+    let raw = action
+        .get("status_code")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code: expected a number"))?;
+
+    if !(100..=599).contains(&raw) {
+        return Err(anyhow::anyhow!(
+            "Invalid status_code {raw}: must be an HTTP status between 100 and 599. CouchDB \
+             uses 200 for success, 201 when a database or document is created, 404 when it \
+             does not exist and 409 when a document _rev does not match."
+        ));
+    }
+
+    Ok(raw as u16)
+}
+
+/// Serialize a response body. Serializing a `serde_json::Value` cannot fail, so the
+/// fallback is unreachable - it exists only to keep this off the panic path.
+fn body_of(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
 pub fn get_couchdb_event_types() -> Vec<EventType> {
     vec![COUCHDB_REQUEST_EVENT.clone()]
 }
@@ -679,11 +717,7 @@ impl Server for CouchDbProtocol {
 
         match action_type {
             "send_couchdb_response" => {
-                let status_code = action
-                    .get("status_code")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))?
-                    as u16;
+                let status_code = parse_status_code(&action)?;
 
                 let body = action
                     .get("body")
@@ -732,7 +766,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -778,7 +812,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -818,11 +852,19 @@ impl Server for CouchDbProtocol {
                         })
                     };
 
+                    // CouchDB answers a stored document with 201 Created; only reads and
+                    // deletes are 200. Answering 201 as 200 makes a client that branches on
+                    // the status treat a successful write as an unrecognised outcome.
+                    let created = action
+                        .get("created")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
                     Ok(ActionResult::Custom {
                         name: "couchdb_response".to_string(),
                         data: json!({
-                            "status": 200,
-                            "body": serde_json::to_string_pretty(&response).unwrap(),
+                            "status": if created { 201 } else { 200 },
+                            "body": body_of(&response),
                             "etag": format!("\"{}\"", rev)
                         }),
                     })
@@ -855,7 +897,7 @@ impl Server for CouchDbProtocol {
                         name: "couchdb_response".to_string(),
                         data: json!({
                             "status": status,
-                            "body": serde_json::to_string_pretty(&response).unwrap()
+                            "body": body_of(&response)
                         }),
                     })
                 }
@@ -869,7 +911,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&databases).unwrap()
+                        "body": body_of(databases)
                     }),
                 })
             }
@@ -893,7 +935,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -906,7 +948,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 201,
-                        "body": serde_json::to_string_pretty(&results).unwrap()
+                        "body": body_of(results)
                     }),
                 })
             }
@@ -932,7 +974,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -958,7 +1000,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -984,7 +1026,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -1003,7 +1045,7 @@ impl Server for CouchDbProtocol {
                     name: "couchdb_response".to_string(),
                     data: json!({
                         "status": 401,
-                        "body": serde_json::to_string_pretty(&response).unwrap(),
+                        "body": body_of(&response),
                         "www_authenticate": format!("Basic realm=\"{}\"", realm)
                     }),
                 })

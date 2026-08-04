@@ -69,14 +69,9 @@ impl CouchDbServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!(
-                            "CouchDB connection {} from {}",
-                            connection_id, remote_addr
-                        );
-                        let _ = status_tx.send(format!(
-                            "[INFO] CouchDB connection from {}",
-                            remote_addr
-                        ));
+                        info!("CouchDB connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx
+                            .send(format!("[INFO] CouchDB connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -154,11 +149,7 @@ impl CouchDbServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(
-                            status_tx,
-                            "Failed to accept CouchDB connection: {}",
-                            e
-                        );
+                        console_error!(status_tx, "Failed to accept CouchDB connection: {}", e);
                         break;
                     }
                 }
@@ -230,11 +221,7 @@ async fn handle_couchdb_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(
-                status_tx,
-                "Failed to read CouchDB request body: {}",
-                e
-            );
+            console_error!(status_tx, "Failed to read CouchDB request body: {}", e);
             Bytes::new()
         }
     };
@@ -309,31 +296,31 @@ async fn handle_couchdb_request_with_llm(
                                 data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
                             let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
                             let etag = data.get("etag").and_then(|v| v.as_str());
-                            let www_authenticate = data.get("www_authenticate").and_then(|v| v.as_str());
+                            let www_authenticate =
+                                data.get("www_authenticate").and_then(|v| v.as_str());
 
                             debug!("CouchDB response: status={}", status);
-                            let _ = status_tx
-                                .send(format!("[DEBUG] CouchDB → {} response", status));
-                            trace!("CouchDB response body: {}", body);
                             let _ =
-                                status_tx.send(format!("[TRACE] CouchDB response: {}", body));
+                                status_tx.send(format!("[DEBUG] CouchDB → {} response", status));
+                            trace!("CouchDB response body: {}", body);
+                            let _ = status_tx.send(format!("[TRACE] CouchDB response: {}", body));
 
-                            let mut response_builder = Response::builder()
-                                .status(status)
-                                .header("Content-Type", "application/json")
-                                .header("Server", "CouchDB/3.5.1 (NetGet LLM)");
+                            let mut builder = couchdb_response_builder(status);
 
                             if let Some(etag_value) = etag {
-                                response_builder = response_builder.header("ETag", etag_value);
+                                builder = header_or_skip(builder, "ETag", etag_value);
                             }
 
                             if let Some(www_auth) = www_authenticate {
-                                response_builder = response_builder.header("WWW-Authenticate", www_auth);
+                                builder =
+                                    header_or_skip(builder, "WWW-Authenticate", www_auth);
                             }
 
-                            return Ok(response_builder
+                            return Ok(builder
                                 .body(Full::new(Bytes::from(body.to_string())))
-                                .unwrap());
+                                .unwrap_or_else(|_| {
+                                    Response::new(Full::new(Bytes::from(r#"{"ok":true}"#)))
+                                }));
                         }
                     }
                     _ => {
@@ -349,12 +336,9 @@ async fn handle_couchdb_request_with_llm(
             })
             .to_string();
 
-            Ok(Response::builder()
-                .status(200)
-                .header("Content-Type", "application/json")
-                .header("Server", "CouchDB/3.5.1 (NetGet LLM)")
+            Ok(couchdb_response_builder(200)
                 .body(Full::new(Bytes::from(default_response)))
-                .unwrap())
+                .unwrap_or_else(|_| Response::new(Full::new(Bytes::from(r#"{"ok":true}"#)))))
         }
         Err(e) => {
             console_error!(status_tx, "LLM error for CouchDB request: {}", e);
@@ -365,21 +349,57 @@ async fn handle_couchdb_request_with_llm(
             })
             .to_string();
 
-            Ok(Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json")
-                .header("Server", "CouchDB/3.5.1 (NetGet LLM)")
+            Ok(couchdb_response_builder(500)
                 .body(Full::new(Bytes::from(error_response)))
-                .unwrap())
+                .unwrap_or_else(|_| Response::new(Full::new(Bytes::from(r#"{"ok":false}"#)))))
+        }
+    }
+}
+
+/// Start a CouchDB response with the standard headers and a validated status.
+///
+/// `status` originates in model output. `Response::builder().status()` rejects anything
+/// outside 100-999 and the previous `.unwrap()` turned that into a panic, killing the
+/// hyper connection task and leaving the client waiting on a socket that never answers.
+/// `CouchDbProtocol::execute_action` already rejects out-of-range values with a message the
+/// model sees; this is the belt-and-braces path.
+fn couchdb_response_builder(status: u16) -> hyper::http::response::Builder {
+    let status = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!("Invalid CouchDB status code {}, sending 500 instead", status);
+        hyper::StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .header("Server", "CouchDB/3.5.1 (NetGet LLM)")
+}
+
+/// Attach a header whose value came from model output.
+///
+/// `ETag` carries a document revision and `WWW-Authenticate` an auth realm, both chosen by
+/// the model. `HeaderValue` rejects control characters and non-ASCII bytes, which
+/// `Builder::body()` reports as an error - previously `.unwrap()`ed into a panic. Skip the
+/// header instead and say so in the log.
+fn header_or_skip(
+    builder: hyper::http::response::Builder,
+    name: &'static str,
+    value: &str,
+) -> hyper::http::response::Builder {
+    match hyper::header::HeaderValue::from_str(value) {
+        Ok(v) => builder.header(name, v),
+        Err(_) => {
+            error!(
+                "Dropping CouchDB {} header: {:?} is not a valid HTTP header value",
+                name, value
+            );
+            builder
         }
     }
 }
 
 /// Detect CouchDB operation from HTTP method and path
-fn detect_couchdb_operation(
-    method: &str,
-    path: &str,
-) -> (String, Option<String>, Option<String>) {
+fn detect_couchdb_operation(method: &str, path: &str) -> (String, Option<String>, Option<String>) {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
     match (method, parts.as_slice()) {
