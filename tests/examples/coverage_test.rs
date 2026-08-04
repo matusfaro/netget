@@ -191,8 +191,11 @@ fn example_test_count_testable_examples() {
 fn example_test_core_protocols_have_tests() {
     let tested = get_tested_protocols();
 
-    // Core protocols that MUST have tests
-    let core_protocols = vec![
+    // Core protocols that MUST have tests.
+    // Explicitly typed: every element is feature-gated, so under a feature set
+    // that enables none of them the vec is empty and its element type cannot be
+    // inferred (E0282). That is not hypothetical — `--features telnet` alone hits it.
+    let core_protocols: Vec<&str> = vec![
         #[cfg(feature = "tcp")]
         "TCP",
         #[cfg(feature = "http")]

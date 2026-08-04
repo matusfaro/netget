@@ -66,6 +66,9 @@ async fn stopping_telnet_server_releases_tcp_port() {
         state.clone(),
         status_tx,
         server_id,
+        // send_first: this test only checks that stopping releases the port,
+        // so no connect-time banner is wanted.
+        false,
     )
     .await
     .expect("telnet server should start");
