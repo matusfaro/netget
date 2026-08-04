@@ -35,7 +35,6 @@ impl ElasticsearchServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
         let listener =
@@ -250,12 +249,7 @@ async fn handle_elasticsearch_request_with_llm(
                             let _ =
                                 status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
 
-                            return Ok(Response::builder()
-                                .status(status)
-                                .header("Content-Type", "application/json; charset=UTF-8")
-                                .header("X-elastic-product", "Elasticsearch")
-                                .body(Full::new(Bytes::from(body.to_string())))
-                                .unwrap());
+                            return Ok(build_es_response(status, body.to_string()));
                         }
                     }
                     _ => {
@@ -271,12 +265,7 @@ async fn handle_elasticsearch_request_with_llm(
             })
             .to_string();
 
-            Ok(Response::builder()
-                .status(200)
-                .header("Content-Type", "application/json; charset=UTF-8")
-                .header("X-elastic-product", "Elasticsearch")
-                .body(Full::new(Bytes::from(default_response)))
-                .unwrap())
+            Ok(build_es_response(200, default_response))
         }
         Err(e) => {
             console_error!(status_tx, "LLM error for Elasticsearch request: {}", e);
@@ -294,14 +283,33 @@ async fn handle_elasticsearch_request_with_llm(
             })
             .to_string();
 
-            Ok(Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json; charset=UTF-8")
-                .header("X-elastic-product", "Elasticsearch")
-                .body(Full::new(Bytes::from(error_response)))
-                .unwrap())
+            Ok(build_es_response(500, error_response))
         }
     }
+}
+
+/// Build an Elasticsearch JSON response.
+///
+/// `status` originates in model output. `Response::builder().status()` rejects anything
+/// outside 100-999 and the previous `.unwrap()` turned that into a panic, killing the
+/// hyper connection task and leaving the client waiting on a socket that never answers.
+/// `ElasticsearchProtocol::execute_action` already rejects out-of-range values with a
+/// message the model sees; this is the belt-and-braces path.
+fn build_es_response(status: u16, body: String) -> Response<Full<Bytes>> {
+    let status = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!(
+            "Invalid Elasticsearch status code {}, sending 500 instead",
+            status
+        );
+        hyper::StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json; charset=UTF-8")
+        .header("X-elastic-product", "Elasticsearch")
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|_| Response::new(Full::new(Bytes::from("{}"))))
 }
 
 /// Detect Elasticsearch operation from HTTP method and path

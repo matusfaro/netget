@@ -403,15 +403,12 @@ pub fn get_elasticsearch_event_types() -> Vec<EventType> {
 // Implement Protocol trait (common functionality)
 impl Protocol for ElasticsearchProtocol {
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-                crate::llm::actions::ParameterDefinition {
-                    name: "send_first".to_string(),
-                    type_hint: "boolean".to_string(),
-                    description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
-                    required: false,
-                    example: serde_json::json!(false),
-                },
-            ]
+        // Deliberately empty. `send_first` used to be declared here and was even parsed in
+        // `spawn()`, but it arrived at `ElasticsearchServer::spawn_with_llm_actions` as
+        // `_send_first` and was discarded - a client cannot be spoken to before it sends an
+        // HTTP request anyway. Undeclaring it makes `server_startup` log an explicit
+        // "does not support send_first" warning instead of silently accepting it.
+        vec![]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // No async actions for Elasticsearch currently
@@ -425,6 +422,7 @@ impl Protocol for ElasticsearchProtocol {
             send_get_response_action(),
             send_bulk_response_action(),
             send_cluster_info_action(),
+            send_cluster_health_action(),
         ]
     }
     fn protocol_name(&self) -> &'static str {
@@ -518,20 +516,11 @@ impl Server for ElasticsearchProtocol {
     > {
         Box::pin(async move {
             use crate::server::elasticsearch::ElasticsearchServer;
-            let send_first = ctx
-                .startup_params
-                .as_ref()
-                .map(|p| p.get_optional_bool("send_first"))
-                .transpose()?
-                .flatten()
-                .unwrap_or(false);
-
             ElasticsearchServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
-                send_first,
                 ctx.server_id,
             )
             .await
@@ -545,11 +534,7 @@ impl Server for ElasticsearchProtocol {
 
         match action_type {
             "send_elasticsearch_response" => {
-                let status_code = action
-                    .get("status_code")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))?
-                    as u16;
+                let status_code = parse_status_code(&action)?;
 
                 let body = action
                     .get("body")
@@ -600,7 +585,7 @@ impl Server for ElasticsearchProtocol {
                     name: "elasticsearch_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -638,7 +623,7 @@ impl Server for ElasticsearchProtocol {
                     name: "elasticsearch_response".to_string(),
                     data: json!({
                         "status": if result == "created" { 201 } else { 200 },
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -685,7 +670,7 @@ impl Server for ElasticsearchProtocol {
                     name: "elasticsearch_response".to_string(),
                     data: json!({
                         "status": if found { 200 } else { 404 },
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -709,7 +694,7 @@ impl Server for ElasticsearchProtocol {
                     name: "elasticsearch_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
                     }),
                 })
             }
@@ -718,11 +703,6 @@ impl Server for ElasticsearchProtocol {
                     .get("cluster_name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("llm-elasticsearch");
-
-                let _status = action
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("green");
 
                 let version = action
                     .get("version")
@@ -751,7 +731,62 @@ impl Server for ElasticsearchProtocol {
                     name: "elasticsearch_response".to_string(),
                     data: json!({
                         "status": 200,
-                        "body": serde_json::to_string_pretty(&response).unwrap()
+                        "body": body_of(&response)
+                    }),
+                })
+            }
+            "send_cluster_health" => {
+                let cluster_name = action
+                    .get("cluster_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("llm-elasticsearch");
+
+                let status = action
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("green");
+
+                if !matches!(status, "green" | "yellow" | "red") {
+                    return Err(anyhow::anyhow!(
+                        "Invalid cluster health status {status:?}: Elasticsearch defines exactly \
+                         three values - \"green\", \"yellow\" and \"red\". Clients branch on this \
+                         string, so an unknown value is treated as an unusable cluster."
+                    ));
+                }
+
+                let number_of_nodes = action
+                    .get("number_of_nodes")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1);
+
+                let active_shards = action
+                    .get("active_shards")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+
+                let response = serde_json::json!({
+                    "cluster_name": cluster_name,
+                    "status": status,
+                    "timed_out": false,
+                    "number_of_nodes": number_of_nodes,
+                    "number_of_data_nodes": number_of_nodes,
+                    "active_primary_shards": active_shards,
+                    "active_shards": active_shards,
+                    "relocating_shards": 0,
+                    "initializing_shards": 0,
+                    "unassigned_shards": 0,
+                    "delayed_unassigned_shards": 0,
+                    "number_of_pending_tasks": 0,
+                    "number_of_in_flight_fetch": 0,
+                    "task_max_waiting_in_queue_millis": 0,
+                    "active_shards_percent_as_number": 100.0
+                });
+
+                Ok(ActionResult::Custom {
+                    name: "elasticsearch_response".to_string(),
+                    data: json!({
+                        "status": 200,
+                        "body": body_of(&response)
                     }),
                 })
             }

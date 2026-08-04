@@ -64,11 +64,13 @@ maintains data and search results through conversation context.
 3. Detect operation from method + path (e.g., GET + "/_search" → search)
 4. Parse index name and document ID from path
 5. Create `ELASTICSEARCH_REQUEST_EVENT` with method, path, operation, body
-6. Call LLM via `call_llm()` with event and protocol
+6. Call LLM via `call_llm()` (which first tries any script/static handler, so those cost no
+   model call)
 7. Process action result:
-    - `elasticsearch_response`: Build HTTP response with status/body
+    - `ActionResult::Custom { name: "elasticsearch_response", .. }`: Build HTTP response
+      with status/body
 8. If no action, return default JSON `{"acknowledged": true}`
-9. Close connection (HTTP/1.1 without keep-alive)
+9. Keep the connection open for further requests
 
 ### Operation Detection
 
@@ -79,7 +81,9 @@ maintains data and search results through conversation context.
 - **Delete document** (`DELETE /{index}/_doc/{id}`) → delete
 - **Bulk operations** (`POST|PUT /_bulk` or `/{index}/_bulk`) → bulk
 - **Index management** (`PUT|DELETE|GET /{index}`) → create_index, delete_index, index_info
-- **Cluster operations** (`GET /_cluster/health`, `/_cluster/stats`) → cluster_health, cluster_stats
+- **Cluster operations** (`GET /_cluster/health`, `/_cluster/stats`) → cluster_health
+  (answer with `send_cluster_health`), cluster_stats (answer with
+  `send_elasticsearch_response`)
 - **Cat API** (`GET /_cat/{endpoint}`) → cat_*
 
 ### Response Format
@@ -95,9 +99,37 @@ maintains data and search results through conversation context.
 
 ### Action-Based Responses
 
-**Sync Actions** (network event context required):
+**Sync Actions** (network event context required) — these are the action names the model
+emits. `elasticsearch_response` is the *internal* `ActionResult::Custom` name every one of
+them produces; it is **not** an action name the model may emit.
 
-- `elasticsearch_response`: Return HTTP response with status and body
+- `send_elasticsearch_response` — `status_code` (number, required), `body` (string,
+  required). The escape hatch for endpoints with no dedicated action (`_cat/*`, index
+  management, deletes). `status_code` outside 100-599 is rejected.
+- `send_search_response` — `hits` (array, required), `total` (number), `took` (number).
+  Wraps `hits` in the full `{took, timed_out, _shards, hits:{total:{value,relation},
+  max_score, hits}}` envelope; the model supplies only the inner hit documents.
+- `send_index_response` — `index`, `id`, `result` (`"created"` or `"updated"`). Emits
+  `_index/_id/_version/result/_shards/_seq_no/_primary_term`, and answers 201 for
+  `"created"`, 200 otherwise.
+- `send_get_response` — `found` (bool, required), `index`, `id`, `source` (object).
+  Emits the `_source` envelope and answers 200 when found, 404 when not.
+- `send_bulk_response` — `items` (array, required), `errors` (bool). Wraps as
+  `{took, errors, items}`.
+- `send_cluster_info` — `cluster_name`, `version`. Answers the root endpoint (`GET /`)
+  with the node/version banner. It carries **no** cluster status.
+- `send_cluster_health` — `cluster_name`, `status` (`green`/`yellow`/`red`, validated),
+  `number_of_nodes`, `active_shards`. Answers `GET /_cluster/health`.
+
+The generic actions (`show_message`, memory operations, …) are supplied centrally by
+`get_network_event_common_actions()`.
+
+### Startup Parameters
+
+**None.** `get_startup_parameters()` returns an empty list. `send_first` was declared here
+and even parsed in `spawn()`, but arrived at the server as `_send_first` and was discarded -
+there is nothing to send before a client issues an HTTP request. Passing it now produces an
+explicit "does not support send_first" warning instead of being silently accepted.
 
 **Event Types**:
 
@@ -110,48 +142,48 @@ maintains data and search results through conversation context.
 **Root endpoint** (cluster info):
 
 ```
-For GET / request, use elasticsearch_response with:
-status=200
+For GET / request, use send_elasticsearch_response with:
+status_code=200
 body='{"name":"netget-node","cluster_name":"netget","version":{"number":"8.0.0"},"tagline":"You Know, for Search"}'
 ```
 
 **Search operation**:
 
 ```
-For POST /products/_search with query match_all, use elasticsearch_response with:
-status=200
+For POST /products/_search with query match_all, use send_elasticsearch_response with:
+status_code=200
 body='{"hits":{"total":{"value":2},"hits":[{"_index":"products","_id":"1","_source":{"name":"Widget"}},{"_index":"products","_id":"2","_source":{"name":"Gadget"}}]}}'
 ```
 
 **Index document**:
 
 ```
-For PUT /products/_doc/1, use elasticsearch_response with:
-status=201
+For PUT /products/_doc/1, use send_elasticsearch_response with:
+status_code=201
 body='{"_index":"products","_id":"1","_version":1,"result":"created"}'
 ```
 
 **Get document**:
 
 ```
-For GET /products/_doc/123, use elasticsearch_response with:
-status=200
+For GET /products/_doc/123, use send_elasticsearch_response with:
+status_code=200
 body='{"_index":"products","_id":"123","found":true,"_source":{"name":"Widget","price":19.99}}'
 ```
 
 **Delete document**:
 
 ```
-For DELETE /products/_doc/123, use elasticsearch_response with:
-status=200
+For DELETE /products/_doc/123, use send_elasticsearch_response with:
+status_code=200
 body='{"_index":"products","_id":"123","_version":2,"result":"deleted"}'
 ```
 
 **Error responses**:
 
 ```
-For GET /products/_doc/nonexistent, use elasticsearch_response with:
-status=404
+For GET /products/_doc/nonexistent, use send_elasticsearch_response with:
+status_code=404
 body='{"_index":"products","_id":"nonexistent","found":false}'
 ```
 
@@ -161,18 +193,19 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 
 1. Server accepts TCP connection on port 9200
 2. Create `ConnectionId` for tracking
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Elasticsearch`
+3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::empty()` (that type is a
+   generic `serde_json::Value` wrapper, not a per-protocol enum)
 4. Spawn HTTP service handler
-5. `http1::Builder` serves single request
-6. Connection closed after response sent
+5. `http1::Builder::serve_connection` serves the connection, including keep-alive
+6. Connection closed when the client closes it
 
 ### State Tracking
 
 - Connection state stored in `ServerInstance.connections` HashMap
-- Protocol-specific: `recent_requests` Vec (method, path, time)
-- Tracks: remote_addr, local_addr, bytes_sent/received
-- Status: Active → Closed after each request
-- HTTP/1.1 without keep-alive (new connection per request)
+- No protocol-specific connection state is recorded; there is no `recent_requests` list
+- Tracks: remote_addr, local_addr. `bytes_sent`/`bytes_received` are initialised to 0 and
+  never updated
+- Status: Active → Closed when the connection ends
 
 ### Concurrency
 
@@ -188,7 +221,6 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 - **No persistent storage** - data only exists in LLM conversation context
 - **No authentication** - no security features
 - **HTTP/1.1 only** - no HTTP/2 support
-- **No keep-alive** - new connection per request
 - **No streaming** - full request/response buffering
 - **Limited operations** - only common REST API operations supported
 - **No aggregations** - advanced aggregation queries not implemented
@@ -228,8 +260,8 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 {
   "actions": [
     {
-      "type": "elasticsearch_response",
-      "status": 200,
+      "type": "send_elasticsearch_response",
+      "status_code": 200,
       "body": "{\"name\":\"netget\",\"cluster_name\":\"netget-cluster\",\"version\":{\"number\":\"8.0.0\"},\"tagline\":\"You Know, for Search\"}"
     }
   ]
@@ -242,8 +274,8 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 {
   "actions": [
     {
-      "type": "elasticsearch_response",
-      "status": 200,
+      "type": "send_elasticsearch_response",
+      "status_code": 200,
       "body": "{\"hits\":{\"total\":{\"value\":2},\"hits\":[{\"_id\":\"1\",\"_source\":{\"name\":\"Widget\"}}]}}"
     }
   ]
@@ -256,8 +288,8 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 {
   "actions": [
     {
-      "type": "elasticsearch_response",
-      "status": 201,
+      "type": "send_elasticsearch_response",
+      "status_code": 201,
       "body": "{\"_index\":\"products\",\"_id\":\"1\",\"result\":\"created\"}"
     }
   ]
@@ -270,8 +302,8 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 {
   "actions": [
     {
-      "type": "elasticsearch_response",
-      "status": 404,
+      "type": "send_elasticsearch_response",
+      "status_code": 404,
       "body": "{\"_index\":\"products\",\"_id\":\"999\",\"found\":false}"
     }
   ]
