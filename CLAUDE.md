@@ -93,9 +93,18 @@ never decoded, so a model following the documentation puts literal ASCII on the 
 Inbound data *is* hex-encoded when non-printable, so the round-trip is asymmetric. When you
 touch a protocol, verify its documented encoding matches its executor.
 
-**Protocols must not implement storage** — no databases, filesystems, or persistence inside a
-protocol. The LLM supplies all data via actions, scripts, static responses, or server memory.
-MySQL has no tables; the model answers every query.
+**Protocols must not implement storage** — no databases, filesystems, or persistence written
+into a protocol's Rust implementation. The LLM supplies all data via actions, scripts, static
+responses, or server memory. MySQL has no tables; the model answers every query.
+
+The sanctioned exception is the generic SQLite facility (`src/state/sqlite.rs`, feature
+`sqlite`, included in `all-protocols` and therefore in default builds). The LLM can call
+`create_database` / `execute_sql` / `list_databases` / `delete_database` at runtime, scoped to
+a server, a client, or globally. The point of the rule is that storage is a *generic runtime
+capability the model opts into*, never something a protocol hardcodes. Two caveats worth
+knowing: `create_database` defaults to **file-backed**, writing `./netget_db_<name>.db` into
+the process's working directory, and server/client-scoped databases are deleted when their
+owner closes while global ones persist.
 
 ### Privilege model
 
