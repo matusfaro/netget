@@ -8,10 +8,13 @@ configuration. The LLM controls DHCP DISCOVER/OFFER/REQUEST/ACK flow using struc
 **Status**: Beta (Core Protocol)
 **RFC**: RFC 2131 (DHCP), RFC 2132 (DHCP Options)
 **Port**: 67 (server), 68 (client) - UDP
+**Privilege**: declares `PrivilegeRequirement::PrivilegedPort(67)`; any port above 1023 needs none.
+**Test coverage**: `tests/server/dhcp/test.rs` (the file is `test.rs`, not `e2e_test.rs`) — three
+mocked scenarios building DISCOVER/REQUEST packets by hand.
 
 ## Library Choices
 
-- **dhcproto v0.11** - DHCP protocol parsing and construction
+- **dhcproto v0.12** - DHCP protocol parsing and construction
     - Used for parsing DHCP messages (DISCOVER, REQUEST, etc.)
     - Used for constructing DHCP responses (OFFER, ACK, NAK)
     - Handles binary DHCP wire format
@@ -36,19 +39,32 @@ The LLM responds to DHCP requests with semantic actions:
 
 Each action includes network configuration parameters (IP, subnet mask, router, DNS servers, lease time).
 
-### 2. Request Context Preservation
+### 2. Request Context Preservation (correlation)
 
 DHCP responses must echo specific fields from the request:
 
-- Transaction ID (xid) - Matches request to response
-- Client hardware address (chaddr) - Client's MAC address
-- Message type - DISCOVER → OFFER, REQUEST → ACK
+- **Transaction ID (xid)** — the client matches replies by it and silently drops anything else, so
+  a wrong xid presents as a timeout, not an error
+- **Client hardware address (chaddr)** — who the reply is for
+- **Relay address (giaddr)** — a relayed client only sees the reply if this comes back
+- **Broadcast flag** — RFC 2131 4.1 says answer the way the client asked
+- Message type — Discover → Offer, Request → Ack
 
-**Implementation**: `DhcpRequestContext` stored in Arc<Mutex<Option<...>>>
+**Implementation**: `DhcpRequestContext { xid, chaddr, message_type, ciaddr, giaddr, broadcast,
+requested_ip }` held in an `Arc<Mutex<Option<…>>>` on the protocol instance, and **a fresh
+`DhcpProtocol` instance is created per received datagram** in the socket loop.
 
-- Set when request is parsed
-- Accessed during action execution
-- Contains: xid, chaddr, message_type, ciaddr, requested_ip
+That last part is load-bearing. The instance used to be created once per server and shared by every
+request, while each request set the context and then awaited an LLM call lasting seconds — so two
+overlapping clients would overwrite each other's xid and both get a reply addressed to the wrong
+transaction. One instance per datagram removes the shared slot entirely.
+
+The offer/ack/nak actions also accept explicit `xid` and `client_mac` parameters, which override the
+context for replies built out of band (a script answering from stored state, say). Omitting them —
+the normal case — echoes the request.
+
+The event exposes `xid`, `client_ip` and `gateway_ip` so a script or static handler can see the
+correlation values even though it does not have to supply them.
 
 ### 3. Stateless Per-Request Processing
 
@@ -66,10 +82,15 @@ Actions support common DHCP options:
 - Subnet Mask (option 1)
 - Router/Gateway (option 3)
 - DNS Servers (option 6)
+- Domain Name (option 15)
 - Lease Time (option 51)
-- Server Identifier (option 54)
+- Server Identifier (option 54), always set from `server_ip`
+- Message (option 56), NAK only
 
 Additional options can be added via raw `send_dhcp_response` action.
+
+An unparseable entry in `dns_servers` is an error rather than being skipped: shipping a shorter list
+than the caller asked for is worse than saying the value was wrong.
 
 ### 5. Dual Logging
 
@@ -81,10 +102,18 @@ Additional options can be added via raw `send_dhcp_response` action.
 
 Each DHCP request creates a "connection" entry:
 
-- Connection ID: Unique per request
-- Protocol info: `ProtocolConnectionInfo::Dhcp` with recent_requests list
-- Tracks message type and timestamp
-- Status: Active during processing
+- Connection ID: unique per request
+- Protocol info: `ProtocolConnectionInfo::empty()` — no DHCP-specific payload is attached
+- Records the peer address and byte/packet counts
+- Status: Active, and never reaped
+
+### 7. Malformed-Packet Handling
+
+`hlen` is an attacker-controlled byte and dhcproto does not validate it: `Message::chaddr()` slices
+a fixed `[u8; 16]` with it, so `hlen > 16` panics inside the library. That parse happens in the
+socket task, so the panic would take the whole listener down — one datagram, server gone, status
+still showing `Running`. `parse_dhcp_message` therefore checks `hlen` before touching `chaddr()`
+and drops the datagram with a warning. Keep any new field access behind the same check.
 
 ## LLM Integration
 
@@ -94,9 +123,16 @@ Each DHCP request creates a "connection" entry:
 
 Event parameters:
 
-- `message_type` (string) - DISCOVER, REQUEST, INFORM, RELEASE, etc.
-- `client_mac` (string) - Client MAC address (hex)
-- `requested_ip` (string, optional) - IP address client wants (if any)
+- `message_type` (string) - `Discover`, `Request`, `Inform`, `Release`, `Decline` … **capitalised,
+  not upper case**: it is dhcproto's `MessageType` Debug spelling. A handler comparing against
+  `'DISCOVER'` never matches
+- `client_mac` (string) - client hardware address as lower-case hex **without separators**
+  (`001122334455`, not `00:11:22:33:44:55`). Handlers and prompts that match on a MAC must use this
+  form; the reply actions' own `client_mac` parameter accepts either
+- `requested_ip` (string, optional) - address requested in option 50, if any
+- `client_ip` (string) - ciaddr, `0.0.0.0` unless the client already holds a lease
+- `xid` (number) - transaction id; echoed automatically by the reply actions
+- `gateway_ip` (string) - giaddr of the relay the request came through; echoed automatically
 
 ### Available Actions
 
@@ -130,7 +166,10 @@ Parameters:
 
 #### `send_dhcp_response` (Advanced)
 
-Send custom DHCP response packet as hex string.
+Send a complete packet as hex, at least 236 bytes. The field is decoded **strictly** as hex —
+whitespace, `:` separators and a leading `0x` are stripped, anything else that fails to decode
+returns an error instead of being sent as literal ASCII. Nothing is echoed into a raw packet, so the
+xid at bytes 4-7 must match the request or the client ignores it.
 
 #### `ignore_request`
 
@@ -191,18 +230,19 @@ NetGet implements both sides but doesn't enforce state machine - LLM decides res
 
 **Use Case**: Testing, honeypots, demonstrations. Not suitable for production DHCP server.
 
-### 2. No DHCP Relay Support
+### 2. Partial DHCP Relay Support
 
-- Doesn't handle DHCP relay agents (giaddr field)
-- No support for DHCP across subnets
-- Assumes direct client-server communication
+- The request's `giaddr` is parsed, exposed to the LLM and echoed into every reply, so a relayed
+  exchange is not broken by a zeroed field
+- But the reply is still sent back to the UDP source address of the request, not to giaddr:67 as a
+  real server would, and relay agent options (82) are ignored
 
 ### 3. Limited DHCP Options
 
 Action-based interface supports common options only:
 
-- Subnet Mask, Router, DNS, Lease Time
-- Missing: Domain Name, NTP servers, TFTP server, Boot file, etc.
+- Subnet Mask, Router, DNS, Domain Name, Lease Time, Server Identifier, Message
+- Missing: NTP servers, TFTP server/boot file, WINS, renewal/rebinding times (T1/T2), vendor options
 - Workaround: Use `send_dhcp_response` for custom options
 
 ### 4. No DHCP Decline/Release Tracking

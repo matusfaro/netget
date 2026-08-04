@@ -22,55 +22,19 @@ use actions::DhcpRequestContext;
 #[cfg(feature = "dhcp")]
 use dhcproto::{v4, Decodable, Decoder};
 
+/// Render a hardware address the way the `dhcp_request` event reports it: lower-case hex
+/// with no separators, e.g. `001122334455`.
+///
+/// This matches the format the BOOTP sibling and the E2E suites expect. The reply actions
+/// accept either this or the colon-separated form when `client_mac` is passed explicitly.
+pub fn format_mac(bytes: &[u8]) -> String {
+    hex::encode(bytes)
+}
+
 /// DHCP server that forwards requests to LLM
 pub struct DhcpServer;
 
 impl DhcpServer {
-    /// Spawn DHCP server with integrated LLM handling
-    pub async fn spawn_with_llm(
-        listen_addr: SocketAddr,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<SocketAddr> {
-        let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
-        let local_addr = socket.local_addr()?;
-        info!("DHCP server listening on {}", local_addr);
-
-        tokio::spawn(async move {
-            let mut buffer = vec![0u8; 1500]; // Standard MTU size
-
-            loop {
-                match socket.recv_from(&mut buffer).await {
-                    Ok((n, peer_addr)) => {
-                        let data = buffer[..n].to_vec();
-
-                        // DEBUG: Log summary
-                        console_debug!(status_tx, "DHCP received {} bytes from {}", n, peer_addr);
-
-                        // TRACE: Log full payload (always hex for DHCP)
-                        let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "DHCP data (hex): {}", hex_str);
-
-                        // Legacy method - no longer supported
-                        error!(
-                            "DHCP legacy spawn_with_llm is deprecated, use spawn_with_llm_actions"
-                        );
-                        let _ = status_tx.send(
-                            "✗ DHCP legacy mode no longer supported, please restart with action-based mode".to_string()
-                        );
-                    }
-                    Err(e) => {
-                        error!("DHCP receive error: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(local_addr)
-    }
-
     /// Spawn DHCP server with integrated LLM actions
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
@@ -83,8 +47,6 @@ impl DhcpServer {
         let local_addr = socket.local_addr()?;
         info!("DHCP server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] DHCP server listening on {}", local_addr));
-
-        let protocol = Arc::new(DhcpProtocol::new());
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -151,36 +113,71 @@ impl DhcpServer {
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let socket_clone = socket.clone();
-                        let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
+                            // One protocol instance per request. The instance carries the
+                            // request context (xid, chaddr, giaddr, broadcast flag) used to
+                            // build the reply, so two clients whose LLM calls overlap can
+                            // never echo each other's transaction ID.
+                            let protocol = DhcpProtocol::new();
+
                             #[cfg(feature = "dhcp")]
-                            if let Some((_, context)) = parsed_info.as_ref() {
-                                if let Some(ctx) = context {
-                                    protocol_clone.set_request_context(ctx.clone());
-                                }
+                            if let Some((_, Some(ctx))) = parsed_info.as_ref() {
+                                protocol.set_request_context(ctx.clone());
                             }
 
                             // Extract event data
                             #[cfg(feature = "dhcp")]
-                            let (message_type, client_mac, requested_ip) =
-                                if let Some((_, Some(ctx))) = &parsed_info {
-                                    (
-                                        format!("{:?}", ctx.message_type),
-                                        hex::encode(&ctx.chaddr),
-                                        ctx.requested_ip.map(|ip| ip.to_string()),
-                                    )
-                                } else {
-                                    ("unknown".to_string(), "unknown".to_string(), None)
-                                };
+                            let (
+                                message_type,
+                                client_mac,
+                                requested_ip,
+                                xid,
+                                client_ip,
+                                gateway_ip,
+                            ) = if let Some((_, Some(ctx))) = &parsed_info {
+                                (
+                                    format!("{:?}", ctx.message_type),
+                                    crate::server::dhcp::format_mac(&ctx.chaddr),
+                                    ctx.requested_ip.map(|ip| ip.to_string()),
+                                    Some(ctx.xid),
+                                    ctx.ciaddr.to_string(),
+                                    ctx.giaddr.to_string(),
+                                )
+                            } else {
+                                (
+                                    "unknown".to_string(),
+                                    "unknown".to_string(),
+                                    None,
+                                    None,
+                                    "0.0.0.0".to_string(),
+                                    "0.0.0.0".to_string(),
+                                )
+                            };
 
                             #[cfg(not(feature = "dhcp"))]
-                            let (message_type, client_mac, requested_ip) =
-                                ("unknown".to_string(), "unknown".to_string(), None::<String>);
+                            let (
+                                message_type,
+                                client_mac,
+                                requested_ip,
+                                xid,
+                                client_ip,
+                                gateway_ip,
+                            ) = (
+                                "unknown".to_string(),
+                                "unknown".to_string(),
+                                None::<String>,
+                                None::<u32>,
+                                "0.0.0.0".to_string(),
+                                "0.0.0.0".to_string(),
+                            );
 
                             let mut event_data = serde_json::json!({
                                 "message_type": message_type,
-                                "client_mac": client_mac
+                                "client_mac": client_mac,
+                                "xid": xid,
+                                "client_ip": client_ip,
+                                "gateway_ip": gateway_ip
                             });
                             if let Some(ip) = requested_ip {
                                 event_data["requested_ip"] = serde_json::json!(ip);
@@ -200,7 +197,7 @@ impl DhcpServer {
                                 server_id,
                                 None,
                                 &event,
-                                protocol_clone.as_ref(),
+                                &protocol,
                             )
                             .await
                             {
@@ -290,6 +287,18 @@ impl DhcpServer {
 
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {
+                // `hlen` is read straight off the wire without validation, and
+                // `Message::chaddr()` slices a fixed [u8; 16] with it - a datagram
+                // declaring hlen > 16 panics inside dhcproto. This runs in the socket
+                // task, so that panic would take the whole server down. Reject instead.
+                if msg.hlen() as usize > 16 {
+                    tracing::warn!(
+                        "Dropping DHCP datagram with invalid hlen {} (max 16)",
+                        msg.hlen()
+                    );
+                    return None;
+                }
+
                 // Extract message type from options
                 let message_type = msg.opts().get(v4::OptionCode::MessageType).and_then(|opt| {
                     if let v4::DhcpOption::MessageType(mt) = opt {
@@ -339,6 +348,8 @@ impl DhcpServer {
                     chaddr: msg.chaddr().to_vec(),
                     message_type: mt,
                     ciaddr: msg.ciaddr(),
+                    giaddr: msg.giaddr(),
+                    broadcast: msg.flags().broadcast(),
                     requested_ip,
                 });
 
