@@ -1,0 +1,150 @@
+name: CI
+
+# PR gate + push-to-master build. Mirrors release.yml's toolchain/caching
+# conventions but never builds --all-features (too slow/heavy for a gate,
+# and pulls in system libs CI runners lack - see CLAUDE.md). Uses a
+# representative protocol subset instead.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Representative subset covering TCP/UDP transports, an LLM-facing binary
+  # protocol (dns), the http/https stack, a line-based protocol (redis) and
+  # an MCP integration surface (mcp-stdio). Deliberately not --all-features:
+  # that's 3+ min / 3GB+ RAM and needs system libs (protoc, libpcap, dbus,
+  # libusb, pcsclite) this workflow does not install.
+  CI_FEATURES: tcp,http,dns,udp,redis,mcp-stdio
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint-${{ env.CI_FEATURES }}
+
+      # ADVISORY, not blocking: a full-repo `cargo fmt --check` currently
+      # reports diffs in ~2,700 spots across src/ and tests/ (verified
+      # 2026-08-04). Failing the gate on that today would block every PR
+      # for pre-existing debt unrelated to the change being reviewed.
+      # Runs so the diff is visible in logs; tighten (make blocking, or
+      # scope to changed files) once a repo-wide format pass lands.
+      - name: cargo fmt --check (advisory)
+        continue-on-error: true
+        run: |
+          echo "::notice::cargo fmt --check is advisory-only: the repo is not fmt-clean yet (~2,700 diffs as of 2026-08-04). This step reports but does not block. See job summary/logs for the diff."
+          cargo fmt --check
+
+      # BLOCKING, but narrowly scoped: a full default `cargo clippy` on
+      # CI_FEATURES currently emits ~50 warnings (redundant_closure,
+      # too_many_arguments, needless_return, new_without_default, etc.) -
+      # all style/complexity lints, verified 2026-08-04 against a clean
+      # checkout of master. None are clippy::correctness or
+      # clippy::suspicious lints, so denying just those two groups is
+      # green today and still catches real bugs (the kind of thing that
+      # would otherwise ship silently) rather than nothing at all.
+      - name: "cargo clippy (blocking: correctness + suspicious only)"
+        run: |
+          cargo clippy --locked --no-default-features --features "$CI_FEATURES" \
+            -- -D clippy::correctness -D clippy::suspicious
+
+      # ADVISORY: full default lint set (style/complexity/perf included),
+      # across lib + tests. Not blocking today because of the ~50 (lib) +
+      # more (tests) existing warnings noted above; kept here so warning
+      # counts are visible in CI and don't silently grow unnoticed while
+      # this gate is tightened over time.
+      - name: "cargo clippy (advisory: full default lints, incl. tests)"
+        continue-on-error: true
+        run: |
+          echo "::notice::Full clippy (default lints, --all-targets) is advisory-only today; only correctness/suspicious are enforced above."
+          cargo clippy --locked --no-default-features --features "$CI_FEATURES" --all-targets
+
+  test:
+    name: Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ env.CI_FEATURES }}
+
+      - name: cargo test
+        run: |
+          cargo test --locked --no-default-features --features "$CI_FEATURES" \
+            -- --test-threads=100
+
+  orphaned-tests:
+    name: Orphaned test check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guards a bug that silently cost this repo most of its test
+      # coverage: tests/server.rs and tests/client.rs only compile
+      # directories declared with `pub mod <name>;` in the sibling
+      # mod.rs. A directory present on disk but undeclared there is
+      # never compiled and never run - no error, no warning, just
+      # missing coverage (see IMPROVEMENTS.md #5/#6). This job fails
+      # the build the moment that happens again.
+      - name: Check for orphaned test directories
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          check_group() {
+            local label="$1" test_dir="$2" mod_file="$3"
+
+            if [ ! -f "$mod_file" ]; then
+              echo "::error::$mod_file not found"
+              return 1
+            fi
+
+            local declared
+            declared=$(grep -oE "pub mod [a-z0-9_]+" "$mod_file" | awk '{print $3}' | sort -u)
+
+            local on_disk
+            on_disk=$(ls -d "$test_dir"/*/ 2>/dev/null | sed "s|^$test_dir/||;s|/\$||" | sort -u)
+
+            local orphans
+            orphans=$(comm -23 <(echo "$on_disk") <(echo "$declared"))
+
+            if [ -n "$orphans" ]; then
+              echo "::error::Orphaned $label test director$(if [ "$(echo "$orphans" | wc -l)" = "1" ]; then echo y; else echo ies; fi) - present on disk under $test_dir/ but NOT declared in $mod_file, so cargo never compiles or runs them:"
+              echo "$orphans" | sed 's/^/    /'
+              echo
+              echo "Fix: add a feature-gated 'pub mod <name>;' line to $mod_file for each directory above, e.g.:"
+              echo '    #[cfg(feature = "<name>")]'
+              echo '    pub mod <name>;'
+              echo "If the directory is a leftover/stub with no real tests, delete it instead."
+              return 1
+            fi
+
+            echo "OK: every directory under $test_dir/ is declared in $mod_file."
+            return 0
+          }
+
+          status=0
+          check_group server tests/server tests/server/mod.rs || status=1
+          check_group client tests/client tests/client/mod.rs || status=1
+
+          exit $status
