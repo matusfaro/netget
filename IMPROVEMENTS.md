@@ -23,6 +23,16 @@ Delete an entry once its context is no longer useful.
 | 26 — script trust boundary undocumented | `65ed6bcf` | `src/scripting/CLAUDE.md` leads with the arbitrary-code-execution boundary |
 | Scheduled tasks could never act | `2789cb40` | Same empty-action-list bug as item 4, in the scheduled-task path; found while fixing item 4 |
 | Runtime prompt was 81% irrelevant | `73d334c8` | Dropped the handler-configuration tutorial from the per-event template: system prompt 11853 → 2219 chars, request 16377 → 8230 bytes |
+| 11 — MCP docs described the wrong API | `40907b06` | New `src/mcp_stdio/docs.rs` renders MCP-shaped docs (event field names, action schemas, startup params, privilege); `open_server`/`open_client`/`base_stack` no longer appear, asserted by a test |
+| 12 — no MCP client surface | `f1f25528` | `start_client`/`stop_client`/`list_clients`/`client_status`; client half of `list_protocols` now carries maturity and description |
+| 13 — `send_first` ignored | `de5d9e19` | Folded into `startup_params` for the 8 protocols that declare it; warns rather than silently ignoring elsewhere. `interface`, `mac_address`, `initial_memory`, `feedback_instructions`, `scheduled_tasks` also un-hardcoded |
+| 19 — ARP/ICMP absent from releases | `748fccca` | `arp` added to `dist-darwin`, `icmp` to `dist`; ICMP deliberately excluded from Windows, where `pnet` unconditionally links WinPcap |
+| — registry couldn't say "compiled out" | `d58854ca` | `resolve()` on both registries distinguishes not-compiled from unknown, with a did-you-mean suggestion (adoption pending, item 36) |
+| — unbounded `netget.log` | `c14c8b71`, `e3617126` | Size-based rotation (50 MiB × 5 generations ≈ 300 MiB ceiling), wired into `init_logging`; the repo's log had reached 481 MB in a day |
+| — clients unreachable by lowercase name | `f1f25528` | `CLIENT_REGISTRY` is keyed by each protocol's own casing and lookup was exact-match, so `protocol: "tcp"` failed. Also, `client_startup.rs` dropped its status receiver, silently discarding every client status message |
+| — VPN family misrepresented | `10f1e2b4`, `2bce6e64`, `f013c510` | OpenVPN demoted to `Incomplete` (identical keys for all peers, no TLS handshake) plus a TUN deadlock fix; WireGuard's advertised LLM control did not exist and now does; IPSec now actually calls the LLM |
+| — DNS answers rejected by real resolvers | `6a384617` | Responses carried no question section, so glibc/systemd-resolved/`dig` discarded them. Verified after the fix: `dig @127.0.0.1 example.com A` returns NOERROR with the question echoed and the transaction id matched |
+| — HTTP family defects | `3c414406`, `f2d4cf3e`, `e9eec1cb`, `e32cf485` | 204 responses were served as empty 200; a model status of 999 or a CRLF header panicked the connection task; HTTP/2's `request_filter` was accepted and silently ignored because the hyper path is dead code; HTTP/3 documented as the QUIC transport it actually is |
 
 Verified together end to end after landing: a Python script handler returning
 `{"data":"48454c4c4f","encoding":"hex"}` puts `HELLO` on the wire, with no LLM call.
@@ -470,6 +480,47 @@ mock helper should answer it centrally so every protocol's tests don't have to.
   all, so they are invisible to the connection list and to connection-scoped scheduled tasks.
 - `'secure dns'` is claimed as a keyword by both DoT and DoH; the collision is warned about at
   startup and never resolved.
+
+### 41. Action execution failures are swallowed **[verified]**
+
+`src/llm/actions/executor.rs:114` drops a protocol action whose executor returns an error with
+only a `warn!`. The peer then receives the protocol's default — an empty 200 for HTTP, nothing
+at all for TCP — and neither the MCP caller nor the access log learns the action failed; the
+log records it as though it ran. This is why the HTTP executor was deliberately made lenient
+rather than strict, and it is the same root cause as item 7. Fixing it properly means
+propagating action errors into the access log and the tool result.
+
+### 42. `http3` is the QUIC transport, not HTTP/3 **[static]**
+
+The server implements QUIC streams, not HTTP/3 semantics. Metadata and docs now say so
+(`e32cf485`), but two consequences remain: `Cargo.toml:240` pulls `h3`/`h3-quinn` into the
+`http3` feature although only `src/client/http3/` uses them, and NetGet's own HTTP/3 client
+therefore cannot talk to NetGet's own HTTP/3 server. Decide whether to implement HTTP/3 over
+the existing QUIC layer or rename the protocol to `quic`.
+
+### 43. `Http2Server` is dead code **[static]**
+
+`Http2Protocol::spawn()` calls `H2Server::spawn_with_push_support`, never the hyper-based
+`Http2Server` still re-exported at `src/server/mod.rs:64`. That dead path is why HTTP/2's
+`request_filter` was silently inert. Remove the re-export and the module.
+
+### 44. HTTP connection statistics are never updated **[static]**
+
+For all three HTTP protocols, `bytes_sent`, `bytes_received`, `packets_*`, `last_activity` and
+`recent_requests` keep their initial values, so the TUI's per-connection counters stay at zero
+and only connect/disconnect are visible. Needs accessors in `src/state/server.rs`.
+
+### 45. The mock harness misroutes the pre-`open_server` documentation step **[verified]**
+
+Reproduced at session-start commit `ea950dca` in a clean worktree, so this predates all of
+today's work. The documentation step forced before `open_server` produces a prompt whose text
+makes `tests/helpers/mock_ollama.rs` context extraction report `event_type: Some("http_request")`.
+An `instruction contains` rule therefore misses, an `on_event` rule matches instead, and
+`send_http_response` is returned to the *startup* call, which rejects it as an unknown action —
+so no server ever starts. This breaks all 10 `tests/server/http/*` tests, all 4 DNS tests, and
+7 in `tests/examples/`. It is the single highest-value test fix available: one change in the
+mock helper or the docs-gate flow turns several protocol suites green at once. Closely related
+to item 39.
 
 ---
 
