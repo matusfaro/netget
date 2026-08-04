@@ -37,6 +37,9 @@ Delete an entry once its context is no longer useful.
 | — DHCP correlation race across clients | udpinfra pass | `xid`/`chaddr` lived in one `Arc<Mutex<Option<_>>>` shared by the whole server, written just before a multi-second LLM call, so two overlapping clients echoed each other's transaction id |
 | — SNMP BER lengths wrapped at 256 | udpinfra pass | Every length used `0x81 + len as u8`, so any response ≥256 bytes (a long sysDescr, a multi-binding reply) produced a corrupt packet |
 | — Syslog filters could never match | udpinfra pass | `facility`/`severity` were emitted with `{:?}` as `log_kern`/`sev_err` while every doc and example prompt says `kern`/`err`. Numeric codes added alongside, which is how the docs describe filtering |
+| 5 — 76 orphaned test directories | `87e02967`, `84a4fb24`, `1e842bf0`, `9fd32787` | All 15 server and 61 client directories wired in; both orphan sets are now empty, so the CI gate added in `45b8bde4` passes |
+| 45 — mock harness misrouted the docs step | `98c54d4e` | Context extraction classified the *startup* call as an `http_request` event, because the documentation retry embeds `### Event: <id>` headings. Now classified on the prompt template rather than wording. **`--test server` 5/24 → 18/24, `server::tcp` 0/10 → 10/10, `server::dns` 0/4 → 4/4, `--test examples` 13/34 → 34/34, `--test client` 5/9 → 12/13** |
+| — tests phoning external endpoints | `da4c86f5` | The DoT and Git client tests connect to `dns.google:853`, `1.1.1.1:853` and `github.com`. Harmless while orphaned; wiring them in made the calls live, violating the localhost-only policy |
 | — HTTP family defects | `3c414406`, `f2d4cf3e`, `e9eec1cb`, `e32cf485` | 204 responses were served as empty 200; a model status of 999 or a CRLF header panicked the connection task; HTTP/2's `request_filter` was accepted and silently ignored because the hyper path is dead code; HTTP/3 documented as the QUIC transport it actually is |
 
 ### Independent verification after landing
@@ -581,6 +584,44 @@ DHCP client. The general shape — a parsing crate that trusts a length field th
 `kafka-protocol`, `cassandra-protocol`, `bson`, `pgwire`, `opensrv-mysql`) asking specifically
 which of their accessors panic on malformed input, since all of them run inside a socket task
 where a panic silently kills the server while its status still reads `Running`.
+
+### 49. The DNS client loops until the process overflows its stack **[verified]**
+
+`tests/client/dns/e2e_test.rs::test_dns_client_multiple_queries` drives the DNS **client**
+into an unbounded loop: it issued **211 LLM calls** and then netget died with a stack
+overflow. This is a client-side runaway, not a mock artifact — it surfaced only once the
+mock stopped failing every test before it got that far.
+
+Two things are wrong and both deserve fixing: whatever makes the client re-issue instead of
+terminating, and the absence of any ceiling on LLM calls per client session. Servers have the
+per-connection Idle/Processing/Accumulating machine to prevent re-entrancy; clients hand-roll
+their own (item 7 in spirit), and evidently one of them does not converge. A hard cap with a
+clear error beats an unbounded loop regardless of the root cause.
+
+### 50. Two overlapping documentation gates, one of them dead **[verified]**
+
+`REQUIRE_DOCS_FOR_OPEN_ACTIONS` (`src/events/handler.rs:20`) is a hardcoded `false` and only
+controls whether `open_server`/`open_client` appear in the action list. The gate that actually
+forces a `DocumentationRequired` retry is unconditional, at `src/events/handler.rs:807` and
+`:1223`. That retry costs a full extra model round-trip on the first `open_server` of every
+process, and it gives the model nothing: the handler already fetches the documentation itself
+and calls `mark_server_protocols_documented` before returning the error, so it could simply
+fall through and start the server.
+
+Gate both behind the existing flag. Note the flag is process-global — `is_server_docs_read()`
+returns `!documented_server_protocols.is_empty()` (`src/state/app_state.rs:728`) — so it fires
+once per process regardless of which protocol is being started.
+
+### 51. Remaining test failures after the mock fix **[verified]**
+
+All test-side, none in `src/`:
+- `server::http::test::{test_http_routing, test_http_error_responses}` key their mocks on
+  `event_data["uri"]`, but the HTTP event emits `path`.
+- `server::http::test::test_http_simple_get_with_logging` answers a network event with
+  `write_file`, which is not in HTTP's sync action set.
+- 3 × `server::http::e2e_scheduled_tasks_test` wait for the log line
+  `[TASK] Created one-shot task` while NetGet emits `[TASK] Scheduled one-shot task`
+  (`src/events/handler.rs:1237,1242`).
 
 ---
 
