@@ -26,34 +26,38 @@ impl DynamoProtocol {
 
 /// DynamoDB request event - triggered when a DynamoDB API request is received
 pub static DYNAMO_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dynamo_request", "DynamoDB API request received", json!({"type": "placeholder", "event_id": "dynamo_request"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "operation".to_string(),
-                type_hint: "string".to_string(),
-                description: "DynamoDB operation (GetItem, PutItem, Query, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "table_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Target table name (if available)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "request_body".to_string(),
-                type_hint: "string".to_string(),
-                description: "JSON request body".to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![send_dynamo_response_action(), show_message_action()])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("DynamoDB {operation}")
-                .with_debug("DynamoDB {operation} on {table_name}")
-                .with_trace("DynamoDB: {json_pretty(.)}"),
-        )
+    EventType::new(
+        "dynamo_request",
+        "DynamoDB API request received",
+        json!({"type": "placeholder", "event_id": "dynamo_request"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "operation".to_string(),
+            type_hint: "string".to_string(),
+            description: "DynamoDB operation (GetItem, PutItem, Query, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "table_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Target table name (if available)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "request_body".to_string(),
+            type_hint: "string".to_string(),
+            description: "JSON request body".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![send_dynamo_response_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("DynamoDB {operation}")
+            .with_debug("DynamoDB {operation} on {table_name}")
+            .with_trace("DynamoDB: {json_pretty(.)}"),
+    )
 });
 
 fn send_dynamo_response_action() -> ActionDefinition {
@@ -87,26 +91,26 @@ fn send_dynamo_response_action() -> ActionDefinition {
     }
 }
 
-fn show_message_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "show_message".to_string(),
-        description: "Display a message in the TUI output panel".to_string(),
-        parameters: vec![Parameter {
-            name: "message".to_string(),
-            type_hint: "string".to_string(),
-            description: "Message to display".to_string(),
-            required: true,
-        }],
-        example: serde_json::json!({
-            "type": "show_message",
-            "message": "Stored item in Users table"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> DynamoDB message: {message}")
-                .with_debug("DynamoDB show_message: message='{message}'"),
-        ),
+/// Read and validate the model-supplied `status_code`.
+///
+/// The old `as u64 as u16` cast wrapped silently, and out-of-range values reached
+/// `Response::builder().status()` where an `.unwrap()` turned them into a panic that
+/// killed the connection task. Reject them here, where the message reaches the model.
+fn parse_status_code(action: &Value) -> Result<u16> {
+    let raw = action
+        .get("status_code")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code: expected a number"))?;
+
+    if !(100..=599).contains(&raw) {
+        return Err(anyhow::anyhow!(
+            "Invalid status_code {raw}: must be an HTTP status between 100 and 599. \
+             DynamoDB uses 200 for success and 400 with an \
+             {{\"__type\": ..., \"message\": ...}} body for client errors."
+        ));
     }
+
+    Ok(raw as u16)
 }
 
 pub fn get_dynamo_event_types() -> Vec<EventType> {
@@ -231,11 +235,7 @@ impl Server for DynamoProtocol {
 
         match action_type {
             "send_dynamo_response" => {
-                let status_code = action
-                    .get("status_code")
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))?
-                    as u16;
+                let status_code = parse_status_code(&action)?;
 
                 let body = action
                     .get("body")

@@ -9,7 +9,7 @@ through conversation context rather than persistent storage.
 **Port**: 8000 (default DynamoDB local port)
 **Protocol**: HTTP/1.1 with JSON payloads
 **API Version**: DynamoDB_20120810
-**Stack Representation**: `ETH>IP>TCP>HTTP>DYNAMO`
+**Stack Representation**: `ETH>IP>TCP>HTTP>DYNAMODB`
 
 ## Library Choices
 
@@ -65,7 +65,8 @@ through conversation context rather than persistent storage.
 5. Create `DYNAMO_REQUEST_EVENT` with operation, table, body
 6. Call LLM via `call_llm()` with event and protocol
 7. Process action result:
-    - `dynamo_response`: Build HTTP response with status/body
+    - `ActionResult::Custom { name: "dynamo_response", .. }`: Build HTTP response with
+      status/body
 8. If no action, return empty JSON `{}`
 9. Close connection (HTTP/1.1 without keep-alive)
 
@@ -79,7 +80,8 @@ through conversation context rather than persistent storage.
 
 ### Response Format
 
-- Status: 200 (success), 400 (client error), 500 (server error)
+- Status: 200 (success), 400 (client error), 500 (server error). `send_dynamo_response`
+  rejects any `status_code` outside 100-599 rather than truncating it.
 - Headers:
     - `Content-Type: application/x-amz-json-1.0`
     - `x-amzn-RequestId: <hex-timestamp>`
@@ -92,7 +94,13 @@ through conversation context rather than persistent storage.
 
 **Sync Actions** (network event context required):
 
-- `dynamo_response`: Return HTTP response with status and body
+- `send_dynamo_response` — parameters `status_code` (number, required) and `body` (string,
+  required, a JSON document). This is the only protocol-specific action. `dynamo_response`
+  is the *internal* `ActionResult::Custom` name the server matches on; it is not an action
+  name the model may emit.
+
+The generic actions (`show_message`, memory operations, …) are supplied centrally by
+`get_network_event_common_actions()` and are available here too.
 
 **Event Types**:
 
@@ -104,32 +112,32 @@ through conversation context rather than persistent storage.
 **GetItem operation**:
 
 ```
-For GetItem on Users table with key {id: "user-123"}, use dynamo_response with:
-status=200
+For GetItem on Users table with key {id: "user-123"}, use send_dynamo_response with:
+status_code=200
 body='{"Item":{"id":{"S":"user-123"},"name":{"S":"Alice"},"email":{"S":"alice@example.com"}}}'
 ```
 
 **PutItem operation**:
 
 ```
-For PutItem on Users table, use dynamo_response with:
-status=200
+For PutItem on Users table, use send_dynamo_response with:
+status_code=200
 body='{}'
 ```
 
 **Query operation**:
 
 ```
-For Query on Users table, use dynamo_response with:
-status=200
+For Query on Users table, use send_dynamo_response with:
+status_code=200
 body='{"Items":[{"id":{"S":"user-123"},"name":{"S":"Alice"}}],"Count":1,"ScannedCount":1}'
 ```
 
 **Error responses**:
 
 ```
-For invalid operations, use dynamo_response with:
-status=400
+For invalid operations, use send_dynamo_response with:
+status_code=400
 body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 ```
 
@@ -139,18 +147,21 @@ body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 
 1. Server accepts TCP connection on port 8000
 2. Create `ConnectionId` for tracking
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Dynamo`
+3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::empty()` (that type is a
+   generic `serde_json::Value` wrapper, not a per-protocol enum)
 4. Spawn HTTP service handler
-5. `http1::Builder` serves single request
-6. Connection closed after response sent
+5. `http1::Builder::serve_connection` serves the connection, including keep-alive: a client
+   may send several requests over one connection
+6. Connection closed when the client closes it
 
 ### State Tracking
 
 - Connection state stored in `ServerInstance.connections` HashMap
-- Protocol-specific: `recent_operations` Vec (operation, table, time)
-- Tracks: remote_addr, local_addr, bytes_sent/received
-- Status: Active → Closed after each request
-- HTTP/1.1 without keep-alive (new connection per request)
+- No protocol-specific connection state is recorded (`ProtocolConnectionInfo::empty()`);
+  there is no `recent_operations` list
+- Tracks: remote_addr, local_addr. `bytes_sent`/`bytes_received` are initialised to 0 and
+  never updated
+- Status: Active → Closed when the connection ends
 
 ### Concurrency
 
@@ -166,7 +177,6 @@ body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 - **No persistent storage** - data only exists in LLM conversation context
 - **No authentication** - AWS signature verification not implemented
 - **HTTP/1.1 only** - no HTTP/2 support
-- **No keep-alive** - new connection per request
 - **No streaming** - full request/response buffering
 - **Limited operations** - only common CRUD operations supported
 - **No transactions** - no atomic multi-item operations
@@ -204,8 +214,8 @@ body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 {
   "actions": [
     {
-      "type": "dynamo_response",
-      "status": 200,
+      "type": "send_dynamo_response",
+      "status_code": 200,
       "body": "{\"Item\":{\"id\":{\"S\":\"user-123\"},\"name\":{\"S\":\"Alice\"}}}"
     }
   ]
@@ -218,8 +228,8 @@ body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 {
   "actions": [
     {
-      "type": "dynamo_response",
-      "status": 200,
+      "type": "send_dynamo_response",
+      "status_code": 200,
       "body": "{}"
     }
   ]
@@ -232,8 +242,8 @@ body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 {
   "actions": [
     {
-      "type": "dynamo_response",
-      "status": 200,
+      "type": "send_dynamo_response",
+      "status_code": 200,
       "body": "{\"Items\":[{\"id\":{\"S\":\"user-123\"}}],\"Count\":1}"
     }
   ]
@@ -246,8 +256,8 @@ body='{"__type":"ResourceNotFoundException","message":"Table not found"}'
 {
   "actions": [
     {
-      "type": "dynamo_response",
-      "status": 400,
+      "type": "send_dynamo_response",
+      "status_code": 400,
       "body": "{\"__type\":\"ResourceNotFoundException\",\"message\":\"Table not found\"}"
     }
   ]

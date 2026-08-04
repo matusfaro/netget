@@ -250,21 +250,7 @@ async fn handle_dynamo_request_with_llm(
                             trace!("DynamoDB response body: {}", body);
                             let _ = status_tx.send(format!("[TRACE] DynamoDB response: {}", body));
 
-                            // Generate a simple request ID using timestamp
-                            let request_id = format!(
-                                "{:x}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_nanos()
-                            );
-
-                            return Ok(Response::builder()
-                                .status(status)
-                                .header("Content-Type", "application/x-amz-json-1.0")
-                                .header("x-amzn-RequestId", request_id)
-                                .body(Full::new(Bytes::from(body.to_string())))
-                                .unwrap());
+                            return Ok(build_dynamo_response(status, body.to_string()));
                         }
                     }
                     _ => {
@@ -276,20 +262,7 @@ async fn handle_dynamo_request_with_llm(
             // No DynamoDB response found, return default OK with empty response
             debug!("No DynamoDB response from LLM, returning 200 OK with empty object");
 
-            let request_id = format!(
-                "{:x}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            );
-
-            Ok(Response::builder()
-                .status(200)
-                .header("Content-Type", "application/x-amz-json-1.0")
-                .header("x-amzn-RequestId", request_id)
-                .body(Full::new(Bytes::from("{}")))
-                .unwrap())
+            Ok(build_dynamo_response(200, "{}".to_string()))
         }
         Err(e) => {
             console_error!(status_tx, "LLM error for DynamoDB request: {}", e);
@@ -300,11 +273,37 @@ async fn handle_dynamo_request_with_llm(
                 "message": "Internal server error"
             });
 
-            Ok(Response::builder()
-                .status(500)
-                .header("Content-Type", "application/x-amz-json-1.0")
-                .body(Full::new(Bytes::from(error_response.to_string())))
-                .unwrap())
+            Ok(build_dynamo_response(500, error_response.to_string()))
         }
     }
+}
+
+/// Build an AWS-JSON response.
+///
+/// `status` originates in model output. `Response::builder().status()` rejects anything
+/// outside 100-999 and the previous `.unwrap()` turned that into a panic, killing the
+/// hyper connection task and leaving the client waiting on a socket that never answers.
+/// `DynamoProtocol::execute_action` already rejects out-of-range values with a message the
+/// model sees; this is the belt-and-braces path.
+fn build_dynamo_response(status: u16, body: String) -> Response<Full<Bytes>> {
+    let status = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!("Invalid DynamoDB status code {}, sending 500 instead", status);
+        hyper::StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    // Timestamp-derived request id, echoed in x-amzn-RequestId.
+    let request_id = format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/x-amz-json-1.0")
+        .header("x-amzn-RequestId", request_id)
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|_| Response::new(Full::new(Bytes::from("{}"))))
 }
