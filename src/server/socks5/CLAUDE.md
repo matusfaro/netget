@@ -126,8 +126,11 @@ Domain resolution performed by proxy, not client. This allows:
 ```
 
 - LLM can validate credentials against any policy (database, LDAP, custom logic)
-- ActionResult::NoAction = auth success
-- ActionResult::CloseConnection = auth failure
+- The decision is read from the **action name**: `allow_socks5_auth` permits,
+  `deny_socks5_auth` (or emitting neither) rejects. It used to be inferred from
+  "any result is `ActionResult::NoAction`", which several unrelated actions also
+  return, so an unrelated action could authorise the session.
+- **Fail closed**: an event that produces no decision action is denied
 
 **Connection Decision** (`SOCKS5_CONNECT_REQUEST_EVENT`):
 
@@ -151,6 +154,8 @@ Domain resolution performed by proxy, not client. This allows:
 
 - `mitm: true` → Enable MITM inspection for this connection
 - `mitm: false` → Fast pass-through mode
+- The decision is read from the action name (`allow_socks5_connect` /
+  `deny_socks5_connect`); an explicit deny wins, and no decision means deny
 
 **Data Inspection** (MITM mode only):
 
@@ -160,17 +165,15 @@ Domain resolution performed by proxy, not client. This allows:
 {
   "actions": [
     {
-      "type": "forward_socks5_data",
-      "data_base64": "...",
-      "message": "Allowed"
+      "type": "forward_socks5_data"
     },
     {
       "type": "modify_socks5_data",
-      "data_base64": "...",  // Modified data
-      "message": "Redacted sensitive info"
+      "data": "48656c6c6f",
+      "encoding": "hex"
     },
     {
-      "type": "close_socks5_connection",
+      "type": "close_connection",
       "reason": "Blocked malicious payload"
     }
   ]
@@ -179,27 +182,40 @@ Domain resolution performed by proxy, not client. This allows:
 
 `SOCKS5_DATA_FROM_TARGET_EVENT` (target → client): Same structure
 
+**There is no `data_base64` field and no `close_socks5_connection` action** — the
+earlier docs listed both. `modify_socks5_data` takes `data` plus an optional
+`encoding` (`"utf8"` default, or `"hex"`); base64 was documented but never decoded,
+so a base64 payload was relayed as its literal base64 text. The close action is
+named `close_connection`.
+
+**Binary payloads**: the event reports `data` together with an `encoding` field —
+printable payloads arrive as text (`"utf8"`), anything else arrives hex-encoded
+(`"hex"`). Previously the payload was pushed through `String::from_utf8_lossy`,
+which replaced every non-UTF-8 byte with U+FFFD and made binary traffic
+unrecoverable and unmodifiable.
+
 ### Event Types
 
 1. **`SOCKS5_AUTH_REQUEST_EVENT`**
     - Triggered: Username/password authentication phase
     - Context: username, password
-    - LLM decides: Allow (NoAction) or Deny (CloseConnection)
+    - LLM decides: `allow_socks5_auth` or `deny_socks5_auth` (no action = deny)
 
 2. **`SOCKS5_CONNECT_REQUEST_EVENT`**
     - Triggered: CONNECT request (if filter matches)
     - Context: target (host:port), username (if authenticated)
-    - LLM decides: Allow (with optional MITM), Deny
+    - LLM decides: `allow_socks5_connect` (optional `mitm`) or `deny_socks5_connect`
+      (no action = deny)
 
 3. **`SOCKS5_DATA_TO_TARGET_EVENT`** (MITM mode)
     - Triggered: Each data chunk from client to target
-    - Context: data, target, username
-    - LLM decides: Forward, Modify, Close
+    - Context: data, encoding, target, username
+    - LLM decides: `forward_socks5_data`, `modify_socks5_data`, `close_connection`
 
 4. **`SOCKS5_DATA_FROM_TARGET_EVENT`** (MITM mode)
     - Triggered: Each data chunk from target to client
-    - Context: data, target, username
-    - LLM decides: Forward, Modify, Close
+    - Context: data, encoding, target, username
+    - LLM decides: `forward_socks5_data`, `modify_socks5_data`, `close_connection`
 
 ## Connection and State Management
 
@@ -221,7 +237,10 @@ Socks5 {
 2. Phase 1: Handshake → Select auth method (fast)
 3. Phase 2: Authentication (if needed) → LLM consultation
 4. Phase 3: CONNECT request → LLM consultation (if filtered)
-5. Connect to target server
+5. Connect to target server. On failure the client gets a SOCKS5 reply carrying the
+   mapped failure code (0x05 connection refused, 0x04 host unreachable, 0x03 network
+   unreachable, else 0x01). The connection used to be dropped with no reply at all,
+   leaving clients waiting for the CONNECT response until they timed out.
 6. Phase 4: Relay data (pass-through or MITM)
 7. Connection closes → Mark as closed
 
@@ -303,7 +322,11 @@ correctly.
     - Not suitable for high-throughput applications (video streaming, large downloads)
     - Consider pass-through mode for performance-sensitive traffic
 
-4. **No Connection Pooling**
+4. **`username_patterns` config field is dead**
+    - `Socks5FilterConfig.username_patterns` is parsed and stored but never read by
+      any filtering decision
+
+5. **No Connection Pooling**
     - Each SOCKS5 connection creates new target connection
     - No HTTP/1.1 keep-alive equivalent
     - May exhaust ports under high load

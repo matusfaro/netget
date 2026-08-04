@@ -42,13 +42,44 @@ const ATYP_DOMAIN: u8 = 0x03;
 const ATYP_IPV6: u8 = 0x04;
 
 const REPLY_SUCCESS: u8 = 0x00;
-const _REPLY_GENERAL_FAILURE: u8 = 0x01;
+const REPLY_GENERAL_FAILURE: u8 = 0x01;
 const REPLY_CONNECTION_NOT_ALLOWED: u8 = 0x02;
-const _REPLY_NETWORK_UNREACHABLE: u8 = 0x03;
-const _REPLY_HOST_UNREACHABLE: u8 = 0x04;
-const _REPLY_CONNECTION_REFUSED: u8 = 0x05;
+const REPLY_NETWORK_UNREACHABLE: u8 = 0x03;
+const REPLY_HOST_UNREACHABLE: u8 = 0x04;
+const REPLY_CONNECTION_REFUSED: u8 = 0x05;
 const _REPLY_COMMAND_NOT_SUPPORTED: u8 = 0x07;
 const _REPLY_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
+
+/// Render relayed bytes for the LLM: printable payloads as text, everything else
+/// as hex. Returns the string and the encoding label to put on the event so the
+/// model knows which form it is looking at (and which to echo back).
+fn encode_relay_data(data: &[u8]) -> (String, &'static str) {
+    if data
+        .iter()
+        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+    {
+        (String::from_utf8_lossy(data).to_string(), "utf8")
+    } else {
+        (hex::encode(data), "hex")
+    }
+}
+
+/// Map an outbound connection failure onto the SOCKS5 reply code the client
+/// expects (RFC 1928 section 6).
+fn socks5_reply_for_connect_error(err: &anyhow::Error) -> u8 {
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            return match io_err.kind() {
+                std::io::ErrorKind::ConnectionRefused => REPLY_CONNECTION_REFUSED,
+                std::io::ErrorKind::TimedOut => REPLY_HOST_UNREACHABLE,
+                std::io::ErrorKind::NetworkUnreachable => REPLY_NETWORK_UNREACHABLE,
+                std::io::ErrorKind::HostUnreachable => REPLY_HOST_UNREACHABLE,
+                _ => REPLY_GENERAL_FAILURE,
+            };
+        }
+    }
+    REPLY_GENERAL_FAILURE
+}
 
 /// Target address for SOCKS5 connection
 #[derive(Debug, Clone)]
@@ -370,8 +401,11 @@ impl Socks5Server {
             (FilterMode::AllowAll, _) => (true, config.mitm_by_default),
             (FilterMode::DenyAll, _) => (false, false),
             (FilterMode::Selective, true) | (FilterMode::AskLlm, _) => {
-                // Ask LLM
-                Self::ask_llm_for_decision(
+                // Ask LLM. A failure here (model unreachable, invalid actions,
+                // retries exhausted) must still produce a SOCKS5 reply: returning
+                // Err dropped the connection without one, so the client saw an
+                // unexplained EOF instead of a refusal. Fail closed.
+                match Self::ask_llm_for_decision(
                     &target_addr,
                     username.as_deref(),
                     connection_id,
@@ -381,7 +415,21 @@ impl Socks5Server {
                     &protocol,
                     server_id,
                 )
-                .await?
+                .await
+                {
+                    Ok(decision) => decision,
+                    Err(e) => {
+                        error!(
+                            "SOCKS5 {} decision failed for {}: {} - denying",
+                            connection_id, target_addr, e
+                        );
+                        let _ = status_tx.send(format!(
+                            "✗ SOCKS5 {} decision failed: {} - denying",
+                            connection_id, e
+                        ));
+                        (false, false)
+                    }
+                }
             }
             (FilterMode::Selective, false) => {
                 // No filter match, use default action
@@ -404,9 +452,34 @@ impl Socks5Server {
             return Ok(());
         }
 
-        // Connect to target
-        let mut target_stream =
-            Self::connect_to_target(&target_addr, connection_id, &status_tx).await?;
+        // Connect to target.
+        //
+        // On failure the client must be told with a SOCKS5 reply; returning Err
+        // here used to drop the connection without any reply at all, so clients
+        // (curl included) sat waiting for the CONNECT response until they timed
+        // out instead of reporting the real error.
+        let mut target_stream = match Self::connect_to_target(
+            &target_addr,
+            connection_id,
+            &status_tx,
+        )
+        .await
+        {
+            Ok(stream) => stream,
+            Err(e) => {
+                let reply = socks5_reply_for_connect_error(&e);
+                warn!(
+                    "SOCKS5 {} failed to connect to {}: {} (reply 0x{:02x})",
+                    connection_id, target_addr, e, reply
+                );
+                let _ = status_tx.send(format!(
+                    "✗ SOCKS5 {} connect to {} failed: {}",
+                    connection_id, target_addr, e
+                ));
+                Self::send_connect_reply(&mut client_stream, reply, &target_addr).await?;
+                return Ok(());
+            }
+        };
 
         info!(
             "SOCKS5 {} connected to target {}",
@@ -505,10 +578,14 @@ impl Socks5Server {
                             trace!("SOCKS5 {} client→target {} bytes: {:?}", connection_id, n, data);
                             let _ = status_tx.send(format!("[TRACE] SOCKS5 {} client→target {} bytes", connection_id, n));
 
-                            // Ask LLM what to do with this data
-                            let data_str = String::from_utf8_lossy(data).to_string();
+                            // Ask LLM what to do with this data. Binary payloads
+                            // are hex-encoded rather than run through
+                            // from_utf8_lossy, which replaced every non-UTF-8 byte
+                            // with U+FFFD and made the payload unrecoverable.
+                            let (data_str, encoding) = encode_relay_data(data);
                             let event = Event::new(&SOCKS5_DATA_TO_TARGET_EVENT, serde_json::json!({
                                 "data": data_str,
+                                "encoding": encoding,
                                 "target": target_addr.to_string(),
                                 "username": username,
                             }));
@@ -580,10 +657,12 @@ impl Socks5Server {
                             trace!("SOCKS5 {} target→client {} bytes: {:?}", connection_id, n, data);
                             let _ = status_tx.send(format!("[TRACE] SOCKS5 {} target→client {} bytes", connection_id, n));
 
-                            // Ask LLM what to do with this data
-                            let data_str = String::from_utf8_lossy(data).to_string();
+                            // Ask LLM what to do with this data (see note above
+                            // on hex encoding for binary payloads).
+                            let (data_str, encoding) = encode_relay_data(data);
                             let event = Event::new(&SOCKS5_DATA_FROM_TARGET_EVENT, serde_json::json!({
                                 "data": data_str,
+                                "encoding": encoding,
                                 "target": target_addr.to_string(),
                                 "username": username,
                             }));
@@ -769,7 +848,9 @@ impl Socks5Server {
             }),
         );
 
-        let execution_result = call_llm(
+        // A failed LLM call must still produce an auth response; returning Err
+        // left the client waiting on a reply that never came. Fail closed.
+        let execution_result = match call_llm(
             llm_client,
             app_state,
             server_id,
@@ -777,13 +858,34 @@ impl Socks5Server {
             &event,
             protocol.as_ref(),
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!(
+                    "SOCKS5 {} auth decision failed: {} - rejecting",
+                    connection_id, e
+                );
+                let _ = status_tx.send(format!(
+                    "✗ SOCKS5 {} auth decision failed: {} - rejecting",
+                    connection_id, e
+                ));
+                let _ = stream.write_all(&[0x01, 0x01]).await;
+                let _ = stream.flush().await;
+                bail!("Authentication decision failed for user {}: {}", username, e);
+            }
+        };
 
-        // Check if LLM allowed auth
-        let auth_allowed = execution_result
-            .protocol_results
-            .iter()
-            .any(|result| matches!(result, ActionResult::NoAction));
+        // Same reasoning as the CONNECT decision: match on the action the model
+        // emitted rather than on ActionResult::NoAction, which several unrelated
+        // actions also return.
+        let allowed_action = execution_result.raw_actions.iter().any(|action| {
+            action.get("type").and_then(|v| v.as_str()) == Some("allow_socks5_auth")
+        });
+        let denied_action = execution_result.raw_actions.iter().any(|action| {
+            action.get("type").and_then(|v| v.as_str()) == Some("deny_socks5_auth")
+        });
+        let auth_allowed = allowed_action && !denied_action;
 
         // Send auth response: [VER(1), STATUS]
         let status = if auth_allowed { 0x00 } else { 0x01 };
@@ -1014,30 +1116,27 @@ impl Socks5Server {
         )
         .await?;
 
-        // Check if LLM allowed connection
-        let allowed = execution_result
-            .protocol_results
-            .iter()
-            .any(|result| matches!(result, ActionResult::NoAction));
+        // Decide from the action the model actually emitted, not from the shape
+        // of the result. Several unrelated SOCKS5 actions also map to
+        // ActionResult::NoAction (forward_socks5_data, allow_socks5_auth), so
+        // "any NoAction" would have allowed a connection off the back of an
+        // action that says nothing about this decision. An explicit deny, or no
+        // decision at all, keeps the connection closed.
+        let allow_action = execution_result.raw_actions.iter().find(|action| {
+            action.get("type").and_then(|v| v.as_str()) == Some("allow_socks5_connect")
+        });
+        let denied = execution_result.raw_actions.iter().any(|action| {
+            action.get("type").and_then(|v| v.as_str()) == Some("deny_socks5_connect")
+        });
 
-        // Extract MITM flag from actions if allowed
-        let mitm_enabled = if allowed {
-            execution_result
-                .raw_actions
-                .iter()
-                .find(|action| {
-                    action
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s == "allow_socks5_connect")
-                        .unwrap_or(false)
-                })
+        let allowed = allow_action.is_some() && !denied;
+
+        // Extract MITM flag from the allow action
+        let mitm_enabled = allowed
+            && allow_action
                 .and_then(|action| action.get("mitm"))
                 .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        } else {
-            false
-        };
+                .unwrap_or(false);
 
         console_debug!(
             status_tx,

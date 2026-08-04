@@ -59,9 +59,9 @@ impl Protocol for Socks5Protocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("Manual SOCKS5 protocol (RFC 1928)")
-            .llm_control("Auth, connection allow/deny, MITM data inspection")
+            .llm_control("Auth allow/deny, connection allow/deny, MITM data forward/modify/close")
             .e2e_testing("curl --socks5 / SOCKS5 clients")
-            .notes("CONNECT only (no BIND/UDP ASSOCIATE)")
+            .notes("CONNECT only (no BIND/UDP ASSOCIATE); a connect/auth event with no explicit allow action is denied; MITM inspection costs one LLM call per data chunk in each direction")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -261,13 +261,15 @@ impl Socks5Protocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' field for modify_socks5_data action")?;
 
-        debug!(
-            "SOCKS5 modifying data (new length: {} bytes)",
-            modified_data.len()
-        );
+        // The `data` field used to be documented as "base64 or UTF-8" while the
+        // executor only ever took `.as_bytes()`, so a base64 payload was relayed
+        // as its literal base64 text. Encoding is now explicit and honoured.
+        let bytes = decode_outbound_data(modified_data, &action)?;
+
+        debug!("SOCKS5 modifying data (new length: {} bytes)", bytes.len());
 
         // Return Output with the modified data
-        Ok(ActionResult::Output(modified_data.as_bytes().to_vec()))
+        Ok(ActionResult::Output(bytes))
     }
 
     fn execute_close_connection(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -278,6 +280,51 @@ impl Socks5Protocol {
 
         debug!("SOCKS5 closing connection: {}", reason);
         Ok(ActionResult::CloseConnection)
+    }
+}
+
+/// Turn the `data` field of a MITM action into the exact bytes to relay,
+/// honouring the action's optional `encoding` field.
+///
+/// - `encoding` absent or `"utf8"`: the string's UTF-8 bytes are relayed verbatim.
+/// - `encoding` = `"hex"`: `data` is decoded as hex.
+///
+/// There is deliberately no auto-detection: `"48656c6c6f"` is both valid text and
+/// valid hex, so the caller must say which it means.
+fn decode_outbound_data(data: &str, action: &serde_json::Value) -> Result<Vec<u8>> {
+    let encoding = action
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf8");
+
+    match encoding {
+        "utf8" => Ok(data.as_bytes().to_vec()),
+        "hex" => {
+            let cleaned: String = data
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace() && *c != ':')
+                .collect();
+            let cleaned = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
+
+            if cleaned.len() % 2 != 0 {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex in 'data': expected an even number of hex digits, got {} \
+                     ({data:?}). Each byte is two hex digits, e.g. \"48656c6c6f\" = \"Hello\".",
+                    cleaned.len()
+                ));
+            }
+
+            hex::decode(cleaned).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid hex in 'data' ({data:?}): {e}. Use only 0-9/a-f, two digits per \
+                     byte. To relay this string as literal text instead, omit 'encoding' or \
+                     set it to \"utf8\"."
+                )
+            })
+        }
+        other => Err(anyhow::anyhow!(
+            "Unknown 'encoding' value {other:?}. Valid values are \"utf8\" (default) and \"hex\"."
+        )),
     }
 }
 
@@ -387,12 +434,20 @@ fn modify_socks5_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "modify_socks5_data".to_string(),
         description: "Modify SOCKS5 data before forwarding (MITM mode)".to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Modified data to send (base64 or UTF-8)".to_string(),
-            required: true,
-        }],
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Replacement payload. Interpreted according to 'encoding'.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "encoding".to_string(),
+                type_hint: "string".to_string(),
+                description: "How to interpret 'data': \"utf8\" (default) relays the string's bytes verbatim; \"hex\" decodes it as hex first. Match the 'encoding' reported on the event to round-trip binary payloads.".to_string(),
+                required: false,
+            },
+        ],
         example: json!({
             "type": "modify_socks5_data",
             "data": "Modified payload"
@@ -437,7 +492,7 @@ pub static SOCKS5_AUTH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "SOCKS5 client authentication request (username/password)",
         json!({
             "type": "allow_socks5_auth"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -463,7 +518,7 @@ pub static SOCKS5_CONNECT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         json!({
             "type": "allow_socks5_connect",
             "mitm": false
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -497,13 +552,19 @@ pub static SOCKS5_DATA_TO_TARGET_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "Data from client to target (MITM inspection mode)",
         json!({
             "type": "forward_socks5_data"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "Data being sent from client to target (UTF-8 or hex)".to_string(),
+            description: "Data being sent from client to target. Printable payloads arrive as text, binary arrives hex-encoded; check 'encoding'.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How 'data' is encoded: \"utf8\" or \"hex\". Pass the same value to modify_socks5_data when replacing the payload.".to_string(),
             required: true,
         },
         Parameter {
@@ -532,13 +593,19 @@ pub static SOCKS5_DATA_FROM_TARGET_EVENT: LazyLock<EventType> = LazyLock::new(||
         "Data from target to client (MITM inspection mode)",
         json!({
             "type": "forward_socks5_data"
-        })
+        }),
     )
     .with_parameters(vec![
         Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "Data being sent from target to client (UTF-8 or hex)".to_string(),
+            description: "Data being sent from target to client. Printable payloads arrive as text, binary arrives hex-encoded; check 'encoding'.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How 'data' is encoded: \"utf8\" or \"hex\". Pass the same value to modify_socks5_data when replacing the payload.".to_string(),
             required: true,
         },
         Parameter {
