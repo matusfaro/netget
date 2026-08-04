@@ -6,7 +6,7 @@ use netget::llm::{OllamaClient, prompt::PromptBuilder};
 use netget::protocol::Event;
 use netget::scripting::{
     ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
-    execute_script,
+    execute_script_async,
 };
 use netget::state::app_state::AppState;
 use netget::state::ServerId;
@@ -983,7 +983,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             };
 
             // Execute the script
-            let response = execute_script(&config, &input)
+            let response = execute_script_async(&config, &input)
+                .await
                 .context("Failed to execute script")?;
 
             // Compare actions

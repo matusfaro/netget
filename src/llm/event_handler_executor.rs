@@ -191,7 +191,7 @@ async fn execute_script_handler(
     };
 
     // Execute the script
-    match crate::scripting::executor::execute_script(&script_config, &script_input) {
+    match crate::scripting::executor::execute_script_async(&script_config, &script_input).await {
         Ok(response) => {
             debug!(
                 "Script handled event '{}' ({} actions)",
