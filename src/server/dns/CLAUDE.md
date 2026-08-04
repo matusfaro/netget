@@ -7,7 +7,22 @@ queries with A, AAAA, CNAME, MX, TXT records, and NXDOMAIN responses using struc
 
 **Status**: Beta (Core Protocol)
 **RFC**: RFC 1035 (Domain Names), RFC 3596 (AAAA), RFC 1034 (Concepts)
-**Port**: 53 (UDP)
+**Port**: 53 (UDP), declared as `PrivilegeRequirement::PrivilegedPort(53)`
+
+### What "Beta" covers here
+
+Answers built by the structured actions are RFC 1035 responses that a real stub
+resolver will accept: correct wire format, the client's transaction ID echoed,
+and the question section repeated. Not covered: TCP transport, EDNS0, DNSSEC,
+multi-record answers, and record types outside A/AAAA/CNAME/MX/TXT (see
+Limitations).
+
+E2E coverage lives in `tests/server/dns/test.rs` (note: `test.rs`, not
+`e2e_test.rs` as most protocols use). Those four tests currently fail before
+they reach the DNS layer - the mock script does not answer the
+`DocumentationRequired` retry that `open_server` triggers on first use, so the
+server never starts. The DNS action path is exercised end-to-end today via the
+DoT and DoH suites, which delegate to this implementation and do pass.
 
 ## Library Choices
 
@@ -47,6 +62,32 @@ DNS is connectionless UDP protocol:
 - "Connection" in UI represents recent queries from same client
 - Query ID from client packet must be echoed in response
 
+### 2b. Responses Echo the Question Section
+
+Every response built by the structured actions repeats the question it answers
+(RFC 1035 §4.1.2). This is not cosmetic: real stub resolvers - glibc's,
+systemd-resolved, `dig` - compare the response's question section against the
+query they sent and discard responses that do not match. The question is
+reconstructed in `new_response()` (`actions.rs`) from the action's `domain` plus
+the record type implied by the action, so `send_dns_a_response` produces a
+`domain A IN` question. `send_dns_nxdomain` and `send_dns_cname_response` accept
+an optional `query_type` because the type cannot be inferred from the answer in
+those two cases.
+
+Consequence for the two ID-bearing fields the client uses to correlate a
+response:
+
+- `query_id` - taken verbatim from the action. Out-of-range values are rejected
+  rather than truncated with `as u16`, because a truncated ID produces a
+  response the client silently drops.
+- question section - as above.
+
+Both are why a **static** event handler cannot serve DNS answers: static
+handlers emit fixed action JSON with no access to the event, so they cannot echo
+either the client's random transaction ID or the queried name. Use **script**
+mode for deterministic DNS; static mode is only useful here for `ignore_query`
+(a DNS blackhole).
+
 ### 3. hickory-proto Integration
 
 Parsing flow:
@@ -71,8 +112,10 @@ Parsing flow:
 Each DNS query creates a "connection" entry in ServerInstance:
 
 - Connection ID: Unique per query
-- Protocol info: `ProtocolConnectionInfo::Dns` with recent_queries list
-- Tracks: bytes received/sent, packets received/sent
+- Protocol info: `ProtocolConnectionInfo::empty()` - there is no DNS-specific
+  variant, so no per-query domain list is surfaced to the UI
+- Tracks: bytes received/sent, packets received/sent (sent counters are updated
+  via `AppState::update_connection_stats` after the response goes out)
 - Status: Immediately active, no persistent state
 
 ## LLM Integration
@@ -153,10 +196,26 @@ Parameters:
 
 - `query_id` (required)
 - `domain` (required)
+- `query_type` (optional, default: `A`) - echoed in the question section so the
+  client can match the (answer-less) response to its query
 
-#### `send_dns_response` (Advanced)
+#### `send_dns_response` (Escape hatch)
 
-Send custom DNS response packet as hex string. For advanced use cases where LLM needs full control.
+Send a complete, hand-assembled DNS response message, hex-encoded. Intended only
+for record types with no dedicated action (NS, SOA, PTR, SRV, CAA, ...).
+
+- `data` must be valid hex and at least 12 bytes (a DNS header). Invalid hex is
+  rejected with an error. There is no plain-text fallback: the earlier behaviour
+  of sending the raw string bytes when hex decoding failed put non-DNS garbage
+  on the wire and left clients timing out with no diagnostic.
+- The caller is responsible for the transaction ID and the question section;
+  nothing is filled in.
+
+Note: this is the one DNS action that takes wire bytes as a parameter, which
+runs against the project rule that action parameters carry structured data
+rather than encoded bytes. It is kept because dropping it would leave the
+unsupported record types unreachable, and its description steers the model to
+the structured actions first.
 
 #### `ignore_query`
 
@@ -189,9 +248,11 @@ Don't send any response to this query.
 1. **Query Received**: UDP datagram arrives on port 53
 2. **Register**: New ConnectionId created for this query
 3. **Track**: Added to ServerInstance.connections with:
-    - `ProtocolConnectionInfo::Dns { recent_queries: [(domain, timestamp)] }`
+    - `ProtocolConnectionInfo::empty()`
     - bytes_received, packets_received = 1
-4. **Process**: Parse query, call LLM, execute action
+4. **Process**: Parse query, dispatch through `call_llm` (which first tries any
+   configured script/static event handler and only falls back to a model call if
+   none matches), execute action
 5. **Respond**: Send UDP response
 6. **Update**: Track bytes_sent, packets_sent
 7. **Persist**: Connection remains in UI to show recent activity
@@ -202,9 +263,12 @@ Note: DNS has no persistent connections. Each query-response is independent.
 
 ### 1. UDP Only
 
-- No TCP support (RFC 1035 specifies TCP for large responses)
-- Responses limited to 512 bytes (standard UDP DNS limit)
-- No EDNS0 support for larger UDP packets
+- No TCP support (RFC 1035 specifies TCP for large responses), so a client that
+  retries over TCP after a truncated answer gets nothing
+- The receive buffer is 4096 bytes, which accommodates EDNS0-sized queries
+- EDNS0 itself is not implemented: the OPT record in a query is ignored and no
+  OPT record is added to responses
+- Oversized responses are not truncated with the TC bit set; they are simply sent
 
 ### 2. Single Answer Per Response
 

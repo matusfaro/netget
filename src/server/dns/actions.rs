@@ -8,7 +8,7 @@ use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
-use hickory_proto::op::{Header, Message as DnsMessage, MessageType, OpCode, ResponseCode};
+use hickory_proto::op::{Header, Message as DnsMessage, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
 use serde_json::json;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -67,10 +67,10 @@ impl Protocol for DnsProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(53))
-            .implementation("hickory-proto for parsing and construction")
+            .implementation("hickory-proto for parsing and construction; UDP only, no TCP fallback")
             .llm_control("Response records (A, AAAA, MX, TXT, CNAME, NXDOMAIN)")
-            .e2e_testing("hickory-client AsyncClient - 5 LLM calls")
-            .notes("Excellent scripting candidate")
+            .e2e_testing("tests/server/dns/test.rs - hickory-client AsyncClient over UDP, mock-driven")
+            .notes("Excellent scripting candidate; static handlers cannot echo the client's transaction ID, use script mode for deterministic answers")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -95,7 +95,9 @@ impl Protocol for DnsProtocol {
                 "base_stack": "dns",
                 "instruction": "DNS server that resolves queries based on domain patterns"
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: the right way to build a deterministic DNS server.
+            // The script sees the event and can echo the client's random
+            // transaction ID, which a static handler cannot do.
             json!({
                 "type": "open_server",
                 "port": 53,
@@ -105,11 +107,16 @@ impl Protocol for DnsProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<dns_handler>"
+                        "code": "if event.get('domain', '').rstrip('.').endswith('example.com'):\n    respond([{'type': 'send_dns_a_response', 'query_id': event['query_id'], 'domain': event['domain'], 'ip': '93.184.216.34', 'ttl': 300}])\nelse:\n    respond([{'type': 'send_dns_nxdomain', 'query_id': event['query_id'], 'domain': event['domain'], 'query_type': event.get('query_type', 'A')}])"
                     }
                 }]
             }),
-            // Static mode: Fixed responses
+            // Static mode: static handlers emit fixed action JSON with no access
+            // to the event, so they cannot echo the client's random transaction
+            // ID or the queried name - a static answer record would be silently
+            // discarded by every real resolver. Dropping queries (a DNS
+            // blackhole) is what static mode can do correctly here; use script
+            // mode for deterministic answers.
             json!({
                 "type": "open_server",
                 "port": 53,
@@ -119,11 +126,7 @@ impl Protocol for DnsProtocol {
                     "handler": {
                         "type": "static",
                         "actions": [{
-                            "type": "send_dns_a_response",
-                            "query_id": 0,
-                            "domain": "any",
-                            "ip": "93.184.216.34",
-                            "ttl": 300
+                            "type": "ignore_query"
                         }]
                     }
                 }]
@@ -172,275 +175,230 @@ impl Server for DnsProtocol {
     }
 }
 
+/// Read the DNS transaction ID out of an action.
+///
+/// The transaction ID is how a client correlates a response with the query it
+/// sent, and clients pick it at random. Silently truncating an out-of-range
+/// value with `as u16` would produce a response the client discards without any
+/// diagnostic, so an out-of-range value is a hard error instead.
+fn parse_query_id(action: &serde_json::Value) -> Result<u16> {
+    let raw = action
+        .get("query_id")
+        .and_then(|v| v.as_u64())
+        .context("Missing 'query_id' parameter (echo the query_id from the dns_query event)")?;
+
+    u16::try_from(raw).map_err(|_| {
+        anyhow::anyhow!(
+            "'query_id' must be a 16-bit DNS transaction ID (0-65535), got {}. \
+             Echo the query_id from the dns_query event verbatim.",
+            raw
+        )
+    })
+}
+
+/// Parse a DNS record type name (`"A"`, `"AAAA"`, `"MX"`, ...).
+fn parse_record_type(name: &str) -> Result<RecordType> {
+    RecordType::from_str(&name.to_ascii_uppercase())
+        .with_context(|| format!("Unknown DNS record type: {name}"))
+}
+
+/// Build the shell of a DNS response: header plus the echoed question section.
+///
+/// RFC 1035 §4.1.2 requires a response to repeat the question it answers, and
+/// real stub resolvers (glibc's, systemd-resolved, `dig`) discard responses
+/// whose question section does not match the query they sent. The question is
+/// reconstructed from the action's `domain` plus the record type implied by the
+/// action, so answering a query with the matching action produces a response
+/// those clients accept.
+fn new_response(
+    query_id: u16,
+    domain: &str,
+    query_type: RecordType,
+    response_code: ResponseCode,
+) -> Result<(DnsMessage, Name)> {
+    let name =
+        Name::from_str(domain).with_context(|| format!("Invalid domain name: '{domain}'"))?;
+
+    let mut message = DnsMessage::new();
+    let mut header = Header::new();
+    header.set_id(query_id);
+    header.set_message_type(MessageType::Response);
+    header.set_op_code(OpCode::Query);
+    header.set_authoritative(true);
+    header.set_response_code(response_code);
+    message.set_header(header);
+
+    // Echo the question section (counts are recomputed by hickory at encode time).
+    message.add_query(Query::query(name.clone(), query_type));
+
+    Ok((message, name))
+}
+
+/// Serialize a response message to DNS wire format.
+fn finish_response(message: DnsMessage) -> Result<ActionResult> {
+    let bytes = message
+        .to_vec()
+        .context("Failed to serialize DNS message")?;
+    Ok(ActionResult::Output(bytes))
+}
+
+fn ttl_of(action: &serde_json::Value) -> u32 {
+    action
+        .get("ttl")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300)
+        .min(u32::MAX as u64) as u32
+}
+
+fn required_str<'a>(action: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    action
+        .get(key)
+        .and_then(|v| v.as_str())
+        .with_context(|| format!("Missing '{key}' parameter"))
+}
+
 impl DnsProtocol {
     fn execute_send_dns_a_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let query_id = action
-            .get("query_id")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'query_id' parameter")? as u16;
+        let query_id = parse_query_id(&action)?;
+        let domain = required_str(&action, "domain")?;
+        let ip = required_str(&action, "ip")?;
+        let ttl = ttl_of(&action);
 
-        let domain = action
-            .get("domain")
-            .and_then(|v| v.as_str())
-            .context("Missing 'domain' parameter")?;
+        let ipv4 = Ipv4Addr::from_str(ip)
+            .with_context(|| format!("Invalid IPv4 address: '{ip}'"))?;
 
-        let ip = action
-            .get("ip")
-            .and_then(|v| v.as_str())
-            .context("Missing 'ip' parameter")?;
+        let (mut message, name) =
+            new_response(query_id, domain, RecordType::A, ResponseCode::NoError)?;
 
-        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
-
-        // Build DNS response
-        let name = Name::from_str(domain).context("Invalid domain name")?;
-        let ipv4 = Ipv4Addr::from_str(ip).context("Invalid IPv4 address")?;
-
-        let mut message = DnsMessage::new();
-        let mut header = Header::new();
-        header.set_id(query_id);
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_authoritative(true);
-        header.set_response_code(ResponseCode::NoError);
-        message.set_header(header);
-
-        // Add answer record
         let mut record = Record::with(name, RecordType::A, ttl);
         record.set_data(Some(RData::A(rdata::A(ipv4))));
         message.add_answer(record);
 
-        // Serialize to bytes
-        let bytes = message
-            .to_vec()
-            .context("Failed to serialize DNS message")?;
-
-        Ok(ActionResult::Output(bytes))
+        finish_response(message)
     }
 
     fn execute_send_dns_aaaa_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let query_id = action
-            .get("query_id")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'query_id' parameter")? as u16;
+        let query_id = parse_query_id(&action)?;
+        let domain = required_str(&action, "domain")?;
+        let ip = required_str(&action, "ip")?;
+        let ttl = ttl_of(&action);
 
-        let domain = action
-            .get("domain")
-            .and_then(|v| v.as_str())
-            .context("Missing 'domain' parameter")?;
+        let ipv6 = Ipv6Addr::from_str(ip)
+            .with_context(|| format!("Invalid IPv6 address: '{ip}'"))?;
 
-        let ip = action
-            .get("ip")
-            .and_then(|v| v.as_str())
-            .context("Missing 'ip' parameter")?;
+        let (mut message, name) =
+            new_response(query_id, domain, RecordType::AAAA, ResponseCode::NoError)?;
 
-        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
-
-        // Build DNS response
-        let name = Name::from_str(domain).context("Invalid domain name")?;
-        let ipv6 = Ipv6Addr::from_str(ip).context("Invalid IPv6 address")?;
-
-        let mut message = DnsMessage::new();
-        let mut header = Header::new();
-        header.set_id(query_id);
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_authoritative(true);
-        header.set_response_code(ResponseCode::NoError);
-        message.set_header(header);
-
-        // Add answer record
         let mut record = Record::with(name, RecordType::AAAA, ttl);
         record.set_data(Some(RData::AAAA(rdata::AAAA(ipv6))));
         message.add_answer(record);
 
-        // Serialize to bytes
-        let bytes = message
-            .to_vec()
-            .context("Failed to serialize DNS message")?;
-
-        Ok(ActionResult::Output(bytes))
+        finish_response(message)
     }
 
     fn execute_send_dns_cname_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let query_id = action
-            .get("query_id")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'query_id' parameter")? as u16;
+        let query_id = parse_query_id(&action)?;
+        let domain = required_str(&action, "domain")?;
+        let target = required_str(&action, "target")?;
+        let ttl = ttl_of(&action);
 
-        let domain = action
-            .get("domain")
-            .and_then(|v| v.as_str())
-            .context("Missing 'domain' parameter")?;
+        let target_name = Name::from_str(target)
+            .with_context(|| format!("Invalid target domain name: '{target}'"))?;
 
-        let target = action
-            .get("target")
-            .and_then(|v| v.as_str())
-            .context("Missing 'target' parameter")?;
+        // A CNAME may be returned for any query type; the question echoes CNAME
+        // unless the caller says which type was actually asked for.
+        let query_type = match action.get("query_type").and_then(|v| v.as_str()) {
+            Some(qt) => parse_record_type(qt)?,
+            None => RecordType::CNAME,
+        };
 
-        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
+        let (mut message, name) =
+            new_response(query_id, domain, query_type, ResponseCode::NoError)?;
 
-        // Build DNS response
-        let name = Name::from_str(domain).context("Invalid domain name")?;
-        let target_name = Name::from_str(target).context("Invalid target domain name")?;
-
-        let mut message = DnsMessage::new();
-        let mut header = Header::new();
-        header.set_id(query_id);
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_authoritative(true);
-        header.set_response_code(ResponseCode::NoError);
-        message.set_header(header);
-
-        // Add answer record
         let mut record = Record::with(name, RecordType::CNAME, ttl);
         record.set_data(Some(RData::CNAME(rdata::CNAME(target_name))));
         message.add_answer(record);
 
-        // Serialize to bytes
-        let bytes = message
-            .to_vec()
-            .context("Failed to serialize DNS message")?;
-
-        Ok(ActionResult::Output(bytes))
+        finish_response(message)
     }
 
     fn execute_send_dns_mx_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let query_id = action
-            .get("query_id")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'query_id' parameter")? as u16;
+        let query_id = parse_query_id(&action)?;
+        let domain = required_str(&action, "domain")?;
+        let exchange = required_str(&action, "exchange")?;
+        let ttl = ttl_of(&action);
 
-        let domain = action
-            .get("domain")
-            .and_then(|v| v.as_str())
-            .context("Missing 'domain' parameter")?;
+        let preference_raw = action.get("preference").and_then(|v| v.as_u64()).unwrap_or(10);
+        let preference = u16::try_from(preference_raw).map_err(|_| {
+            anyhow::anyhow!("'preference' must be in the range 0-65535, got {preference_raw}")
+        })?;
 
-        let exchange = action
-            .get("exchange")
-            .and_then(|v| v.as_str())
-            .context("Missing 'exchange' parameter")?;
+        let exchange_name = Name::from_str(exchange)
+            .with_context(|| format!("Invalid exchange domain name: '{exchange}'"))?;
 
-        let preference = action
-            .get("preference")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as u16;
+        let (mut message, name) =
+            new_response(query_id, domain, RecordType::MX, ResponseCode::NoError)?;
 
-        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
-
-        // Build DNS response
-        let name = Name::from_str(domain).context("Invalid domain name")?;
-        let exchange_name = Name::from_str(exchange).context("Invalid exchange domain name")?;
-
-        let mut message = DnsMessage::new();
-        let mut header = Header::new();
-        header.set_id(query_id);
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_authoritative(true);
-        header.set_response_code(ResponseCode::NoError);
-        message.set_header(header);
-
-        // Add answer record
         let mut record = Record::with(name, RecordType::MX, ttl);
         record.set_data(Some(RData::MX(rdata::MX::new(preference, exchange_name))));
         message.add_answer(record);
 
-        // Serialize to bytes
-        let bytes = message
-            .to_vec()
-            .context("Failed to serialize DNS message")?;
-
-        Ok(ActionResult::Output(bytes))
+        finish_response(message)
     }
 
     fn execute_send_dns_txt_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let query_id = action
-            .get("query_id")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'query_id' parameter")? as u16;
+        let query_id = parse_query_id(&action)?;
+        let domain = required_str(&action, "domain")?;
+        let text = required_str(&action, "text")?;
+        let ttl = ttl_of(&action);
 
-        let domain = action
-            .get("domain")
-            .and_then(|v| v.as_str())
-            .context("Missing 'domain' parameter")?;
+        let (mut message, name) =
+            new_response(query_id, domain, RecordType::TXT, ResponseCode::NoError)?;
 
-        let text = action
-            .get("text")
-            .and_then(|v| v.as_str())
-            .context("Missing 'text' parameter")?;
-
-        let ttl = action.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300) as u32;
-
-        // Build DNS response
-        let name = Name::from_str(domain).context("Invalid domain name")?;
-
-        let mut message = DnsMessage::new();
-        let mut header = Header::new();
-        header.set_id(query_id);
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_authoritative(true);
-        header.set_response_code(ResponseCode::NoError);
-        message.set_header(header);
-
-        // Add answer record
         let mut record = Record::with(name, RecordType::TXT, ttl);
         record.set_data(Some(RData::TXT(rdata::TXT::new(vec![text.to_string()]))));
         message.add_answer(record);
 
-        // Serialize to bytes
-        let bytes = message
-            .to_vec()
-            .context("Failed to serialize DNS message")?;
-
-        Ok(ActionResult::Output(bytes))
+        finish_response(message)
     }
 
     fn execute_send_dns_nxdomain(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let query_id = action
-            .get("query_id")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'query_id' parameter")? as u16;
+        let query_id = parse_query_id(&action)?;
+        let domain = required_str(&action, "domain")?;
 
-        let domain = action
-            .get("domain")
-            .and_then(|v| v.as_str())
-            .context("Missing 'domain' parameter")?;
+        // NXDOMAIN carries no answer, so the question section is the only way a
+        // client can tell which of its outstanding queries the response is for.
+        let query_type = match action.get("query_type").and_then(|v| v.as_str()) {
+            Some(qt) => parse_record_type(qt)?,
+            None => RecordType::A,
+        };
 
-        // Build DNS NXDOMAIN response
-        let _name = Name::from_str(domain).context("Invalid domain name")?;
+        let (message, _name) =
+            new_response(query_id, domain, query_type, ResponseCode::NXDomain)?;
 
-        let mut message = DnsMessage::new();
-        let mut header = Header::new();
-        header.set_id(query_id);
-        header.set_message_type(MessageType::Response);
-        header.set_op_code(OpCode::Query);
-        header.set_authoritative(true);
-        header.set_response_code(ResponseCode::NXDomain);
-        message.set_header(header);
-
-        // Serialize to bytes
-        let bytes = message
-            .to_vec()
-            .context("Failed to serialize DNS message")?;
-
-        Ok(ActionResult::Output(bytes))
+        finish_response(message)
     }
 
     fn execute_send_dns_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_str())
-            .context("Missing 'data' parameter")?;
+        let data = required_str(&action, "data")?;
 
-        // Try to decode as hex first (for binary DNS packets)
-        // If hex decode fails, treat as raw string
-        let bytes = if let Ok(decoded) = hex::decode(data) {
-            decoded
-        } else {
-            data.as_bytes().to_vec()
-        };
+        // Hex only. The previous behaviour fell back to sending the raw string
+        // bytes when hex decoding failed, which silently put non-DNS bytes on
+        // the wire and left the client timing out with no diagnostic.
+        let bytes = hex::decode(data.trim()).map_err(|e| {
+            anyhow::anyhow!(
+                "'data' must be a hex-encoded DNS message ({e}). \
+                 Prefer the structured actions (send_dns_a_response, send_dns_nxdomain, ...) \
+                 which build the wire format for you."
+            )
+        })?;
+
+        if bytes.len() < 12 {
+            anyhow::bail!(
+                "'data' decoded to {} bytes; a DNS message needs at least a 12-byte header",
+                bytes.len()
+            );
+        }
 
         Ok(ActionResult::Output(bytes))
     }
@@ -559,6 +517,12 @@ fn send_dns_cname_response_action() -> ActionDefinition {
                 type_hint: "string".to_string(),
                 description: "Target domain name (e.g., 'example.com')".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "query_type".to_string(),
+                type_hint: "string".to_string(),
+                description: "Record type the client actually asked for (A, AAAA, ...). Echoed back in the question section. Default: CNAME".to_string(),
+                required: false,
             },
             Parameter {
                 name: "ttl".to_string(),
@@ -697,11 +661,18 @@ fn send_dns_nxdomain_action() -> ActionDefinition {
                 description: "Domain name being queried (the nonexistent domain)".to_string(),
                 required: true,
             },
+            Parameter {
+                name: "query_type".to_string(),
+                type_hint: "string".to_string(),
+                description: "Record type from the request (A, AAAA, MX, TXT, ...). Echoed back in the question section so the client can match the response to its query. Default: A".to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "send_dns_nxdomain",
             "query_id": 12345,
-            "domain": "nonexistent.example.com"
+            "domain": "nonexistent.example.com",
+            "query_type": "A"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -714,11 +685,11 @@ fn send_dns_nxdomain_action() -> ActionDefinition {
 fn send_dns_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dns_response".to_string(),
-        description: "Send custom DNS response packet (advanced, for raw hex data)".to_string(),
+        description: "ESCAPE HATCH - only for record types that have no dedicated action (NS, SOA, PTR, SRV, CAA, ...). Prefer send_dns_a_response / send_dns_aaaa_response / send_dns_cname_response / send_dns_mx_response / send_dns_txt_response / send_dns_nxdomain, which build the wire format for you. This action requires you to hand-assemble the full DNS message, including echoing the query ID and the question section.".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "DNS response packet as hex-encoded string or plain text".to_string(),
+            description: "Complete DNS response message in RFC 1035 wire format, hex-encoded (at least 12 bytes / 24 hex characters). Not base64, not plain text - invalid hex is rejected.".to_string(),
             required: true,
         }],
         example: json!({

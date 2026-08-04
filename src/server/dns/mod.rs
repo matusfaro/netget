@@ -38,7 +38,11 @@ impl DnsServer {
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
-            let mut buffer = vec![0u8; 512]; // Standard DNS packet size
+            // RFC 1035 caps plain UDP DNS at 512 bytes, but EDNS0 (RFC 6891)
+            // clients routinely advertise 1232-4096 byte buffers. A short
+            // buffer would silently truncate those datagrams, and the truncated
+            // bytes would then fail to parse as DNS.
+            let mut buffer = vec![0u8; 4096];
 
             loop {
                 match socket.recv_from(&mut buffer).await {
@@ -170,6 +174,19 @@ impl DnsServer {
                                                         .send_to(output_data, peer_addr)
                                                         .await;
 
+                                                    // Keep the connection counters shown in the
+                                                    // TUI in step with what was actually sent.
+                                                    state_clone
+                                                        .update_connection_stats(
+                                                            server_id,
+                                                            connection_id,
+                                                            None,
+                                                            Some(output_data.len() as u64),
+                                                            None,
+                                                            Some(1),
+                                                        )
+                                                        .await;
+
                                                     // DEBUG: Log summary
                                                     debug!(
                                                         "DNS sent {} bytes to {}",
@@ -243,25 +260,6 @@ impl DnsServer {
         task_registrar
             .register_server_task(server_id, accept_handle)
             .await;
-
-        Ok(local_addr)
-    }
-
-    /// Legacy spawn method - deprecated
-    pub async fn spawn_with_llm(
-        listen_addr: SocketAddr,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<SocketAddr> {
-        let socket = UdpSocket::bind(listen_addr).await?;
-        let local_addr = socket.local_addr()?;
-
-        error!("DNS legacy spawn_with_llm is deprecated, use spawn_with_llm_actions");
-        let _ = status_tx.send(
-            "✗ DNS legacy mode no longer supported, please restart with action-based mode"
-                .to_string(),
-        );
 
         Ok(local_addr)
     }
