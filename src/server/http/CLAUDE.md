@@ -1,280 +1,136 @@
-# HTTP Protocol Implementation
+# HTTP/1.1 Protocol Implementation
 
-## Overview
+HTTP/1.1 server built on hyper v1.0. Hyper owns the protocol (parsing,
+keep-alive, chunked *request* decoding, connection management); the LLM owns one
+thing only — the response status, headers and text body.
 
-HTTP server implementing RFC 7230-7235 (HTTP/1.1) using the hyper library. The LLM controls HTTP responses (status
-codes, headers, body) while hyper handles the protocol parsing, connection management, and request routing.
+**State**: Beta — human-reviewed, verified against real clients (`curl`,
+`reqwest`). **Privilege**: declares `PrivilegedPort(80)`; the preflight check
+fires only when the requested port is actually below 1024.
+**RFC**: 7230-7235.
 
-**Status**: Beta (Core Protocol)
-**RFC**: RFC 7230-7235 (HTTP/1.1)
+Shared request/response plumbing lives in `src/server/http_common/` — read
+`src/server/http_common/CLAUDE.md` too; the filter and response-building
+contracts are documented there, not repeated here.
 
-## Library Choices
+## What the model sees and controls
 
-- **hyper v1.0** - Modern async HTTP library with excellent performance
-- **hyper-util** - Additional utilities for Tokio integration
-- **http-body-util** - Body handling utilities (Full, Empty, Incoming)
-- **Manual response construction** - LLM generates status, headers, body
+**Event**: `http_request`, one per HTTP request (not per TCP connection).
 
-**Rationale**: Hyper is the de-facto standard for HTTP in Rust. It handles:
+| Field | Notes |
+|---|---|
+| `method` | `GET`, `POST`, … |
+| `path` | path only, no query string |
+| `query_string` | raw string, present only when there was one |
+| `query` | parsed, URL-decoded key→value object |
+| `headers` | lowercase name→value object; non-UTF-8 values are dropped |
+| `body` | request body decoded as UTF-8 **lossily** |
+| `body_bytes` | body size in bytes before decoding |
+| `body_is_binary` | present and `true` only when the body was not valid UTF-8 |
 
-- HTTP/1.1 protocol parsing and formatting
-- Request header parsing and validation
-- Connection keep-alive management
-- Chunked transfer encoding
-- Async I/O with Tokio integration
+**Action**: `send_http_response` — the only one. `status` (required, 100-599),
+`headers` (optional), `body` (optional; omit for 204/304).
 
-The LLM focuses on application logic (routing, business logic, response generation) rather than protocol implementation
-details.
+There are no async actions: HTTP is purely reactive.
 
-## Architecture Decisions
+### Hard limits, stated in the action description so the model sees them too
 
-### 1. Request-Response Model
+- **One response per request, sent complete.** No chunked/streaming responses, no
+  server-sent events, no way to hold the request open or send in parts.
+- **No binary response bodies.** `body` is a string written as UTF-8. Images,
+  gzip, protobuf cannot be produced. There is no hex/base64 escape hatch, by
+  design: action parameters must not carry encoded bytes.
+- **Non-UTF-8 request bodies are lossy.** The raw bytes are not exposed to the
+  model in any form; `body_is_binary` tells it the text is not the real payload.
+- **Request bodies are fully buffered**, with no size cap, before the LLM call.
+- `Content-Length` and `Date` are set by hyper; setting them in `headers` is
+  ignored or harmful. Header names/values that are not legal HTTP (e.g.
+  containing CR/LF) are dropped rather than injected.
 
-HTTP is inherently synchronous request-response:
+### Failure behavior
 
-- Each request is handled independently by hyper
-- LLM generates response based on request (method, URI, headers, body)
-- No persistent connection state between requests (though TCP connection may persist)
-- No async actions - HTTP is purely reactive to client requests
+- LLM call fails → `500 Internal Server Error`.
+- Model emits no `send_http_response` → empty `200`.
+- Model emits a `send_http_response` the executor rejects (e.g. a status outside
+  100-599) → the action is dropped with a warning by
+  `execute_actions()` and the client still gets the empty `200`. This is why the
+  executor is lenient about status/body shapes; see `http_common/CLAUDE.md`.
+- A status or header hyper cannot represent → 500 / dropped header, never a panic.
 
-### 2. Hyper Service Pattern
+## Architecture
 
-Hyper uses a service pattern for request handling:
+- `spawn_with_llm_actions` binds via `create_reusable_tcp_listener`, propagates
+  bind failure with `?` (so `server_startup` reports `Error` rather than a
+  phantom `Running`), and registers the accept-loop `JoinHandle` with
+  `AppState::register_server_task()` so `stop_server` releases the socket.
+- Optional TLS: `startup_params` are parsed by
+  `crate::server::tls_cert_manager::extract_tls_config_from_params`; when
+  present, each accepted stream goes through `tokio_rustls` before hyper. The
+  server logs itself as `HTTPS` in that case. (ALPN is not advertised.)
+- One `tokio` task per TCP connection; hyper's `service_fn` calls the LLM per
+  request. Per-connection tasks are not tracked, so `stop_server` does not cancel
+  in-flight requests.
+- Handling mode priority is the generic one: script handler → static handler →
+  LLM (`call_llm` → `try_execute_event_handler`). Script and static handlers cost
+  no LLM call.
+- `h2c` upgrade: an `Upgrade: h2c` request with an `HTTP2-Settings` header gets
+  `101 Switching Protocols` and the connection is handed to
+  `http2::h2_server::handle_h2_request` (feature-gated on `http2`; without it the
+  server answers `501`). The request filter is carried across the upgrade.
 
-- `service_fn()` creates a closure that handles each request
-- Each request gets a fresh LLM call to generate the response
-- Service is cloned for each connection (cheap clone via Arc)
-- Connection-scoped state persists across requests on same TCP connection
+### Connection state
 
-### 3. Connection Tracking
+One `ConnectionId` per TCP connection, added on accept and closed when the socket
+closes. `ProtocolConnectionInfo` is a generic JSON wrapper (not an enum) and is
+initialized to `{"recent_requests": []}`.
 
-Unlike raw TCP, HTTP connections are tracked per-TCP-connection, not per-request:
+**Known gap**: nothing updates it afterwards. `recent_requests` stays empty and
+`bytes_sent`/`bytes_received`/`packets_*`/`last_activity` are never incremented
+for HTTP, so per-connection counters in the TUI stay at zero. Only connect and
+disconnect are tracked.
 
-- One `ConnectionId` per TCP connection (not per HTTP request)
-- `ProtocolConnectionInfo::Http` tracks recent requests on the connection
-- Multiple HTTP requests can occur on the same TCP connection (HTTP keep-alive)
-- Connection closed when TCP socket closes
+## Request filtering
 
-### 4. Body Handling
-
-Request bodies are fully buffered before LLM processing:
-
-- `req.into_body().collect().await` reads entire body into memory
-- Bodies are converted to UTF-8 strings for LLM (or "binary" marker for non-UTF8)
-- Response bodies are wrapped in `Full<Bytes>` for hyper
-- No streaming body support (LLM sees complete request, generates complete response)
-
-### 5. Header Parsing
-
-Headers are extracted and provided to LLM as JSON object:
-
-- All headers converted to lowercase keys (HTTP headers are case-insensitive)
-- Non-UTF8 header values are skipped (rare edge case)
-- LLM can specify response headers in same JSON format
-
-### 6. Dual Logging
-
-All HTTP operations use dual logging:
-
-- **DEBUG**: Request summary (method, URI, body size)
-- **TRACE**: Full request details (all headers, pretty-printed JSON body)
-- Both go to `netget.log` (via tracing) and TUI Status panel (via status_tx)
-
-### 7. Error Handling
-
-LLM errors result in 500 Internal Server Error:
-
-- If LLM call fails, return 500 with "Internal Server Error" body
-- If LLM response is invalid, return 500
-- Hyper connection errors (parsing failures) close connection automatically
-
-## LLM Integration
-
-### Action-Based Response Model
-
-The LLM responds to HTTP events with actions:
-
-**Events**:
-
-- `http_request` - HTTP request received from client
-    - Parameters: `method`, `uri`, `headers`, `body`
-
-**Available Actions**:
-
-- `send_http_response` - Send HTTP response (status, headers, body)
-- Common actions: `show_message`, `update_instruction`, etc.
-- **No async actions** - HTTP is purely request-response
-
-### Example LLM Response
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_http_response",
-      "status": 200,
-      "headers": {
-        "Content-Type": "text/html",
-        "X-Custom-Header": "value"
-      },
-      "body": "<html><body>Hello World</body></html>"
-    },
-    {
-      "type": "show_message",
-      "message": "Served GET /"
-    }
-  ]
-}
-```
-
-### Response Format
-
-The `send_http_response` action returns structured data:
-
-```json
-{
-  "status": 200,
-  "headers": {"Content-Type": "text/html"},
-  "body": "<html>...</html>"
-}
-```
-
-This is serialized to `ActionResult::Output` and parsed by the request handler to construct the actual hyper `Response`.
-
-### Default Response
-
-If LLM doesn't provide a response or response parsing fails:
-
-- Status: 200 OK
-- Headers: empty
-- Body: empty string
-
-This ensures the server always responds (no hanging connections).
-
-## Request Filtering (which requests reach the LLM)
-
-By default every HTTP request triggers an LLM call. Browsers and scanners send a
-lot of noise (favicon probes, CORS `OPTIONS` preflights, `HEAD`, asset/XHR
-requests, vuln scans), and each one would otherwise cost a slow, billable LLM
-round-trip. A server can declare a **`request_filter`** in its `startup_params`:
-an allowlist of match rules. A request is forwarded to the LLM only if it matches
-at least one rule; requests matching no rule get **`filtered_response`** (default
-`404`) with **no LLM call**.
-
-Implementation is shared with HTTP/2 in `src/server/http_common/handler.rs`
-(`RequestFilter`), built once per connection in `serve_connection` (path regexes
-compile once, not per request) and applied in the request handler before the
-event is built. Pure and unit-tested in `tests/http_request_filter_test.rs`.
-
-### Config
+By default every request costs an LLM round-trip, including favicon probes, CORS
+preflights and scanner noise. `request_filter` in `startup_params` is an
+allowlist: a request reaches the LLM only if it matches at least one rule;
+everything else gets `filtered_response` (default 404) with no LLM call.
 
 ```json
 "startup_params": {
-  "request_filter": [
-    { "methods": ["GET"], "path": "^/$", "headers": { "accept": "text/html" } },
-    { "methods": ["POST"], "path": "^/api/" }
-  ],
-  "filtered_response": { "status": 404, "body": "Not Found",
-                         "headers": { "content-type": "text/plain" } }
+  "request_filter": [ { "methods": ["GET"], "headers": { "accept": "text/html" } } ],
+  "filtered_response": { "status": 404, "body": "Not Found" }
 }
 ```
 
-- **Rules are OR'd**; **conditions within a rule are AND'd**; an omitted condition is a wildcard.
-  - `methods`: request method ∈ list, case-insensitive. Omit for any.
-  - `path`: a **regular expression** matched against the path (portion before `?`),
-    e.g. `"^/$"`, `"^/api/"`. Omit for any. An invalid regex drops that rule (logged), never fatal.
-  - `headers`: object of header-name → matcher; name is case-insensitive; value
-    `true` = must be present, string = value must **contain** that substring
-    (case-insensitive), e.g. `{ "accept": "text/html" }`.
-- **No `request_filter` (or empty)** ⇒ pass-through: every request reaches the LLM (default, unchanged).
-- Filtered requests are **not** logged to the access log — they never enter the LLM path.
+That one rule covers the common noise generically — favicon requests carry
+`Accept: image/*` and preflights are not `GET`. It replaced an earlier hardcoded
+favicon bypass.
 
-### Handling noise generically
+Full schema, matching semantics and the **fail-open** caveat (a malformed rule is
+dropped, not fatal, so a typo sends *more* traffic to the LLM) are in
+`src/server/http_common/CLAUDE.md`. Parse problems are logged at `error!` and
+pushed to the status stream as `[ERROR] HTTP request_filter: …` at connection
+setup. Pure unit tests: `tests/http_request_filter_test.rs`.
 
-The favicon/CORS problem falls out of a single sensible filter — favicon.ico
-requests carry `Accept: image/*` and OPTIONS preflights aren't `GET`, so both are
-excluded by:
+## Testing
 
-```json
-"request_filter": [ { "methods": ["GET"], "headers": { "accept": "text/html" } } ]
+- `tests/server/http/test.rs` — 7 mocked E2E scenarios (simple GET, JSON API,
+  routing, headers, methods, error responses, logging) driven through the real
+  binary with `reqwest`. Declared in `tests/server/http/mod.rs`.
+- `tests/server/http/e2e_scheduled_tasks_test.rs` — scheduled-task coverage.
+- `tests/http_request_filter_test.rs` — pure filter unit tests.
+
+```bash
+./cargo-isolated.sh test --no-default-features --features http \
+    --test server::http::test -- --test-threads=100
 ```
 
-This replaces the earlier hardcoded favicon bypass. The same schema applies to
-HTTP/2 (see `src/server/http2/CLAUDE.md`).
+**Gaps**: no test covers TLS/HTTPS, the h2c upgrade path, the request filter
+end-to-end through a running server (only the pure unit tests), a non-UTF-8
+request body, or a model response with an invalid status/header.
 
-## Connection Management
-
-### Connection Lifecycle
-
-1. **Accept**: `TcpListener::accept()` creates new TCP connection
-2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Http`
-3. **Serve**: Hyper's `http1::Builder::new().serve_connection()` handles HTTP/1.1 protocol
-4. **Request Loop**: Each request on the connection calls the service function
-5. **LLM Call**: Service function calls LLM to generate response
-6. **Close**: Connection removed when TCP socket closes (client disconnect or error)
-
-### Connection Data Structure
-
-```rust
-ProtocolConnectionInfo::Http {
-    recent_requests: Vec<String>, // Track recent URIs requested
-}
-```
-
-Unlike TCP, no write_half or queued_data - hyper manages the socket internally.
-
-### State Updates
-
-- Connection state tracked in `ServerInstance.connections`
-- Each request increments `packets_received` and `bytes_received`
-- Each response increments `packets_sent` and `bytes_sent`
-- `last_activity` updated on each request
-- UI updates via `__UPDATE_UI__` message
-
-## Known Limitations
-
-### 1. HTTP/1.1 Only
-
-- No HTTP/2 support (hyper supports it, but not implemented here)
-- No HTTP/3 (QUIC) support
-- Connection upgrade (WebSocket) not supported
-
-### 2. No TLS Support
-
-- Raw HTTP only (port 80, 8080, etc.)
-- For HTTPS, would need to wrap listener with rustls or native-tls
-- See future enhancement section for HTTPS implementation plan
-
-### 3. No Streaming
-
-- Request bodies fully buffered before LLM processing
-- Response bodies fully generated before sending
-- No support for chunked responses generated incrementally
-- Large requests/responses may exhaust memory
-
-### 4. No Connection Pooling Control
-
-- Hyper manages keep-alive automatically
-- No LLM control over connection persistence
-- No way to force close after response (hyper decides)
-
-### 5. Limited Header Control
-
-- LLM can set custom headers, but hyper may add/modify:
-    - `Content-Length` (calculated automatically)
-    - `Date` (may be added by hyper)
-    - `Connection` (keep-alive management)
-- No way to prevent hyper's automatic headers
-
-### 6. No Multipart Form Support
-
-- Request body provided as raw string to LLM
-- No automatic parsing of `multipart/form-data` or `application/x-www-form-urlencoded`
-- LLM must parse these formats manually if needed
-
-## Example Prompts
-
-### Simple Web Server
+## Example prompts
 
 ```
 listen on port 8080 via http
@@ -283,143 +139,47 @@ For GET /about, return <h1>About Us</h1>
 For other paths, return 404 with "Not Found"
 ```
 
-### JSON API
-
 ```
 listen on port 3000 via http
-For POST /api/users, parse JSON body and return:
-  Status: 201
-  Content-Type: application/json
-  Body: {"status": "created", "id": 123}
-For GET /api/users/:id, return user data as JSON
+For POST /api/users, parse the JSON body and return 201 with
+Content-Type: application/json and body {"status":"created","id":123}
 ```
-
-### Static File Server (Simulated)
-
-```
-listen on port 8000 via http
-For GET /index.html, return HTML content
-For GET /style.css, return CSS with Content-Type: text/css
-For GET /script.js, return JS with Content-Type: application/javascript
-For other paths, return 404
-```
-
-### Custom Headers and Status Codes
 
 ```
 listen on port 8080 via http
 For GET /health, return 200 with body: OK
-For GET /redirect, return 301 with Location header: /home
-For GET /forbidden, return 403 with body: Access Denied
-For POST /data, return 201 with X-Request-ID header
+For GET /redirect, return 301 with Location: /home
+For DELETE /items/*, return 204 with no body
 ```
 
-### REST API with Routing
+For deterministic behavior prefer a static or script handler over the
+instruction — same result, no LLM call:
 
-```
-listen on port 4000 via http
-For GET /products, return list of products as JSON
-For GET /products/:id, return single product as JSON
-For POST /products, create new product and return 201
-For PUT /products/:id, update product and return 200
-For DELETE /products/:id, delete product and return 204 (no body)
-```
-
-## Performance Characteristics
-
-### Latency
-
-- One LLM call per HTTP request
-- Typical latency: 2-5 seconds per request with qwen3-coder:30b
-- Connection keep-alive reduces TCP handshake overhead for subsequent requests
-
-### Throughput
-
-- Limited by LLM response time (2-5s per request)
-- Concurrent requests processed in parallel (each on separate tokio task)
-- Hyper handles connection multiplexing efficiently
-
-### Concurrency
-
-- Unlimited concurrent connections (bounded by system resources)
-- Each connection processed on separate tokio task
-- Ollama lock serializes LLM API calls across all connections
-
-### Memory Usage
-
-- Each request/response buffered in memory
-- Large requests/responses can be memory-intensive
-- No streaming support means entire body must fit in RAM
-
-## Comparison with Raw TCP
-
-| Feature            | TCP (Raw)                   | HTTP                              |
-|--------------------|-----------------------------|-----------------------------------|
-| Protocol Parsing   | LLM constructs protocol     | Hyper handles HTTP parsing        |
-| Request Structure  | Raw bytes                   | Parsed method, URI, headers, body |
-| Response Structure | Raw bytes                   | Status, headers, body             |
-| Connection Model   | Persistent, stateful        | Request-response, less state      |
-| Use Case           | Custom protocols, FTP, SMTP | Web APIs, REST, webhooks          |
-| Complexity         | LLM implements protocol     | LLM implements application logic  |
-
-## Future Enhancements
-
-### HTTPS Support
-
-Add TLS support using rustls:
-
-```rust
-use tokio_rustls::{TlsAcceptor, rustls::ServerConfig};
-
-// Create TLS acceptor
-let tls_acceptor = TlsAcceptor::from(tls_config);
-
-// Accept TLS connection
-let tls_stream = tls_acceptor.accept(tcp_stream).await?;
-
-// Serve HTTP over TLS
-http1::Builder::new().serve_connection(TokioIo::new(tls_stream), service).await?;
+```json
+"event_handlers": [{
+  "event_pattern": "http_request",
+  "handler": { "type": "static", "actions": [
+    { "type": "send_http_response", "status": 200,
+      "headers": {"Content-Type": "text/plain"}, "body": "Hello World" }
+  ]}
+}]
 ```
 
-### HTTP/2 Support
+## Performance
 
-Hyper supports HTTP/2, would need to:
+One LLM call per request unless a script/static handler matches or the request is
+filtered out; 2-5 s per call with `qwen3-coder:30b`. Requests are handled
+concurrently (a task each), but the Ollama lock serializes the model calls, so
+throughput is effectively one request at a time. Keep-alive avoids repeated TCP
+handshakes. Everything is buffered in memory.
 
-- Use `hyper::server::conn::http2` instead of `http1`
-- Handle ALPN negotiation for HTTP/2 over TLS
-- Update LLM prompts to describe HTTP/2 features (server push, etc.)
+## Not implemented
 
-### WebSocket Upgrade
-
-Support WebSocket connections:
-
-- Detect `Upgrade: websocket` header
-- Perform WebSocket handshake
-- Switch to WebSocket protocol implementation
-
-### Streaming Responses
-
-Support chunked responses generated incrementally:
-
-- Use `Body` trait instead of `Full<Bytes>`
-- Allow LLM to generate response chunks asynchronously
-- Stream file downloads without buffering entire file
-
-### Request Body Streaming
-
-Process large request bodies in chunks:
-
-- Don't buffer entire body before LLM call
-- Stream body to LLM in chunks
-- Useful for file uploads
+WebSocket upgrade · streaming/chunked responses · request-body streaming ·
+binary bodies · multipart/urlencoded form parsing (the body is handed over raw) ·
+LLM control over keep-alive or connection close · ALPN · per-connection stats.
 
 ## References
 
-- [RFC 7230: HTTP/1.1 Message Syntax and Routing](https://datatracker.ietf.org/doc/html/rfc7230)
-- [RFC 7231: HTTP/1.1 Semantics and Content](https://datatracker.ietf.org/doc/html/rfc7231)
-- [RFC 7232: HTTP/1.1 Conditional Requests](https://datatracker.ietf.org/doc/html/rfc7232)
-- [RFC 7233: HTTP/1.1 Range Requests](https://datatracker.ietf.org/doc/html/rfc7233)
-- [RFC 7234: HTTP/1.1 Caching](https://datatracker.ietf.org/doc/html/rfc7234)
-- [RFC 7235: HTTP/1.1 Authentication](https://datatracker.ietf.org/doc/html/rfc7235)
-- [Hyper Documentation](https://docs.rs/hyper/latest/hyper/)
-- [HTTP on Wikipedia](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol)
+- RFC 7230-7235 (HTTP/1.1)
+- [hyper](https://docs.rs/hyper/latest/hyper/)

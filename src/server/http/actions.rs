@@ -53,13 +53,22 @@ impl Protocol for HttpProtocol {
         vec!["http", "http server", "http stack", "via http", "hyper"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Beta)
-            .implementation("hyper v1.0 web server library")
-            .llm_control("Response content (status, headers, body)")
-            .e2e_testing("reqwest HTTP client - 14 LLM calls")
+            // Default HTTP port is privileged; the preflight check only fires
+            // when the requested port is actually < 1024.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(80))
+            .implementation("hyper v1.0 HTTP/1.1 server, optional TLS via rustls")
+            .llm_control("Response content (status, headers, text body) — one response per request")
+            .e2e_testing("reqwest + mocked LLM, tests/server/http/test.rs (7 scenarios)")
+            .notes(
+                "Text bodies only: no binary response bodies, no chunked/streaming responses, \
+                 and request bodies are fully buffered before the LLM sees them",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -179,25 +188,39 @@ impl HttpProtocol {
 fn send_http_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_http_response".to_string(),
-        description: "IMPORTANT: Use this action to respond to HTTP requests. This is the ONLY correct action for HTTP responses - do NOT use generic 'send_data' or 'show_message' actions to send HTTP responses. Always specify status code, headers (especially Content-Type), and body content.".to_string(),
+        description: "Respond to the HTTP request that triggered this event. This is the ONLY \
+            action that produces an HTTP response - do NOT use generic 'send_data' or \
+            'show_message' for that. Emit it exactly once per request: the response is sent \
+            complete, in one piece, as soon as you return. There is no way to stream or chunk a \
+            response, to send it in several parts, or to keep the request open; and the body is \
+            sent as UTF-8 text, so binary payloads (images, gzip, protobuf) cannot be produced at \
+            all. If you emit no send_http_response, the client gets an empty 200."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "status".to_string(),
                 type_hint: "number".to_string(),
-                description: "HTTP status code (e.g., 200, 404, 500)".to_string(),
+                description: "HTTP status code as a number between 100 and 599 (e.g. 200, 404, 500).".to_string(),
                 required: true,
             },
             Parameter {
                 name: "headers".to_string(),
                 type_hint: "object".to_string(),
-                description: "Response headers as key-value pairs (e.g., {\"Content-Type\": \"text/html\"})".to_string(),
+                description: "Optional response headers as a flat name->value object (e.g. \
+                    {\"Content-Type\": \"text/html\"}). Set Content-Type yourself; Content-Length \
+                    and Date are added automatically and must not be set here. Headers whose name \
+                    or value is not legal HTTP (for example one containing a newline) are dropped."
+                    .to_string(),
                 required: false,
             },
             Parameter {
                 name: "body".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response body content (HTML, JSON, text, etc.)".to_string(),
-                required: true,
+                description: "Response body as text (HTML, JSON, plain text). Optional: omit it \
+                    for an empty body, which is what 204 and 304 require. A JSON object or array \
+                    is serialized to compact JSON text. Bytes cannot be sent - text only."
+                    .to_string(),
+                required: false,
             },
         ],
         example: json!({
@@ -276,7 +299,24 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "body".to_string(),
             type_hint: "string".to_string(),
-            description: "Request body".to_string(),
+            description: "Request body decoded as UTF-8 text (empty string when there is no body). \
+                Bytes that are not valid UTF-8 are replaced with U+FFFD, so when body_is_binary is \
+                true this field is lossy and must not be treated as the exact request payload."
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "body_bytes".to_string(),
+            type_hint: "number".to_string(),
+            description: "Size of the request body in bytes, before UTF-8 decoding.".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "body_is_binary".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Present and true only when the request body is not valid UTF-8. The \
+                body field is then a lossy decoding; the raw bytes are not available to you."
+                .to_string(),
             required: false,
         },
     ])
