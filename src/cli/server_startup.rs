@@ -214,7 +214,7 @@ pub async fn start_server_from_action(
     host: Option<String>,
     port: Option<u16>,
     protocol: &str,
-    _send_first: bool,
+    send_first: bool,
     initial_memory: Option<String>,
     instruction: String,
     startup_params: Option<serde_json::Value>,
@@ -233,6 +233,51 @@ pub async fn start_server_from_action(
     let protocol_impl = registry
         .get(&protocol_name)
         .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", protocol))?;
+
+    // === send_first ===
+    //
+    // `send_first` is a top-level parameter of this function (and of the
+    // `open_server` action / MCP `start_server` tool), but protocols consume it
+    // as a startup parameter: TCP, Redis, PostgreSQL, MySQL, MongoDB, JSON-RPC,
+    // IRC and LDAP all read `startup_params.send_first`. Fold the top-level flag
+    // into `startup_params` so the two spellings mean the same thing.
+    //
+    // Only inject when the protocol actually declares the parameter -
+    // `StartupParams` rejects undeclared keys. An explicit value already present
+    // in `startup_params` wins, so callers can still set it per-protocol.
+    let declares_send_first = protocol_impl
+        .get_startup_parameters()
+        .iter()
+        .any(|p| p.name == "send_first");
+
+    let startup_params = if send_first && declares_send_first {
+        let mut params = startup_params.unwrap_or_else(|| serde_json::json!({}));
+        match params.as_object_mut() {
+            Some(map) => {
+                map.entry("send_first")
+                    .or_insert(serde_json::Value::Bool(true));
+                Some(params)
+            }
+            None => {
+                return Err(anyhow::anyhow!(
+                    "startup_params must be a JSON object, got: {}",
+                    params
+                ));
+            }
+        }
+    } else {
+        if send_first && !declares_send_first {
+            let _ = status_tx.send(format!(
+                "[WARN] Protocol '{}' does not support send_first; ignoring it",
+                protocol
+            ));
+            tracing::warn!(
+                "send_first requested for protocol '{}', which declares no send_first startup parameter - ignoring",
+                protocol
+            );
+        }
+        startup_params
+    };
 
     // === DUAL PATH LOGIC: Migrated vs Unmigrated Protocols ===
     //

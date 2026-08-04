@@ -178,6 +178,39 @@ pub struct StartServerParams {
     /// get_protocol_docs for a protocol's available startup parameters.
     #[serde(default)]
     pub startup_params: Option<serde_json::Value>,
+    /// Network interface to bind, for interface-bound (layer 2 / raw socket)
+    /// protocols such as `arp`, `datalink`, `icmp` and `isis` — e.g. "en0", "lo".
+    /// Ignored by port-based protocols. Check get_protocol_docs: if the protocol
+    /// is interface-bound its docs list `interface` instead of `port`.
+    #[serde(default)]
+    pub interface: Option<String>,
+    /// Source MAC address for layer 2 protocols (e.g. "02:00:00:00:00:01").
+    /// Only meaningful together with `interface`.
+    #[serde(default)]
+    pub mac_address: Option<String>,
+    /// Make the server speak first on connect instead of waiting for the client
+    /// — the FTP/SMTP-style greeting banner. Only protocols that declare a
+    /// `send_first` startup parameter honour it (tcp, redis, postgresql, mysql,
+    /// mongodb, jsonrpc, irc, ldap, …); for the rest it is ignored with a
+    /// warning. The banner content comes from the handler for the protocol's
+    /// "connection opened" event.
+    #[serde(default)]
+    pub send_first: Option<bool>,
+    /// Seed the server's LLM memory before the first request. Only affects the
+    /// `instruction` path; `event_handlers` never read memory.
+    #[serde(default)]
+    pub initial_memory: Option<String>,
+    /// Natural-language instructions for the automatic feedback loop that
+    /// adjusts this server's behaviour as it runs.
+    #[serde(default)]
+    pub feedback_instructions: Option<String>,
+    /// Server-scoped scheduled LLM tasks, removed when the server stops. Array of
+    /// objects: {"task_id":"...", "recurring":true, "interval_secs":60,
+    /// "instruction":"..."} for a repeating task, or {"task_id":"...",
+    /// "recurring":false, "delay_secs":10, "instruction":"..."} for a one-shot.
+    /// Optional: "max_executions" (number), "context" (any JSON).
+    #[serde(default)]
+    pub scheduled_tasks: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -424,22 +457,32 @@ impl NetGetMcpService {
             params.port.unwrap_or(0)
         );
 
+        let scheduled_tasks = match parse_scheduled_tasks(params.scheduled_tasks) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid scheduled_tasks: {}",
+                    e
+                ))]));
+            }
+        };
+
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
         let server_id = match crate::cli::server_startup::start_server_from_action(
             &self.state.app_state,
-            None,                // mac_address
-            None,                // interface
-            params.host.clone(), // host
-            params.port,         // port
-            &params.protocol,    // protocol
-            false,               // send_first
-            None,                // initial_memory
-            instruction,           // instruction
-            params.startup_params, // startup_params
-            params.event_handlers, // event_handlers
-            None,                // scheduled_tasks
-            None,                // feedback_instructions
-            status_tx,           // status_tx
+            params.mac_address.clone(),         // mac_address
+            params.interface.clone(),           // interface
+            params.host.clone(),                // host
+            params.port,                        // port
+            &params.protocol,                   // protocol
+            params.send_first.unwrap_or(false), // send_first
+            params.initial_memory,              // initial_memory
+            instruction,                        // instruction
+            params.startup_params,              // startup_params
+            params.event_handlers,              // event_handlers
+            scheduled_tasks,                    // scheduled_tasks
+            params.feedback_instructions,       // feedback_instructions
+            status_tx,                          // status_tx
         )
         .await
         {
@@ -935,6 +978,37 @@ impl ServerHandler for NetGetMcpService {
             Ok(self.get_info())
         }
     }
+}
+
+/// Parse the MCP `scheduled_tasks` argument into typed task definitions.
+///
+/// Kept as raw JSON on the wire because `ServerTaskDefinition` does not derive
+/// `JsonSchema`; a bad entry is reported to the caller rather than silently
+/// dropped.
+fn parse_scheduled_tasks(
+    tasks: Option<Vec<serde_json::Value>>,
+) -> Result<Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>, String> {
+    let Some(tasks) = tasks else {
+        return Ok(None);
+    };
+    if tasks.is_empty() {
+        return Ok(None);
+    }
+    let mut parsed = Vec::with_capacity(tasks.len());
+    for (i, task) in tasks.into_iter().enumerate() {
+        match serde_json::from_value::<crate::llm::actions::common::ServerTaskDefinition>(task) {
+            Ok(def) => parsed.push(def),
+            Err(e) => {
+                return Err(format!(
+                    "entry {}: {}. Each entry needs \"task_id\" (string), \"recurring\" (boolean) \
+                     and \"instruction\" (string); recurring tasks also take \"interval_secs\", \
+                     one-shot tasks \"delay_secs\".",
+                    i, e
+                ));
+            }
+        }
+    }
+    Ok(Some(parsed))
 }
 
 /// Build a short one-line summary of a request (event data) for the log list.
