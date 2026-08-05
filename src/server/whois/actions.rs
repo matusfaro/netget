@@ -332,7 +332,16 @@ pub static WHOIS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "whois_query",
         "Client sent a WHOIS domain lookup query",
-        json!({"type": "placeholder", "event_id": "whois_query"}),
+        // Rendered verbatim into the protocol documentation the model reads
+        // (src/llm/actions/tools.rs and src/mcp_stdio/docs.rs), so it must be an action the
+        // executor actually accepts - the previous {"type": "placeholder"} was not.
+        json!({
+            "type": "send_whois_record",
+            "domain": "example.com",
+            "registrar": "Example Registrar, Inc.",
+            "registrant": "Example Organization",
+            "name_servers": ["ns1.example.com", "ns2.example.com"]
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "query".to_string(),
@@ -352,6 +361,10 @@ pub static WHOIS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_error_action(),
         close_connection_action(),
     ])
+    .with_alternative_example(json!({
+        "type": "send_error",
+        "message": "No match for domain \"example.invalid\""
+    }))
 });
 
 pub fn get_whois_event_types() -> Vec<EventType> {
