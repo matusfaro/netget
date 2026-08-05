@@ -1,4 +1,10 @@
 //! WebRTC Signaling Server protocol actions implementation
+//!
+//! The signaling server relays SDP offers/answers and ICE candidates between registered
+//! peers. Relay is automatic and happens *before* any event fires: putting a model
+//! round-trip in front of every ICE candidate would break any real browser peer. The LLM's
+//! role here is observation, plus the ability to speak to a peer directly at registration
+//! time.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -11,77 +17,167 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+/// Actions available while a signaling connection is open.
+fn signaling_actions() -> Vec<ActionDefinition> {
+    vec![
+        ActionDefinition {
+            name: "send_signaling_message".to_string(),
+            description: "Send one JSON signaling message to the peer this event came                           from. Must be a valid signaling message: register, registered,                           offer, answer, ice_candidate, relay or error."
+                .to_string(),
+            parameters: vec![Parameter {
+                name: "message".to_string(),
+                type_hint: "object".to_string(),
+                description: "The message object, including its `type` field".to_string(),
+                required: true,
+            }],
+            example: json!({
+                "type": "send_signaling_message",
+                "message": {"type": "error", "message": "Registration rejected"}
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> signaling message to {peer_id}")
+                    .with_debug("WebRTC-Signaling send_signaling_message"),
+            ),
+        },
+        ActionDefinition {
+            name: "disconnect_peer".to_string(),
+            description: "Close this peer's signaling connection".to_string(),
+            parameters: vec![],
+            example: json!({"type": "disconnect_peer"}),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> signaling disconnect")
+                    .with_debug("WebRTC-Signaling disconnect_peer"),
+            ),
+        },
+    ]
+}
+
 /// WebRTC signaling peer connected event
 pub static WEBRTC_SIGNALING_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_signaling_peer_connected",
-        "WebRTC signaling peer registered with peer ID",
+        "A peer registered a peer ID with the signaling server. The server has already          acknowledged it with a `registered` message.",
         json!({
-            "type": "no_action"
+            "type": "send_signaling_message",
+            "message": {
+                "type": "relay",
+                "from": "netget",
+                "to": "{{event.peer_id}}",
+                "data": {"welcome": true}
+            }
         }),
     )
     .with_parameters(vec![
         Parameter {
             name: "peer_id".to_string(),
             type_hint: "string".to_string(),
-            description: "Unique peer identifier".to_string(),
+            description: "Peer ID the client chose. Nothing authenticates it; any \
+                          client may claim any unused ID."
+                .to_string(),
             required: true,
         },
         Parameter {
             name: "remote_addr".to_string(),
             type_hint: "string".to_string(),
-            description: "Remote address of signaling peer".to_string(),
+            description: "Remote address of the signaling connection".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "How many peers are registered, including this one".to_string(),
             required: true,
         },
     ])
+    .with_actions(signaling_actions())
+    .with_alternative_example(json!({"type": "disconnect_peer"}))
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("signaling peer {peer_id} registered ({peer_count} online)")
+            .with_debug("WebRTC-Signaling register peer_id={peer_id} from {remote_addr}")
+            .with_trace("WebRTC-Signaling register: {json_pretty(.)}"),
+    )
 });
 
 /// WebRTC signaling peer disconnected event
 pub static WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_signaling_peer_disconnected",
-        "WebRTC signaling peer disconnected",
+        "A registered peer's signaling connection closed. Informational: the socket is          already gone, so there is nothing protocol-specific left to send.",
         json!({
-            "type": "no_action"
-        }),
-    )
-    .with_parameters(vec![Parameter {
-        name: "peer_id".to_string(),
-        type_hint: "string".to_string(),
-        description: "Unique peer identifier".to_string(),
-        required: true,
-    }])
-});
-
-/// WebRTC signaling message received event
-pub static WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "webrtc_signaling_message_received",
-        "Signaling message received from peer",
-        json!({
-            "type": "no_action"
+            "type": "append_to_log",
+            "message": "signaling peer {{event.peer_id}} went away"
         }),
     )
     .with_parameters(vec![
         Parameter {
             name: "peer_id".to_string(),
             type_hint: "string".to_string(),
-            description: "Sender peer identifier".to_string(),
+            description: "Peer ID that went away".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "How many peers remain registered".to_string(),
+            required: true,
+        },
+    ])
+    .with_no_actions()
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("signaling peer {peer_id} disconnected ({peer_count} online)")
+            .with_debug("WebRTC-Signaling disconnect peer_id={peer_id}"),
+    )
+});
+
+/// WebRTC signaling message received event
+pub static WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "webrtc_signaling_message_received",
+        "An offer, answer, ICE candidate or relay message passed through the server. It          has already been forwarded (or found undeliverable) by the time this fires, so          this event is for observation and memory only.",
+        json!({
+            "type": "append_memory",
+            "memory": "{{event.peer_id}} sent a {{event.message_type}} to {{event.target_peer}}"
+        }),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "peer_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Sender, taken from the message's own `from` field".to_string(),
             required: true,
         },
         Parameter {
             name: "message_type".to_string(),
             type_hint: "string".to_string(),
-            description: "Message type (offer, answer, ice_candidate)".to_string(),
+            description: "\"offer\", \"answer\", \"ice_candidate\" or \"relay\"".to_string(),
             required: true,
         },
         Parameter {
             name: "target_peer".to_string(),
             type_hint: "string".to_string(),
-            description: "Target peer identifier".to_string(),
-            required: false,
+            description: "Recipient, from the message's `to` field".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "delivered".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "False when no peer with that ID was registered; the \
+                          message was dropped and the sender was sent an error."
+                .to_string(),
+            required: true,
         },
     ])
+    .with_no_actions()
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("signaling {message_type} {peer_id} -> {target_peer}")
+            .with_debug("WebRTC-Signaling {message_type} from={peer_id} to={target_peer} delivered={delivered}")
+            .with_trace("WebRTC-Signaling message: {json_pretty(.)}"),
+    )
 });
 
 /// WebRTC Signaling Server protocol action handler
@@ -106,44 +202,14 @@ impl Protocol for WebRtcSignalingProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "list_signaling_peers".to_string(),
-                description: "List all connected signaling peers".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "list_signaling_peers"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC list signaling peers")
-                        .with_debug("WebRTC-Signaling list_signaling_peers"),
-                ),
-            },
-            ActionDefinition {
-                name: "broadcast_message".to_string(),
-                description: "Broadcast a message to all connected signaling peers".to_string(),
-                parameters: vec![Parameter {
-                    name: "message".to_string(),
-                    type_hint: "object".to_string(),
-                    description: "Message to broadcast (JSON object)".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "broadcast_message",
-                    "message": {"type": "announcement", "text": "Server restarting in 5 minutes"}
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC broadcast message")
-                        .with_debug("WebRTC-Signaling broadcast_message: message={message}"),
-                ),
-            },
-        ]
+        // Deliberately empty. `list_signaling_peers` and `broadcast_message` were
+        // advertised here; both built an `ActionResult::Custom` that nothing in this
+        // protocol consumed, so invoking either did nothing while reporting success.
+        Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]
+        signaling_actions()
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -151,22 +217,12 @@ impl Protocol for WebRtcSignalingProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
+        // These used to be three *fresh* EventTypes with `{"type": "placeholder"}`
+        // response examples, unrelated to the statics the server actually fires.
         vec![
-            EventType::new(
-                "webrtc_signaling_peer_connected",
-                "Triggered when a peer registers with the signaling server",
-                json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_connected"}),
-            ),
-            EventType::new(
-                "webrtc_signaling_peer_disconnected",
-                "Triggered when a peer disconnects from the signaling server",
-                json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_disconnected"}),
-            ),
-            EventType::new(
-                "webrtc_signaling_message_received",
-                "Triggered when a signaling message is received",
-                json!({"type": "placeholder", "event_id": "webrtc_signaling_message_received"}),
-            ),
+            WEBRTC_SIGNALING_PEER_CONNECTED_EVENT.clone(),
+            WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT.clone(),
+            WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT.clone(),
         ]
     }
 
@@ -188,9 +244,19 @@ impl Protocol for WebRtcSignalingProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("WebSocket-based signaling server for WebRTC SDP exchange")
-            .llm_control("Monitor peer connections and signaling message flow")
-            .e2e_testing("WebSocket client connections with SDP offer/answer relay")
+            .implementation(
+                "tokio-tungstenite WebSocket relay: peers register a peer ID, then \
+                 offer/answer/ice_candidate/relay messages are forwarded by their `to` field",
+            )
+            .llm_control(
+                "Observe registrations and message flow; speak to or disconnect a peer at \
+                 registration time. Relay itself is automatic and not gated on the model.",
+            )
+            .e2e_testing("Two tokio-tungstenite clients exchanging an offer and an answer")
+            .notes(
+                "No authentication: any client may claim any unused peer ID. Undeliverable \
+                 messages are dropped and the sender gets an error; nothing is queued.",
+            )
             .build()
     }
 
@@ -248,7 +314,13 @@ impl Protocol for WebRtcSignalingProtocol {
                     "handler": {
                         "type": "static",
                         "actions": [{
-                            "type": "no_action"
+                            "type": "send_signaling_message",
+                            "message": {
+                                "type": "relay",
+                                "from": "netget",
+                                "to": "{{event.peer_id}}",
+                                "data": {"welcome": true}
+                            }
                         }]
                     }
                 }]
@@ -285,27 +357,21 @@ impl Server for WebRtcSignalingProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "list_signaling_peers" => {
-                // Return custom action for manual processing
-                Ok(ActionResult::Custom {
-                    name: "list_signaling_peers".to_string(),
-                    data: json!({}),
-                })
-            }
-            "broadcast_message" => {
+            "send_signaling_message" => {
                 let message = action
                     .get("message")
                     .context("Missing 'message' field")?
                     .clone();
-
-                // Return custom action for manual processing
-                Ok(ActionResult::Custom {
-                    name: "broadcast_message".to_string(),
-                    data: json!({
-                        "message": message,
-                    }),
-                })
+                if !message.is_object() {
+                    anyhow::bail!("'message' must be a JSON object");
+                }
+                // Output is written to this peer's WebSocket as a text frame by
+                // WebRtcSignalingServer::apply_results.
+                Ok(ActionResult::Output(
+                    serde_json::to_vec(&message).context("message is not serialisable")?,
+                ))
             }
+            "disconnect_peer" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!(
                 "Unknown WebRTC Signaling action: {}",
                 action_type

@@ -18,7 +18,10 @@ use crate::server::connection::ConnectionId;
 use crate::server::WebRtcSignalingProtocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use actions::{WEBRTC_SIGNALING_PEER_CONNECTED_EVENT, WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT};
+use actions::{
+    WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT, WEBRTC_SIGNALING_PEER_CONNECTED_EVENT,
+    WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT,
+};
 
 /// Unique identifier for a signaling peer
 pub type PeerId = String;
@@ -73,10 +76,19 @@ pub enum SignalingMessage {
 }
 
 /// Peer connection data
+///
+/// Holds a channel into the connection's writer task rather than the `SplitSink` itself.
+/// That is the whole fix for the relay: `register_peer` used to take ownership of the
+/// sink, so `handle_connection` could not keep reading and had to `break` immediately
+/// after a successful registration — which ran the disconnect cleanup, unregistered the
+/// peer that had just registered, and dropped its socket. No peer was ever registered for
+/// longer than one statement, so `forward_message` could never find a recipient and not a
+/// single offer, answer or ICE candidate was ever relayed.
 struct PeerConnection {
     #[allow(dead_code)]
     peer_id: PeerId,
-    ws_tx: futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
+    /// Messages queued here are written by this connection's writer task.
+    out_tx: mpsc::UnboundedSender<Message>,
     #[allow(dead_code)]
     remote_addr: SocketAddr,
     #[allow(dead_code)]
@@ -86,7 +98,13 @@ struct PeerConnection {
 /// WebRTC signaling server shared state
 pub struct WebRtcSignalingServerData {
     /// Connected peers indexed by peer ID
-    peers: Arc<Mutex<HashMap<PeerId, Arc<Mutex<PeerConnection>>>>>,
+    peers: Arc<Mutex<HashMap<PeerId, PeerConnection>>>,
+}
+
+impl Default for WebRtcSignalingServerData {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebRtcSignalingServerData {
@@ -97,26 +115,27 @@ impl WebRtcSignalingServerData {
     }
 
     /// Register a new peer
-    pub async fn register_peer(
+    async fn register_peer(
         &self,
         peer_id: PeerId,
-        ws_tx: futures::stream::SplitSink<tokio_tungstenite::WebSocketStream<TcpStream>, Message>,
+        out_tx: mpsc::UnboundedSender<Message>,
         remote_addr: SocketAddr,
         connection_id: ConnectionId,
     ) -> Result<()> {
-        let peer_conn = Arc::new(Mutex::new(PeerConnection {
-            peer_id: peer_id.clone(),
-            ws_tx,
-            remote_addr,
-            connection_id,
-        }));
-
         let mut peers = self.peers.lock().await;
         if peers.contains_key(&peer_id) {
             anyhow::bail!("Peer ID {} already registered", peer_id);
         }
 
-        peers.insert(peer_id.clone(), peer_conn);
+        peers.insert(
+            peer_id.clone(),
+            PeerConnection {
+                peer_id: peer_id.clone(),
+                out_tx,
+                remote_addr,
+                connection_id,
+            },
+        );
         info!("Registered signaling peer: {}", peer_id);
 
         Ok(())
@@ -130,19 +149,30 @@ impl WebRtcSignalingServerData {
     }
 
     /// Forward message to a specific peer
-    pub async fn forward_message(&self, to: &str, message: SignalingMessage) -> Result<()> {
+    pub async fn forward_message(&self, to: &str, message: &SignalingMessage) -> Result<()> {
+        let msg_json = serde_json::to_string(message)?;
         let peers = self.peers.lock().await;
-        let peer_conn = peers
-            .get(to)
-            .context(format!("Peer {} not found", to))?
-            .clone();
+        let peer_conn = peers.get(to).context(format!("Peer {} not found", to))?;
+        peer_conn
+            .out_tx
+            .send(Message::Text(msg_json))
+            .context("Peer's writer task has stopped")?;
         drop(peers);
 
-        let msg_json = serde_json::to_string(&message)?;
-        let mut peer_conn_lock = peer_conn.lock().await;
-        peer_conn_lock.ws_tx.send(Message::Text(msg_json)).await?;
-
         trace!("Forwarded message to peer {}: {:?}", to, message);
+        Ok(())
+    }
+
+    /// Send a message to one peer without requiring it to be the relay target
+    pub async fn send_to_peer(&self, peer_id: &str, text: String) -> Result<()> {
+        let peers = self.peers.lock().await;
+        let peer_conn = peers
+            .get(peer_id)
+            .context(format!("Peer {} not found", peer_id))?;
+        peer_conn
+            .out_tx
+            .send(Message::Text(text))
+            .context("Peer's writer task has stopped")?;
         Ok(())
     }
 
@@ -240,12 +270,13 @@ impl WebRtcSignalingServer {
         Ok(local_addr)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_connection(
         stream: TcpStream,
         remote_addr: SocketAddr,
         server_data: Arc<WebRtcSignalingServerData>,
         app_state: Arc<AppState>,
-        _status_tx: mpsc::UnboundedSender<String>,
+        status_tx: mpsc::UnboundedSender<String>,
         llm_client: OllamaClient,
         server_id: ServerId,
         protocol: Arc<WebRtcSignalingProtocol>,
@@ -254,7 +285,22 @@ impl WebRtcSignalingServer {
         let ws_stream = accept_async(stream).await?;
         info!("WebSocket connection established with {}", remote_addr);
 
-        let (ws_tx, mut ws_rx) = ws_stream.split();
+        let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+        // One writer task owns the sink. Everything that wants to write — this read loop,
+        // and any other peer relaying towards us — queues on `out_tx` instead. Handing the
+        // sink itself to the peer registry is what previously forced the read loop to
+        // terminate on registration.
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+        let writer = tokio::spawn(async move {
+            while let Some(msg) = out_rx.recv().await {
+                if let Err(e) = ws_tx.send(msg).await {
+                    debug!("Signaling writer stopped: {}", e);
+                    break;
+                }
+            }
+            let _ = ws_tx.close().await;
+        });
 
         let mut peer_id: Option<PeerId> = None;
         let mut connection_id: Option<ConnectionId> = None;
@@ -270,6 +316,12 @@ impl WebRtcSignalingServer {
                         Ok(m) => m,
                         Err(e) => {
                             warn!("Invalid signaling message: {}", e);
+                            let _ = Self::reply(
+                                &out_tx,
+                                &SignalingMessage::Error {
+                                    message: format!("Invalid signaling message: {}", e),
+                                },
+                            );
                             continue;
                         }
                     };
@@ -278,16 +330,31 @@ impl WebRtcSignalingServer {
                         SignalingMessage::Register {
                             peer_id: new_peer_id,
                         } => {
-                            // Register peer
+                            if peer_id.is_some() {
+                                let _ = Self::reply(
+                                    &out_tx,
+                                    &SignalingMessage::Error {
+                                        message: "This connection is already registered"
+                                            .to_string(),
+                                    },
+                                );
+                                continue;
+                            }
+
                             let conn_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                            connection_id = Some(conn_id);
 
                             match server_data
-                                .register_peer(new_peer_id.clone(), ws_tx, remote_addr, conn_id)
+                                .register_peer(
+                                    new_peer_id.clone(),
+                                    out_tx.clone(),
+                                    remote_addr,
+                                    conn_id,
+                                )
                                 .await
                             {
                                 Ok(_) => {
                                     peer_id = Some(new_peer_id.clone());
+                                    connection_id = Some(conn_id);
 
                                     // Add connection to server
                                     use crate::state::server::{
@@ -315,6 +382,22 @@ impl WebRtcSignalingServer {
                                     app_state
                                         .add_connection_to_server(server_id, conn_state)
                                         .await;
+                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+                                    // Confirm registration. `SignalingMessage::Registered`
+                                    // was defined but never sent, so a client waiting for
+                                    // it (as the documented protocol says it may) hung.
+                                    let _ = Self::reply(
+                                        &out_tx,
+                                        &SignalingMessage::Registered {
+                                            peer_id: new_peer_id.clone(),
+                                        },
+                                    );
+                                    info!("Peer {} registered successfully", new_peer_id);
+                                    let _ = status_tx.send(format!(
+                                        "[INFO] WebRTC signaling peer '{}' registered from {}",
+                                        new_peer_id, remote_addr
+                                    ));
 
                                     // Fire connected event
                                     let event = Event::new(
@@ -322,90 +405,112 @@ impl WebRtcSignalingServer {
                                         serde_json::json!({
                                             "peer_id": new_peer_id,
                                             "remote_addr": remote_addr.to_string(),
+                                            "peer_count": server_data.peer_count().await,
                                         }),
                                     );
 
-                                    let _ = call_llm(
+                                    if let Ok(result) = call_llm(
                                         &llm_client,
                                         &app_state,
                                         server_id,
-                                        None, // connection_id
+                                        Some(conn_id),
                                         &event,
                                         protocol.as_ref(),
                                     )
-                                    .await;
-
-                                    // Send registration confirmation
-                                    // (ws_tx was moved into register_peer, can't use here)
-                                    info!("Peer {} registered successfully", new_peer_id);
+                                    .await
+                                    {
+                                        if Self::apply_results(result, &out_tx, &status_tx) {
+                                            break;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     warn!("Failed to register peer {}: {}", new_peer_id, e);
-                                    // Can't send error, ws_tx was consumed
-                                    break;
+                                    let _ = Self::reply(
+                                        &out_tx,
+                                        &SignalingMessage::Error {
+                                            message: e.to_string(),
+                                        },
+                                    );
                                 }
                             }
+                        }
+                        SignalingMessage::Offer { .. }
+                        | SignalingMessage::Answer { .. }
+                        | SignalingMessage::IceCandidate { .. }
+                        | SignalingMessage::Relay { .. } => {
+                            let (kind, from, to) = match &message {
+                                SignalingMessage::Offer { from, to, .. } => {
+                                    ("offer", from.clone(), to.clone())
+                                }
+                                SignalingMessage::Answer { from, to, .. } => {
+                                    ("answer", from.clone(), to.clone())
+                                }
+                                SignalingMessage::IceCandidate { from, to, .. } => {
+                                    ("ice_candidate", from.clone(), to.clone())
+                                }
+                                SignalingMessage::Relay { from, to, .. } => {
+                                    ("relay", from.clone(), to.clone())
+                                }
+                                _ => unreachable!(),
+                            };
 
-                            // ws_tx was consumed, can't continue with this connection
-                            break;
+                            // Relay first: a signaling server is a relay, and putting a
+                            // model round-trip in front of every ICE candidate would break
+                            // any real browser peer.
+                            let delivered = match server_data.forward_message(&to, &message).await {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to forward {} from {} to {}: {}",
+                                        kind, from, to, e
+                                    );
+                                    let _ = Self::reply(
+                                        &out_tx,
+                                        &SignalingMessage::Error {
+                                            message: format!(
+                                                "Cannot deliver {} to {}: {}",
+                                                kind, to, e
+                                            ),
+                                        },
+                                    );
+                                    false
+                                }
+                            };
+
+                            let _ = status_tx.send(format!(
+                                "[DEBUG] WebRTC signaling {} {} -> {} ({})",
+                                kind,
+                                from,
+                                to,
+                                if delivered {
+                                    "delivered"
+                                } else {
+                                    "undeliverable"
+                                }
+                            ));
+
+                            // Notify the LLM out of band so observation never delays relay.
+                            let event = Event::new(
+                                &WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT,
+                                serde_json::json!({
+                                    "peer_id": from,
+                                    "message_type": kind,
+                                    "target_peer": to,
+                                    "delivered": delivered,
+                                }),
+                            );
+                            let llm = llm_client.clone();
+                            let state = app_state.clone();
+                            let proto = protocol.clone();
+                            tokio::spawn(async move {
+                                let _ =
+                                    call_llm(&llm, &state, server_id, None, &event, proto.as_ref())
+                                        .await;
+                            });
                         }
-                        SignalingMessage::Offer { from, to, sdp } => {
-                            // Forward offer
-                            if let Err(e) = server_data
-                                .forward_message(
-                                    &to,
-                                    SignalingMessage::Offer {
-                                        from: from.clone(),
-                                        to: to.clone(),
-                                        sdp,
-                                    },
-                                )
-                                .await
-                            {
-                                warn!("Failed to forward offer from {} to {}: {}", from, to, e);
-                            }
-                        }
-                        SignalingMessage::Answer { from, to, sdp } => {
-                            // Forward answer
-                            if let Err(e) = server_data
-                                .forward_message(
-                                    &to,
-                                    SignalingMessage::Answer {
-                                        from: from.clone(),
-                                        to: to.clone(),
-                                        sdp,
-                                    },
-                                )
-                                .await
-                            {
-                                warn!("Failed to forward answer from {} to {}: {}", from, to, e);
-                            }
-                        }
-                        SignalingMessage::IceCandidate {
-                            from,
-                            to,
-                            candidate,
-                        } => {
-                            // Forward ICE candidate
-                            if let Err(e) = server_data
-                                .forward_message(
-                                    &to,
-                                    SignalingMessage::IceCandidate {
-                                        from: from.clone(),
-                                        to: to.clone(),
-                                        candidate,
-                                    },
-                                )
-                                .await
-                            {
-                                warn!(
-                                    "Failed to forward ICE candidate from {} to {}: {}",
-                                    from, to, e
-                                );
-                            }
-                        }
-                        _ => {
-                            debug!("Ignoring signaling message: {:?}", message);
+                        other => {
+                            debug!("Ignoring signaling message: {:?}", other);
                         }
                     }
                 }
@@ -432,6 +537,7 @@ impl WebRtcSignalingServer {
                 &WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT,
                 serde_json::json!({
                     "peer_id": pid,
+                    "peer_count": server_data.peer_count().await,
                 }),
             );
 
@@ -439,7 +545,7 @@ impl WebRtcSignalingServer {
                 &llm_client,
                 &app_state,
                 server_id,
-                None, // connection_id
+                connection_id,
                 &event,
                 protocol.as_ref(),
             )
@@ -450,9 +556,49 @@ impl WebRtcSignalingServer {
                 app_state
                     .remove_connection_from_server(server_id, conn_id)
                     .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
         }
 
+        // Dropping our sender lets the writer task finish once the registry copy is gone.
+        drop(out_tx);
+        let _ = writer.await;
+
         Ok(())
+    }
+
+    fn reply(out_tx: &mpsc::UnboundedSender<Message>, message: &SignalingMessage) -> Result<()> {
+        out_tx.send(Message::Text(serde_json::to_string(message)?))?;
+        Ok(())
+    }
+
+    /// Execute whatever the LLM returned for a signaling event.
+    ///
+    /// Returns true if the connection should be closed.
+    fn apply_results(
+        result: crate::llm::actions::executor::ExecutionResult,
+        out_tx: &mpsc::UnboundedSender<Message>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> bool {
+        for message in &result.messages {
+            let _ = status_tx.send(format!("[INFO] {}", message));
+        }
+
+        let mut close = false;
+        for protocol_result in result.protocol_results {
+            match protocol_result {
+                crate::llm::ActionResult::Output(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => {
+                        let _ = out_tx.send(Message::Text(text));
+                    }
+                    Err(e) => {
+                        error!("Signaling action produced non-UTF-8 output: {}", e);
+                    }
+                },
+                crate::llm::ActionResult::CloseConnection => close = true,
+                _ => {}
+            }
+        }
+        close
     }
 }
