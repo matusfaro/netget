@@ -1,93 +1,16 @@
-//! Common USB/IP utilities shared across all USB protocols
+//! USB constant tables shared across the USB device protocols
 //!
-//! This module provides shared functionality for USB/IP protocol handling,
-//! including connection management, URB processing, and helper utilities.
-
-/// USB/IP protocol version (1.1.1)
-#[cfg(feature = "usb-common")]
-pub const USBIP_VERSION: u16 = 0x0111;
-
-/// USB/IP operation codes
-#[cfg(feature = "usb-common")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum UsbIpOp {
-    /// Request device list
-    ReqDevlist = 0x8005,
-    /// Reply device list
-    RepDevlist = 0x0005,
-    /// Import device request
-    ReqImport = 0x8003,
-    /// Import device reply (same opcode as RetSubmit in USB/IP protocol)
-    RepImport = 0x0003,
-    /// Submit URB
-    CmdSubmit = 0x0001,
-    /// URB reply (same opcode 0x0003 as RepImport - context determines which)
-    /// NOTE: In USB/IP, RepImport and RetSubmit share opcode 0x0003.
-    /// Use context (connection state) to distinguish them.
-    // RetSubmit = 0x0003,  // Commented out - use RepImport variant for 0x0003
-    /// Unlink URB
-    CmdUnlink = 0x0002,
-    /// Unlink reply
-    RetUnlink = 0x0004,
-}
-
-/// USB/IP connection state
-#[cfg(feature = "usb-common")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsbIpConnectionState {
-    /// Waiting for device list request
-    WaitingForRequest,
-    /// Device imported, processing URBs
-    Active,
-    /// Connection closed
-    Closed,
-}
-
-/// Helper to create a human-readable device path (required by USB/IP protocol)
-#[cfg(feature = "usb-common")]
-pub fn format_device_path(bus_num: u32, dev_num: u32) -> String {
-    format!("{}-{}", bus_num, dev_num)
-}
-
-/// Convert USB endpoint direction to string
-#[cfg(feature = "usb-common")]
-pub fn endpoint_direction_str(endpoint: u8) -> &'static str {
-    if endpoint & 0x80 != 0 {
-        "IN"
-    } else {
-        "OUT"
-    }
-}
-
-/// Convert USB endpoint address to number (strip direction bit)
-#[cfg(feature = "usb-common")]
-pub fn endpoint_number(endpoint: u8) -> u8 {
-    endpoint & 0x0f
-}
-
-/// USB device speed constants
-#[cfg(feature = "usb-common")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum UsbSpeed {
-    Unknown = 0,
-    Low = 1,       // 1.5 Mbit/s
-    Full = 2,      // 12 Mbit/s
-    High = 3,      // 480 Mbit/s
-    Wireless = 4,  // 480 Mbit/s
-    Super = 5,     // 5 Gbit/s
-    SuperPlus = 6, // 10 Gbit/s
-}
-
-impl Default for UsbSpeed {
-    fn default() -> Self {
-        UsbSpeed::Full
-    }
-}
+//! These are the USB specification values that `descriptors.rs` and the
+//! individual device implementations build their descriptors and control
+//! request handling from.
+//!
+//! The module is compiled under the `usb-common` feature, which every USB
+//! device protocol (`usb-keyboard`, `usb-mouse`, `usb-serial`, `usb-msc`,
+//! `usb-fido2`, `usb-smartcard`) enables. USB/IP framing - opcodes, protocol
+//! version, device paths, connection state - is the `usbip` crate's job and
+//! deliberately has no counterpart here.
 
 /// USB device class codes
-#[cfg(feature = "usb-common")]
 pub mod device_class {
     pub const USE_INTERFACE: u8 = 0x00;
     pub const AUDIO: u8 = 0x01;
@@ -112,7 +35,6 @@ pub mod device_class {
 }
 
 /// USB descriptor types
-#[cfg(feature = "usb-common")]
 pub mod descriptor_type {
     pub const DEVICE: u8 = 0x01;
     pub const CONFIGURATION: u8 = 0x02;
@@ -128,7 +50,6 @@ pub mod descriptor_type {
 }
 
 /// USB standard requests (bmRequestType)
-#[cfg(feature = "usb-common")]
 pub mod request_type {
     // Direction
     pub const HOST_TO_DEVICE: u8 = 0x00;
@@ -147,7 +68,6 @@ pub mod request_type {
 }
 
 /// USB standard request codes (bRequest)
-#[cfg(feature = "usb-common")]
 pub mod request {
     pub const GET_STATUS: u8 = 0x00;
     pub const CLEAR_FEATURE: u8 = 0x01;
@@ -163,7 +83,6 @@ pub mod request {
 }
 
 /// HID-specific request codes
-#[cfg(feature = "usb-common")]
 pub mod hid_request {
     pub const GET_REPORT: u8 = 0x01;
     pub const GET_IDLE: u8 = 0x02;
@@ -174,7 +93,11 @@ pub mod hid_request {
 }
 
 /// CDC-specific request codes
-#[cfg(feature = "usb-common")]
+///
+/// Unused: `usb-serial` does not implement CDC class control requests yet, so
+/// a host's SET_LINE_CODING / SET_CONTROL_LINE_STATE is handled by the usbip
+/// crate's defaults rather than by the device. Kept as the reference table for
+/// when it does.
 pub mod cdc_request {
     pub const SEND_ENCAPSULATED_COMMAND: u8 = 0x00;
     pub const GET_ENCAPSULATED_RESPONSE: u8 = 0x01;
@@ -185,70 +108,9 @@ pub mod cdc_request {
 }
 
 /// Endpoint transfer types
-#[cfg(feature = "usb-common")]
 pub mod transfer_type {
     pub const CONTROL: u8 = 0;
     pub const ISOCHRONOUS: u8 = 1;
     pub const BULK: u8 = 2;
     pub const INTERRUPT: u8 = 3;
-}
-
-/// Helper to format USB setup packet for logging
-#[cfg(feature = "usb-common")]
-pub fn format_setup_packet(
-    request_type: u8,
-    request: u8,
-    value: u16,
-    index: u16,
-    length: u16,
-) -> String {
-    let direction = if request_type & 0x80 != 0 {
-        "IN"
-    } else {
-        "OUT"
-    };
-    let req_type = match request_type & 0x60 {
-        0x00 => "STANDARD",
-        0x20 => "CLASS",
-        0x40 => "VENDOR",
-        _ => "RESERVED",
-    };
-    let recipient = match request_type & 0x1f {
-        0x00 => "DEVICE",
-        0x01 => "INTERFACE",
-        0x02 => "ENDPOINT",
-        0x03 => "OTHER",
-        _ => "RESERVED",
-    };
-
-    format!(
-        "Setup[{} {} {}] req={:#04x} val={:#06x} idx={:#06x} len={}",
-        direction, req_type, recipient, request, value, index, length
-    )
-}
-
-/// Logging helper: hex dump data in a readable format
-#[cfg(feature = "usb-common")]
-pub fn hex_dump(data: &[u8], max_bytes: usize) -> String {
-    if data.is_empty() {
-        return "[]".to_string();
-    }
-
-    let truncated = if data.len() > max_bytes {
-        &data[..max_bytes]
-    } else {
-        data
-    };
-
-    let hex: String = truncated
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if data.len() > max_bytes {
-        format!("[{} ... ({} bytes total)]", hex, data.len())
-    } else {
-        format!("[{}]", hex)
-    }
 }

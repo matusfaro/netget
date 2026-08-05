@@ -5,11 +5,9 @@
 //! - CDC ACM devices (serial)
 //! - Custom devices
 
-#[cfg(feature = "usb-common")]
 use crate::server::usb::common::*;
 
 /// Standard USB device descriptor (18 bytes)
-#[cfg(feature = "usb-common")]
 pub fn build_device_descriptor(
     vendor_id: u16,
     product_id: u16,
@@ -158,7 +156,6 @@ pub fn build_hid_keyboard_config_descriptor() -> Vec<u8> {
 
 /// Build a USB string descriptor
 /// String descriptors are UTF-16LE encoded with a 2-byte header
-#[cfg(feature = "usb-common")]
 pub fn build_string_descriptor(s: &str) -> Vec<u8> {
     let mut desc = Vec::new();
 
@@ -180,7 +177,6 @@ pub fn build_string_descriptor(s: &str) -> Vec<u8> {
 
 /// Build language ID string descriptor (string index 0)
 /// US English (0x0409) is the most common
-#[cfg(feature = "usb-common")]
 pub fn build_language_id_descriptor() -> Vec<u8> {
     vec![
         4,                       // bLength
