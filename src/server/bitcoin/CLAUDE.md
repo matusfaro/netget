@@ -71,8 +71,11 @@ The implementation parses all Bitcoin P2P message types:
 
 Triggered by network events, return `ActionResult`:
 
-1. **send_bitcoin_message** - Send raw hex-encoded message
-    - Use for complex messages not covered by helpers
+1. **send_bitcoin_message** - ESCAPE HATCH, raw hex-encoded message
+    - The only action that takes bytes, which the project's action design rules say to avoid:
+      the model must produce the 24-byte header, the magic and the payload checksum itself,
+      none of which are computed for it. Prefer a dedicated action; reach for this only for a
+      message type that has none, and expect the peer to reject a miscomputed checksum.
     - Example: `{"type": "send_bitcoin_message", "hex_data": "f9beb4d9..."}`
 
 2. **send_version** - Send version handshake message
@@ -245,8 +248,23 @@ hex = "0.4"   # For hex encoding/decoding
 
 ## Implementation Notes
 
-1. **Message Parsing**: Uses `RawNetworkMessage::consensus_decode()` which may return error if message is incomplete (
-   need more bytes) or malformed (actual error). We handle incomplete messages by accumulating data.
+1. **Message Parsing**: `try_parse_bitcoin_message` validates the 24-byte header itself -
+   magic, then the declared payload length against a 4 MB cap - before handing exactly
+   `24 + length` bytes to `RawNetworkMessage::consensus_decode()`. It reports "incomplete"
+   only for a valid header whose body has not fully arrived, so the outstanding byte count is
+   bounded; everything else is an error that drops the connection.
+
+   This matters because the previous version mapped *every* decode failure to "need more
+   data". A peer sending garbage was buffered indefinitely and the whole buffer re-parsed on
+   each read - unbounded memory, quadratic work. Two related defects lived alongside it: the
+   parse loop discarded the "remaining" slice, so a pipelined second message made the loop
+   re-parse the first one and call the LLM on it forever; and the merge step did
+   `conns.get_mut(&connection_id).unwrap()` after having released the lock, panicking the task
+   whenever a peer disconnected while its data was in flight.
+
+   Payload allocation itself is safe: rust-bitcoin caps vectors at `MAX_VEC_SIZE` (4 MB), so
+   a bogus length prefix cannot provoke a huge allocation the way it could in hand-rolled
+   parsers.
 
 2. **Magic Bytes**: Network is configured at server startup via `network` parameter. All messages must match the
    configured network's magic bytes.
@@ -259,8 +277,11 @@ hex = "0.4"   # For hex encoding/decoding
 5. **Message Encoding**: All response messages are built using `RawNetworkMessage::new()` and encoded with
    `consensus_encode()` to ensure proper format.
 
-6. **Connection Tracking**: Each connection tracks `handshake_complete` and `last_message_type` in
-   `ProtocolConnectionInfo::Bitcoin`.
+6. **Connection Tracking**: `ProtocolConnectionInfo` is a generic `serde_json::Value` wrapper,
+   not an enum with a `Bitcoin` variant. Connections are registered with
+   `ProtocolConnectionInfo::empty()` and the last message type is set via
+   `update_bitcoin_connection_info`. The `handshake_complete` field on `ConnectionData` is
+   written once at construction and never read.
 
 ## Future Enhancements
 

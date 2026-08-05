@@ -382,23 +382,39 @@ impl BitcoinServer {
             return;
         }
 
-        // Merge any queued data with new data
-        let all_data = {
+        // Merge any queued data with new data.
+        //
+        // The lock was released after the state check above, so the reader task's EOF branch
+        // or a close_this_connection may have removed this entry in between - `.unwrap()` here
+        // panicked the task whenever a peer disconnected while a datagram was in flight.
+        let Some(mut buffer) = ({
             let mut conns = connections.lock().await;
-            let conn_data = conns.get_mut(&connection_id).unwrap();
-            conn_data.state = ConnectionState::Processing;
-            let mut merged = conn_data.queued_data.clone();
-            merged.extend_from_slice(&data);
-            conn_data.queued_data.clear();
-            merged
+            conns.get_mut(&connection_id).map(|conn_data| {
+                conn_data.state = ConnectionState::Processing;
+                let mut merged = std::mem::take(&mut conn_data.queued_data);
+                merged.extend_from_slice(&data);
+                merged
+            })
+        }) else {
+            debug!(
+                "Bitcoin connection {} went away before its data could be processed",
+                connection_id
+            );
+            return;
         };
 
         loop {
             // Try to parse Bitcoin message
-            let parsed_message = Self::try_parse_bitcoin_message(&all_data, magic);
+            let parsed_message = Self::try_parse_bitcoin_message(&buffer, magic);
 
             match parsed_message {
-                Ok(Some((message, _remaining))) => {
+                Ok(Some((message, remaining))) => {
+                    // Consume what we just parsed. Leaving `buffer` untouched (the old
+                    // behaviour, which dropped `remaining`) meant that whenever a peer
+                    // pipelined a second message the loop re-parsed the *first* one and
+                    // called the LLM on it again, without end.
+                    buffer = remaining;
+
                     // Successfully parsed a message
                     let payload = message.payload();
                     let message_type = Self::get_message_type_name(payload);
@@ -505,7 +521,7 @@ impl BitcoinServer {
                                     .unwrap_or(false)
                             };
 
-                            if has_queued {
+                            if has_queued || !buffer.is_empty() {
                                 debug!(
                                     "Processing queued data for Bitcoin connection {}",
                                     connection_id
@@ -514,7 +530,15 @@ impl BitcoinServer {
                                     "▶ Processing queued data for {}",
                                     connection_id
                                 ));
-                                // Loop continues to process queued data
+                                // Fold anything that arrived during the LLM call onto the
+                                // bytes we have not consumed yet, then go round again.
+                                {
+                                    let mut conns = connections.lock().await;
+                                    if let Some(conn) = conns.get_mut(&connection_id) {
+                                        let queued = std::mem::take(&mut conn.queued_data);
+                                        buffer.extend_from_slice(&queued);
+                                    }
+                                }
                             } else {
                                 // Go to Idle state
                                 connections
@@ -538,9 +562,14 @@ impl BitcoinServer {
                     }
                 }
                 Ok(None) => {
-                    // Need more data to complete message
+                    // Need more data to complete message.
+                    //
+                    // try_parse_bitcoin_message only reports "incomplete" for a header that
+                    // validates, so the outstanding bytes are bounded by MAX_MESSAGE_BYTES and
+                    // this cannot be used to grow the buffer without limit.
                     debug!(
-                        "Incomplete Bitcoin message, waiting for more data on {}",
+                        "Incomplete Bitcoin message ({} bytes buffered), waiting for more on {}",
+                        buffer.len(),
                         connection_id
                     );
                     let _ =
@@ -551,7 +580,11 @@ impl BitcoinServer {
                         .entry(connection_id)
                         .and_modify(|conn| {
                             conn.state = ConnectionState::Accumulating;
-                            conn.queued_data = all_data.clone();
+                            let mut pending = buffer;
+                            // Anything that landed during the LLM call goes after it.
+                            let queued = std::mem::take(&mut conn.queued_data);
+                            pending.extend_from_slice(&queued);
+                            conn.queued_data = pending;
                         });
                     return;
                 }
@@ -576,39 +609,65 @@ impl BitcoinServer {
         }
     }
 
-    /// Try to parse a Bitcoin P2P message from raw bytes
+    /// Try to parse one Bitcoin P2P message off the front of `data`.
+    ///
+    /// Returns `Ok(None)` **only** when the bytes so far are a valid prefix of a message whose
+    /// declared length has not arrived yet. Everything else - bad magic, an absurd length, a
+    /// body that will not decode - is `Err`, so the caller drops the connection instead of
+    /// buffering forever. The previous version mapped every decode failure to `Ok(None)`,
+    /// which turned a stream of garbage into unbounded memory growth: the caller kept the
+    /// whole thing as "incomplete" and re-parsed it on every read.
     fn try_parse_bitcoin_message(
         data: &[u8],
         magic: Magic,
     ) -> Result<Option<(RawNetworkMessage, Vec<u8>)>> {
-        if data.is_empty() {
+        // magic(4) | command(12) | length(4) | checksum(4)
+        const HEADER_LEN: usize = 24;
+        // Bitcoin Core's own cap on a P2P message body.
+        const MAX_MESSAGE_BYTES: usize = 4_000_000;
+
+        if data.len() < HEADER_LEN {
             return Ok(None);
         }
 
-        // Try to decode the message
-        let mut cursor = Cursor::new(data);
-        match RawNetworkMessage::consensus_decode(&mut cursor) {
-            Ok(message) => {
-                // Check magic bytes match
-                if *message.magic() != magic {
-                    return Err(anyhow::anyhow!(
-                        "Magic bytes mismatch: expected {:?}, got {:?}",
-                        magic,
-                        *message.magic()
-                    ));
-                }
-
-                // Calculate remaining bytes
-                let position = cursor.position() as usize;
-                let remaining = data[position..].to_vec();
-
-                Ok(Some((message, remaining)))
-            }
-            Err(_) => {
-                // Not enough data yet or parse error
-                Ok(None)
-            }
+        // Validate the header before trusting the length field.
+        let got_magic = Magic::from_bytes(
+            data[0..4]
+                .try_into()
+                .expect("4-byte slice is always convertible"),
+        );
+        if got_magic != magic {
+            return Err(anyhow::anyhow!(
+                "Magic bytes mismatch: expected {:?}, got {:?}",
+                magic,
+                got_magic
+            ));
         }
+
+        let payload_len = u32::from_le_bytes(
+            data[16..20]
+                .try_into()
+                .expect("4-byte slice is always convertible"),
+        ) as usize;
+        if payload_len > MAX_MESSAGE_BYTES {
+            return Err(anyhow::anyhow!(
+                "Bitcoin message declares {} byte payload, over the {} byte limit",
+                payload_len,
+                MAX_MESSAGE_BYTES
+            ));
+        }
+
+        let total = HEADER_LEN + payload_len;
+        if data.len() < total {
+            // Genuinely incomplete, and bounded: at most MAX_MESSAGE_BYTES outstanding.
+            return Ok(None);
+        }
+
+        let mut cursor = Cursor::new(&data[..total]);
+        let message = RawNetworkMessage::consensus_decode(&mut cursor)
+            .map_err(|e| anyhow::anyhow!("Malformed Bitcoin message: {}", e))?;
+
+        Ok(Some((message, data[total..].to_vec())))
     }
 
     /// Get message type name from NetworkMessage

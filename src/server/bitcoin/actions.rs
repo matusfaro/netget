@@ -396,11 +396,17 @@ impl BitcoinProtocol {
 fn send_bitcoin_message_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_bitcoin_message".to_string(),
-        description: "Send a raw Bitcoin P2P message (hex-encoded bytes)".to_string(),
+        description: "ESCAPE HATCH - prefer send_version/send_verack/send_ping/send_pong/\
+                      send_getaddr. Sends bytes you supply verbatim, including the 24-byte \
+                      header, magic and payload checksum, none of which are computed for you. \
+                      Only use this for a message type with no dedicated action."
+            .to_string(),
         parameters: vec![Parameter {
             name: "hex_data".to_string(),
             type_hint: "string".to_string(),
-            description: "Hex-encoded Bitcoin message (including header)".to_string(),
+            description: "Complete hex-encoded Bitcoin message: magic(4) + command(12) + \
+                          length(4) + checksum(4) + payload. Written to the socket as-is."
+                .to_string(),
             required: true,
         }],
         example: json!({
@@ -629,9 +635,18 @@ pub static BITCOIN_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(
 pub static BITCOIN_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bitcoin_message_received",
-        "Bitcoin P2P message received",
-        json!({"type": "placeholder", "event_id": "bitcoin_message_received"}),
+        "Bitcoin P2P message received. Reply with the message this peer expects: verack \
+         after their version, pong echoing a ping's nonce, and so on.",
+        json!({
+            "type": "send_verack",
+            "network": "mainnet"
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "send_pong",
+        "network": "mainnet",
+        "nonce": 123456789
+    }))
     .with_parameters(vec![
         Parameter {
             name: "message_type".to_string(),
