@@ -3,7 +3,6 @@
 //! Handles network servers, connection management, and protocol implementations
 
 pub mod connection;
-pub mod packet;
 // server_trait requires async-trait, so only compile when features that provide it are enabled
 #[cfg(any(
     feature = "tcp",
@@ -507,8 +506,6 @@ pub use jsonrpc::actions::JsonRpcProtocol;
 #[cfg(feature = "jsonrpc")]
 pub use jsonrpc::JsonRpcServer;
 
-// VPN utilities (shared infrastructure for VPN protocols)
-pub mod vpn_util;
 
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
@@ -852,4 +849,3 @@ pub use bluetooth_ble_weight_scale::actions::BluetoothBleWeightScaleProtocol;
 pub use bluetooth_ble_weight_scale::BluetoothBleWeightScale;
 
 pub use connection::{Connection, ConnectionId};
-pub use packet::Packet;
