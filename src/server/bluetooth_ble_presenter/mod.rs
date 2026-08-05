@@ -8,7 +8,7 @@ pub struct BluetoothBlePresenter;
 impl BluetoothBlePresenter {
     #[cfg(feature = "bluetooth-ble-presenter")]
     pub async fn spawn_with_llm_actions(
-        _: String,
+        device_name: String,
         llm: crate::llm::ollama_client::OllamaClient,
         state: Arc<crate::state::app_state::AppState>,
         tx: mpsc::UnboundedSender<String>,
@@ -16,7 +16,7 @@ impl BluetoothBlePresenter {
         inst: String,
     ) -> Result<std::net::SocketAddr> {
         crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(
-            "NetGet-Presenter".to_string(),
+            device_name,
             llm,
             state,
             tx,

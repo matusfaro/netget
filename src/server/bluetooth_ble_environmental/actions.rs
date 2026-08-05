@@ -1,17 +1,42 @@
-//! BLE Environmental Service
+//! BLE Environmental Sensing Service (0x181A) - temperature, humidity and pressure
+//!
+//! Profile wrapper over the `bluetooth-ble` base stack.
+//!
+//! The base server (`BluetoothBle::spawn_with_llm_actions`) hardcodes `BluetoothBleProtocol`
+//! when it calls `call_llm`, so the events the model actually sees and the actions it may
+//! answer with are always the base's. Declaring profile-specific actions or events here would
+//! document a vocabulary that no code path can ever emit or execute, so this protocol forwards
+//! the base's set verbatim - the same shape `doh`/`dot` use to forward `DnsProtocol`'s actions.
+//! The profile identity lives in the instruction preamble and in the GATT layout suggested by
+//! the startup examples below.
+
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, ParameterDefinition,
 };
 use crate::protocol::EventType;
+use crate::server::bluetooth_ble::actions::BluetoothBleProtocol;
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
 
+/// BLE Environmental Sensing Service (0x181A) - temperature, humidity and pressure
 pub struct BluetoothBleEnvironmentalProtocol;
+
 impl BluetoothBleEnvironmentalProtocol {
     pub fn new() -> Self {
         Self
+    }
+
+    /// The base protocol this profile delegates its whole vocabulary to.
+    fn base() -> BluetoothBleProtocol {
+        BluetoothBleProtocol::new()
+    }
+}
+
+impl Default for BluetoothBleEnvironmentalProtocol {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -20,103 +45,184 @@ impl Protocol for BluetoothBleEnvironmentalProtocol {
         vec![ParameterDefinition {
             name: "device_name".to_string(),
             type_hint: "string".to_string(),
-            description:
-                "Environmental sensor device name for advertising (default: NetGet-Environment)"
-                    .to_string(),
+            description: "Bluetooth device name to advertise (default: NetGet-Environmental)"
+                .to_string(),
             required: false,
-            example: json!("NetGet-Environment"),
+            example: json!("NetGet-Environmental"),
         }]
     }
-    fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
-        vec![]
+
+    /// Delegated: the base stack owns every action this server can execute.
+    fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition> {
+        Self::base().get_async_actions(state)
     }
+
+    /// Delegated: see `get_async_actions`. Returning `vec![]` here while the base emits
+    /// events would leave the model with no way to answer a read or a write.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]
+        Self::base().get_sync_actions()
     }
+
+    /// Delegated: the base's event types are the only ones ever emitted for this server, and
+    /// they carry their own `.with_actions(...)` lists, which is what `call_llm` offers the
+    /// model. An event id declared here but not emitted by the base would silently match an
+    /// `event_handlers` pattern that can never fire.
+    fn get_event_types(&self) -> Vec<EventType> {
+        Self::base().get_event_types()
+    }
+
     fn protocol_name(&self) -> &'static str {
         "BLUETOOTH_BLE_ENVIRONMENTAL"
     }
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![]
-    }
+
     fn stack_name(&self) -> &'static str {
         "BLUETOOTH_BLE_ENVIRONMENTAL"
     }
+
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "environmental"]
+        vec![
+            "bluetooth",
+            "ble",
+            "environmental",
+            "temperature",
+            "humidity",
+        ]
     }
+
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("BLE Environmental")
-            .llm_control("Environmental actions")
-            .e2e_testing("Requires BLE device")
-            .notes("BLE Environmental")
+            .implementation(
+                "bluetooth-ble base stack (ble-peripheral-rust) plus an instruction preamble for the Environmental Sensing Service (0x181A)",
+            )
+            .llm_control(
+                "Base BLE GATT control (add_service, start_advertising, stop_advertising, respond_to_read, respond_to_write, send_notification); the LLM builds the Environmental Sensing Service (0x181A) itself.",
+            )
+            .e2e_testing(
+                "Requires a real Bluetooth LE adapter and a central such as nRF Connect; no automated coverage",
+            )
+            .notes(
+                "Thin profile wrapper over the bluetooth-ble base stack. It prepends an instruction describing the Environmental Sensing Service (0x181A) and otherwise reuses the base entirely: the base hardcodes BluetoothBleProtocol when it calls the LLM, so the action vocabulary, the event types and the executor are the base's. This protocol deliberately declares no actions or events of its own - one that did would be documented to the model but never reachable at runtime.",
+            )
             .build()
     }
+
     fn description(&self) -> &'static str {
-        "BLE Environmental"
+        "BLE Environmental Sensing Service (0x181A) - temperature, humidity and pressure"
     }
+
     fn example_prompt(&self) -> &'static str {
-        "Act as a BLE environmental device"
+        "Act as an environmental sensor reporting 21.5 C and 48% relative humidity"
     }
+
     fn group_name(&self) -> &'static str {
         "Network"
     }
 
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
-        use serde_json::json;
 
+        // Every event id and action name below is one the base stack really emits and really
+        // executes. UUIDs are written in full 128-bit form because the base parses them with
+        // `Uuid::parse_str`, which rejects the 16-bit shorthand.
         StartupExamples::new(
-            // LLM mode: LLM controls environmental sensor
+            // LLM mode: the model builds the GATT layout and answers reads itself.
             json!({
                 "type": "open_server",
                 "port": 0,
                 "base_stack": "bluetooth-ble-environmental",
-                "instruction": "Act as a BLE environmental sensor. Report temperature, humidity, and pressure.",
+                "instruction": "Act as an environmental sensor reporting 21.5 C and 48% relative humidity",
                 "startup_params": {
-                    "device_name": "NetGet-Environment"
+                    "device_name": "NetGet-Environmental"
                 }
             }),
-            // Script mode: Code-based environmental data
+            // Script mode: a read is answered in-process, with no model call.
             json!({
                 "type": "open_server",
                 "port": 0,
                 "base_stack": "bluetooth-ble-environmental",
                 "startup_params": {
-                    "device_name": "NetGet-Environment"
+                    "device_name": "NetGet-Environmental"
                 },
-                "event_handlers": [{
-                    "event_pattern": "environmental_update",
-                    "handler": {
-                        "type": "script",
-                        "language": "python",
-                        "code": "<environmental_handler>"
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "script",
+                            "language": "python",
+                            "code": "actions = [{'type': 'respond_to_read', 'value': '6a08'}]"
+                        }
                     }
-                }]
+                ]
             }),
-            // Static mode: Fixed environmental data
+            // Static mode: fixed GATT layout and a fixed read response, with no model call.
             json!({
                 "type": "open_server",
                 "port": 0,
                 "base_stack": "bluetooth-ble-environmental",
                 "startup_params": {
-                    "device_name": "NetGet-Environment"
+                    "device_name": "NetGet-Environmental"
                 },
-                "event_handlers": [{
-                    "event_pattern": "environmental_update",
-                    "handler": {
-                        "type": "static",
-                        "actions": [{
-                            "type": "send_environmental_data",
-                            "temperature": 22.5,
-                            "humidity": 45.0,
-                            "pressure": 1013.25
-                        }]
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_ble_started",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "add_service",
+                                    "uuid": "0000181a-0000-1000-8000-00805f9b34fb",
+                                    "primary": true,
+                                    "characteristics": [
+                                        {
+                                            "uuid": "00002a6e-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "read",
+                                                "notify"
+                                            ],
+                                            "permissions": [
+                                                "readable"
+                                            ],
+                                            "initial_value": "6a08"
+                                        },
+                                        {
+                                            "uuid": "00002a6f-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "read",
+                                                "notify"
+                                            ],
+                                            "permissions": [
+                                                "readable"
+                                            ],
+                                            "initial_value": "c012"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "start_advertising",
+                                    "device_name": "NetGet-Environmental",
+                                    "service_uuids": [
+                                        "0000181a-0000-1000-8000-00805f9b34fb"
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "respond_to_read",
+                                    "value": "6a08"
+                                }
+                            ]
+                        }
                     }
-                }]
+                ]
             }),
         )
     }
@@ -129,24 +235,38 @@ impl Server for BluetoothBleEnvironmentalProtocol {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
     {
         Box::pin(async move {
+            let device_name = ctx
+                .startup_params
+                .as_ref()
+                .map(|p| p.get_optional_string("device_name"))
+                .transpose()?
+                .flatten()
+                .unwrap_or_else(|| "NetGet-Environmental".to_string());
+
+            // The user's own instruction must reach the base stack; the profile preamble is
+            // added there, not substituted for it.
             let instruction = ctx
                 .state
                 .get_server(ctx.server_id)
                 .await
                 .map(|s| s.instruction)
                 .unwrap_or_default();
+
             crate::server::bluetooth_ble_environmental::BluetoothBleEnvironmental::spawn_with_llm_actions(
-                "NetGet-Environmental".to_string(), ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
-            ).await
+                device_name,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                instruction,
+            )
+            .await
         })
     }
+
+    /// Delegated: the base's executor is what actually runs, so validation must accept exactly
+    /// the base's action names and reject everything else rather than waving any action through.
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action["type"]
-            .as_str()
-            .context("Action must have 'type' field")?;
-        Ok(ActionResult::Custom {
-            name: action_type.to_string(),
-            data: action,
-        })
+        Self::base().execute_action(action)
     }
 }
