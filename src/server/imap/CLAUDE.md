@@ -2,15 +2,23 @@
 
 ## Overview
 
-IMAP4rev1 (Internet Message Access Protocol) server implementing RFC 3501 for email retrieval and mailbox management.
-Supports both plain (port 143) and TLS (port 993) connections.
+IMAP4rev1 (Internet Message Access Protocol) server covering enough of RFC 3501 for real
+clients (`imaplib`, Thunderbird-style flows) to log in, select a mailbox and fetch messages.
+**Plain TCP on port 143 only** - there is no IMAPS and no STARTTLS.
 
 ## Library Choices
 
 - **Manual Implementation** - No external IMAP library used
-- **Manual parsing** - Line-based command parsing without imap-codec
-- Raw TCP/TLS handling with tokio for async I/O
+- **Manual parsing** - Line-based command parsing without imap-codec. Commands are split into
+  at most three fields (`splitn(3, ' ')`); quoting, literals (`{n}`) and continuation requests
+  are not modelled, and whatever the split does not understand is handed to the model as text.
+- Raw TCP handling with tokio for async I/O
 - Chosen for maximum LLM control over mailbox and message storage
+
+An `ImapServer::spawn_with_tls` advertising IMAPS on 993 used to live in `mod.rs`. Nothing
+called it and it could not have worked - it passed a concatenated PEM string to
+`native_tls::Identity::from_pkcs12`, which only accepts DER PKCS#12 - so it was deleted rather
+than left looking implemented.
 
 ## Architecture Decisions
 
@@ -34,9 +42,14 @@ mailbox_read_only: bool
 
 ### LLM Integration
 
-- **Three event types**:
-    - `IMAP_CONNECTION_EVENT` - Initial greeting
-    - `IMAP_AUTH_EVENT` - LOGIN command (special handling)
+- **Three event types**, each advertising its own action list. That list - not
+  `get_sync_actions()` - is what `call_llm` offers the model, so an action missing from it is
+  unreachable over the LLM path even though `execute_action` handles it:
+    - `IMAP_CONNECTION_EVENT` - Initial greeting. Offers `send_imap_greeting`,
+      `send_imap_untagged` and `send_imap_response`, because an IMAP banner is an untagged line
+      and all three can produce one.
+    - `IMAP_AUTH_EVENT` - LOGIN command (special handling). Deliberately narrow:
+      `send_imap_response` and `close_connection`.
     - `IMAP_COMMAND_EVENT` - All other commands (CAPABILITY, SELECT, FETCH, etc.)
 - **Action-based responses** - LLM returns JSON actions for all protocol interactions
 - **Tagged responses** - IMAP uses command tags (A001, A002) for request/response correlation
@@ -54,11 +67,14 @@ mailbox_read_only: bool
 The LLM controls IMAP responses through these actions:
 
 - `send_imap_greeting` - Initial `* OK` greeting with capabilities
-- `send_imap_response` - Tagged responses (OK/NO/BAD)
+- `send_imap_response` - Tagged completion (`tag` + `status`), or one verbatim line via
+  `response` (used for untagged banners)
 - `send_imap_untagged` - Untagged informational responses
 - `send_imap_capability` - CAPABILITY response
 - `send_imap_list` - LIST response with mailbox list
 - `send_imap_status` - STATUS response with mailbox info
+- `send_imap_select` - the full untagged block for SELECT/EXAMINE (EXISTS, RECENT, UIDVALIDITY,
+  UIDNEXT, FLAGS, PERMANENTFLAGS) in one action
 - `send_imap_fetch` - FETCH response with message data
 - `send_imap_search` - SEARCH response with message IDs
 - `send_imap_exists` - EXISTS count
@@ -96,24 +112,18 @@ State transitions:
 - `CLOSE` → `Authenticated`
 - `LOGOUT` → `Logout`
 
-## TLS Support
-
-Optional TLS mode (port 993/IMAPS):
-
-- Uses `tokio-native-tls` with self-signed certificates
-- Certificate generated via `rcgen` library
-- Only available when `proxy` feature is enabled
-- Same protocol implementation, different transport
-
 ## Limitations
 
 - **No message persistence** - LLM manages mailbox data in memory/context
-- **No STARTTLS** - Plain or TLS, no upgrade
+- **No TLS** - plain TCP only; neither IMAPS nor STARTTLS
 - **No SASL AUTH** - Only LOGIN authentication supported
 - **No IMAP extensions** - IDLE, CONDSTORE, QRESYNC not implemented
 - **No mailbox subscriptions** - SUBSCRIBE/UNSUBSCRIBE not tracked
 - **No server-side search** - SEARCH criteria interpreted by LLM
 - **No message flags persistence** - Flags not persisted across sessions
+- **State transitions are unconditional** - `update_session_state` moves the session to
+  `Selected` on any `SELECT`/`EXAMINE` line, whatever the model answered, so a SELECT the model
+  refused with `NO` still leaves the session reported as Selected.
 
 ## Examples
 
@@ -211,6 +221,4 @@ For FETCH 1, return message with From: test@example.com, Subject: Test.
 ## References
 
 - RFC 3501 - IMAP4rev1 Protocol Specification
-- RFC 2595 - Using TLS with IMAP
 - RFC 4551 - IMAP Extension for Conditional STORE (CONDSTORE)
-- tokio-native-tls documentation: https://docs.rs/tokio-native-tls

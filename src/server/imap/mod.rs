@@ -3,16 +3,19 @@
 //! This module implements an IMAP (Internet Message Access Protocol) server
 //! that allows LLM control over email retrieval and mailbox management.
 //!
-//! Key features:
-//! - Full IMAP4rev1 protocol support with imap-codec for parsing
-//! - Session state management (NotAuthenticated → Authenticated → Selected → Logout)
-//! - Both plain (port 143) and TLS (port 993) connections supported
-//! - LLM-controlled mailbox and message storage via memory actions
-//! - Extended command support: UID operations, STATUS, EXAMINE, APPEND
+//! Key points:
+//! - IMAP4rev1 commands parsed by hand into (tag, command, args). There is no `imap-codec`
+//!   and no grammar: anything the split does not model (literals, continuations, quoting) is
+//!   passed to the model as raw text.
+//! - Session state management (NotAuthenticated -> Authenticated -> Selected -> Logout)
+//! - Plain TCP only. An `ImapServer::spawn_with_tls` used to sit here advertising IMAPS on
+//!   993; nothing called it and it could not have worked - it fed a concatenated PEM string
+//!   to `Identity::from_pkcs12`, which only accepts DER PKCS#12 - so it was removed rather
+//!   than left as an implemented-looking feature.
+//! - No mailbox storage: the model answers LIST/FETCH/SEARCH from its instruction and memory.
 
 pub mod actions;
 
-use crate::console_info;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -148,139 +151,6 @@ impl ImapServer {
                         error!("Failed to accept IMAP connection: {}", e);
                         let _ = status_tx
                             .send(format!("[ERROR] Failed to accept IMAP connection: {}", e));
-                        break;
-                    }
-                }
-            }
-        });
-
-        task_registrar
-            .register_server_task(server_id, accept_handle)
-            .await;
-
-        Ok(local_addr)
-    }
-
-    /// Spawn IMAP server with TLS support (port 993/IMAPS)
-    #[cfg(all(feature = "imap", feature = "proxy"))]
-    pub async fn spawn_with_tls(
-        listen_addr: SocketAddr,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        server_id: ServerId,
-    ) -> Result<SocketAddr> {
-        use tokio_native_tls::native_tls;
-
-        // Generate self-signed certificate for TLS
-        let cert = generate_self_signed_cert()?;
-        let identity = native_tls::Identity::from_pkcs12(&cert, "netget")?;
-        let acceptor = tokio_native_tls::TlsAcceptor::from(
-            native_tls::TlsAcceptor::builder(identity).build()?,
-        );
-
-        let listener =
-            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
-        let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "IMAPS server (TLS) listening on {}", local_addr);
-
-        let protocol = Arc::new(ImapProtocol::new());
-
-        let task_registrar = app_state.clone();
-        let accept_handle = tokio::spawn(async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, remote_addr)) => {
-                        let connection_id =
-                            ConnectionId::new(app_state.get_next_unified_id().await);
-                        debug!("IMAPS connection {} from {}", connection_id, remote_addr);
-
-                        // Accept TLS connection
-                        let tls_stream = match acceptor.accept(stream).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                error!("TLS handshake failed for {}: {}", connection_id, e);
-                                let _ = status_tx
-                                    .send(format!("[ERROR] IMAPS TLS handshake failed: {}", e));
-                                continue;
-                            }
-                        };
-
-                        let _ = status_tx.send(format!(
-                            "→ IMAPS connection {} from {}",
-                            connection_id, remote_addr
-                        ));
-
-                        // Track connection in server state
-                        let local_addr = listen_addr;
-                        let (read_half, write_half) = tokio::io::split(tls_stream);
-                        let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
-
-                        // Add connection to app_state
-                        app_state
-                            .add_connection_to_server(
-                                server_id,
-                                crate::state::ConnectionState {
-                                    id: connection_id,
-                                    remote_addr,
-                                    local_addr,
-                                    bytes_sent: 0,
-                                    bytes_received: 0,
-                                    packets_sent: 0,
-                                    packets_received: 0,
-                                    last_activity: std::time::Instant::now(),
-                                    status: ConnectionStatus::Active,
-                                    status_changed_at: std::time::Instant::now(),
-                                    protocol_info: ProtocolConnectionInfo::empty(),
-                                },
-                            )
-                            .await;
-
-                        let llm_clone = llm_client.clone();
-                        let state_clone = app_state.clone();
-                        let status_clone = status_tx.clone();
-                        let protocol_clone = protocol.clone();
-                        let write_half_for_session = write_half_arc.clone();
-
-                        tokio::spawn(async move {
-                            let mut session = ImapSession {
-                                reader: BufReader::new(read_half),
-                                writer: write_half_for_session,
-                                connection_id,
-                                server_id,
-                                remote_addr,
-                                llm_client: llm_clone,
-                                app_state: state_clone.clone(),
-                                status_tx: status_clone.clone(),
-                                protocol: protocol_clone,
-                            };
-
-                            if let Err(e) = session.handle().await {
-                                error!("IMAPS session error for {}: {}", connection_id, e);
-                                let _ = status_clone.send(format!(
-                                    "[ERROR] IMAPS session {} error: {}",
-                                    connection_id, e
-                                ));
-                            }
-
-                            // Mark connection as closed
-                            state_clone
-                                .update_connection_status(
-                                    server_id,
-                                    connection_id,
-                                    ConnectionStatus::Closed,
-                                )
-                                .await;
-
-                            info!("IMAPS connection {} closed", connection_id);
-                            let _ = status_clone
-                                .send(format!("✗ IMAPS connection {} closed", connection_id));
-                        });
-                    }
-                    Err(e) => {
-                        error!("Failed to accept IMAPS connection: {}", e);
-                        let _ = status_tx
-                            .send(format!("[ERROR] Failed to accept IMAPS connection: {}", e));
                         break;
                     }
                 }
@@ -666,36 +536,4 @@ fn parse_imap_command(line: &str) -> (String, String, String) {
             parts[2].to_string(),
         ),
     }
-}
-
-/// Generate self-signed certificate for TLS (IMAPS)
-#[cfg(all(feature = "imap", feature = "proxy"))]
-fn generate_self_signed_cert() -> Result<Vec<u8>> {
-    use rcgen::{CertificateParams, DistinguishedName};
-
-    let mut params = CertificateParams::new(vec!["localhost".to_string()])?;
-    let mut dn = DistinguishedName::new();
-    dn.push(rcgen::DnType::CommonName, "NetGet IMAPS Server");
-    dn.push(rcgen::DnType::OrganizationName, "NetGet");
-    params.distinguished_name = dn;
-
-    let key_pair = rcgen::KeyPair::generate()?;
-    let cert = params.self_signed(&key_pair)?;
-
-    // Get PEM format
-    let cert_pem = cert.pem();
-    let key_pem = key_pair.serialize_pem();
-
-    // Convert to PKCS12
-    let _cert_der: Vec<u8> = cert.der().to_vec();
-    let _key_der = key_pair.serialize_der();
-
-    // Create PKCS12 bundle (requires openssl or similar)
-    // For simplicity, we'll use native-tls's Identity::from_pkcs12
-    // This is a placeholder - in production, use proper cert generation
-    let identity_pem = format!("{}\n{}", key_pem, cert_pem);
-
-    // For now, return a simple self-signed cert
-    // In a real implementation, this would use proper PKCS12 encoding
-    Ok(identity_pem.into_bytes())
 }

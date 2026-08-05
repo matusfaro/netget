@@ -507,14 +507,23 @@ impl Protocol for ImapProtocol {
         vec!["imap"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual IMAP4rev1 parsing")
+            .implementation(
+                "Manual line-based IMAP4rev1 parsing (tag/command/args split), plain TCP only",
+            )
             .llm_control("Authentication + mailbox ops + FETCH")
-            .e2e_testing("async-imap client")
-            .notes("Session state machine, no persistence")
+            .e2e_testing("Raw TCP client issuing tagged IMAP commands")
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(143))
+            .notes(
+                "Tracks session state (NotAuthenticated/Authenticated/Selected/Logout) but stores \
+                 no mailboxes or messages - the model answers every FETCH. No IMAPS, no STARTTLS, \
+                 no SASL, no literal continuation ('+') handling.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -657,30 +666,45 @@ fn send_imap_greeting_action() -> ActionDefinition {
 fn send_imap_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_response".to_string(),
-        description: "Send tagged IMAP response (OK/NO/BAD)".to_string(),
+        description: "Send an IMAP response line. Normally used for the tagged completion of a \
+                      command: give 'tag' and 'status' and NetGet assembles '<tag> <status> \
+                      [code] message'. Alternatively give 'response' alone to emit one \
+                      pre-formatted line verbatim (useful for untagged banners)."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "tag".to_string(),
                 type_hint: "string".to_string(),
-                description: "Command tag from client request".to_string(),
-                required: true,
+                description: "Command tag echoed from the client's request (e.g. 'A001'). \
+                              Required unless 'response' is used."
+                    .to_string(),
+                required: false,
             },
             Parameter {
                 name: "status".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response status: OK, NO, or BAD".to_string(),
-                required: true,
+                description: "Response status: OK, NO, or BAD (default: OK)".to_string(),
+                required: false,
             },
             Parameter {
                 name: "message".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response message".to_string(),
+                description: "Human-readable text after the status".to_string(),
                 required: false,
             },
             Parameter {
                 name: "code".to_string(),
                 type_hint: "string".to_string(),
                 description: "Optional response code in brackets (e.g., READ-WRITE, READ-ONLY)"
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "response".to_string(),
+                type_hint: "string".to_string(),
+                description: "A complete response line to send as-is, replacing tag/status/\
+                              message/code (e.g. '* OK IMAP4rev1 Service Ready'). CRLF is added \
+                              if missing."
                     .to_string(),
                 required: false,
             },
@@ -1090,7 +1114,18 @@ pub static IMAP_CONNECTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         }),
     )
     .with_parameters(vec![])
-    .with_actions(vec![send_imap_greeting_action()])
+    // An IMAP greeting is an *untagged* line, so all three of these produce a valid one:
+    // `send_imap_greeting` builds `* OK [CAPABILITY ...] ... Service Ready`, while
+    // `send_imap_untagged` and `send_imap_response`'s single-string `response` form let the
+    // model write the banner verbatim. Only `send_imap_greeting` used to be advertised, so a
+    // model - or a test mock - answering with the raw banner it was told to send had its
+    // action rejected as unknown, retried, and the connection then died before the greeting
+    // was ever written.
+    .with_actions(vec![
+        send_imap_greeting_action(),
+        send_imap_untagged_action(),
+        send_imap_response_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("IMAP connection from {client_ip}")
@@ -1142,8 +1177,14 @@ pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "imap_command",
-        "IMAP command received from client",
-        json!({"type": "placeholder", "event_id": "imap_command"}),
+        "IMAP command received from client (CAPABILITY, SELECT, LIST, FETCH, STORE, SEARCH, \
+         LOGOUT, ...). LOGIN is not delivered here - it raises imap_auth instead. Untagged \
+         responses come first, then exactly one tagged send_imap_response carrying the client's \
+         tag, which is what completes the command.",
+        json!([
+            {"type": "send_imap_exists", "count": 5},
+            {"type": "send_imap_response", "tag": "A002", "status": "OK", "code": "READ-WRITE", "message": "SELECT completed"}
+        ]),
     )
     .with_parameters(vec![
         Parameter {
@@ -1185,12 +1226,17 @@ pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    // Must list every action that can legitimately answer a command: `call_llm` builds the
+    // model's tool list from here, not from `get_sync_actions()`. `send_imap_select` was
+    // missing, so the one action that emits a complete SELECT/EXAMINE response was unreachable
+    // over the LLM path even though the protocol's own script example uses it.
     .with_actions(vec![
         send_imap_response_action(),
         send_imap_untagged_action(),
         send_imap_capability_action(),
         send_imap_list_action(),
         send_imap_status_action(),
+        send_imap_select_action(),
         send_imap_fetch_action(),
         send_imap_search_action(),
         send_imap_exists_action(),
