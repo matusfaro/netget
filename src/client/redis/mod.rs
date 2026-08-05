@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::redis::actions::{
@@ -211,7 +211,29 @@ impl RedisClient {
                                                 info!("Redis client {} disconnecting", client_id);
                                                 break;
                                             }
-                                            _ => {}
+                                            // Do not swallow. `_ => {}` here meant an action
+                                            // the client cannot execute — including one it
+                                            // never advertised — was indistinguishable from
+                                            // success: nothing went on the wire and nothing
+                                            // said so. Two tests passed at HEAD while sending
+                                            // `wait_for_more`, which this client does not
+                                            // implement.
+                                            Err(e) => {
+                                                error!(
+                                                    "Redis client {} could not execute action: {}",
+                                                    client_id, e
+                                                );
+                                                let _ = status_tx.send(format!(
+                                                    "[ERROR] Redis client {} action failed: {}",
+                                                    client_id, e
+                                                ));
+                                            }
+                                            Ok(other) => {
+                                                debug!(
+                                                    "Redis client {} ignoring unhandled action result: {:?}",
+                                                    client_id, other
+                                                );
+                                            }
                                         }
                                     }
                                 }

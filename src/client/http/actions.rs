@@ -145,43 +145,55 @@ impl Protocol for HttpClientProtocol {
         ]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![ActionDefinition {
-            name: "send_http_request".to_string(),
-            description: "Send another HTTP request in response to received data".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "method".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "HTTP method".to_string(),
-                    required: true,
-                },
-                Parameter {
-                    name: "path".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Request path".to_string(),
-                    required: true,
-                },
-                Parameter {
-                    name: "headers".to_string(),
-                    type_hint: "object".to_string(),
-                    description: "Request headers".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "body".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Request body".to_string(),
-                    required: false,
-                },
-            ],
-            example: json!({
-                "type": "send_http_request",
-                "method": "POST",
-                "path": "/api/data",
-                "body": "{\"key\": \"value\"}"
-            }),
-            log_template: None,
-        }]
+        vec![
+            ActionDefinition {
+                name: "send_http_request".to_string(),
+                description: "Send another HTTP request in response to received data".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "method".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "HTTP method".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "path".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request path".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "headers".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Request headers".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request body".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "send_http_request",
+                    "method": "POST",
+                    "path": "/api/data",
+                    "body": "{\"key\": \"value\"}"
+                }),
+                log_template: None,
+            },
+            ActionDefinition {
+                name: "wait_for_more".to_string(),
+                description:
+                    "Take no action and wait for the next response. Use when nothing should be \
+                 sent yet."
+                        .to_string(),
+                parameters: vec![],
+                example: json!({ "type": "wait_for_more" }),
+                log_template: None,
+            },
+        ]
     }
     fn protocol_name(&self) -> &'static str {
         "HTTP"
@@ -343,6 +355,12 @@ impl Client for HttpClientProtocol {
                 })
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
+            // CLAUDE.md lists wait_for_more as one of the three standard client
+            // sync actions, and ftp/imap/doh/rip/tcp/dns all implement it. These two
+            // did not, so returning it was an "unknown action" error the client then
+            // swallowed -- two suites passed while sending an action the client
+            // could never obey.
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!(
                 "Unknown HTTP client action: {}",
                 action_type

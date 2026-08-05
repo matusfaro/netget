@@ -87,21 +87,33 @@ impl Protocol for RedisClientProtocol {
         ]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![ActionDefinition {
-            name: "execute_redis_command".to_string(),
-            description: "Execute a Redis command in response to received data".to_string(),
-            parameters: vec![Parameter {
-                name: "command".to_string(),
-                type_hint: "string".to_string(),
-                description: "Redis command".to_string(),
-                required: true,
-            }],
-            example: json!({
-                "type": "execute_redis_command",
-                "command": "SET result OK"
-            }),
-            log_template: None,
-        }]
+        vec![
+            ActionDefinition {
+                name: "execute_redis_command".to_string(),
+                description: "Execute a Redis command in response to received data".to_string(),
+                parameters: vec![Parameter {
+                    name: "command".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Redis command".to_string(),
+                    required: true,
+                }],
+                example: json!({
+                    "type": "execute_redis_command",
+                    "command": "SET result OK"
+                }),
+                log_template: None,
+            },
+            ActionDefinition {
+                name: "wait_for_more".to_string(),
+                description:
+                    "Take no action and wait for more data from the server. Use when the reply so \
+                 far is incomplete."
+                        .to_string(),
+                parameters: vec![],
+                example: json!({ "type": "wait_for_more" }),
+                log_template: None,
+            },
+        ]
     }
     fn protocol_name(&self) -> &'static str {
         "Redis"
@@ -245,6 +257,12 @@ impl Client for RedisClientProtocol {
                 })
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
+            // CLAUDE.md lists wait_for_more as one of the three standard client
+            // sync actions, and ftp/imap/doh/rip/tcp/dns all implement it. These two
+            // did not, so returning it was an "unknown action" error the client then
+            // swallowed -- two suites passed while sending an action the client
+            // could never obey.
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!(
                 "Unknown Redis client action: {}",
                 action_type
