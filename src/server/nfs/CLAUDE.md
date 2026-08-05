@@ -1,413 +1,184 @@
 # NFS Protocol Implementation
 
-## Overview
+**Status**: `DevelopmentState::Experimental`.
 
-NFSv3 (Network File System version 3) server implementing RFC 1813. Provides RPC-based distributed filesystem where the
-LLM controls all file operations, directory structure, and content.
+NFSv3 (RFC 1813) over TCP, default port 2049. 2049 is above 1023, so no privilege is required
+and `privilege_requirement` is correctly `None` — a declaration here could never fire.
 
-**Protocol**: NFSv3 (RFC 1813)
-**Transport**: TCP (RPC over TCP)
-**Port**: 2049 (standard), configurable
-**Status**: Alpha
+`nfsserve` v0.10 owns RPC, XDR, message framing and the MOUNT protocol. `LlmNfsFileSystem`
+(`src/server/nfs/mod.rs`) implements its `NFSFileSystem` trait, and every trait method turns
+into one LLM round-trip.
 
-## Library Choices
+## No storage — and that is the whole design
 
-- **nfsserve** v0.6 - NFSv3 server framework
-    - Handles RPC/XDR protocol encoding/decoding
-    - Provides NFSTcp listener and connection management
-    - Manages MOUNT protocol integration
-    - Abstracts NFSv3 procedure calls into trait methods
-- **async-trait** - Async trait support for NFSFileSystem
+There is no file table, no directory tree, no attribute cache, no backing store of any kind.
+`LlmNfsFileSystem` holds an `OllamaClient`, an `Arc<AppState>`, a `ServerId`, an
+`Arc<NfsProtocol>` and a status channel. Nothing else. Every `lookup`, `getattr`, `read`,
+`readdir` — all of it comes back from the model.
 
-**Why nfsserve?**
+This is the side of the line a file protocol is supposed to be on, and it is worth contrasting
+with `src/server/webdav/`, which serves a real in-process `MemFs` and is marked `Incomplete`
+for exactly that reason.
 
-- Complete NFSv3 protocol stack (RPC, XDR, NFS, MOUNT)
-- Trait-based architecture perfect for LLM integration
-- Handles complex binary encoding without manual XDR marshaling
-- Focus LLM on filesystem semantics, not protocol details
+The cost is pushed onto the model: **file IDs must be stable**. If `lookup(dir=1,
+"readme.txt")` returns 42 once and 43 the next time, or if `getattr(42)` reports a different
+size than the last call, clients cache the difference and misbehave in ways that look like
+server bugs. Say so in the instruction.
 
-## Architecture Decisions
+## The bug that made this protocol unusable
 
-### Trait-Based Filesystem
+`NFS_OPERATION_EVENT` was declared with
 
-Implement `NFSFileSystem` trait with LLM backend:
+```rust
+.with_actions(vec![
+    // Include all NFS response actions
+    // The LLM will choose the appropriate response based on the operation type
+])
+```
 
-- All filesystem operations call LLM via `consult_llm()`
-- Trait methods: lookup, getattr, setattr, read, write, create, mkdir, remove, rename, readdir, symlink, readlink
-- Each method converts NFS parameters to JSON, sends to LLM, parses action response
+— a comment where the actions should have been. `call_llm` builds the model's tool list from
+`event.event_type.actions`, **not** from `get_sync_actions()`, so the model was offered
+`set_memory` / `show_message` / `append_to_log` and nothing else. Every `nfs_*_response` it
+produced was rejected as an unknown action, retried twice, and failed. Every operation then
+fell through to `error!("No valid nfs_..._response action in LLM response")` and returned
+NFS3ERR. **No NFS operation could ever be answered.**
 
-### LLM-Controlled Filesystem
+Worse in a dev build: `call_llm` reacts to `EventType::has_no_usable_actions()` with a
+`debug_assert!(false, ...)`, so the connection task panicked — silently, while the server
+still reported `Running`.
 
-**CRITICAL**: Unlike WebDAV, NFS is FULLY LLM-controlled:
+The event now carries `nfs_response_actions()`, the same list as `get_sync_actions()`.
 
-- Every file operation consults LLM
-- LLM decides file content, directory structure, permissions
-- No persistent storage (ephemeral LLM-generated filesystem)
+## Events
 
-### Action-Based Responses
+One event type, `nfs_operation`, for all twelve procedures:
 
-Each filesystem operation has corresponding action type:
+| field | meaning |
+|---|---|
+| `operation` | `lookup`, `getattr`, `setattr`, `read`, `write`, `create`, `mkdir`, `remove`, `rename`, `readdir`, `symlink`, `readlink` |
+| `params` | operation-specific: `fileid`, `dirid`, `filename`, `offset`, `count`, `data`, `mode`, `uid`, `gid`, `start_after`, `max_entries`, ... |
 
-- `nfs_lookup_response` - Return file ID for path lookup
-- `nfs_getattr_response` - Return file attributes (size, mode, timestamps)
-- `nfs_read_response` - Return file content
-- `nfs_write_response` - Confirm write operation
-- `nfs_create_response` - Confirm file creation with new file ID
-- `nfs_mkdir_response` - Confirm directory creation
-- `nfs_readdir_response` - Return directory entry list
-- etc.
+The operation name is the only thing telling the model which response to send, which is why
+every response action is advertised on this one event rather than split across several.
 
-### File ID Management
+## Actions
 
-NFS uses file IDs (fileid3) instead of paths:
+Ten response actions, one per operation shape. All are advertised on `nfs_operation`.
 
-- Root directory is always fileid=1
-- LLM assigns file IDs (must be stable across lookups)
-- Clients cache file IDs to avoid repeated lookups
+| action | read back by | key fields |
+|---|---|---|
+| `nfs_lookup_response` | `lookup` | `fileid`, `error` |
+| `nfs_getattr_response` | `getattr` | `file_type`, `mode`, `size`, `uid`, `gid`, `atime`/`mtime`/`ctime` |
+| `nfs_setattr_response` | `setattr` | same attribute fields |
+| `nfs_read_response` | `read`, `readlink` | `data`, `eof` |
+| `nfs_write_response` | `write` | `size`, `mode`, `mtime` |
+| `nfs_create_response` | `create`, `create_exclusive`, `symlink` | `fileid`, `size`, `mode` |
+| `nfs_mkdir_response` | `mkdir` | `fileid`, `mode` |
+| `nfs_remove_response` | `remove` | `success` |
+| `nfs_rename_response` | `rename` | `success` |
+| `nfs_readdir_response` | `readdir` | `entries[{name, fileid, attr?}]`, `eof` |
 
-### RPC Transport
+Any response may carry `"error"` instead; the mapping to NFS status is coarse — the string is
+logged, not parsed, and each operation returns its own fixed code (`lookup`/`remove` →
+NFS3ERR_NOENT, `read`/`write`/`setattr`/`create`/`mkdir`/`rename` → NFS3ERR_ACCES, `readdir` →
+NFS3ERR_NOTDIR, `create_exclusive` → NFS3ERR_EXIST, `readlink` → NFS3ERR_INVAL). Returning
+`"error": "Is a directory"` will not produce NFS3ERR_ISDIR.
 
-nfsserve handles all RPC details:
+`mode` is a **decimal** number in JSON: 420 is `0644`, 493 is `0755`.
 
-- XDR encoding/decoding of NFS structures
-- RPC message framing over TCP
-- MOUNT protocol for export mounting
-- Portmapper integration (built into nfsserve)
+### Removed
 
-## Connection Management
+`mount_filesystem` and `unmount_filesystem` were declared as async actions. Both parsed a
+`path`, discarded it, and returned `ActionResult::NoAction` — nothing in `nfsserve` or in
+`LlmNfsFileSystem` has any notion of an export to mount. Removed.
 
-### NFSTcpListener Management
+### Field-name mismatches fixed
 
-nfsserve manages connections internally:
+Two executors read fields the action definitions never documented, so a model following the
+documentation always hit the default:
 
-- Single NFSTcpListener per server instance
-- `handle_forever()` runs connection acceptor loop
-- Library handles per-connection RPC state
+- `mkdir` read `action["dirid"]` while `nfs_mkdir_response` documents `fileid`. Every
+  documented response produced fileid 0, and the client got a directory it could not enter.
+- `readdir` read `action["end"]` while `nfs_readdir_response` documents `eof`. Listings were
+  always reported complete.
 
-### Connection Tracking
+Both now prefer the documented name and still accept the old one.
 
-NetGet tracks NFS connections at TCP level:
+## Text only — the binary limitation
 
-- Connection ID per TCP connection (generated by nfsserve)
-- Protocol-specific info: `ProtocolConnectionInfo::Nfs { mount_path, file_handles }`
-- Stats updated per RPC call (packets_sent/received)
+`nfs_read_response.data` is a `String`, and the `data` field of a write event is a `String`.
+Actions must not carry raw bytes or base64 (models cannot reliably produce or parse them), and
+no binary path was ever built here.
 
-### Concurrency
+Concretely:
 
-Multiple concurrent clients supported:
+- **Reads**: `data.as_bytes()` goes on the wire verbatim. Any file whose bytes are not valid
+  UTF-8 cannot be served.
+- **Writes**: `String::from_utf8_lossy(data)`. A client writing a JPEG hands the model a string
+  full of U+FFFD, and the original bytes are gone. If the model then echoes that back on the
+  next read, the file is corrupt.
 
-- nfsserve handles multiplexing internally
-- Each client gets independent RPC stream
-- LLM called sequentially per operation (no concurrent LLM calls for same server)
+This is a real limitation of the design, not a gap to be filled by adding a hex field — the
+project rule forbids one. Serving binary content over NFS is out of scope for this protocol.
 
-## State Management
+## Performance
 
-### Server State
+One model round-trip per NFS procedure. `ls -l` in a directory of ten files is a `readdir`
+plus a `getattr` each: eleven calls, tens of seconds. `mount` alone costs several. This is
+usable for a honeypot or a demo and unusable for anything else — reach for script handlers
+(`event_pattern: "nfs_operation"`) if you need throughput.
 
-Minimal NetGet-specific state:
+## Startup and lifecycle
 
-- Connection tracking for UI display
-- Server ID for LLM context
+`NFSTcpListener::bind(...)` runs before the spawn and propagates with `?` and a context, so a
+bind failure surfaces as a startup error rather than a server stuck in `Running`. The returned
+address uses `get_listen_port()`, so an ephemeral port is reported correctly. The
+`handle_forever()` task is registered with `AppState::register_server_task()`, so `stop_server`
+releases the socket.
 
-### Filesystem State
-
-LLM maintains filesystem state via instructions/memory:
-
-- File IDs must be stable (LLM responsibility)
-- Directory structure defined in prompt or generated dynamically
-- File content generated on-demand by LLM
-
-**IMPORTANT**: LLM must maintain consistency:
-
-- Same file ID must return same attributes across getattr calls
-- Directory listings must be consistent
-- File content should be stable (or explain changes)
-
-### No Persistent Storage
-
-NFS filesystem is ephemeral:
-
-- No backing storage
-- Files "exist" only as LLM generates them
-- Suitable for honeypot, testing, or AI-generated content
+`consult_llm` passes `connection_id: None` — `nfsserve` manages its own connections and does
+not expose them, so per-connection state and per-connection scheduled tasks are unavailable
+here, and the access log shows no client address.
 
 ## Limitations
 
-### NFSv3 Only
+- NFSv3 only, TCP only. No NFSv2, no NFSv4, no UDP.
+- Binary files (above).
+- One LLM call per operation (above).
+- No per-connection tracking (above).
+- `nlink` is always 1, `fsid` always 0, `used` always equals `size`.
+- Error strings map coarsely to NFS status codes (above).
+- No locking (NLM), no ACLs, no extended attributes.
+- Real clients probe aggressively on mount; a model that answers inconsistently will produce
+  mount failures whose cause is not obvious from the client's error message.
 
-- No NFSv2 support (older clients may not work)
-- No NFSv4 support (modern features unavailable)
-- Only TCP transport (no UDP)
+## Manual verification
 
-### Simplified File Attributes
+```bash
+./cargo-isolated.sh run --no-default-features --features nfs --release
+# "listen on port 12049 via nfs. Root directory (fileid 1) contains readme.txt (fileid 2,
+#  regular file, 14 bytes, content 'Hello from NFS'). Keep file IDs stable."
 
-- Limited timestamp support (current time used for most fields)
-- Fixed UID/GID (1000:1000 by default)
-- No extended attributes (xattrs)
-- No ACLs (only traditional Unix permissions)
-
-### Performance Considerations
-
-- **CRITICAL**: Every operation calls LLM (slow)
-- High latency for file operations (seconds per call)
-- Not suitable for high-throughput workloads
-- Use scripting mode for performance-critical scenarios
-
-### Testing Limitations
-
-- Real NFS clients (Linux, macOS) have strict requirements
-- Clients expect consistent file IDs
-- Some clients probe filesystem capabilities
-- Testing mostly validates connection handling, not full filesystem semantics
-
-## LLM Integration
-
-### Event-Based Processing
-
-NFS operations trigger `NFS_OPERATION_EVENT`:
-
-```json
-{
-  "operation": "lookup",
-  "params": {
-    "dirid": 1,
-    "filename": "readme.txt"
-  }
-}
+showmount -e 127.0.0.1                      # exports
+# Linux:
+sudo mount -t nfs -o vers=3,port=12049,mountport=12049,tcp 127.0.0.1:/ /mnt/netget
+# macOS:
+sudo mount -o vers=3,port=12049,mountport=12049,tcp,resvport 127.0.0.1:/ /mnt/netget
+ls -l /mnt/netget && cat /mnt/netget/readme.txt
 ```
 
-LLM receives:
+Expect each command to take seconds, not milliseconds — that is the per-operation LLM call.
+Watch `netget.log` at DEBUG to see the operation sequence the client actually issues; it is
+longer than you would guess.
 
-- Operation name (lookup, read, write, etc.)
-- Structured parameters (file IDs, paths, offsets)
+## Testing
 
-### Action Response Format
-
-**nfs_lookup_response** - File lookup result:
-
-```json
-{
-  "type": "nfs_lookup_response",
-  "fileid": 42
-}
-```
-
-**nfs_getattr_response** - File attributes:
-
-```json
-{
-  "type": "nfs_getattr_response",
-  "file_type": "regular",
-  "mode": 0o644,
-  "size": 1024,
-  "uid": 1000,
-  "gid": 1000,
-  "mtime": 1705320000
-}
-```
-
-**nfs_read_response** - File content:
-
-```json
-{
-  "type": "nfs_read_response",
-  "data": "File content here",
-  "eof": true
-}
-```
-
-**nfs_write_response** - Write confirmation:
-
-```json
-{
-  "type": "nfs_write_response",
-  "file_type": "regular",
-  "size": 1024,
-  "mtime": 1705320000
-}
-```
-
-**nfs_create_response** - File creation:
-
-```json
-{
-  "type": "nfs_create_response",
-  "fileid": 43,
-  "file_type": "regular",
-  "mode": 0o644,
-  "size": 0
-}
-```
-
-**nfs_readdir_response** - Directory listing:
-
-```json
-{
-  "type": "nfs_readdir_response",
-  "entries": [
-    {"fileid": 42, "name": "readme.txt", "attr": {...}},
-    {"fileid": 43, "name": "data.bin", "attr": {...}}
-  ],
-  "end": true
-}
-```
-
-### Error Handling
-
-LLM can return errors via `"error"` field:
-
-```json
-{
-  "type": "nfs_lookup_response",
-  "error": "File not found"
-}
-```
-
-Maps to NFS error codes:
-
-- "File not found" → NFS3ERR_NOENT
-- "Access denied" → NFS3ERR_ACCES
-- "Not a directory" → NFS3ERR_NOTDIR
-- "Is a directory" → NFS3ERR_ISDIR
-
-## Example Prompts and Responses
-
-### Example 1: Simple Filesystem
-
-**Prompt:**
-
-```
-Listen on port 2049 via NFS. Provide export /data with root directory
-containing file readme.txt (content: "Welcome to NetGet NFS server").
-```
-
-**LLM Response (lookup):**
-
-```json
-{
-  "actions": [
-    {
-      "type": "nfs_lookup_response",
-      "fileid": 2
-    }
-  ]
-}
-```
-
-**LLM Response (read):**
-
-```json
-{
-  "actions": [
-    {
-      "type": "nfs_read_response",
-      "data": "Welcome to NetGet NFS server",
-      "eof": true
-    }
-  ]
-}
-```
-
-### Example 2: Directory Structure
-
-**Prompt:**
-
-```
-Listen on port 2049 via NFS. Root directory has folders: documents (fileid 10),
-images (fileid 20). documents contains report.txt (fileid 11).
-```
-
-**LLM Response (readdir /):**
-
-```json
-{
-  "actions": [
-    {
-      "type": "nfs_readdir_response",
-      "entries": [
-        {
-          "fileid": 10,
-          "name": "documents",
-          "attr": {"file_type": "directory", "mode": 0o755}
-        },
-        {
-          "fileid": 20,
-          "name": "images",
-          "attr": {"file_type": "directory", "mode": 0o755}
-        }
-      ],
-      "end": true
-    }
-  ]
-}
-```
-
-### Example 3: Write Operations
-
-**Prompt:**
-
-```
-Listen on port 2049 via NFS. Accept all file writes, store content in memory.
-```
-
-**LLM Response (write):**
-
-```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Wrote 256 bytes to file 42"
-    },
-    {
-      "type": "nfs_write_response",
-      "file_type": "regular",
-      "size": 256,
-      "mtime": 1705320000
-    }
-  ]
-}
-```
+`tests/server/nfs/test.rs` — connection lifecycle, port configuration, multiple connections,
+stop/start. It exercises the TCP and RPC layers; it does not mount a filesystem, so it did not
+catch the empty-action bug above. A mocked mount + lookup + read would.
 
 ## References
 
-- [RFC 1813: NFS Version 3 Protocol](https://tools.ietf.org/html/rfc1813)
-- [RFC 1831: RPC Version 2](https://tools.ietf.org/html/rfc1831)
-- [RFC 1832: XDR External Data Representation](https://tools.ietf.org/html/rfc1832)
-- [nfsserve Rust crate](https://docs.rs/nfsserve)
-- [Linux NFS Documentation](https://linux-nfs.org/)
-
-## Logging
-
-### Structured Logging Levels
-
-**TRACE** - Full NFS operation details:
-
-- Complete RPC call parameters
-- LLM request/response JSON (pretty-printed)
-- File ID mappings
-
-**DEBUG** - NFS operation summaries:
-
-- Operation name and key parameters
-- "NFS lookup dirid=1 filename=readme.txt"
-- "NFS read fileid=42 offset=0 count=4096"
-
-**INFO** - High-level events:
-
-- Server startup and port binding
-- "NFS server listening on 127.0.0.1:2049"
-- LLM consultation results
-
-**WARN** - Non-fatal issues:
-
-- LLM returned errors (file not found, access denied)
-- Malformed LLM responses
-
-**ERROR** - Critical failures:
-
-- LLM communication errors
-- RPC transport failures
-- Missing required action fields
-
-All logs use dual logging pattern (tracing macros + status_tx).
+- [RFC 1813: NFS Version 3](https://tools.ietf.org/html/rfc1813)
+- [RFC 1831: RPC v2](https://tools.ietf.org/html/rfc1831) / [RFC 1832: XDR](https://tools.ietf.org/html/rfc1832)
+- [nfsserve](https://docs.rs/nfsserve)

@@ -1,4 +1,20 @@
-//! NFS server implementation using nfsserve
+//! NFSv3 server built on `nfsserve`, with the filesystem supplied entirely by the LLM.
+//!
+//! `nfsserve` owns RPC, XDR and the MOUNT protocol; `LlmNfsFileSystem` below implements its
+//! `NFSFileSystem` trait by raising an `nfs_operation` event for every procedure and reading
+//! the answer out of the model's response action. **There is no storage here** - no file
+//! table, no directory tree, no attribute cache. Consistency across calls (a file ID meaning
+//! the same file twice, a directory listing matching what lookup returns) is the model's
+//! responsibility, which is why the server instruction carries so much weight.
+//!
+//! Two consequences worth knowing before using it:
+//!
+//! - **One model round-trip per NFS procedure.** A `ls` is several. Real workloads are
+//!   impractically slow; script or static handlers are the answer for anything repetitive.
+//! - **Text only.** File contents travel as UTF-8 strings in JSON actions because actions must
+//!   not carry raw bytes or base64. Outbound data is written verbatim; inbound writes go
+//!   through `String::from_utf8_lossy`, so a client writing binary hands the model U+FFFD.
+//!   Binary files cannot be served or received faithfully, and there is no encoded fallback.
 pub mod actions;
 
 use anyhow::{Context, Result};
@@ -192,9 +208,12 @@ impl LlmNfsFileSystem {
     /// Parse NFS timestamp
     fn parse_nfstime(&self, timestamp: Option<u64>) -> nfstime3 {
         let ts = timestamp.unwrap_or_else(|| {
+            // unwrap_or_default rather than unwrap: a clock set before 1970 would otherwise
+            // panic inside a connection task, where the panic is silent and the server keeps
+            // reporting Running.
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs()
         });
         nfstime3 {
@@ -451,6 +470,8 @@ impl NFSFileSystem for LlmNfsFileSystem {
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
+        // Lossy on purpose - actions carry no binary form. Non-UTF-8 bytes reach the model as
+        // U+FFFD and cannot be recovered; see the module docs.
         let data_str = String::from_utf8_lossy(data).to_string();
         let params = serde_json::json!({
             "fileid": id,
@@ -627,7 +648,16 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_ACCES);
                         }
 
-                        let fileid = action.get("dirid").and_then(|v| v.as_u64()).unwrap_or(0);
+                        // `nfs_mkdir_response` documents `fileid`, and that is what a model
+                        // following the action definition sends. This used to read `dirid`
+                        // only, so every documented response yielded fileid 0 and the client
+                        // got a directory it could not then look into. `dirid` is still
+                        // accepted for anything that learned the old shape.
+                        let fileid = action
+                            .get("fileid")
+                            .or_else(|| action.get("dirid"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
 
                         match self.build_fattr3(&action) {
                             Ok(mut attrs) => {
@@ -804,7 +834,14 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             });
                         }
 
-                        let end = action.get("end").and_then(|v| v.as_bool()).unwrap_or(true);
+                        // `nfs_readdir_response` documents `eof`; this used to read `end`
+                        // only, so a model following the action definition always got the
+                        // default. Both are accepted, documented name first.
+                        let end = action
+                            .get("eof")
+                            .or_else(|| action.get("end"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
 
                         debug!(
                             "NFS readdir returned {} entries, end={}",

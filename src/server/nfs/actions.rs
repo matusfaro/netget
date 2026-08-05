@@ -1,4 +1,16 @@
-//! NFS protocol actions implementation
+//! NFS protocol actions implementation.
+//!
+//! The filesystem is entirely LLM-supplied: nothing here stores a file, a directory or an
+//! attribute. `LlmNfsFileSystem` (`src/server/nfs/mod.rs`) implements `nfsserve`'s
+//! `NFSFileSystem` by turning every NFSv3 procedure into an `nfs_operation` event and reading
+//! the answer back out of the model's action. Consistency of file IDs across calls is the
+//! model's job, which is why the instruction matters so much for this protocol.
+//!
+//! **Text only.** `nfs_read_response.data` and the `data` field of a write event are UTF-8
+//! strings, because actions must not carry raw bytes or base64 — models cannot reliably
+//! produce or parse them. The consequence is real and worth stating: this server cannot serve
+//! or faithfully receive binary files. Inbound writes go through `String::from_utf8_lossy`, so
+//! any non-UTF-8 byte a client writes reaches the model as U+FFFD and is unrecoverable.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -21,24 +33,18 @@ impl NfsProtocol {
 }
 
 impl Protocol for NfsProtocol {
+    /// No async actions.
+    ///
+    /// `mount_filesystem` / `unmount_filesystem` used to be declared here. Both parsed a
+    /// `path`, discarded it and returned `ActionResult::NoAction`: nothing in `nfsserve` or in
+    /// `LlmNfsFileSystem` has any notion of an export to mount, so they could not have done
+    /// anything even if something had called them. Removed rather than left as a promise.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![mount_filesystem_action(), unmount_filesystem_action()]
+        Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            // Response actions - LLM returns these with structured data
-            nfs_lookup_response_action(),
-            nfs_read_response_action(),
-            nfs_write_response_action(),
-            nfs_getattr_response_action(),
-            nfs_create_response_action(),
-            nfs_remove_response_action(),
-            nfs_mkdir_response_action(),
-            nfs_readdir_response_action(),
-            nfs_rename_response_action(),
-            nfs_setattr_response_action(),
-        ]
+        nfs_response_actions()
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -62,10 +68,24 @@ impl Protocol for NfsProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("nfsserve v0.6 NFSv3 server library")
-            .llm_control("All filesystem operations (lookup, read, write, mkdir)")
-            .e2e_testing("mount / nfs-client")
-            .notes("NFSv3 only, virtual filesystem, no persistence")
+            // Port 2049 is above 1023, so no privilege is required to bind it. (A client
+            // mounting from it may still need privileges of its own; that is the client's
+            // problem, not this server's.)
+            .implementation(
+                "nfsserve v0.10 NFSv3 server; LlmNfsFileSystem implements NFSFileSystem",
+            )
+            .llm_control(
+                "Every filesystem operation: lookup, getattr, setattr, read, write, create, \
+                 mkdir, remove, rename, readdir, symlink, readlink. Nothing is stored server-side.",
+            )
+            .e2e_testing("mount / showmount, and tests/server/nfs/test.rs")
+            .notes(
+                "NFSv3 over TCP only. File contents are UTF-8 strings in actions, so binary \
+                 files cannot be served or received faithfully. The LLM must keep file IDs \
+                 stable across calls or clients will misbehave. Every operation costs one \
+                 model round-trip, so real workloads are impractically slow - use script or \
+                 static handlers for anything beyond a demo.",
+            )
             .build()
     }
 
@@ -157,8 +177,6 @@ impl Server for NfsProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "mount_filesystem" => self.execute_mount_filesystem(action),
-            "unmount_filesystem" => self.execute_unmount_filesystem(action),
             "nfs_lookup_response" => self.execute_nfs_lookup_response(action),
             "nfs_read_response" => self.execute_nfs_read_response(action),
             "nfs_write_response" => self.execute_nfs_write_response(action),
@@ -175,26 +193,6 @@ impl Server for NfsProtocol {
 }
 
 impl NfsProtocol {
-    /// Mount a filesystem export
-    fn execute_mount_filesystem(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Unmount a filesystem
-    fn execute_unmount_filesystem(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
-    }
-
     /// NFS LOOKUP response
     fn execute_nfs_lookup_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = json!({
@@ -302,51 +300,28 @@ impl NfsProtocol {
     }
 }
 
+/// Every response action, in the order the operations appear in `NFSFileSystem`.
+///
+/// This is both `get_sync_actions()` and the action list attached to `nfs_operation`. The
+/// event carries the operation name, so the model picks the matching response from this set;
+/// there is exactly one event type, and splitting the actions per operation would mean
+/// splitting the event type too.
+fn nfs_response_actions() -> Vec<ActionDefinition> {
+    vec![
+        nfs_lookup_response_action(),
+        nfs_getattr_response_action(),
+        nfs_setattr_response_action(),
+        nfs_read_response_action(),
+        nfs_write_response_action(),
+        nfs_create_response_action(),
+        nfs_mkdir_response_action(),
+        nfs_remove_response_action(),
+        nfs_rename_response_action(),
+        nfs_readdir_response_action(),
+    ]
+}
+
 /// Action definitions
-fn mount_filesystem_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "mount_filesystem".to_string(),
-        description: "Mount an NFS filesystem export".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Export path to mount".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "mount_filesystem",
-            "path": "/export/data"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("NFS mount {path}")
-                .with_debug("NFS mount_filesystem: path={path}"),
-        ),
-    }
-}
-
-fn unmount_filesystem_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "unmount_filesystem".to_string(),
-        description: "Unmount an NFS filesystem".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Export path to unmount".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "unmount_filesystem",
-            "path": "/export/data"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("NFS unmount {path}")
-                .with_debug("NFS unmount_filesystem: path={path}"),
-        ),
-    }
-}
-
 fn nfs_lookup_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "nfs_lookup_response".to_string(),
@@ -387,7 +362,11 @@ fn nfs_read_response_action() -> ActionDefinition {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "string".to_string(),
-                description: "File content to return".to_string(),
+                description:
+                    "File content to return, as text. Sent to the client verbatim as UTF-8 \
+                     bytes; there is no binary or encoded form, so binary files cannot be \
+                     served."
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -430,7 +409,8 @@ fn nfs_write_response_action() -> ActionDefinition {
             Parameter {
                 name: "mode".to_string(),
                 type_hint: "number".to_string(),
-                description: "File permissions (e.g. 0644)".to_string(),
+                description: "File permissions as a decimal number (420 = 0644, 493 = 0755)"
+                    .to_string(),
                 required: false,
             },
             Parameter {
@@ -449,7 +429,7 @@ fn nfs_write_response_action() -> ActionDefinition {
         example: json!({
             "type": "nfs_write_response",
             "size": 1024,
-            "mode": 0o644
+            "mode": 420
         }),
         log_template: Some(
             LogTemplate::new()
@@ -473,7 +453,9 @@ fn nfs_getattr_response_action() -> ActionDefinition {
             Parameter {
                 name: "mode".to_string(),
                 type_hint: "number".to_string(),
-                description: "Permissions (e.g. 0644 for files, 0755 for dirs)".to_string(),
+                description:
+                    "Permissions as a decimal number (420 = 0644 for files, 493 = 0755 for dirs)"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -522,7 +504,7 @@ fn nfs_getattr_response_action() -> ActionDefinition {
         example: json!({
             "type": "nfs_getattr_response",
             "file_type": "regular",
-            "mode": 0o644,
+            "mode": 420,
             "size": 1024,
             "uid": 1000,
             "gid": 1000
@@ -569,7 +551,7 @@ fn nfs_create_response_action() -> ActionDefinition {
             "type": "nfs_create_response",
             "fileid": 123,
             "size": 0,
-            "mode": 0o644
+            "mode": 420
         }),
         log_template: Some(
             LogTemplate::new()
@@ -623,7 +605,8 @@ fn nfs_mkdir_response_action() -> ActionDefinition {
             Parameter {
                 name: "mode".to_string(),
                 type_hint: "number".to_string(),
-                description: "Directory permissions (default 0755)".to_string(),
+                description: "Directory permissions as a decimal number (default 493 = 0755)"
+                    .to_string(),
                 required: false,
             },
             Parameter {
@@ -636,7 +619,7 @@ fn nfs_mkdir_response_action() -> ActionDefinition {
         example: json!({
             "type": "nfs_mkdir_response",
             "fileid": 456,
-            "mode": 0o755
+            "mode": 493
         }),
         log_template: Some(
             LogTemplate::new()
@@ -750,7 +733,7 @@ fn nfs_setattr_response_action() -> ActionDefinition {
         ],
         example: json!({
             "type": "nfs_setattr_response",
-            "mode": 0o600
+            "mode": 384
         }),
         log_template: Some(
             LogTemplate::new()
@@ -765,8 +748,18 @@ fn nfs_setattr_response_action() -> ActionDefinition {
 // ============================================================================
 
 /// NFS operation event - triggered when NFS client requests a filesystem operation
+///
+/// The action list is the whole protocol. `call_llm` builds the model's vocabulary from
+/// `event.event_type.actions`, **not** from `get_sync_actions()`, so the empty
+/// `.with_actions(vec![])` this used to carry meant the model was offered `set_memory`,
+/// `show_message` and nothing else: every `nfs_*_response` it produced was rejected as an
+/// unknown action, retried twice, and failed. No NFS operation could ever be answered.
 pub static NFS_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("nfs_operation", "NFS client requested a filesystem operation", json!({"type": "placeholder", "event_id": "nfs_operation"}))
+    EventType::new(
+        "nfs_operation",
+        "NFS client requested a filesystem operation",
+        json!({"type": "nfs_getattr_response", "file_type": "regular", "mode": 420, "size": 13}),
+    )
     .with_parameters(vec![
         Parameter {
             name: "operation".to_string(),
@@ -777,14 +770,27 @@ pub static NFS_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "params".to_string(),
             type_hint: "object".to_string(),
-            description: "Operation-specific parameters (path, fileid, offset, size, etc.)".to_string(),
+            description: "Operation-specific parameters (fileid, dirid, filename, offset, count, data, ...)".to_string(),
             required: true,
         },
     ])
-    .with_actions(vec![
-        // Include all NFS response actions
-        // The LLM will choose the appropriate response based on the operation type
-    ])
+    // The model must be able to answer every operation, and only the operation field tells it
+    // which response to pick, so all response actions are advertised on the one event.
+    .with_actions(nfs_response_actions())
+    .with_alternative_example(json!({
+        "type": "nfs_lookup_response",
+        "fileid": 2
+    }))
+    .with_alternative_example(json!({
+        "type": "nfs_read_response",
+        "data": "Hello from NFS",
+        "eof": true
+    }))
+    .with_alternative_example(json!({
+        "type": "nfs_readdir_response",
+        "entries": [{"name": "readme.txt", "fileid": 2}],
+        "eof": true
+    }))
     .with_log_template(
         LogTemplate::new()
             .with_info("NFS {operation}")
