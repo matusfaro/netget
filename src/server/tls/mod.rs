@@ -148,27 +148,49 @@ impl TlsServer {
                                 .await;
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
 
-                            // Handle connection (send data first if needed)
-                            let llm_client_for_conn = llm_client_clone.clone();
-                            let app_state_for_conn = app_state_clone.clone();
-                            let status_tx_for_conn = status_tx_clone.clone();
-                            let connections_for_conn = connections_clone.clone();
-                            let write_half_for_conn = write_half_arc.clone();
-                            let protocol_for_conn = protocol_clone.clone();
-                            tokio::spawn(async move {
-                                Self::handle_connection_with_actions(
-                                    connection_id,
-                                    server_id,
-                                    llm_client_for_conn,
-                                    app_state_for_conn,
-                                    status_tx_for_conn,
-                                    send_first,
-                                    connections_for_conn,
-                                    write_half_for_conn,
-                                    protocol_for_conn,
-                                )
-                                .await;
-                            });
+                            // Register the connection HERE, before either task is spawned.
+                            //
+                            // This used to be the first thing the banner task did, racing the
+                            // reader task spawned immediately after it, and
+                            // handle_data_with_actions returns silently when the connection
+                            // is not in the map. TLS loses that race almost every time: the
+                            // handshake reads from the socket, so application data sent right
+                            // behind the client's Finished is already buffered inside rustls
+                            // and the reader's first read() returns it without ever waiting on
+                            // the I/O driver. 15 of 16 clients that wrote at handshake
+                            // completion had their request dropped with no response and no log
+                            // line.
+                            connections_clone.lock().await.insert(
+                                connection_id,
+                                ConnectionData {
+                                    state: ConnectionState::Idle,
+                                    queued_data: Vec::new(),
+                                    write_half: write_half_arc.clone(),
+                                },
+                            );
+
+                            // Send the greeting banner, if this server was asked for one.
+                            if send_first {
+                                let llm_client_for_conn = llm_client_clone.clone();
+                                let app_state_for_conn = app_state_clone.clone();
+                                let status_tx_for_conn = status_tx_clone.clone();
+                                let connections_for_conn = connections_clone.clone();
+                                let write_half_for_conn = write_half_arc.clone();
+                                let protocol_for_conn = protocol_clone.clone();
+                                tokio::spawn(async move {
+                                    Self::send_banner(
+                                        connection_id,
+                                        server_id,
+                                        llm_client_for_conn,
+                                        app_state_for_conn,
+                                        status_tx_for_conn,
+                                        connections_for_conn,
+                                        write_half_for_conn,
+                                        protocol_for_conn,
+                                    )
+                                    .await;
+                                });
+                            }
 
                             // Spawn reader task
                             let llm_client_for_read = llm_client_clone.clone();
@@ -293,30 +315,21 @@ impl TlsServer {
         Ok(local_addr)
     }
 
-    /// Handle new connection with LLM actions
-    async fn handle_connection_with_actions(
+    /// Send the greeting banner for a new connection (`send_first` servers only).
+    ///
+    /// The connection is already registered by the accept path by the time this runs.
+    #[allow(clippy::too_many_arguments)]
+    async fn send_banner(
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        send_first: bool,
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         write_half: Arc<Mutex<tokio::io::WriteHalf<tokio_rustls::server::TlsStream<TcpStream>>>>,
         protocol: Arc<TlsProtocol>,
     ) {
-        // Add connection to tracking
-        connections.lock().await.insert(
-            connection_id,
-            ConnectionData {
-                state: ConnectionState::Idle,
-                queued_data: Vec::new(),
-                write_half: write_half.clone(),
-            },
-        );
-
-        // Send data first if requested
-        if send_first {
+        {
             // Create connection opened event
             let event = Event::new(&TLS_CONNECTION_OPENED_EVENT, serde_json::json!({}));
 

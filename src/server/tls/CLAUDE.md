@@ -224,6 +224,16 @@ Example:
    close_notify and EOF; it used to only drop the bookkeeping entry, leaving the
    socket open indefinitely.
 
+**Step 3 happens synchronously, before either per-connection task is spawned.** Registering the
+connection in the `connections` map used to be the first thing the banner task did, racing the
+reader task spawned immediately after it, and `handle_data_with_actions` returns silently when
+the connection is not in the map. TLS lost that race almost every time — the handshake reads
+from the socket, so application data sent right behind the client's `Finished` is already
+buffered inside rustls and the reader's first `read()` returns it without ever waiting on the
+I/O driver. 15 of 16 clients that wrote at handshake completion had their request dropped with
+no response and no log line. The banner task is now spawned only when `send_first` is set;
+`tests/connection_map_race_test.rs` pins it.
+
 ### State Management
 
 - Each connection has independent state (Idle/Processing/Accumulating)
