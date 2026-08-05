@@ -6,115 +6,36 @@ use crate::llm::actions::{
 };
 use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
-use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::Mutex;
+use std::sync::LazyLock;
 use tracing::debug;
 
-/// IRC client state for tracking nicknames and channels
-#[derive(Clone, Debug)]
-pub struct IrcClientState {
-    pub nickname: Option<String>,
-    pub username: Option<String>,
-    pub realname: Option<String>,
-    pub channels: Vec<String>,
-}
-
-impl IrcClientState {
-    pub fn new() -> Self {
-        Self {
-            nickname: None,
-            username: None,
-            realname: None,
-            channels: Vec::new(),
-        }
-    }
-}
-
 /// IRC protocol action handler
-pub struct IrcProtocol {
-    /// Map of active connections to their IRC state
-    clients: Arc<Mutex<HashMap<ConnectionId, IrcClientState>>>,
-}
+///
+/// Deliberately stateless. An `IrcClientState` map (nickname, username, realname, channels)
+/// used to live here with insert/update/lookup helpers, but nothing ever called them - no
+/// nickname was ever recorded and no channel was ever joined. It was also the wrong place for
+/// it: protocols do not keep protocol state in Rust, the model tracks nicknames and channel
+/// membership through its instruction and server memory.
+pub struct IrcProtocol;
 
 impl IrcProtocol {
     pub fn new() -> Self {
-        Self {
-            clients: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Add a connection to the protocol handler
-    pub async fn add_connection(&self, connection_id: ConnectionId) {
-        self.clients
-            .lock()
-            .await
-            .insert(connection_id, IrcClientState::new());
-    }
-
-    /// Remove a connection from the protocol handler
-    pub async fn remove_connection(&self, connection_id: &ConnectionId) {
-        self.clients.lock().await.remove(connection_id);
-    }
-
-    /// Update client nickname
-    pub async fn set_nickname(&self, connection_id: ConnectionId, nickname: String) {
-        if let Some(client) = self.clients.lock().await.get_mut(&connection_id) {
-            client.nickname = Some(nickname);
-        }
-    }
-
-    /// Update client username and realname
-    pub async fn set_user_info(
-        &self,
-        connection_id: ConnectionId,
-        username: String,
-        realname: String,
-    ) {
-        if let Some(client) = self.clients.lock().await.get_mut(&connection_id) {
-            client.username = Some(username);
-            client.realname = Some(realname);
-        }
-    }
-
-    /// Add a channel to client's channel list
-    pub async fn join_channel(&self, connection_id: ConnectionId, channel: String) {
-        if let Some(client) = self.clients.lock().await.get_mut(&connection_id) {
-            if !client.channels.contains(&channel) {
-                client.channels.push(channel);
-            }
-        }
-    }
-
-    /// Remove a channel from client's channel list
-    pub async fn part_channel(&self, connection_id: ConnectionId, channel: &str) {
-        if let Some(client) = self.clients.lock().await.get_mut(&connection_id) {
-            client.channels.retain(|c| c != channel);
-        }
-    }
-
-    /// Get client state
-    pub async fn get_client_state(&self, connection_id: &ConnectionId) -> Option<IrcClientState> {
-        self.clients.lock().await.get(connection_id).cloned()
+        Self
     }
 }
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IrcProtocol {
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-        vec![
-                crate::llm::actions::ParameterDefinition {
-                    name: "send_first".to_string(),
-                    type_hint: "boolean".to_string(),
-                    description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
-                    required: false,
-                    example: serde_json::json!(false),
-                },
-            ]
+        // No `send_first`: it was declared here but `spawn` read it into `_send_first` and threw
+        // it away, so callers were told the server could open the conversation when it never
+        // did. An IRC server does not speak first anyway - the client sends NICK/USER. Not
+        // declaring it makes `server_startup` warn that the flag is unsupported instead of
+        // silently dropping it. Same reasoning as `src/server/ftp/actions.rs:215`.
+        Vec::new()
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // IRC could have async actions like broadcast_message in the future
@@ -151,10 +72,13 @@ impl Protocol for IrcProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual line-based IRC parsing")
-            .llm_control("All IRC messages (NICK, JOIN, PRIVMSG)")
-            .e2e_testing("Manual IRC client")
-            .notes("No channel state tracking")
+            .implementation("Manual line-based IRC parsing, plain TCP only")
+            .llm_control("Every inbound line; the model composes every reply")
+            .e2e_testing("Raw TCP client issuing NICK/USER/JOIN/PRIVMSG")
+            .notes(
+                "Single-client view: no channel membership, no nick registry, no broadcast \
+                 between connections, no TLS. The model tracks all of that itself.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -222,13 +146,6 @@ impl Server for IrcProtocol {
     > {
         Box::pin(async move {
             use crate::server::irc::IrcServer;
-            let _send_first = ctx
-                .startup_params
-                .as_ref()
-                .map(|p| p.get_optional_bool("send_first"))
-                .transpose()?
-                .flatten()
-                .unwrap_or(false);
 
             IrcServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
@@ -794,13 +711,16 @@ fn close_connection_action() -> ActionDefinition {
 pub static IRC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "irc_message_received",
-        "IRC message received from a client",
-        json!({"type": "placeholder", "event_id": "irc_message_received"}),
+        "One IRC protocol line received from a client (NICK, USER, JOIN, PRIVMSG, PING, QUIT, ...). \
+         The server does not speak first, so registration begins with the client's NICK/USER.",
+        json!({"type": "send_irc_welcome", "nickname": "alice", "server": "irc.example.com", "message": "Welcome to the IRC Network"}),
     )
     .with_parameters(vec![Parameter {
         name: "message".to_string(),
         type_hint: "string".to_string(),
-        description: "The IRC message line received".to_string(),
+        description: "The IRC message line received, with the trailing CRLF stripped \
+                      (e.g. 'NICK alice', 'PRIVMSG #general :hello')"
+            .to_string(),
         required: true,
     }])
     .with_actions(vec![

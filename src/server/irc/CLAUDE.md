@@ -5,7 +5,7 @@
 IRC (Internet Relay Chat) server implementing core IRC protocol for real-time text-based communication. The LLM controls
 IRC responses, handles protocol commands (NICK, USER, JOIN, PRIVMSG, PING, etc.), and manages chat server logic.
 
-**Status**: Alpha (Application Protocol)
+**Status**: Experimental (see `metadata()` in `actions.rs` - that is the authoritative value)
 **RFC**: RFC 1459 (Internet Relay Chat Protocol), RFC 2812 (IRC Client Protocol)
 **Port**: 6667 (plain TCP), 6697 (with TLS, not implemented)
 
@@ -63,22 +63,20 @@ All IRC messages must end with `\r\n`:
 - `send_irc_message`: Formats to ensure `\r\n` termination
 - Other actions: Format with `\r\n` suffix
 
-### 4. Client State Tracking (Unused Currently)
+### 4. No Server-Side State
 
-`IrcProtocol` maintains per-connection state:
+`IrcProtocol` is a unit struct. It previously carried an `IrcClientState` map (nickname,
+username, realname, channels) with insert/update/lookup helpers, but nothing ever called any of
+them - no nickname was recorded and no channel was joined - so it was removed. Protocols do not
+keep protocol state in Rust; the model tracks nicknames and channel membership through its
+instruction and server memory.
 
-```rust
-struct IrcClientState {
-    nickname: Option<String>,
-    username: Option<String>,
-    realname: Option<String>,
-    channels: Vec<String>,
-}
-```
+### 4a. Log Previews Must Be Char-Safe
 
-**Note**: State tracking is implemented but not actively used by current LLM integration. LLM maintains state through
-conversation context instead. State structure is available for future enhancements (e.g., server-side channel
-management).
+Both message previews in `mod.rs` go through `crate::utils::truncate_for_log`. They used to be
+`&line[..100]`, which panics whenever byte 100 of an IRC line falls inside a multi-byte
+character - i.e. on ordinary non-ASCII chat text. A panic in a connection task is silent and
+leaves the server reporting `Running`.
 
 ### 5. Dual Logging
 
@@ -91,7 +89,8 @@ management).
 Each IRC client gets:
 
 - Unique `ConnectionId`
-- Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::Irc`
+- Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::empty()` (IRC stores no
+  protocol-specific connection info)
 - Tracked bytes sent/received, packets sent/received
 - State: Active until client disconnects or LLM closes
 
@@ -99,11 +98,13 @@ Each IRC client gets:
 
 ### Event Type
 
-**`irc_message_received`** - Triggered when IRC client sends a message
+**`irc_message_received`** - Triggered when IRC client sends a message. This is the only event
+IRC emits, and its `.with_actions(...)` list is what `call_llm` offers the model - it carries
+the full action set below.
 
 Event parameters:
 
-- `message` (string) - The IRC message line received (with `\r\n`)
+- `message` (string) - The IRC message line received, **CRLF stripped** (`line.trim()`)
 
 ### Available Actions
 
@@ -243,7 +244,7 @@ See `actions.rs` for complete action list including `send_irc_part`, `send_irc_n
 ### Connection Lifecycle
 
 1. **Accept**: TCP listener accepts connection
-2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Irc`
+2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::empty()`
 3. **Split**: Stream split into ReadHalf and WriteHalf
 4. **Track**: WriteHalf stored in `Arc<Mutex<WriteHalf>>` for sending
 5. **Read Loop**: Continuous line reading until disconnect
@@ -251,10 +252,13 @@ See `actions.rs` for complete action list including `send_irc_part`, `send_irc_n
 
 ### State Management
 
-- `ProtocolState`: Idle/Processing/Accumulating (prevents concurrent LLM calls)
-- `queued_data`: Data buffered while LLM is processing
+- **No per-connection state machine.** Unlike TCP, IRC does not implement
+  Idle/Processing/Accumulating and has no `queued_data`: the read loop awaits each LLM call
+  before reading the next line, so lines are handled strictly in order and a slow model applies
+  backpressure through TCP rather than being queued.
 - Connection stays in ServerInstance until closed
-- UI updates on every message (bytes sent/received, last activity)
+- No startup parameters. `send_first` was declared and then discarded; an IRC server does not
+  speak first, so it is no longer declared and passing it now produces a warning.
 
 ## Known Limitations
 

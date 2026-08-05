@@ -86,12 +86,13 @@ impl IrcServer {
                                     break;
                                 }
 
-                                // DEBUG: Log summary with text preview
-                                let preview = if line.len() > 100 {
-                                    format!("{}...", &line[..100])
-                                } else {
-                                    line.to_string()
-                                };
+                                // DEBUG: Log summary with text preview.
+                                // `truncate_for_log` cuts on a char boundary. Slicing with
+                                // `&line[..100]` panicked here on any IRC line longer than 100
+                                // bytes whose 100th byte fell inside a multi-byte character -
+                                // i.e. on ordinary non-ASCII chat text - and a panic in this
+                                // task is silent while the server still reads as Running.
+                                let preview = crate::utils::truncate_for_log(&line, 100);
                                 debug!(
                                     "IRC received {} bytes on connection {}: {}",
                                     n,
@@ -165,12 +166,11 @@ impl IrcServer {
                                                         write.write_all(formatted.as_bytes()).await;
                                                     let _ = write.flush().await;
 
-                                                    // DEBUG: Log summary with text preview
-                                                    let preview = if formatted.len() > 100 {
-                                                        format!("{}...", &formatted[..100])
-                                                    } else {
-                                                        formatted.clone()
-                                                    };
+                                                    // Same char-boundary hazard as the inbound
+                                                    // preview above, but on model output.
+                                                    let preview = crate::utils::truncate_for_log(
+                                                        &formatted, 100,
+                                                    );
                                                     debug!(
                                                         "IRC sent {} bytes on connection {}: {}",
                                                         formatted.len(),
@@ -224,23 +224,4 @@ impl IrcServer {
 
         Ok(local_addr)
     }
-}
-
-/// Send an IRC response
-pub async fn send_irc_response(
-    write_half: &mut tokio::net::tcp::WriteHalf<'_>,
-    response: &str,
-) -> Result<()> {
-    // Ensure IRC messages end with \r\n
-    let formatted = if response.ends_with("\r\n") {
-        response.to_string()
-    } else if response.ends_with('\n') {
-        format!("{response}\r")
-    } else {
-        format!("{response}\r\n")
-    };
-
-    write_half.write_all(formatted.as_bytes()).await?;
-    write_half.flush().await?;
-    Ok(())
 }
