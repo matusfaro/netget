@@ -1,4 +1,26 @@
 //! WebRTC server protocol actions implementation
+//!
+//! # Status: Incomplete — this server cannot carry a byte
+//!
+//! `WebRtcServer::spawn_with_llm_actions` binds nothing, spawns nothing and registers no
+//! task. The only entry point that could create a peer connection is
+//! [`crate::server::webrtc::WebRtcServerData::accept_offer`], and **nothing calls it**:
+//! there is no code path anywhere in NetGet that delivers an SDP offer to this protocol.
+//! `webrtc_offer_received` therefore never fires, no `RTCPeerConnection` is ever created,
+//! no data channel ever opens, and `webrtc_peer_connected` / `webrtc_message_received`
+//! are unreachable for the same reason.
+//!
+//! Four async actions (`accept_offer`, `send_to_peer`, `close_peer`, `list_peers`) used to
+//! be advertised here. Each returned `ActionResult::Custom`, and — unlike postgresql, s3,
+//! grpc or couchdb, which match on `Custom` in their own server loop — this protocol has
+//! no loop to match on it, so the result was constructed and dropped. They have been
+//! removed rather than left advertising a capability that never existed.
+//!
+//! `DevelopmentState` is `Incomplete`, so the protocol is hidden from LLM prompts unless
+//! `--include-disabled-protocols` is passed. Making it real needs, at minimum: a signaling
+//! transport that feeds offers in (the sibling `webrtc_signaling` server, or a startup
+//! parameter), a spawned task that owns `WebRtcServerData` and is registered via
+//! `AppState::register_server_task`, and an async-action path that can reach that task.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -12,6 +34,9 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 /// WebRTC peer connected event (data channel opened)
+///
+/// Unreachable: see the module header. Kept because the (also unreachable) data-channel
+/// callback in `mod.rs` references it.
 pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_peer_connected",
@@ -21,6 +46,7 @@ pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "message": "Welcome to NetGet WebRTC server!"
         }),
     )
+    .with_actions(sync_actions())
     .with_parameters(vec![
         Parameter {
             name: "peer_id".to_string(),
@@ -44,6 +70,8 @@ pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// WebRTC message received event
+///
+/// Unreachable: see the module header.
 pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_message_received",
@@ -53,6 +81,7 @@ pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
             "message": "Message received"
         }),
     )
+    .with_actions(sync_actions())
     .with_parameters(vec![
         Parameter {
             name: "peer_id".to_string(),
@@ -81,67 +110,64 @@ pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     )
 });
 
-/// WebRTC offer received event (manual signaling mode)
-pub static WEBRTC_OFFER_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "webrtc_offer_received",
-        "SDP offer received from peer (manual signaling)",
-        json!({
-            "type": "wait_for_more"
-        }),
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "peer_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Unique peer identifier".to_string(),
-            required: true,
+// `WEBRTC_OFFER_RECEIVED_EVENT` and `WEBRTC_PEER_DISCONNECTED_EVENT` used to live here.
+// Neither could ever fire: no code path delivers an SDP offer, and the
+// `on_peer_connection_state_change` handler cleans up without calling the LLM. The
+// disconnect event's response example was `{"type": "no_action"}`, an action that exists
+// nowhere in NetGet — response examples are rendered verbatim into the prompt, so it was
+// teaching the model a call it could only be rejected for making.
+//
+// The actions a reachable data-channel event could use. Declared once so
+// `get_sync_actions` and every event's `with_actions` cannot drift apart.
+fn sync_actions() -> Vec<ActionDefinition> {
+    vec![
+        ActionDefinition {
+            name: "send_message".to_string(),
+            description: "Send a message in response to received data".to_string(),
+            parameters: vec![Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Message text to send".to_string(),
+                required: true,
+            }],
+            example: json!({
+                "type": "send_message",
+                "message": "Reply message"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC message")
+                    .with_debug("WebRTC send_message"),
+            ),
         },
-        Parameter {
-            name: "sdp_offer".to_string(),
-            type_hint: "string".to_string(),
-            description: "SDP offer JSON from peer".to_string(),
-            required: true,
+        ActionDefinition {
+            name: "disconnect".to_string(),
+            description: "Close the peer connection".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "disconnect"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC disconnect")
+                    .with_debug("WebRTC disconnect"),
+            ),
         },
-    ])
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("WebRTC offer from {peer_id}")
-            .with_debug("WebRTC SDP offer peer_id={peer_id}")
-            .with_trace("WebRTC offer: {json_pretty(.)}"),
-    )
-});
-
-/// WebRTC peer disconnected event
-pub static WEBRTC_PEER_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "webrtc_peer_disconnected",
-        "WebRTC peer connection closed",
-        json!({
-            "type": "no_action"
-        }),
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "peer_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Unique peer identifier".to_string(),
-            required: true,
+        ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Wait for more messages before responding".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC wait")
+                    .with_debug("WebRTC wait_for_more"),
+            ),
         },
-        Parameter {
-            name: "reason".to_string(),
-            type_hint: "string".to_string(),
-            description: "Disconnect reason".to_string(),
-            required: false,
-        },
-    ])
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("WebRTC peer {peer_id} disconnected")
-            .with_debug("WebRTC disconnect peer_id={peer_id} reason={reason}")
-            .with_trace("WebRTC disconnect: {json_pretty(.)}"),
-    )
-});
+    ]
+}
 
 /// WebRTC server protocol action handler
 pub struct WebRtcProtocol;
@@ -180,146 +206,15 @@ impl Protocol for WebRtcProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "accept_offer".to_string(),
-                description: "Accept an SDP offer from a peer and generate an answer".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "peer_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Unique identifier for this peer".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sdp_offer".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "SDP offer JSON from peer".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "accept_offer",
-                    "peer_id": "peer-abc123",
-                    "sdp_offer": "{\"type\":\"offer\",\"sdp\":\"...\"}"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC accept offer peer={peer_id}")
-                        .with_debug("WebRTC accept_offer: peer_id={peer_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_to_peer".to_string(),
-                description: "Send a message to a specific peer".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "peer_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Target peer identifier".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "message".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Message text to send".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_to_peer",
-                    "peer_id": "peer-abc123",
-                    "message": "Hello from NetGet server!"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC send to {peer_id}")
-                        .with_debug("WebRTC send_to_peer: peer_id={peer_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "close_peer".to_string(),
-                description: "Close connection to a specific peer".to_string(),
-                parameters: vec![Parameter {
-                    name: "peer_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Target peer identifier".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "close_peer",
-                    "peer_id": "peer-abc123"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC close peer {peer_id}")
-                        .with_debug("WebRTC close_peer: peer_id={peer_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "list_peers".to_string(),
-                description: "List all active peer connections".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "list_peers"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC list peers")
-                        .with_debug("WebRTC list_peers"),
-                ),
-            },
-        ]
+        // Deliberately empty. accept_offer, send_to_peer, close_peer and list_peers were
+        // advertised here; each built an `ActionResult::Custom` that no code in this
+        // protocol ever consumed, so invoking one did precisely nothing while reporting
+        // success. See the module header.
+        Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_message".to_string(),
-                description: "Send a message in response to received data".to_string(),
-                parameters: vec![Parameter {
-                    name: "message".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Message text to send".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "send_message",
-                    "message": "Reply message"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC message")
-                        .with_debug("WebRTC send_message"),
-                ),
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Close the peer connection".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC disconnect")
-                        .with_debug("WebRTC disconnect"),
-                ),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more messages before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> WebRTC wait")
-                        .with_debug("WebRTC wait_for_more"),
-                ),
-            },
-        ]
+        sync_actions()
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -327,27 +222,12 @@ impl Protocol for WebRtcProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
+        // This used to build four *fresh* EventTypes with `{"type": "placeholder"}`
+        // response examples, entirely disconnected from the LazyLock statics the server
+        // actually fires. Both copies were wrong in different ways; return the real ones.
         vec![
-            EventType::new(
-                "webrtc_peer_connected",
-                "Triggered when a WebRTC peer's data channel opens",
-                json!({"type": "placeholder", "event_id": "webrtc_peer_connected"}),
-            ),
-            EventType::new(
-                "webrtc_message_received",
-                "Triggered when a message is received from a peer",
-                json!({"type": "placeholder", "event_id": "webrtc_message_received"}),
-            ),
-            EventType::new(
-                "webrtc_offer_received",
-                "Triggered when an SDP offer is received (manual mode)",
-                json!({"type": "placeholder", "event_id": "webrtc_offer_received"}),
-            ),
-            EventType::new(
-                "webrtc_peer_disconnected",
-                "Triggered when a peer connection closes",
-                json!({"type": "placeholder", "event_id": "webrtc_peer_disconnected"}),
-            ),
+            WEBRTC_PEER_CONNECTED_EVENT.clone(),
+            WEBRTC_MESSAGE_RECEIVED_EVENT.clone(),
         ]
     }
 
@@ -369,15 +249,23 @@ impl Protocol for WebRtcProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("webrtc-rs for data channels (no media)")
-            .llm_control("Full control over peer connections and data channel messages")
-            .e2e_testing("Manual SDP exchange with local peer or test server")
+            .state(DevelopmentState::Incomplete)
+            .implementation(
+                "webrtc-rs data-channel scaffolding that is never started: spawn() binds \
+                 nothing and no code path delivers an SDP offer",
+            )
+            .llm_control("None reachable - no event can fire")
+            .e2e_testing("None - the E2E suite only asserts that the process starts")
+            .notes(
+                "Not a working WebRTC server. WebRtcServerData::accept_offer has no \
+                 caller, so no peer connection or data channel is ever created and no \
+                 message can be sent or received.",
+            )
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "WebRTC server for peer-to-peer data channels (text messaging, no audio/video)"
+        "WebRTC data-channel scaffolding (INCOMPLETE - no signaling path, cannot connect)"
     }
 
     fn example_prompt(&self) -> &'static str {
@@ -461,72 +349,8 @@ impl Server for WebRtcProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "accept_offer" => {
-                let peer_id = action
-                    .get("peer_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'peer_id' field")?
-                    .to_string();
-
-                let sdp_offer = action
-                    .get("sdp_offer")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'sdp_offer' field")?
-                    .to_string();
-
-                // Return custom action for async processing
-                Ok(ActionResult::Custom {
-                    name: "accept_offer".to_string(),
-                    data: json!({
-                        "peer_id": peer_id,
-                        "sdp_offer": sdp_offer,
-                    }),
-                })
-            }
-            "send_to_peer" => {
-                let peer_id = action
-                    .get("peer_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'peer_id' field")?
-                    .to_string();
-
-                let message = action
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'message' field")?
-                    .to_string();
-
-                // Return custom action for manual processing
-                Ok(ActionResult::Custom {
-                    name: "send_to_peer".to_string(),
-                    data: json!({
-                        "peer_id": peer_id,
-                        "message": message,
-                    }),
-                })
-            }
-            "close_peer" => {
-                let peer_id = action
-                    .get("peer_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'peer_id' field")?
-                    .to_string();
-
-                // Return custom action for manual processing
-                Ok(ActionResult::Custom {
-                    name: "close_peer".to_string(),
-                    data: json!({
-                        "peer_id": peer_id,
-                    }),
-                })
-            }
-            "list_peers" => {
-                // Return custom action for manual processing
-                Ok(ActionResult::Custom {
-                    name: "list_peers".to_string(),
-                    data: json!({}),
-                })
-            }
+            // accept_offer / send_to_peer / close_peer / list_peers used to be handled
+            // here, each returning an ActionResult::Custom that nothing consumed.
             "send_message" => {
                 // This is a sync action for connection context
                 let message = action

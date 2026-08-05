@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -469,29 +469,34 @@ impl WebRtcServer {
     pub async fn spawn_with_llm_actions(
         _listen_addr: SocketAddr,
         _llm_client: OllamaClient,
-        app_state: Arc<AppState>,
+        _app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        server_id: ServerId,
+        _server_id: ServerId,
     ) -> Result<SocketAddr> {
         info!("WebRTC server (action-based) initializing");
+
+        // This constructor is the only part of the protocol that runs. It validates that
+        // the webrtc-rs API can be built and nothing more: there is no listener, no task,
+        // and no way for an SDP offer to reach `WebRtcServerData::accept_offer`, so no
+        // peer connection is ever created. See the header of `actions.rs`.
+        //
+        // The previous version stored `Arc::into_raw(server_data) as usize` in a JSON
+        // field named `server_data_ptr` "for action execution". Nothing ever read that
+        // field — the only two writers are this protocol and webrtc_signaling, and there
+        // are no readers anywhere in the tree — so every WebRTC server start leaked the
+        // whole `WebRtcServerData`, including the webrtc-rs API object and its
+        // interceptor registry, with no way to recover it.
+        let _server_data = WebRtcServerData::new()?;
+
         let _ = status_tx.send(
-            "[INFO] WebRTC server ready to accept peer connections (paste SDP offers)".to_string(),
+            "[WARN] WebRTC server is INCOMPLETE: no signaling path exists, so no peer can \
+             connect and no message can be exchanged"
+                .to_string(),
         );
-
-        // Create server data
-        let server_data = Arc::new(WebRtcServerData::new()?);
-
-        // Store server data in AppState for action execution
-        app_state
-            .with_server_mut(server_id, |server| {
-                server.set_protocol_field(
-                    "server_data_ptr".to_string(),
-                    serde_json::json!(Arc::into_raw(server_data) as usize),
-                );
-            })
-            .await;
-
-        info!("WebRTC server ready");
+        warn!(
+            "WebRTC server started but is non-functional: DevelopmentState::Incomplete, no \
+             signaling transport"
+        );
 
         // Return dummy address (WebRTC is P2P, no traditional listen address)
         Ok("0.0.0.0:0".parse().unwrap())

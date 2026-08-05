@@ -1,5 +1,46 @@
 # WebRTC Server Implementation
 
+> **Status: Incomplete — this is NOT a working WebRTC server.**
+>
+> `WebRtcServer::spawn_with_llm_actions` binds nothing, spawns nothing and registers no
+> task. The only function that could create a peer connection is
+> `WebRtcServerData::accept_offer`, and **nothing calls it**: there is no code path
+> anywhere in NetGet that delivers an SDP offer to this protocol. No `RTCPeerConnection`
+> is ever constructed, no data channel ever opens, and not one byte can be sent or
+> received. `DevelopmentState` is `Incomplete`, so the protocol is hidden from LLM prompts
+> unless `--include-disabled-protocols` is passed.
+>
+> The E2E suite (`tests/server/webrtc/e2e_test.rs`) does not contradict this: none of its
+> five tests calls `verify_mocks()`, so the mocks for `webrtc_offer_received`,
+> `webrtc_peer_connected`, `webrtc_message_received` and `webrtc_peer_disconnected` — none
+> of which can fire — are never checked. Every test asserts only that the process started.
+>
+> **What was removed and why**
+>
+> - `accept_offer`, `send_to_peer`, `close_peer`, `list_peers`: four async actions that
+>   each built an `ActionResult::Custom` and returned it. Protocols that use `Custom`
+>   (postgresql, s3, grpc, couchdb) match on it in their own server loop; this protocol has
+>   no loop, so the result was constructed and dropped. Invoking any of them reported
+>   success and did nothing.
+> - `WEBRTC_OFFER_RECEIVED_EVENT`, `WEBRTC_PEER_DISCONNECTED_EVENT`: neither could fire.
+>   The disconnect event's response example was `{"type": "no_action"}` — an action that
+>   exists nowhere in NetGet. Response examples are rendered verbatim into the prompt, so
+>   it taught the model a call it could only be rejected for making.
+> - `get_event_types()` built four *fresh* `EventType`s with `{"type": "placeholder"}`
+>   response examples, unrelated to the `LazyLock` statics the (unreachable) code fires. It
+>   now returns the real statics, which now declare their actions and parameters.
+> - The `server_data_ptr` field: `spawn` stored `Arc::into_raw(server_data) as usize` in a
+>   JSON field "for action execution". Nothing anywhere read that field, so every WebRTC
+>   server start leaked the whole `WebRtcServerData` — webrtc-rs API object and interceptor
+>   registry included — with no way to recover it.
+>
+> **What it would take to make this real**: a signaling transport that feeds offers in
+> (the sibling `webrtc_signaling` server, or a startup parameter carrying an SDP offer); a
+> spawned task that owns `WebRtcServerData` and is registered via
+> `AppState::register_server_task` so `stop_server` can cancel it; and an async-action path
+> that can reach that task. The `accept_offer` / data-channel code below is retained as a
+> starting point — it is plausible-looking but has never executed.
+
 ## Overview
 
 WebRTC (Web Real-Time Communication) server implementation for NetGet. This implementation focuses on **data channels only** (no audio/video media), which is well-suited for LLM control. The server enables peer-to-peer text/binary messaging with multiple concurrent peers over WebRTC's reliable data channel transport.
@@ -50,32 +91,24 @@ UDP
 
 ### Events
 
-1. **`webrtc_peer_connected`** - Triggered when a peer's data channel opens
-    - Provides peer_id and channel label
-    - LLM can send initial message to new peer
+Two are declared. **Neither can fire** — both are reached only from the data-channel
+callbacks inside `accept_offer`, which has no caller.
 
-2. **`webrtc_message_received`** - Triggered when message arrives from peer
-    - Provides peer_id, message text, and binary flag
-    - LLM decides response action
+1. **`webrtc_peer_connected`** — peer_id, channel_label
+2. **`webrtc_message_received`** — peer_id, message, is_binary
 
-3. **`webrtc_offer_received`** - Triggered when user pastes SDP offer (manual mode)
-    - Provides peer_id and sdp_offer
-    - LLM can auto-accept or review offers
-
-4. **`webrtc_peer_disconnected`** - Triggered when peer closes connection
-    - Provides peer_id and disconnect reason
-    - LLM can clean up peer-specific state
+`webrtc_offer_received` and `webrtc_peer_disconnected` were removed; see the banner.
 
 ### Actions
 
 #### User-Triggered (Async)
 
-- **`accept_offer`** - Accept an SDP offer from peer and generate answer
-- **`send_to_peer`** - Send message to specific peer by ID
-- **`close_peer`** - Close connection to specific peer
-- **`list_peers`** - List all active peer connections
+None. See the removal note at the top of this file.
 
 #### Event-Triggered (Sync)
+
+Declared, and now advertised on both event types via `.with_actions(...)` — but no event
+can fire, so none of them is reachable.
 
 - **`send_message`** - Send reply message
 - **`disconnect`** - Close current peer connection
@@ -116,9 +149,7 @@ Each peer is tracked with:
 
 ### Stored Data (protocol_data)
 
-- `server_data_ptr`: Raw pointer to WebRtcServerData (for action execution)
-
-**Safety Note**: Raw pointer is stored to maintain Arc reference across async boundaries. Pointer is NOT dropped when retrieved for action execution.
+None. `server_data_ptr` was removed; see the removal note at the top of this file.
 
 ## Multi-Peer Support
 
@@ -156,6 +187,9 @@ Peer B connects → peer_id "bob"
 - Support for custom signaling backends
 
 ## Limitations
+
+0. **It does not run.** See the status banner. Everything below describes code that has
+   never executed.
 
 1. **No Media**: Audio/video not supported (data channels only)
 2. **Manual Signaling**: Requires user to exchange SDP manually (UX friction)
