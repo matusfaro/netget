@@ -1,213 +1,137 @@
-# BLE HID Keyboard Implementation
+# BLE HID Keyboard
 
-## Overview
+**Maturity: Experimental.** BLE HID keyboard (0x1812) - HID-over-GATT keyboard a host can pair with
 
-Bluetooth Low Energy (BLE) HID keyboard server that allows devices to pair with NetGet and receive keypresses. Built on
-top of the `bluetooth-ble` protocol, this provides a high-level keyboard interface with connection tracking and targeted
-messaging.
+## What this protocol actually is
 
-## Architecture
+A thin wrapper over the `bluetooth-ble` base stack. `spawn` reads `device_name`, fetches the
+user's instruction from server state, appends a profile sentence to it, and hands the whole
+thing to `BluetoothBle::spawn_with_llm_actions`. There is no other profile-specific code.
 
-### Layered Design
+That matters more than it sounds, because the base **hardcodes `BluetoothBleProtocol`** when it
+calls `call_llm` (`src/server/bluetooth_ble/mod.rs`, the `protocol` local passed to
+`call_llm`/`call_llm_for_event`). Consequences:
 
-```
-bluetooth-ble-keyboard (High-level)
-    ↓
-bluetooth-ble (Low-level GATT)
-    ↓
-ble-peripheral-rust (Platform backends)
-```
+- The only events ever emitted for this server are the base's five.
+- The only actions the model is ever offered are the ones those event types carry via
+  `.with_actions(...)` — `call_llm` builds its tool list from `event.event_type.actions`, not
+  from `get_sync_actions()`.
+- The only actions that ever execute are the ones `BluetoothBle::execute_action` matches.
 
-### Connection Tracking
+So this protocol declares **no actions and no events of its own**, and delegates
+`get_async_actions`, `get_sync_actions`, `get_event_types` and `execute_action` to
+`BluetoothBleProtocol` — the same shape `doh` and `dot` use to forward `DnsProtocol`'s set.
+Anything else would be a documented vocabulary that no code path can reach: the model would be
+told about `set_x`, return it, and have it rejected as an unknown action, while an
+`event_handlers` entry keyed on a profile-specific event id would validate at startup and then
+never fire.
 
-Unlike the base `bluetooth-ble` protocol, the keyboard tracks individual client connections:
+**Do not add profile-specific actions or events here.** They belong in the base stack's
+executor, or nowhere.
 
-```rust
-pub struct ClientConnection {
-    pub id: ClientId,
-    pub connected_at: std::time::Instant,
-}
-```
+## Actions (delegated from `bluetooth-ble`)
 
-This allows:
+| Action | Kind | Purpose |
+|---|---|---|
+| `add_service` | async | Add a GATT service and its characteristics |
+| `start_advertising` | async | Become discoverable |
+| `stop_advertising` | async | Stand down |
+| `send_notification` | async | Push a new characteristic value to subscribers |
+| `respond_to_read` | sync | Answer `bluetooth_read_request` |
+| `respond_to_write` | sync | Acknowledge `bluetooth_write_request` |
 
-- **Targeted messages**: Send keypresses to specific clients
-- **Per-client state**: Track which devices are connected
-- **Connection events**: Notify LLM when clients connect/disconnect
+## Events (delegated from `bluetooth-ble`)
 
-## HID over GATT Profile
+| Event | Offered actions |
+|---|---|
+| `bluetooth_ble_started` | `add_service`, `start_advertising` |
+| `bluetooth_state_changed` | `start_advertising`, `stop_advertising` |
+| `bluetooth_read_request` | `respond_to_read` |
+| `bluetooth_write_request` | `respond_to_write`, `send_notification` |
+| `bluetooth_subscribe` | `send_notification` |
 
-### Service Structure
+Script and static handlers registered against these ids are dispatched by
+`try_execute_event_handler` inside `call_llm`, so a handled event costs no model call.
 
-- **Service UUID**: `0x1812` (HID Service)
-- **Characteristics**:
-    - `0x2A4D` - HID Report Map (keyboard layout descriptor)
-    - `0x2A4B` - HID Report (input reports - keypresses)
-    - `0x2A4A` - HID Information
-    - `0x2A4C` - HID Control Point
+## GATT layout this profile suggests
 
-### HID Report Descriptor
+Nothing enforces this — the LLM (or a static handler) builds the services with `add_service`. It is what the startup examples in `actions.rs` construct and what the instruction preamble asks for.
 
-The keyboard uses a standard USB HID report descriptor:
+- **`00001812-0000-1000-8000-00805f9b34fb`**
+  - `00002a4a-0000-1000-8000-00805f9b34fb` [read] — initial value `01110002`
+  - `00002a4b-0000-1000-8000-00805f9b34fb` [read] — initial value `05010906a101050719e029e71500250175019508810295017508810105067508950815002565050719002965810003c0`
+  - `00002a4d-0000-1000-8000-00805f9b34fb` [read, notify] — initial value `0000000000000000`
+  - `00002a4c-0000-1000-8000-00805f9b34fb` [write_without_response]
 
-- **Modifier byte**: Ctrl, Shift, Alt, GUI
-- **Reserved byte**: Always 0x00
-- **Key array**: Up to 6 simultaneous keys
+**HID-over-GATT caveat:** a host only treats a peripheral as an input device after bonding, and `ble-peripheral-rust` 0.2 exposes no pairing or bonding control. The layout above is a correct, readable HID service; whether a given OS accepts it as a real input device is platform dependent and untested here.
 
-### Report Format (8 bytes)
+## UUIDs must be written in full 128-bit form
 
-```
-[0]: Modifiers (bit flags)
-[1]: Reserved (0x00)
-[2-7]: Key codes (up to 6 keys)
-```
+The base parses every service and characteristic UUID with `uuid::Uuid::parse_str`, which
+accepts the 36-character hyphenated form (and the 32-character simple form) and **rejects the
+16-bit Bluetooth SIG shorthand**. `"180D"` does not parse, and `add_service` fails with
+"Invalid service UUID". There is no expansion helper anywhere in the tree, despite
+`src/server/bluetooth_ble/CLAUDE.md` claiming `"180D"` is "expanded to"
+`0000180d-0000-1000-8000-00805f9b34fb`.
 
-**Example**: Pressing 'A' with Shift
+Every UUID in this protocol's startup examples is therefore written out in full. Alias `XXXX`
+expands to `0000XXXX-0000-1000-8000-00805f9b34fb`.
 
-```
-02 00 04 00 00 00 00 00
-││ ││ ││
-││ ││ └─ Key code 0x04 ('A')
-││ └─── Reserved
-└───── Modifier 0x02 (Left Shift)
-```
+## Data format: hex, and why that is not a rule violation
 
-## LLM Actions
+The project rule is that actions must not carry raw bytes or base64, because models cannot
+reliably produce or parse them. GATT is the honest exception: a characteristic value *is* an
+opaque byte string defined by a Bluetooth SIG spec, and there is no structured field set that
+could replace it without inventing a per-characteristic schema for all of the assigned numbers.
 
-### type_text
+The base therefore uses lowercase hex strings for `initial_value`, `send_notification.value`,
+`respond_to_read.value` and the inbound `bluetooth_write_request.value`, and it really does
+decode them (`hex::decode`, with an optional `0x` prefix stripped) — the documented encoding and
+the executor agree, in both directions.
 
-Type a string of text, converting to HID reports automatically.
+Hex is a deliberate choice over base64: models handle short hex well, and it maps one-to-one
+onto the byte layouts printed in the SIG specifications.
 
-```json
-{
-  "type": "type_text",
-  "text": "Hello, World!",
-  "client_id": 1  // Optional: target specific client
-}
-```
+## No storage
 
-### press_key
+This protocol stores nothing. The base keeps the last written/notified value per characteristic
+purely so a read with no `respond_to_read` in the LLM's reply can fall back to the current
+value; that is transport state, not a database. All profile data comes from the instruction,
+the LLM, or a script/static handler.
 
-Press a single special key.
+## Privilege and platform
 
-```json
-{
-  "type": "press_key",
-  "key": "enter"
-}
-```
+BLE peripheral mode needs **Bluetooth adapter access, not a port**. `PrivilegeRequirement` has
+no variant for that (`None` / `PrivilegedPort` / `RawSockets` / `Root`), so the declaration is
+left at the default `None`: claiming `Root` would be false — Bluetooth needs no root on macOS or
+Windows — and would make `server_startup.rs` refuse to start for unprivileged users who can in
+fact use the adapter. See the out-of-scope note in the review notes: the metadata enum needs an
+`AdapterAccess`-style variant before this can be declared honestly.
 
-Supported keys: `enter`, `escape`, `tab`, `backspace`, `delete`, arrow keys, function keys, etc.
+Platform requirements come from `ble-peripheral-rust` 0.2: BlueZ + `bluetoothd` + D-Bus on
+Linux (feature needs `libdbus-1-dev`), CoreBluetooth on macOS, WinRT on Windows 10+.
 
-### key_combo
+## Startup failure behaviour
 
-Press key combinations.
+Failures propagate correctly — this protocol does **not** have the ARP/DataLink/ICMP defect of
+reporting `Running` while doing nothing. `spawn` is awaited by `server_startup.rs`, which turns
+an `Err` into `ServerStatus::Error`. Two failure paths exist, both in the base:
 
-```json
-{
-  "type": "key_combo",
-  "modifiers": ["ctrl"],
-  "key": "c"
-}
-```
+1. `Peripheral::new()` fails → `Error("Failed to create BLE peripheral: …")`.
+2. The adapter never reports powered → the base polls `is_powered()` 20 times at 500 ms and
+   bails → `Error("Bluetooth adapter failed to power on after 10 seconds")`.
 
-### send_to_client
+Verified on macOS: `Peripheral::new()` succeeds and `is_powered()` returns `false` on the first
+poll and `true` on the second, so the retry loop is load-bearing rather than decorative. Path 2
+is what a user with Bluetooth switched off, no adapter, or a denied CoreBluetooth permission
+gets. The refusal is clear, but the message attributes all three causes to "not powered on".
 
-Send to a specific connected client.
+## Startup parameters
 
-```json
-{
-  "type": "type_text",
-  "text": "Message for you",
-  "client_id": 2
-}
-```
+- `device_name` (string, optional) — advertised name, default `NetGet-Keyboard`
 
-### list_clients
-
-Get all connected client IDs.
-
-```json
-{
-  "type": "list_clients"
-}
-```
-
-## Events
-
-### keyboard_client_connected
-
-Fired when a device pairs and connects.
-
-```json
-{
-  "event": "keyboard_client_connected",
-  "client_id": 1
-}
-```
-
-### keyboard_client_disconnected
-
-Fired when a device disconnects.
-
-```json
-{
-  "event": "keyboard_client_disconnected",
-  "client_id": 1
-}
-```
-
-## Example Usage
-
-### Basic Typing
-
-```
-User: "Act as a Bluetooth keyboard. Type 'Hello from NetGet!'"
-
-LLM: type_text("Hello from NetGet!")
-```
-
-### Multi-Client Scenario
-
-```
-User: "Act as a keyboard. When clients connect, greet them individually."
-
-[Client 1 connects]
-LLM: type_text("Welcome, Client 1!", client_id=1)
-
-[Client 2 connects]
-LLM: type_text("Welcome, Client 2!", client_id=2)
-```
-
-### Keyboard Shortcuts
-
-```
-User: "Send Ctrl+C to all connected devices"
-
-LLM: key_combo(modifiers=["ctrl"], key="c")
-```
-
-## Limitations
-
-- **BLE only**: No Bluetooth Classic support
-- **6-key rollover**: Maximum 6 simultaneous keys (USB HID standard)
-- **US keyboard layout**: Key mapping assumes US QWERTY
-- **No key state**: Cannot query current pressed keys
-- **Platform differences**: Pairing UX varies by OS
-
-## Platform Requirements
-
-Same as `bluetooth-ble`:
-
-- **Linux**: BlueZ daemon
-- **macOS**: Bluetooth enabled, may need app bundle
-- **Windows**: Windows 10+ with Bluetooth
+Declared in `get_startup_parameters()`. That is not optional: `StartupParams` **panics** on an undeclared key, and the JSON comes from the LLM or an MCP client.
 
 ## Testing
 
-E2E tests require real devices to pair as keyboards. See `tests/server/bluetooth_ble_keyboard/CLAUDE.md`.
-
-## References
-
-- HID over GATT Profile: https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile-1-0/
-- USB HID Usage Tables: https://www.usb.org/sites/default/files/documents/hut1_12v2.pdf
+There is no test directory for this protocol, and none is declared in `tests/server/mod.rs`. Meaningful coverage needs a real adapter and a BLE central (nRF Connect, `btleplug`), which CI runners do not have. A mocked E2E test would only exercise the base stack's LLM plumbing, which the base's own tests should cover.

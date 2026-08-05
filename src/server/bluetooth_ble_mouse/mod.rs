@@ -6,32 +6,21 @@
 pub mod actions;
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::server::bluetooth_ble::BluetoothBle;
 use crate::state::app_state::AppState;
 
-/// Client connection ID for tracking connected devices
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClientId(pub u32);
-
-/// Per-client connection state
-#[derive(Debug)]
-pub struct ClientConnection {
-    pub id: ClientId,
-    pub connected_at: std::time::Instant,
-}
-
-/// BLE HID Mouse server
-pub struct BluetoothBleMouse {
-    connections: Arc<Mutex<HashMap<ClientId, ClientConnection>>>,
-    #[allow(dead_code)]
-    next_client_id: Arc<Mutex<u32>>,
-}
+/// BLE HID Mouse server.
+///
+/// A unit struct: this profile owns no state. `ble-peripheral-rust` 0.2 gives the
+/// peripheral no per-central identity, and the base stack emits no connect or
+/// disconnect events, so there is nothing a connection table could be keyed on or
+/// populated from.
+pub struct BluetoothBleMouse;
 
 impl BluetoothBleMouse {
     /// Spawn BLE HID mouse server
@@ -63,27 +52,6 @@ impl BluetoothBleMouse {
             mouse_instruction,
         )
         .await
-    }
-
-    /// Track a new client connection
-    pub async fn add_connection(&self, client_id: ClientId) {
-        let conn = ClientConnection {
-            id: client_id,
-            connected_at: std::time::Instant::now(),
-        };
-        self.connections.lock().await.insert(client_id, conn);
-        info!("BLE mouse client {} connected", client_id.0);
-    }
-
-    /// Remove a client connection
-    pub async fn remove_connection(&self, client_id: ClientId) {
-        self.connections.lock().await.remove(&client_id);
-        info!("BLE mouse client {} disconnected", client_id.0);
-    }
-
-    /// Get all connected client IDs
-    pub async fn get_connections(&self) -> Vec<ClientId> {
-        self.connections.lock().await.keys().copied().collect()
     }
 }
 

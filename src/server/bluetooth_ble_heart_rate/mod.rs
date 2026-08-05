@@ -17,10 +17,16 @@ impl BluetoothBleHeartRate {
         app_state: Arc<crate::state::app_state::AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        _instruction: String,
+        instruction: String,
     ) -> Result<std::net::SocketAddr> {
         info!("Starting BLE Heart Rate Service: {}", device_name);
-        let hr_instruction = "Configure as BLE Heart Rate Service (UUID: 0x180D) with Heart Rate Measurement characteristic (UUID: 0x2A37).".to_string();
+        // The user's instruction leads; the profile preamble is appended. This previously
+        // discarded the instruction entirely, so "start at 60 BPM" never reached the model.
+        let hr_instruction = format!(
+            "{}. Configure as a BLE Heart Rate Service (0x180D) with a Heart Rate Measurement \
+             characteristic (0x2A37).",
+            instruction.trim_end_matches('.')
+        );
         crate::server::bluetooth_ble::BluetoothBle::spawn_with_llm_actions(
             device_name,
             llm_client,

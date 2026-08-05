@@ -1,45 +1,42 @@
-//! BLE Remote Control protocol actions
+//! BLE media remote - HID Service (0x1812) consumer control (play/pause, volume, track)
+//!
+//! Profile wrapper over the `bluetooth-ble` base stack.
+//!
+//! The base server (`BluetoothBle::spawn_with_llm_actions`) hardcodes `BluetoothBleProtocol`
+//! when it calls `call_llm`, so the events the model actually sees and the actions it may
+//! answer with are always the base's. Declaring profile-specific actions or events here would
+//! document a vocabulary that no code path can ever emit or execute, so this protocol forwards
+//! the base's set verbatim - the same shape `doh`/`dot` use to forward `DnsProtocol`'s actions.
+//! The profile identity lives in the instruction preamble and in the GATT layout suggested by
+//! the startup examples below.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
-    ActionDefinition, Parameter, ParameterDefinition,
+    ActionDefinition, ParameterDefinition,
 };
-use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
+use crate::server::bluetooth_ble::actions::BluetoothBleProtocol;
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
-use std::sync::LazyLock;
 
-/// Remote control button pressed event
-pub static REMOTE_BUTTON_PRESSED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "remote_button_pressed",
-        "A remote control button was pressed",
-        json!({
-            "type": "play_pause"
-        }),
-    )
-    .with_parameters(vec![Parameter {
-        name: "button".to_string(),
-        type_hint: "string".to_string(),
-        description: "Button name (play_pause, volume_up, etc.)".to_string(),
-        required: true,
-    }])
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("BLE remote button pressed: {button}")
-            .with_debug("BLE remote button: {button}")
-            .with_trace("BLE remote event: {json_pretty(.)}"),
-    )
-});
-
-/// BLE Remote Control protocol handler
+/// BLE media remote - HID Service (0x1812) consumer control (play/pause, volume, track)
 pub struct BluetoothBleRemoteProtocol;
 
 impl BluetoothBleRemoteProtocol {
     pub fn new() -> Self {
         Self
+    }
+
+    /// The base protocol this profile delegates its whole vocabulary to.
+    fn base() -> BluetoothBleProtocol {
+        BluetoothBleProtocol::new()
+    }
+}
+
+impl Default for BluetoothBleRemoteProtocol {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -48,36 +45,33 @@ impl Protocol for BluetoothBleRemoteProtocol {
         vec![ParameterDefinition {
             name: "device_name".to_string(),
             type_hint: "string".to_string(),
-            description: "Remote device name (default: NetGet-Remote)".to_string(),
+            description: "Bluetooth device name to advertise (default: NetGet-Remote)".to_string(),
             required: false,
-            example: json!("MyRemote"),
+            example: json!("NetGet-Remote"),
         }]
     }
 
-    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            play_pause_action(),
-            next_track_action(),
-            previous_track_action(),
-            volume_up_action(),
-            volume_down_action(),
-            mute_action(),
-            fast_forward_action(),
-            rewind_action(),
-            stop_action(),
-        ]
+    /// Delegated: the base stack owns every action this server can execute.
+    fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition> {
+        Self::base().get_async_actions(state)
     }
 
+    /// Delegated: see `get_async_actions`. Returning `vec![]` here while the base emits
+    /// events would leave the model with no way to answer a read or a write.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]
+        Self::base().get_sync_actions()
+    }
+
+    /// Delegated: the base's event types are the only ones ever emitted for this server, and
+    /// they carry their own `.with_actions(...)` lists, which is what `call_llm` offers the
+    /// model. An event id declared here but not emitted by the base would silently match an
+    /// `event_handlers` pattern that can never fire.
+    fn get_event_types(&self) -> Vec<EventType> {
+        Self::base().get_event_types()
     }
 
     fn protocol_name(&self) -> &'static str {
         "BLUETOOTH_BLE_REMOTE"
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![REMOTE_BUTTON_PRESSED_EVENT.clone()]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -85,27 +79,45 @@ impl Protocol for BluetoothBleRemoteProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "remote", "media", "bluetooth_ble_remote"]
+        vec![
+            "bluetooth",
+            "ble",
+            "remote",
+            "media",
+            "bluetooth_ble_remote",
+        ]
     }
 
+    /// HID-over-GATT caveat: a host will only treat this as an input device once
+    /// it bonds, and ble-peripheral-rust 0.2 exposes no pairing or bonding control.
+    /// The GATT layout below is correct and readable; whether a given OS accepts it
+    /// as a real HID device is platform dependent and untested.
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("BLE HID Consumer Control remote (builds on bluetooth-ble)")
-            .llm_control("Media control actions: play/pause, volume, track navigation")
-            .e2e_testing("Requires BLE-capable device to pair and receive media commands")
-            .notes("HID Consumer Control profile for media player/TV remote control.")
+            .implementation(
+                "bluetooth-ble base stack (ble-peripheral-rust) plus an instruction preamble for the HID Service (0x1812) as a consumer control device",
+            )
+            .llm_control(
+                "Base BLE GATT control (add_service, start_advertising, stop_advertising, respond_to_read, respond_to_write, send_notification); the LLM builds the HID Service (0x1812) as a consumer control device itself.",
+            )
+            .e2e_testing(
+                "Requires a real Bluetooth LE adapter and a central such as nRF Connect; no automated coverage",
+            )
+            .notes(
+                "Thin profile wrapper over the bluetooth-ble base stack. It prepends an instruction describing the HID Service (0x1812) as a consumer control device and otherwise reuses the base entirely: the base hardcodes BluetoothBleProtocol when it calls the LLM, so the action vocabulary, the event types and the executor are the base's. This protocol deliberately declares no actions or events of its own - one that did would be documented to the model but never reachable at runtime.",
+            )
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "BLE remote control - media player/TV remote with play/pause, volume, etc."
+        "BLE media remote - HID Service (0x1812) consumer control (play/pause, volume, track)"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Act as a Bluetooth media remote. When connected, press play/pause then volume up."
+        "Act as a Bluetooth media remote. When a host subscribes, send play/pause then volume up."
     }
 
     fn group_name(&self) -> &'static str {
@@ -115,18 +127,21 @@ impl Protocol for BluetoothBleRemoteProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Every event id and action name below is one the base stack really emits and really
+        // executes. UUIDs are written in full 128-bit form because the base parses them with
+        // `Uuid::parse_str`, which rejects the 16-bit shorthand.
         StartupExamples::new(
-            // LLM mode: LLM handles remote control
+            // LLM mode: the model builds the GATT layout and answers reads itself.
             json!({
                 "type": "open_server",
                 "port": 0,
                 "base_stack": "bluetooth-ble-remote",
-                "instruction": "Act as a Bluetooth media remote. When connected, press play/pause then volume up.",
+                "instruction": "Act as a Bluetooth media remote. When a host subscribes, send play/pause then volume up.",
                 "startup_params": {
                     "device_name": "NetGet-Remote"
                 }
             }),
-            // Script mode: Code-based remote handling
+            // Script mode: a read is answered in-process, with no model call.
             json!({
                 "type": "open_server",
                 "port": 0,
@@ -134,16 +149,18 @@ impl Protocol for BluetoothBleRemoteProtocol {
                 "startup_params": {
                     "device_name": "NetGet-Remote"
                 },
-                "event_handlers": [{
-                    "event_pattern": "remote_button_pressed",
-                    "handler": {
-                        "type": "script",
-                        "language": "python",
-                        "code": "<remote_handler>"
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "script",
+                            "language": "python",
+                            "code": "actions = [{'type': 'respond_to_read', 'value': '00'}]"
+                        }
                     }
-                }]
+                ]
             }),
-            // Static mode: Fixed remote actions
+            // Static mode: fixed GATT layout and a fixed read response, with no model call.
             json!({
                 "type": "open_server",
                 "port": 0,
@@ -151,16 +168,82 @@ impl Protocol for BluetoothBleRemoteProtocol {
                 "startup_params": {
                     "device_name": "NetGet-Remote"
                 },
-                "event_handlers": [{
-                    "event_pattern": "remote_button_pressed",
-                    "handler": {
-                        "type": "static",
-                        "actions": [
-                            {"type": "play_pause"},
-                            {"type": "volume_up"}
-                        ]
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_ble_started",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "add_service",
+                                    "uuid": "00001812-0000-1000-8000-00805f9b34fb",
+                                    "primary": true,
+                                    "characteristics": [
+                                        {
+                                            "uuid": "00002a4a-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "read"
+                                            ],
+                                            "permissions": [
+                                                "readable"
+                                            ],
+                                            "initial_value": "01110002"
+                                        },
+                                        {
+                                            "uuid": "00002a4b-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "read"
+                                            ],
+                                            "permissions": [
+                                                "readable"
+                                            ],
+                                            "initial_value": "050c0901a1010ab5000ab6000acd000ae9000aea000ae2000ab0000ab1000ab70015002501750195088102c0"
+                                        },
+                                        {
+                                            "uuid": "00002a4d-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "read",
+                                                "notify"
+                                            ],
+                                            "permissions": [
+                                                "readable"
+                                            ],
+                                            "initial_value": "00"
+                                        },
+                                        {
+                                            "uuid": "00002a4c-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "write_without_response"
+                                            ],
+                                            "permissions": [
+                                                "writeable"
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "start_advertising",
+                                    "device_name": "NetGet-Remote",
+                                    "service_uuids": [
+                                        "00001812-0000-1000-8000-00805f9b34fb"
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "respond_to_read",
+                                    "value": "00"
+                                }
+                            ]
+                        }
                     }
-                }]
+                ]
             }),
         )
     }
@@ -179,11 +262,10 @@ impl Server for BluetoothBleRemoteProtocol {
                 .map(|p| p.get_optional_string("device_name"))
                 .transpose()?
                 .flatten()
-                .as_deref()
-                .unwrap_or("NetGet-Remote")
-                .to_string();
+                .unwrap_or_else(|| "NetGet-Remote".to_string());
 
-            // Get instruction from server instance
+            // The user's own instruction must reach the base stack; the profile preamble is
+            // added there, not substituted for it.
             let instruction = ctx
                 .state
                 .get_server(ctx.server_id)
@@ -203,162 +285,9 @@ impl Server for BluetoothBleRemoteProtocol {
         })
     }
 
+    /// Delegated: the base's executor is what actually runs, so validation must accept exactly
+    /// the base's action names and reject everything else rather than waving any action through.
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action["type"]
-            .as_str()
-            .context("Action must have 'type' field")?;
-
-        match action_type {
-            "play_pause" | "next_track" | "previous_track" | "volume_up" | "volume_down"
-            | "mute" | "fast_forward" | "rewind" | "stop" => Ok(ActionResult::Custom {
-                name: action_type.to_string(),
-                data: action,
-            }),
-            _ => Err(anyhow::anyhow!("Unknown remote action: {}", action_type)),
-        }
-    }
-}
-
-fn play_pause_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "play_pause".to_string(),
-        description: "Toggle play/pause".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "play_pause"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: play/pause")
-                .with_debug("BLE remote play_pause"),
-        ),
-    }
-}
-
-fn next_track_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "next_track".to_string(),
-        description: "Skip to next track".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "next_track"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: next track")
-                .with_debug("BLE remote next_track"),
-        ),
-    }
-}
-
-fn previous_track_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "previous_track".to_string(),
-        description: "Go to previous track".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "previous_track"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: previous track")
-                .with_debug("BLE remote previous_track"),
-        ),
-    }
-}
-
-fn volume_up_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "volume_up".to_string(),
-        description: "Increase volume".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "volume_up"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: volume up")
-                .with_debug("BLE remote volume_up"),
-        ),
-    }
-}
-
-fn volume_down_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "volume_down".to_string(),
-        description: "Decrease volume".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "volume_down"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: volume down")
-                .with_debug("BLE remote volume_down"),
-        ),
-    }
-}
-
-fn mute_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "mute".to_string(),
-        description: "Toggle mute".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "mute"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: mute")
-                .with_debug("BLE remote mute"),
-        ),
-    }
-}
-
-fn fast_forward_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "fast_forward".to_string(),
-        description: "Fast forward".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "fast_forward"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: fast forward")
-                .with_debug("BLE remote fast_forward"),
-        ),
-    }
-}
-
-fn rewind_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "rewind".to_string(),
-        description: "Rewind".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "rewind"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: rewind")
-                .with_debug("BLE remote rewind"),
-        ),
-    }
-}
-
-fn stop_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "stop".to_string(),
-        description: "Stop playback".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "stop"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> BLE remote: stop")
-                .with_debug("BLE remote stop"),
-        ),
+        Self::base().execute_action(action)
     }
 }

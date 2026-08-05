@@ -27,13 +27,15 @@ impl BluetoothBleBattery {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        instruction: String,
     ) -> Result<std::net::SocketAddr> {
         info!(
             "Starting BLE Battery Service: {} (initial level: {}%)",
             device_name, initial_level
         );
 
-        // Use the base bluetooth-ble server with Battery Service configuration
+        // The user's instruction leads; the profile preamble is appended to it. Replacing it
+        // outright would silently discard whatever the user actually asked the server to do.
         BluetoothBle::spawn_with_llm_actions(
             device_name,
             llm_client,
@@ -41,7 +43,9 @@ impl BluetoothBleBattery {
             status_tx,
             server_id,
             format!(
-                "Act as a Bluetooth Battery Service. Report battery level at {}%.",
+                "{}. Configure as a BLE Battery Service (0x180F) with a Battery Level \
+                 characteristic (0x2A19) starting at {}%.",
+                instruction.trim_end_matches('.'),
                 initial_level
             ),
         )

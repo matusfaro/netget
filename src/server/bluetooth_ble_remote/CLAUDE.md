@@ -1,241 +1,137 @@
-# BLE Remote Control Implementation
+# BLE Media Remote
 
-## Overview
+**Maturity: Experimental.** BLE media remote - HID Service (0x1812) consumer control (play/pause, volume, track)
 
-Bluetooth Low Energy (BLE) remote control server that allows devices to pair with NetGet and receive media control
-commands. Built on top of the `bluetooth-ble` protocol, providing a high-level remote control interface.
+## What this protocol actually is
 
-## Architecture
+A thin wrapper over the `bluetooth-ble` base stack. `spawn` reads `device_name`, fetches the
+user's instruction from server state, appends a profile sentence to it, and hands the whole
+thing to `BluetoothBle::spawn_with_llm_actions`. There is no other profile-specific code.
+
+That matters more than it sounds, because the base **hardcodes `BluetoothBleProtocol`** when it
+calls `call_llm` (`src/server/bluetooth_ble/mod.rs`, the `protocol` local passed to
+`call_llm`/`call_llm_for_event`). Consequences:
 
-### Layered Design
+- The only events ever emitted for this server are the base's five.
+- The only actions the model is ever offered are the ones those event types carry via
+  `.with_actions(...)` — `call_llm` builds its tool list from `event.event_type.actions`, not
+  from `get_sync_actions()`.
+- The only actions that ever execute are the ones `BluetoothBle::execute_action` matches.
 
-```
-bluetooth-ble-remote (High-level)
-    ↓
-bluetooth-ble (Low-level GATT)
-    ↓
-ble-peripheral-rust (Platform backends)
-```
+So this protocol declares **no actions and no events of its own**, and delegates
+`get_async_actions`, `get_sync_actions`, `get_event_types` and `execute_action` to
+`BluetoothBleProtocol` — the same shape `doh` and `dot` use to forward `DnsProtocol`'s set.
+Anything else would be a documented vocabulary that no code path can reach: the model would be
+told about `set_x`, return it, and have it rejected as an unknown action, while an
+`event_handlers` entry keyed on a profile-specific event id would validate at startup and then
+never fire.
 
-### Consumer Control Profile
+**Do not add profile-specific actions or events here.** They belong in the base stack's
+executor, or nowhere.
 
-Uses HID Consumer Control (part of HID over GATT) for media and system control buttons.
+## Actions (delegated from `bluetooth-ble`)
 
-## HID over GATT Profile
+| Action | Kind | Purpose |
+|---|---|---|
+| `add_service` | async | Add a GATT service and its characteristics |
+| `start_advertising` | async | Become discoverable |
+| `stop_advertising` | async | Stand down |
+| `send_notification` | async | Push a new characteristic value to subscribers |
+| `respond_to_read` | sync | Answer `bluetooth_read_request` |
+| `respond_to_write` | sync | Acknowledge `bluetooth_write_request` |
 
-### Service Structure
+## Events (delegated from `bluetooth-ble`)
 
-- **Service UUID**: `0x1812` (HID Service)
-- **Characteristics**: Same as keyboard/mouse but with Consumer Control report descriptor
+| Event | Offered actions |
+|---|---|
+| `bluetooth_ble_started` | `add_service`, `start_advertising` |
+| `bluetooth_state_changed` | `start_advertising`, `stop_advertising` |
+| `bluetooth_read_request` | `respond_to_read` |
+| `bluetooth_write_request` | `respond_to_write`, `send_notification` |
+| `bluetooth_subscribe` | `send_notification` |
 
-### HID Report Descriptor
+Script and static handlers registered against these ids are dispatched by
+`try_execute_event_handler` inside `call_llm`, so a handled event costs no model call.
 
-Standard HID Consumer Control with 16 button bits:
+## GATT layout this profile suggests
 
-- Play/Pause
-- Next/Previous Track
-- Stop, Fast Forward, Rewind
-- Volume Up/Down, Mute
-- Power, Menu, Home
-- 4 reserved bits for future expansion
+Nothing enforces this — the LLM (or a static handler) builds the services with `add_service`. It is what the startup examples in `actions.rs` construct and what the instruction preamble asks for.
 
-### Report Format (2 bytes)
+- **`00001812-0000-1000-8000-00805f9b34fb`**
+  - `00002a4a-0000-1000-8000-00805f9b34fb` [read] — initial value `01110002`
+  - `00002a4b-0000-1000-8000-00805f9b34fb` [read] — initial value `050c0901a1010ab5000ab6000acd000ae9000aea000ae2000ab0000ab1000ab70015002501750195088102c0`
+  - `00002a4d-0000-1000-8000-00805f9b34fb` [read, notify] — initial value `00`
+  - `00002a4c-0000-1000-8000-00805f9b34fb` [write_without_response]
 
-```
-[0-1]: Button bits (16 buttons, bit flags)
-```
+**HID-over-GATT caveat:** a host only treats a peripheral as an input device after bonding, and `ble-peripheral-rust` 0.2 exposes no pairing or bonding control. The layout above is a correct, readable HID service; whether a given OS accepts it as a real input device is platform dependent and untested here.
 
-**Example**: Play/Pause pressed
+## UUIDs must be written in full 128-bit form
 
-```
-01 00
-││
-└─ Bit 0 set (Play/Pause)
-```
+The base parses every service and characteristic UUID with `uuid::Uuid::parse_str`, which
+accepts the 36-character hyphenated form (and the 32-character simple form) and **rejects the
+16-bit Bluetooth SIG shorthand**. `"180D"` does not parse, and `add_service` fails with
+"Invalid service UUID". There is no expansion helper anywhere in the tree, despite
+`src/server/bluetooth_ble/CLAUDE.md` claiming `"180D"` is "expanded to"
+`0000180d-0000-1000-8000-00805f9b34fb`.
 
-**Example**: Volume Up pressed
+Every UUID in this protocol's startup examples is therefore written out in full. Alias `XXXX`
+expands to `0000XXXX-0000-1000-8000-00805f9b34fb`.
 
-```
-40 00
-││
-└─ Bit 6 set (Volume Up)
-```
+## Data format: hex, and why that is not a rule violation
 
-## LLM Actions
+The project rule is that actions must not carry raw bytes or base64, because models cannot
+reliably produce or parse them. GATT is the honest exception: a characteristic value *is* an
+opaque byte string defined by a Bluetooth SIG spec, and there is no structured field set that
+could replace it without inventing a per-characteristic schema for all of the assigned numbers.
 
-### play_pause
+The base therefore uses lowercase hex strings for `initial_value`, `send_notification.value`,
+`respond_to_read.value` and the inbound `bluetooth_write_request.value`, and it really does
+decode them (`hex::decode`, with an optional `0x` prefix stripped) — the documented encoding and
+the executor agree, in both directions.
 
-Toggle play/pause.
+Hex is a deliberate choice over base64: models handle short hex well, and it maps one-to-one
+onto the byte layouts printed in the SIG specifications.
 
-```json
-{
-  "type": "play_pause"
-}
-```
+## No storage
 
-### next_track
+This protocol stores nothing. The base keeps the last written/notified value per characteristic
+purely so a read with no `respond_to_read` in the LLM's reply can fall back to the current
+value; that is transport state, not a database. All profile data comes from the instruction,
+the LLM, or a script/static handler.
 
-Skip to next track.
+## Privilege and platform
 
-```json
-{
-  "type": "next_track"
-}
-```
+BLE peripheral mode needs **Bluetooth adapter access, not a port**. `PrivilegeRequirement` has
+no variant for that (`None` / `PrivilegedPort` / `RawSockets` / `Root`), so the declaration is
+left at the default `None`: claiming `Root` would be false — Bluetooth needs no root on macOS or
+Windows — and would make `server_startup.rs` refuse to start for unprivileged users who can in
+fact use the adapter. See the out-of-scope note in the review notes: the metadata enum needs an
+`AdapterAccess`-style variant before this can be declared honestly.
 
-### previous_track
+Platform requirements come from `ble-peripheral-rust` 0.2: BlueZ + `bluetoothd` + D-Bus on
+Linux (feature needs `libdbus-1-dev`), CoreBluetooth on macOS, WinRT on Windows 10+.
 
-Go to previous track.
+## Startup failure behaviour
 
-```json
-{
-  "type": "previous_track"
-}
-```
+Failures propagate correctly — this protocol does **not** have the ARP/DataLink/ICMP defect of
+reporting `Running` while doing nothing. `spawn` is awaited by `server_startup.rs`, which turns
+an `Err` into `ServerStatus::Error`. Two failure paths exist, both in the base:
 
-### volume_up
+1. `Peripheral::new()` fails → `Error("Failed to create BLE peripheral: …")`.
+2. The adapter never reports powered → the base polls `is_powered()` 20 times at 500 ms and
+   bails → `Error("Bluetooth adapter failed to power on after 10 seconds")`.
 
-Increase volume.
+Verified on macOS: `Peripheral::new()` succeeds and `is_powered()` returns `false` on the first
+poll and `true` on the second, so the retry loop is load-bearing rather than decorative. Path 2
+is what a user with Bluetooth switched off, no adapter, or a denied CoreBluetooth permission
+gets. The refusal is clear, but the message attributes all three causes to "not powered on".
 
-```json
-{
-  "type": "volume_up"
-}
-```
+## Startup parameters
 
-### volume_down
+- `device_name` (string, optional) — advertised name, default `NetGet-Remote`
 
-Decrease volume.
+Declared in `get_startup_parameters()`. That is not optional: `StartupParams` **panics** on an undeclared key, and the JSON comes from the LLM or an MCP client.
 
-```json
-{
-  "type": "volume_down"
-}
-```
+## Testing
 
-### mute
-
-Toggle mute.
-
-```json
-{
-  "type": "mute"
-}
-```
-
-### fast_forward
-
-Fast forward.
-
-```json
-{
-  "type": "fast_forward"
-}
-```
-
-### rewind
-
-Rewind.
-
-```json
-{
-  "type": "rewind"
-}
-```
-
-### stop
-
-Stop playback.
-
-```json
-{
-  "type": "stop"
-}
-```
-
-## Events
-
-### remote_button_pressed
-
-```json
-{
-  "event": "remote_button_pressed",
-  "button": "play_pause"
-}
-```
-
-## Example Usage
-
-### Media Control
-
-```
-User: "Act as a Bluetooth remote. When connected, press play/pause, wait 5 seconds, then volume up twice."
-
-LLM:
-play_pause()
-wait(5000)
-volume_up()
-volume_up()
-```
-
-### Presentation Control
-
-```
-User: "Act as a remote control. Press next track 5 times to advance slides."
-
-LLM:
-next_track()
-next_track()
-next_track()
-next_track()
-next_track()
-```
-
-## Implementation Notes
-
-### No Connection Tracking
-
-Unlike keyboard/mouse, this implementation doesn't track individual clients. All button presses are broadcast to all
-connected devices.
-
-### Button Release
-
-Buttons are momentary - each action sends a button press followed immediately by release (all bits clear). This matches
-standard remote control behavior.
-
-### Platform Compatibility
-
-**Works with**:
-
-- Media players (VLC, Windows Media Player, iTunes, Spotify)
-- Smart TVs
-- Streaming devices (Roku, Fire TV, Apple TV)
-- Presentation software (PowerPoint, Keynote)
-
-**Platform support**:
-
-- **Windows**: Native Consumer Control support
-- **macOS**: Full support via CoreBluetooth
-- **Linux**: BlueZ with Consumer Control mapping
-- **Android/iOS**: Full support as BLE central
-
-## Limitations
-
-- **BLE only**: No Bluetooth Classic
-- **16 buttons maximum**: Limited by report descriptor
-- **No haptic feedback**: Cannot vibrate or provide tactile response
-- **No display**: Cannot show information back to remote
-- **No custom buttons**: Fixed button set per HID spec
-
-## Platform Requirements
-
-Same as `bluetooth-ble`:
-
-- **Linux**: BlueZ daemon
-- **macOS**: Bluetooth enabled
-- **Windows**: Windows 10+ with Bluetooth
-
-## References
-
-- HID over GATT Profile: https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile-1-0/
-- HID Usage Tables (Consumer Page): https://www.usb.org/sites/default/files/documents/hut1_12v2.pdf
+There is no test directory for this protocol, and none is declared in `tests/server/mod.rs`. Meaningful coverage needs a real adapter and a BLE central (nRF Connect, `btleplug`), which CI runners do not have. A mocked E2E test would only exercise the base stack's LLM plumbing, which the base's own tests should cover.

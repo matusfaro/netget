@@ -1,75 +1,42 @@
-//! BLE Data Stream protocol actions
+//! BLE data streaming - custom GATT service pushing real-time sensor/telemetry data
+//!
+//! Profile wrapper over the `bluetooth-ble` base stack.
+//!
+//! The base server (`BluetoothBle::spawn_with_llm_actions`) hardcodes `BluetoothBleProtocol`
+//! when it calls `call_llm`, so the events the model actually sees and the actions it may
+//! answer with are always the base's. Declaring profile-specific actions or events here would
+//! document a vocabulary that no code path can ever emit or execute, so this protocol forwards
+//! the base's set verbatim - the same shape `doh`/`dot` use to forward `DnsProtocol`'s actions.
+//! The profile identity lives in the instruction preamble and in the GATT layout suggested by
+//! the startup examples below.
+
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
-    ActionDefinition, Parameter, ParameterDefinition,
+    ActionDefinition, ParameterDefinition,
 };
-use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
+use crate::server::bluetooth_ble::actions::BluetoothBleProtocol;
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::json;
-use std::sync::LazyLock;
 
-pub static STREAM_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "stream_started",
-        "Data stream started",
-        json!({"type": "placeholder", "event_id": "stream_started"}),
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "stream_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Stream identifier".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "sample_rate".to_string(),
-            type_hint: "number".to_string(),
-            description: "Samples per second".to_string(),
-            required: true,
-        },
-    ])
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("BLE stream started: {stream_id} @ {sample_rate} Hz")
-            .with_debug("BLE data stream started: stream_id={stream_id}, sample_rate={sample_rate}")
-            .with_trace("BLE stream started: {json_pretty(.)}"),
-    )
-});
-
-pub static STREAM_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "stream_data",
-        "Stream data packet received",
-        json!({"type": "placeholder", "event_id": "stream_data"}),
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "stream_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Stream identifier".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "sequence".to_string(),
-            type_hint: "number".to_string(),
-            description: "Packet sequence number".to_string(),
-            required: true,
-        },
-    ])
-    .with_log_template(
-        LogTemplate::new()
-            .with_info("BLE stream data: {stream_id} seq={sequence}")
-            .with_debug("BLE stream data packet: stream_id={stream_id}, sequence={sequence}")
-            .with_trace("BLE stream data: {json_pretty(.)}"),
-    )
-});
-
+/// BLE data streaming - custom GATT service pushing real-time sensor/telemetry data
 pub struct BluetoothBleDataStreamProtocol;
+
 impl BluetoothBleDataStreamProtocol {
     pub fn new() -> Self {
         Self
+    }
+
+    /// The base protocol this profile delegates its whole vocabulary to.
+    fn base() -> BluetoothBleProtocol {
+        BluetoothBleProtocol::new()
+    }
+}
+
+impl Default for BluetoothBleDataStreamProtocol {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -78,153 +45,93 @@ impl Protocol for BluetoothBleDataStreamProtocol {
         vec![ParameterDefinition {
             name: "device_name".to_string(),
             type_hint: "string".to_string(),
-            description: "Device name (default: NetGet-Stream)".to_string(),
+            description: "Bluetooth device name to advertise (default: NetGet-Stream)".to_string(),
             required: false,
-            example: json!("MySensor"),
+            example: json!("NetGet-Stream"),
         }]
     }
 
-    fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "start_stream".to_string(),
-                description: "Start data streaming".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "stream_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Stream identifier".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sample_rate".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Samples per second (1-100)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "data_type".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Data type (sensor, gps, imu, audio)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "start_stream",
-                    "stream_id": "example_stream_id",
-                    "sample_rate": 42,
-                    "data_type": "example_data_type"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BLE stream start: {stream_id} ({data_type} @ {sample_rate} Hz)")
-                        .with_debug("BLE start_stream: stream_id={stream_id}, sample_rate={sample_rate}, data_type={data_type}"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_stream_data".to_string(),
-                description: "Send stream data packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "stream_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Stream identifier".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "data".to_string(),
-                        type_hint: "object".to_string(),
-                        description: "Data payload (JSON)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_stream_data",
-                    "stream_id": "imu_sensor",
-                    "data": {"x": 1.2, "y": 2.3, "z": -0.8}
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BLE stream data: {stream_id}")
-                        .with_debug("BLE send_stream_data: stream_id={stream_id}")
-                        .with_trace("BLE stream data: {json_pretty(data)}"),
-                ),
-            },
-            ActionDefinition {
-                name: "stop_stream".to_string(),
-                description: "Stop data streaming".to_string(),
-                parameters: vec![Parameter {
-                    name: "stream_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Stream identifier".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "stop_stream",
-                    "stream_id": "example_stream_id"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BLE stream stop: {stream_id}")
-                        .with_debug("BLE stop_stream: stream_id={stream_id}"),
-                ),
-            },
-        ]
+    /// Delegated: the base stack owns every action this server can execute.
+    fn get_async_actions(&self, state: &AppState) -> Vec<ActionDefinition> {
+        Self::base().get_async_actions(state)
     }
 
+    /// Delegated: see `get_async_actions`. Returning `vec![]` here while the base emits
+    /// events would leave the model with no way to answer a read or a write.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]
+        Self::base().get_sync_actions()
     }
+
+    /// Delegated: the base's event types are the only ones ever emitted for this server, and
+    /// they carry their own `.with_actions(...)` lists, which is what `call_llm` offers the
+    /// model. An event id declared here but not emitted by the base would silently match an
+    /// `event_handlers` pattern that can never fire.
+    fn get_event_types(&self) -> Vec<EventType> {
+        Self::base().get_event_types()
+    }
+
     fn protocol_name(&self) -> &'static str {
         "BLUETOOTH_BLE_DATA_STREAM"
     }
-    fn get_event_types(&self) -> Vec<EventType> {
-        vec![STREAM_STARTED_EVENT.clone(), STREAM_DATA_EVENT.clone()]
-    }
+
     fn stack_name(&self) -> &'static str {
         "BLUETOOTH_BLE_DATA_STREAM"
     }
+
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "stream", "data", "sensor"]
+        vec!["bluetooth", "ble", "stream", "telemetry", "sensor"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("BLE real-time data streaming (custom GATT)")
-            .llm_control("Actions: start_stream, send_stream_data, stop_stream")
-            .e2e_testing("Requires BLE device")
-            .notes("Custom GATT service for real-time sensor data streaming")
+            .implementation(
+                "bluetooth-ble base stack (ble-peripheral-rust) plus an instruction preamble for the custom streaming service",
+            )
+            .llm_control(
+                "Base BLE GATT control (add_service, start_advertising, stop_advertising, respond_to_read, respond_to_write, send_notification); the LLM builds the custom streaming service itself.",
+            )
+            .e2e_testing(
+                "Requires a real Bluetooth LE adapter and a central such as nRF Connect; no automated coverage",
+            )
+            .notes(
+                "Thin profile wrapper over the bluetooth-ble base stack. It prepends an instruction describing the custom streaming service and otherwise reuses the base entirely: the base hardcodes BluetoothBleProtocol when it calls the LLM, so the action vocabulary, the event types and the executor are the base's. This protocol deliberately declares no actions or events of its own - one that did would be documented to the model but never reachable at runtime.",
+            )
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "BLE data streaming - real-time sensor/telemetry data"
+        "BLE data streaming - custom GATT service pushing real-time sensor/telemetry data"
     }
+
     fn example_prompt(&self) -> &'static str {
-        "Stream IMU data at 10 Hz with random accelerometer values"
+        "Stream IMU accelerometer samples at 10 Hz over a custom notify characteristic"
     }
+
     fn group_name(&self) -> &'static str {
         "Network"
     }
 
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
-        use serde_json::json;
 
+        // Every event id and action name below is one the base stack really emits and really
+        // executes. UUIDs are written in full 128-bit form because the base parses them with
+        // `Uuid::parse_str`, which rejects the 16-bit shorthand.
         StartupExamples::new(
-            // LLM mode: LLM handles BLE data streaming
+            // LLM mode: the model builds the GATT layout and answers reads itself.
             json!({
                 "type": "open_server",
                 "port": 0,
                 "base_stack": "bluetooth-ble-data-stream",
-                "instruction": "Stream IMU sensor data at 10 Hz with realistic accelerometer values",
+                "instruction": "Stream IMU accelerometer samples at 10 Hz over a custom notify characteristic",
                 "startup_params": {
                     "device_name": "NetGet-Stream"
                 }
             }),
-            // Script mode: Code-based stream handling
+            // Script mode: a read is answered in-process, with no model call.
             json!({
                 "type": "open_server",
                 "port": 0,
@@ -232,16 +139,18 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                 "startup_params": {
                     "device_name": "NetGet-Stream"
                 },
-                "event_handlers": [{
-                    "event_pattern": "stream_started",
-                    "handler": {
-                        "type": "script",
-                        "language": "python",
-                        "code": "<stream_handler>"
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "script",
+                            "language": "python",
+                            "code": "actions = [{'type': 'respond_to_read', 'value': '01'}]"
+                        }
                     }
-                }]
+                ]
             }),
-            // Static mode: Fixed stream action
+            // Static mode: fixed GATT layout and a fixed read response, with no model call.
             json!({
                 "type": "open_server",
                 "port": 0,
@@ -249,18 +158,61 @@ impl Protocol for BluetoothBleDataStreamProtocol {
                 "startup_params": {
                     "device_name": "NetGet-Stream"
                 },
-                "event_handlers": [{
-                    "event_pattern": "stream_started",
-                    "handler": {
-                        "type": "static",
-                        "actions": [{
-                            "type": "start_stream",
-                            "stream_id": "sensor_data",
-                            "sample_rate": 10,
-                            "data_type": "imu"
-                        }]
+                "event_handlers": [
+                    {
+                        "event_pattern": "bluetooth_ble_started",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "add_service",
+                                    "uuid": "0000f00d-0000-1000-8000-00805f9b34fb",
+                                    "primary": true,
+                                    "characteristics": [
+                                        {
+                                            "uuid": "0000f00e-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "notify"
+                                            ],
+                                            "permissions": []
+                                        },
+                                        {
+                                            "uuid": "0000f00f-0000-1000-8000-00805f9b34fb",
+                                            "properties": [
+                                                "read",
+                                                "write"
+                                            ],
+                                            "permissions": [
+                                                "readable",
+                                                "writeable"
+                                            ],
+                                            "initial_value": "00"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "start_advertising",
+                                    "device_name": "NetGet-Stream",
+                                    "service_uuids": [
+                                        "0000f00d-0000-1000-8000-00805f9b34fb"
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "event_pattern": "bluetooth_read_request",
+                        "handler": {
+                            "type": "static",
+                            "actions": [
+                                {
+                                    "type": "respond_to_read",
+                                    "value": "01"
+                                }
+                            ]
+                        }
                     }
-                }]
+                ]
             }),
         )
     }
@@ -273,40 +225,38 @@ impl Server for BluetoothBleDataStreamProtocol {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
     {
         Box::pin(async move {
-            let instruction = ctx
-                .state
-                .get_server(ctx.server_id)
-                .await
-                .map(|s| s.instruction)
-                .unwrap_or_default();
             let device_name = ctx
                 .startup_params
                 .as_ref()
                 .map(|p| p.get_optional_string("device_name"))
                 .transpose()?
                 .flatten()
-                .as_deref()
-                .unwrap_or("NetGet-Stream")
-                .to_string();
+                .unwrap_or_else(|| "NetGet-Stream".to_string());
+
+            // The user's own instruction must reach the base stack; the profile preamble is
+            // added there, not substituted for it.
+            let instruction = ctx
+                .state
+                .get_server(ctx.server_id)
+                .await
+                .map(|s| s.instruction)
+                .unwrap_or_default();
+
             crate::server::bluetooth_ble_data_stream::BluetoothBleDataStream::spawn_with_llm_actions(
-                device_name, ctx.llm_client, ctx.state, ctx.status_tx, ctx.server_id, instruction
-            ).await
+                device_name,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                instruction,
+            )
+            .await
         })
     }
 
+    /// Delegated: the base's executor is what actually runs, so validation must accept exactly
+    /// the base's action names and reject everything else rather than waving any action through.
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action["type"]
-            .as_str()
-            .context("Action must have 'type' field")?;
-        match action_type {
-            "start_stream" | "send_stream_data" | "stop_stream" => Ok(ActionResult::Custom {
-                name: action_type.to_string(),
-                data: action,
-            }),
-            _ => Err(anyhow::anyhow!(
-                "Unknown data stream action: {}",
-                action_type
-            )),
-        }
+        Self::base().execute_action(action)
     }
 }
