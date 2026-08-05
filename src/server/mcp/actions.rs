@@ -368,8 +368,6 @@ fn mcp_resources_read_response_action() -> ActionDefinition {
     }
 }
 
-/// Resources subscribe response action
-
 /// Tools list response action
 fn mcp_tools_list_response_action() -> ActionDefinition {
     ActionDefinition {
@@ -464,8 +462,6 @@ fn mcp_prompts_get_response_action() -> ActionDefinition {
         ),
     }
 }
-
-/// Completion response action
 
 /// Error response action
 fn mcp_error_response_action() -> ActionDefinition {

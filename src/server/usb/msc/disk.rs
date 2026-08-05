@@ -45,6 +45,10 @@ impl DiskImage {
             .read(true)
             .write(true)
             .create(true)
+            // Explicit: this opens an existing disk image or creates a new one.
+            // Truncating would destroy the image's contents, and leaving it
+            // unstated is what clippy's suspicious_open_options flags.
+            .truncate(false)
             .open(path)
             .context("Failed to open/create disk image file")?;
 
