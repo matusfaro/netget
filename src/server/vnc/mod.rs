@@ -1,7 +1,19 @@
-//! VNC (Virtual Network Computing) server implementation
+//! VNC (Virtual Network Computing) server — RFB 3.8.
 //!
-//! Implements the RFB (Remote Frame Buffer) protocol for VNC connections.
-//! The LLM controls display generation, authentication, and input handling.
+//! **This protocol is `DevelopmentState::Incomplete` and hidden from the LLM.** The
+//! handshake, the ServerInit and the framebuffer wire format are real and work against real
+//! viewers, but nothing here is LLM-controlled: `spawn_with_llm_actions` drops the
+//! `OllamaClient`, no `Event` is constructed, `call_llm` is never called, and every
+//! `FramebufferUpdateRequest` is answered by `send_test_framebuffer` with a hardcoded
+//! gradient. Key events, pointer events and clipboard text are logged and discarded. The
+//! server instruction the user wrote is read by nobody.
+//!
+//! `send_framebuffer_update` below renders `DisplayCommand`s through
+//! `crate::display::DisplayCanvas` and is the function an LLM integration would call — it has
+//! no caller today. See `src/server/vnc/CLAUDE.md` for what wiring it up requires.
+//!
+//! Security is "None" (type 1) only: any client that connects is admitted. There is no
+//! VNC-Auth and no password.
 
 pub mod actions;
 
@@ -24,6 +36,22 @@ pub struct VncServer;
 
 /// RFB protocol version
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
+
+/// Framebuffer size announced in ServerInit and used for every update.
+///
+/// Fixed: there is no startup parameter for it and no way for the LLM to change it. The size a
+/// client asks for in a FramebufferUpdateRequest is deliberately ignored — RFB lets the server
+/// answer with any rectangle, and answering with the client's requested extent (as this code
+/// used to) both contradicts the announced size and lets a client ask for a 65535x65535
+/// region.
+const FRAMEBUFFER_WIDTH: u16 = 800;
+const FRAMEBUFFER_HEIGHT: u16 = 600;
+
+/// Largest ClientCutText payload accepted, in bytes.
+///
+/// The length field is a client-controlled u32, and the buffer for it is allocated before a
+/// single byte is read; without a cap a four-byte header asks for a 4 GiB allocation.
+const MAX_CUT_TEXT_LEN: u32 = 1 << 20;
 
 /// Security types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +107,16 @@ impl VncServer {
         let local_addr = listener.local_addr()?;
 
         console_info!(status_tx, "VNC server listening on {}", local_addr);
+        warn!(
+            "VNC is Incomplete: clients see a fixed {}x{} gradient, the LLM is never consulted \
+             and the server instruction is ignored",
+            FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
+        );
+        let _ = status_tx.send(format!(
+            "[WARN] VNC is Incomplete: clients see a fixed {}x{} test pattern, the server \
+             instruction is ignored",
+            FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
+        ));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -112,7 +150,13 @@ impl VncServer {
                         });
                     }
                     Err(e) => {
+                        // Break rather than continue: a persistent accept error (EMFILE, the
+                        // socket being closed under us) previously spun this loop at full CPU
+                        // forever, logging on every iteration.
                         error!("Failed to accept VNC connection: {}", e);
+                        let _ =
+                            status_tx.send(format!("✗ VNC accept failed, stopping loop: {}", e));
+                        break;
                     }
                 }
             }
@@ -258,8 +302,8 @@ impl VncServer {
         trace!("Client shared flag: {}", shared_flag);
 
         // 7. Send ServerInit
-        let framebuffer_width = 800u16;
-        let framebuffer_height = 600u16;
+        let framebuffer_width = FRAMEBUFFER_WIDTH;
+        let framebuffer_height = FRAMEBUFFER_HEIGHT;
         let pixel_format = VncPixelFormat::default_rgb888();
         let name = b"NetGet VNC Server";
 
@@ -328,10 +372,11 @@ impl VncServer {
 
             match message_type {
                 0 => {
-                    // SetPixelFormat
+                    // SetPixelFormat. Read and discarded: the server always sends 32bpp BGRX,
+                    // so a client that requests anything else will render garbage.
                     let mut buf = vec![0u8; 19]; // 3 padding + 16 pixel format
                     read_half.read_exact(&mut buf).await?;
-                    trace!("SetPixelFormat received");
+                    trace!("SetPixelFormat received (ignored, server always sends 32bpp BGRX)");
                 }
                 2 => {
                     // SetEncodings
@@ -359,8 +404,9 @@ impl VncServer {
                         height
                     );
 
-                    // Send framebuffer update (test pattern for now)
-                    Self::send_test_framebuffer(&write_half, width, height).await?;
+                    // Always the same hardcoded gradient: the LLM is never consulted. The
+                    // requested region is ignored and the full announced framebuffer is sent.
+                    Self::send_test_framebuffer(&write_half).await?;
                 }
                 4 => {
                     // KeyEvent
@@ -368,6 +414,7 @@ impl VncServer {
                     let _ = read_half.read_u16().await?; // Padding
                     let key = read_half.read_u32().await?;
 
+                    // Logged and discarded: there is no event and no LLM call.
                     debug!("KeyEvent: down={}, key={}", down, key);
                     let _ =
                         status_tx.send(format!("[DEBUG] VNC KeyEvent: down={}, key={}", down, key));
@@ -385,6 +432,19 @@ impl VncServer {
                     let _ = read_half.read_u8().await?; // Padding
                     let _ = read_half.read_u16().await?; // Padding
                     let length = read_half.read_u32().await?;
+                    if length > MAX_CUT_TEXT_LEN {
+                        // The buffer used to be allocated straight from this client-controlled
+                        // u32, so a 7-byte message could ask for a 4 GiB allocation.
+                        warn!(
+                            "VNC ClientCutText length {} exceeds {} byte cap, closing connection",
+                            length, MAX_CUT_TEXT_LEN
+                        );
+                        let _ = status_tx.send(format!(
+                            "[WARN] VNC ClientCutText length {} exceeds cap, closing connection",
+                            length
+                        ));
+                        break;
+                    }
                     let mut text = vec![0u8; length as usize];
                     read_half.read_exact(&mut text).await?;
                     trace!("ClientCutText: {}", String::from_utf8_lossy(&text));
@@ -404,48 +464,55 @@ impl VncServer {
         Ok(())
     }
 
-    /// Send a test framebuffer pattern (fallback when LLM doesn't respond)
+    /// Build the RFB FramebufferUpdate header for a single full-framebuffer Raw rectangle.
+    fn framebuffer_update_header(width: u16, height: u16) -> Vec<u8> {
+        let mut header = Vec::with_capacity(16);
+        header.push(0); // Message type: FramebufferUpdate
+        header.push(0); // Padding
+        header.extend_from_slice(&1u16.to_be_bytes()); // Number of rectangles
+        header.extend_from_slice(&0u16.to_be_bytes()); // X position
+        header.extend_from_slice(&0u16.to_be_bytes()); // Y position
+        header.extend_from_slice(&width.to_be_bytes());
+        header.extend_from_slice(&height.to_be_bytes());
+        header.extend_from_slice(&0i32.to_be_bytes()); // Encoding: Raw
+        header
+    }
+
+    /// Send the hardcoded gradient. This is what every client sees: the LLM is never asked.
     async fn send_test_framebuffer(
         write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
-        width: u16,
-        height: u16,
     ) -> Result<()> {
-        let mut writer = write_half.lock().await;
+        let width = FRAMEBUFFER_WIDTH;
+        let height = FRAMEBUFFER_HEIGHT;
 
-        // FramebufferUpdate header
-        writer.write_u8(0).await?; // Message type
-        writer.write_u8(0).await?; // Padding
-        writer.write_u16(1).await?; // Number of rectangles
-
-        // Rectangle header
-        writer.write_u16(0).await?; // X position
-        writer.write_u16(0).await?; // Y position
-        writer.write_u16(width).await?;
-        writer.write_u16(height).await?;
-        writer.write_i32(0).await?; // Raw encoding
-
-        // Send pixel data (simple gradient pattern)
+        // Serialize the whole frame before taking the lock. This used to be one awaited
+        // `write_u8` per byte - 1.9 million awaits for an 800x600 frame, each one a separate
+        // syscall on an unbuffered socket - while holding the write lock throughout.
+        let mut frame = Self::framebuffer_update_header(width, height);
+        frame.reserve(width as usize * height as usize * 4);
         for y in 0..height {
             for x in 0..width {
                 let r = ((x as f32 / width as f32) * 255.0) as u8;
                 let g = ((y as f32 / height as f32) * 255.0) as u8;
                 let b = 128u8;
-
-                // RGB888 format (32-bit with padding)
-                writer.write_u8(b).await?;
-                writer.write_u8(g).await?;
-                writer.write_u8(r).await?;
-                writer.write_u8(0).await?; // Padding
+                frame.extend_from_slice(&[b, g, r, 0]); // BGRX, matching ServerInit
             }
         }
 
+        let mut writer = write_half.lock().await;
+        writer.write_all(&frame).await?;
         writer.flush().await?;
         trace!("Sent test framebuffer: {}x{}", width, height);
 
         Ok(())
     }
 
-    /// Send framebuffer update with display commands from LLM
+    /// Render `DisplayCommand`s and ship them as a Raw-encoded framebuffer update.
+    ///
+    /// **This function has no caller.** It is the half of the LLM integration that exists: an
+    /// integration would build a `vnc_framebuffer_update_request` event, call `call_llm`,
+    /// deserialize the returned command array into `Vec<DisplayCommand>`, and call this.
+    /// Nothing does that today, which is why the protocol is `Incomplete`.
     pub async fn send_framebuffer_update(
         write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
         width: u16,
@@ -464,29 +531,15 @@ impl VncServer {
             width, height
         ));
 
-        // Send framebuffer update
-        let mut writer = write_half.lock().await;
-
-        // FramebufferUpdate header
-        writer.write_u8(0).await?; // Message type
-        writer.write_u8(0).await?; // Padding
-        writer.write_u16(1).await?; // Number of rectangles
-
-        // Rectangle header
-        writer.write_u16(0).await?; // X position
-        writer.write_u16(0).await?; // Y position
-        writer.write_u16(width).await?;
-        writer.write_u16(height).await?;
-        writer.write_i32(0).await?; // Raw encoding
-
-        // Send pixel data from rendered image
+        // Serialize before locking, for the same reason as send_test_framebuffer.
+        let mut frame = Self::framebuffer_update_header(width, height);
+        frame.reserve(width as usize * height as usize * 4);
         for pixel in image_buffer.pixels() {
-            writer.write_u8(pixel[2]).await?; // B
-            writer.write_u8(pixel[1]).await?; // G
-            writer.write_u8(pixel[0]).await?; // R
-            writer.write_u8(0).await?; // Padding
+            frame.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 0]); // BGRX
         }
 
+        let mut writer = write_half.lock().await;
+        writer.write_all(&frame).await?;
         writer.flush().await?;
         trace!("Sent framebuffer update: {}x{}", width, height);
 

@@ -1,20 +1,35 @@
-//! VNC protocol actions for LLM integration
+//! VNC protocol actions.
+//!
+//! **The protocol is marked `DevelopmentState::Incomplete` and is therefore hidden from the
+//! LLM.** The RFB implementation in `src/server/vnc/mod.rs` never consults the model:
+//! `VncServer::spawn_with_llm_actions` takes the `OllamaClient` as `_llm_client` and drops
+//! it, no `Event` is ever constructed, `call_llm` is never called, and `get_event_types()`
+//! returns the empty trait default. Every `FramebufferUpdateRequest` is answered with a
+//! hardcoded red/green gradient (`send_test_framebuffer`), whatever the user's instruction
+//! said. Key and pointer events are logged and dropped.
+//!
+//! Five actions used to be declared here — `vnc_auth_success`, `vnc_auth_deny`,
+//! `vnc_render_display`, `send_framebuffer_update` and `disconnect_vnc_client`. All five were
+//! unreachable: no event advertised them (there are no events), and the connection loop never
+//! calls `execute_action`, so even a static handler naming one would have changed nothing on
+//! the wire. `vnc_render_display` in particular promised the model control of the display and
+//! returned `NoAction`. They are removed rather than left as a promise the code does not keep.
+//!
+//! The rendering half of the feature does exist and works: `crate::display::DisplayCanvas`
+//! renders a `Vec<DisplayCommand>` to an RGBA buffer, and
+//! `VncServer::send_framebuffer_update` already ships such a buffer as a Raw-encoded
+//! rectangle. What is missing is the wiring — an `EventType` for
+//! `vnc_framebuffer_update_request` advertising a render action via `.with_actions(...)`, a
+//! `call_llm` in the message loop, and deserialization of the returned commands into
+//! `DisplayCommand`. See `src/server/vnc/CLAUDE.md`.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
-    ActionDefinition, Parameter,
+    ActionDefinition,
 };
-use crate::protocol::log_template::LogTemplate;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
-use tracing::debug;
-
-/// VNC protocol event types
-pub const VNC_AUTH_REQUEST_EVENT: &str = "vnc_auth_request";
-pub const VNC_UPDATE_REQUEST_EVENT: &str = "vnc_framebuffer_update_request";
-pub const VNC_KEY_EVENT: &str = "vnc_key_event";
-pub const VNC_POINTER_EVENT: &str = "vnc_pointer_event";
 
 /// VNC protocol implementation
 #[derive(Clone)]
@@ -41,10 +56,10 @@ impl Protocol for VncProtocol {
         "ETH>IP>TCP>VNC"
     }
     fn description(&self) -> &'static str {
-        "VNC remote desktop server"
+        "VNC remote desktop server (Incomplete: displays a fixed test pattern, not LLM-controlled)"
     }
     fn example_prompt(&self) -> &'static str {
-        "Start a VNC server on port 5900 displaying a blue background"
+        "Start a VNC server on port 5900"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["vnc", "rfb", "remote desktop", "framebuffer"]
@@ -53,30 +68,43 @@ impl Protocol for VncProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual RFB protocol, custom display canvas")
-            .llm_control("Framebuffer content, authentication, input events")
-            .e2e_testing("VNC client / vncviewer")
-            .notes("RFB 3.8, Raw encoding only, no compression")
+            // Incomplete, deliberately: `is_available_to_llm()` returns false, so the model is
+            // not offered a remote desktop whose contents it cannot influence.
+            .state(DevelopmentState::Incomplete)
+            .implementation("Manual RFB 3.8, Raw encoding, tiny-skia display canvas")
+            .llm_control(
+                "NONE - the LLM client is dropped on startup, no event is raised, and every \
+                 framebuffer request is answered with a hardcoded gradient",
+            )
+            .e2e_testing("custom RFB client in tests/server/vnc/test.rs")
+            .notes(
+                "Fixed 800x600 framebuffer regardless of the requested size; 'None' security \
+                 only (no VNC-Auth, so any client is admitted); Raw encoding only; the \
+                 client's SetPixelFormat is read and ignored, so a client that asks for \
+                 anything other than 32bpp BGRX gets garbled pixels; key/pointer events and \
+                 clipboard text are logged and discarded.",
+            )
             .build()
     }
     fn group_name(&self) -> &'static str {
         "Network Services"
     }
 
+    /// Structurally valid examples are mandatory (`tests/startup_examples_validation_test.rs`
+    /// requires a script handler and a static handler), but VNC declares no event types, so no
+    /// `event_pattern` here can match and no handler below can fire.
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
         StartupExamples::new(
-            // LLM mode: LLM handles all VNC responses intelligently
             json!({
                 "type": "open_server",
                 "port": 5900,
                 "base_stack": "vnc",
-                "instruction": "VNC remote desktop server displaying content"
+                "instruction": "NOTE: vnc ignores this instruction entirely - clients always \
+                                see a fixed gradient test pattern"
             }),
-            // Script mode: Code-based deterministic responses
             json!({
                 "type": "open_server",
                 "port": 5900,
@@ -86,142 +114,36 @@ impl Protocol for VncProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<vnc_handler>"
+                        "code": "# never runs: vnc raises no events"
                     }
                 }]
             }),
-            // Static mode: Fixed responses
             json!({
                 "type": "open_server",
                 "port": 5900,
                 "base_stack": "vnc",
                 "event_handlers": [{
-                    "event_pattern": "vnc_auth_request",
+                    "event_pattern": "vnc_framebuffer_update_request",
                     "handler": {
                         "type": "static",
                         "actions": [{
-                            "type": "vnc_auth_success"
+                            "type": "show_message",
+                            "message": "never runs: vnc raises no events"
                         }]
                     }
                 }]
             }),
         )
     }
+
+    /// No async actions: the connection loop has no path that would execute one.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-                ActionDefinition {
-                    name: "send_framebuffer_update".to_string(),
-                    description: "Send a framebuffer update to a VNC client with display content".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "connection_id".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Connection ID of the VNC client".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "width".to_string(),
-                            type_hint: "number".to_string(),
-                            description: "Framebuffer width in pixels".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "height".to_string(),
-                            type_hint: "number".to_string(),
-                            description: "Framebuffer height in pixels".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "commands".to_string(),
-                            type_hint: "array".to_string(),
-                            description: "Display commands to render (DrawRectangle, DrawText, RenderAsciiArt, etc.)".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: serde_json::from_str(r#"{"type": "send_framebuffer_update", "connection_id": "conn123", "width": 800, "height": 600, "commands": [{"SetBackground": {"color": {"r": 50, "g": 50, "b": 50, "a": 255}}}, {"DrawText": {"x": 100, "y": 100, "text": "Welcome to VNC", "font_size": 24, "color": {"r": 255, "g": 255, "b": 255, "a": 255}}}]}"#).unwrap(),
-                    log_template: Some(
-                        LogTemplate::new()
-                            .with_info("-> VNC update {width}x{height}")
-                            .with_debug("VNC send_framebuffer_update: {width}x{height}, {commands_len} commands"),
-                    ),
-                },
-                ActionDefinition {
-                    name: "disconnect_vnc_client".to_string(),
-                    description: "Disconnect a VNC client".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "connection_id".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Connection ID of the VNC client".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: serde_json::from_str(r#"{"type": "disconnect_vnc_client", "connection_id": "conn123"}"#).unwrap(),
-                    log_template: Some(
-                        LogTemplate::new()
-                            .with_info("VNC disconnect {connection_id}")
-                            .with_debug("VNC disconnect_vnc_client: connection_id={connection_id}"),
-                    ),
-                },
-            ]
+        Vec::new()
     }
+
+    /// No sync actions: the server raises no events, so no action could ever be offered.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-                ActionDefinition {
-                    name: "vnc_auth_success".to_string(),
-                    description: "Allow VNC client to connect".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "username".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Optional username for this connection".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: serde_json::from_str(r#"{"type": "vnc_auth_success", "username": "guest"}"#).unwrap(),
-                    log_template: Some(
-                        LogTemplate::new()
-                            .with_info("-> VNC auth success: {username}")
-                            .with_debug("VNC vnc_auth_success: username={username}"),
-                    ),
-                },
-                ActionDefinition {
-                    name: "vnc_auth_deny".to_string(),
-                    description: "Deny VNC client connection".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "reason".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Reason for denying the connection".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: serde_json::from_str(r#"{"type": "vnc_auth_deny", "reason": "Access denied"}"#).unwrap(),
-                    log_template: Some(
-                        LogTemplate::new()
-                            .with_info("-> VNC auth denied: {reason}")
-                            .with_debug("VNC vnc_auth_deny: reason={reason}"),
-                    ),
-                },
-                ActionDefinition {
-                    name: "vnc_render_display".to_string(),
-                    description: "Render display content in response to update request".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "commands".to_string(),
-                            type_hint: "array".to_string(),
-                            description: "Display commands to render (DrawRectangle, DrawText, RenderAsciiArt, DrawWindow, DrawButton, etc.)".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: serde_json::from_str(r#"{"type": "vnc_render_display", "commands": [{"RenderAsciiArt": {"text": "+----------+\n| Login:   |\n| User: __ |\n+----------+", "font_size": 16, "fg_color": {"r": 255, "g": 255, "b": 255, "a": 255}, "bg_color": {"r": 0, "g": 0, "b": 0, "a": 255}}}]}"#).unwrap(),
-                    log_template: Some(
-                        LogTemplate::new()
-                            .with_info("-> VNC render: {commands_len} commands")
-                            .with_debug("VNC vnc_render_display: {commands_len} commands"),
-                    ),
-                },
-            ]
+        Vec::new()
     }
 }
 
@@ -245,42 +167,15 @@ impl Server for VncProtocol {
             .await
         })
     }
-    fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
-        let action_type = action["type"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing action type"))?;
 
-        match action_type {
-            "vnc_auth_success" => {
-                debug!("VNC auth success");
-                // Return NoAction since authentication is handled by the protocol handler
-                Ok(ActionResult::NoAction)
-            }
-            "vnc_auth_deny" => {
-                let reason = action["reason"]
-                    .as_str()
-                    .unwrap_or("Access denied")
-                    .to_string();
-                debug!("VNC auth denied: {}", reason);
-                // Return CloseConnection to deny the client
-                Ok(ActionResult::CloseConnection)
-            }
-            "vnc_render_display" => {
-                // VNC framebuffer updates are handled asynchronously by the server
-                // This action just signals success to the LLM
-                debug!("VNC render display command received");
-                Ok(ActionResult::NoAction)
-            }
-            "send_framebuffer_update" => {
-                // Async action - handled by spawning a task
-                debug!("VNC send framebuffer update command received");
-                Ok(ActionResult::NoAction)
-            }
-            "disconnect_vnc_client" => {
-                debug!("VNC disconnect client");
-                Ok(ActionResult::CloseConnection)
-            }
-            _ => Err(anyhow!("Unknown VNC action: {}", action_type)),
-        }
+    /// VNC has no actions. Anything routed here is a caller bug, so report it rather than
+    /// returning `NoAction` and letting the caller believe the display changed.
+    fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
+        let action_type = action["type"].as_str().unwrap_or("<missing type>");
+        Err(anyhow!(
+            "VNC declares no actions (the protocol is Incomplete: the framebuffer is a fixed \
+             test pattern and the LLM is never consulted); refusing action '{}'",
+            action_type
+        ))
     }
 }
