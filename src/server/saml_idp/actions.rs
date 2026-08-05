@@ -55,13 +55,26 @@ impl Protocol for SamlIdpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("SAML 2.0 Identity Provider with LLM-controlled authentication")
-            .llm_control("Authentication decisions, SAML assertion generation, user attributes")
+            .implementation(
+                "SAML 2.0 SSO endpoints over hyper HTTP/1.1. Simulator: the model writes the \
+                 assertion XML and NetGet only base64s it into the HTTP-POST form. There is no \
+                 signing key anywhere in this protocol.",
+            )
+            .llm_control(
+                "Whether to authenticate, the whole assertion XML (subject, conditions, \
+                 attributes), the IDP metadata, and error pages.",
+            )
             .e2e_testing("SAML SP client library")
+            .notes(
+                "No XML signing: assertions carry a <ds:Signature> only if the model invents \
+                 one, and it will not verify. Inbound AuthnRequest signatures are not checked \
+                 either, and there is no replay protection. Real SPs configured to require \
+                 signed assertions will reject these.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "SAML 2.0 Identity Provider that authenticates users and generates signed SAML assertions"
+        "SAML 2.0 Identity Provider simulator (LLM writes the assertion; nothing is signed)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start a SAML Identity Provider on port 8080. Authenticate all users as 'testuser' with email 'test@example.com'"
@@ -90,7 +103,7 @@ impl Protocol for SamlIdpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "path = event.get('path', '')\nif '/metadata' in path:\n    action('send_metadata', metadata_xml='<EntityDescriptor>...</EntityDescriptor>')\nelse:\n    action('send_saml_response', assertion_xml='<saml:Assertion>...</saml:Assertion>')"
+                        "code": "path = event.get('path', '')\nif '/metadata' in path:\n    action('send_metadata', metadata_xml='<EntityDescriptor>...</EntityDescriptor>')\nelse:\n    action('send_saml_response', assertion_xml='<saml:Assertion>...</saml:Assertion>', acs_url='http://localhost:8081/acs')"
                     }
                 }]
             }),
@@ -106,6 +119,7 @@ impl Protocol for SamlIdpProtocol {
                         "actions": [{
                             "type": "send_saml_response",
                             "assertion_xml": "<saml:Assertion><saml:Subject><saml:NameID>testuser</saml:NameID></saml:Subject></saml:Assertion>",
+                            "acs_url": "http://localhost:8081/acs",
                             "relay_state": "original-url"
                         }]
                     }
@@ -158,10 +172,15 @@ impl SamlIdpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'assertion_xml' field")?;
 
+        let acs_url = action
+            .get("acs_url")
+            .and_then(|v| v.as_str())
+            .context("Missing 'acs_url' field (the SP's AssertionConsumerService URL)")?;
+
         let relay_state = action.get("relay_state").and_then(|v| v.as_str());
 
         // Build HTTP POST form response (SAML HTTP-POST binding)
-        let form_html = build_saml_post_form(assertion_xml, relay_state);
+        let form_html = build_saml_post_form(assertion_xml, acs_url, relay_state);
 
         let response_data = json!({
             "status": 200,
@@ -210,7 +229,7 @@ impl SamlIdpProtocol {
 
         let error_html = format!(
             "<html><body><h1>Authentication Error</h1><p>{}</p></body></html>",
-            error_message
+            escape_html(error_message)
         );
 
         let response_data = json!({
@@ -227,15 +246,40 @@ impl SamlIdpProtocol {
     }
 }
 
+/// Escape text for interpolation into an HTML attribute or text node.
+///
+/// Everything placed into these pages — RelayState, the ACS URL, error messages — is model
+/// output derived from an untrusted request, so `"` or `<` used to break out of the
+/// surrounding attribute and inject markup into a page the browser renders and auto-submits.
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Build SAML HTTP-POST form for assertion delivery
-fn build_saml_post_form(assertion_xml: &str, relay_state: Option<&str>) -> String {
+///
+/// `acs_url` is the SP's AssertionConsumerService endpoint and must be a real URL. The form
+/// action used to be the literal string `{{ACS_URL}}` — nothing ever substituted it, and
+/// `send_saml_response` had no parameter that could have, so every assertion this IDP
+/// produced was posted to a relative path named `{{ACS_URL}}` and never reached any SP.
+fn build_saml_post_form(assertion_xml: &str, acs_url: &str, relay_state: Option<&str>) -> String {
     let encoded_assertion =
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, assertion_xml);
     let relay_state_field = relay_state
         .map(|rs| {
             format!(
                 r#"<input type="hidden" name="RelayState" value="{}" />"#,
-                rs
+                escape_html(rs)
             )
         })
         .unwrap_or_default();
@@ -250,7 +294,7 @@ fn build_saml_post_form(assertion_xml: &str, relay_state: Option<&str>) -> Strin
     <noscript>
         <p><strong>Note:</strong> Your browser does not support JavaScript, please click Submit to continue.</p>
     </noscript>
-    <form method="post" action="{{{{ACS_URL}}}}">
+    <form method="post" action="{}">
         <input type="hidden" name="SAMLResponse" value="{}" />
         {}
         <noscript>
@@ -259,7 +303,9 @@ fn build_saml_post_form(assertion_xml: &str, relay_state: Option<&str>) -> Strin
     </form>
 </body>
 </html>"#,
-        encoded_assertion, relay_state_field
+        escape_html(acs_url),
+        encoded_assertion,
+        relay_state_field
     )
 }
 
@@ -267,7 +313,10 @@ fn build_saml_post_form(assertion_xml: &str, relay_state: Option<&str>) -> Strin
 fn send_saml_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_saml_response".to_string(),
-        description: "Send a SAML response with authentication assertion to the Service Provider"
+        description: "Send a SAML response with authentication assertion to the Service Provider. \
+                      NetGet base64-encodes the XML into an auto-submitting HTTP-POST form for \
+                      you — provide plain XML, never base64. Nothing is signed: if the SP \
+                      requires a signed assertion it will reject this."
             .to_string(),
         parameters: vec![
             Parameter {
@@ -279,15 +328,27 @@ fn send_saml_response_action() -> ActionDefinition {
                 required: true,
             },
             Parameter {
+                name: "acs_url".to_string(),
+                type_hint: "string".to_string(),
+                description: "The SP's AssertionConsumerService URL that the generated form posts \
+                              to. Usually the AssertionConsumerServiceURL of the AuthnRequest, or \
+                              the SP's configured ACS endpoint."
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
                 name: "relay_state".to_string(),
                 type_hint: "string".to_string(),
-                description: "Optional RelayState parameter to maintain SP state".to_string(),
+                description: "Optional RelayState parameter to maintain SP state. Echo back the \
+                              RelayState the SP sent."
+                    .to_string(),
                 required: false,
             },
         ],
         example: json!({
             "type": "send_saml_response",
             "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
+            "acs_url": "http://localhost:8081/acs",
             "relay_state": "original-sp-url"
         }),
         log_template: Some(
@@ -366,9 +427,19 @@ pub static SAML_IDP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_saml_response",
             "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
+            "acs_url": "http://localhost:8081/acs",
             "relay_state": "original-sp-url"
         }),
     )
+    .with_alternative_example(json!({
+        "type": "send_metadata",
+        "metadata_xml": "<EntityDescriptor entityID=\"http://localhost:8080\">...</EntityDescriptor>"
+    }))
+    .with_alternative_example(json!({
+        "type": "send_error_response",
+        "error_message": "Unknown service provider",
+        "status_code": 403
+    }))
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} SAML {method} {path} ({duration_ms}ms)")

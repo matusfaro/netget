@@ -28,6 +28,46 @@ use crate::server::SamlIdpProtocol;
 use crate::state::app_state::AppState;
 use actions::SAML_IDP_REQUEST_EVENT;
 
+/// Build a response from parts that came from the model, without ever panicking.
+///
+/// `status`, and every response header, arrive as model output (`send_error_response` even
+/// documents `status_code` as a parameter). The previous code did
+/// `Response::builder().status(status as u16)…body(..).unwrap()`, so a `status_code` of
+/// 1000 — or a header value containing CR/LF — panicked inside the connection task instead
+/// of answering. Local copy of `http_common::handler::build_safe_response`, which the
+/// `saml-idp` feature cannot reach because `http_common` is gated on `feature = "http"`.
+fn build_safe_response(
+    status: u16,
+    headers: impl IntoIterator<Item = (String, String)>,
+    body: String,
+) -> Response<Full<Bytes>> {
+    let status_code = StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!("SAML IDP: invalid HTTP status {status}, sending 500 instead");
+        StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    let mut builder = Response::builder().status(status_code);
+    for (name, value) in headers {
+        match (
+            hyper::header::HeaderName::from_bytes(name.as_bytes()),
+            hyper::header::HeaderValue::from_str(&value),
+        ) {
+            (Ok(n), Ok(v)) => builder = builder.header(n, v),
+            _ => warn!("SAML IDP: dropping invalid response header {name:?}"),
+        }
+    }
+
+    builder
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|e| {
+            error!("SAML IDP: failed to build response ({e}), sending bare 500");
+            let mut fallback =
+                Response::new(Full::new(Bytes::from_static(b"Internal Server Error")));
+            *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            fallback
+        })
+}
+
 /// SAML IDP server that delegates authentication and assertion generation to LLM
 pub struct SamlIdpServer;
 
@@ -196,10 +236,11 @@ async fn handle_saml_idp_request(
         Ok(collected) => collected.to_bytes().to_vec(),
         Err(e) => {
             error!("Failed to read SAML IDP request body: {}", e);
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from("Failed to read request body")))
-                .unwrap());
+            return Ok(build_safe_response(
+                400,
+                [],
+                "Failed to read request body".to_string(),
+            ));
         }
     };
 
@@ -260,10 +301,7 @@ async fn handle_saml_idp_request(
         Ok(result) => {
             if result.protocol_results.is_empty() {
                 warn!("LLM returned no actions for SAML IDP request");
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Full::new(Bytes::from("No response generated")))
-                    .unwrap()
+                build_safe_response(500, [], "No response generated".to_string())
             } else {
                 // Parse HTTP response from protocol results
                 use crate::llm::actions::protocol_trait::ActionResult;
@@ -298,21 +336,12 @@ async fn handle_saml_idp_request(
                     }
                 }
 
-                let mut response = Response::builder().status(status_code);
-                for (name, value) in response_headers {
-                    response = response.header(name, value);
-                }
-                response
-                    .body(Full::new(Bytes::from(response_body)))
-                    .unwrap()
+                build_safe_response(status_code, response_headers, response_body)
             }
         }
         Err(e) => {
             error!("LLM error for SAML IDP request: {}", e);
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from(format!("LLM error: {}", e))))
-                .unwrap()
+            build_safe_response(500, [], format!("LLM error: {}", e))
         }
     };
 

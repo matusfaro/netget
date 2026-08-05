@@ -1,269 +1,131 @@
-# SAML Identity Provider (IDP) Implementation
+# saml_idp — SAML 2.0 Identity Provider simulator
 
-## Overview
+Serves the IDP side of the SAML 2.0 Web Browser SSO profile over hyper HTTP/1.1 and asks the
+model what to answer. `DevelopmentState::Experimental`, group `Authentication`, keywords
+`saml idp` / `saml identity provider` / `identity provider` / `idp` / `saml-idp`. Feature
+`saml-idp = []` — no dependencies beyond what the binary already links.
 
-SAML IDP implements a SAML 2.0 Identity Provider that authenticates users and generates signed SAML assertions. This is
-an Experimental-status implementation where the LLM controls all authentication decisions, user attributes, and
-assertion generation.
+**Read this first: there is no signing key in this protocol.** The model writes the assertion
+XML and NetGet only base64-encodes it into the HTTP-POST form. An assertion carries a
+`<ds:Signature>` only if the model invents one, and an invented signature will not verify
+against anything. Inbound `AuthnRequest` signatures are not checked either, there is no replay
+protection, and no user exists. A real SP configured to require signed assertions — which is
+most of them — will reject what this produces. Use it to exercise SPs that accept unsigned
+assertions, and as a honeypot.
 
-**Protocol Compliance**: SAML 2.0 Web Browser SSO Profile
-**Transport**: HTTP/1.1 over TCP
-**Status**: Experimental - LLM-controlled authentication and assertion generation
+The `description()` used to read "generates signed SAML assertions". It does not, and now says
+so; the same claim must not come back into `metadata()`, the docs or the action descriptions.
 
-## Library Choices
+## Files
 
-### HTTP Implementation
+| File | Contents |
+|---|---|
+| `mod.rs` | `SamlIdpServer::spawn_with_llm_actions`, `handle_saml_idp_request`, `build_safe_response` |
+| `actions.rs` | `SamlIdpProtocol` (`Protocol` + `Server`), three sync actions, `build_saml_post_form`, `escape_html`, `SAML_IDP_REQUEST_EVENT` |
 
-- **hyper v1.5** - HTTP/1.1 server with async/await support
-- **http-body-util** - Request body collection
-- **tokio** - Async runtime
+No `startup_params`: `get_startup_parameters()` is the empty default, so `StartupParams` rejects
+any key a caller passes. The entity ID, endpoints and attribute policy all come from the
+instruction.
 
-**Rationale**: SAML uses HTTP as transport layer. Hyper provides robust HTTP server capabilities. No external SAML
-library needed since LLM generates assertions.
+## One event, three actions
 
-### No SAML Library
+`saml_idp_request` fires for every request, carrying `method`, `path`, `query`, `headers`,
+`body` and `client_ip`. There is no routing: `/sso`, `/SingleSignOnService`, `/metadata` and
+anything else all arrive the same way and the model decides from `path`.
 
-- **Manual assertion generation** - LLM generates SAML assertion XML
-- **Manual metadata generation** - LLM generates EntityDescriptor XML
-- **No XML signing** - Signatures can be added by LLM if needed
+Bindings: HTTP-Redirect puts the `AuthnRequest` in `query`, HTTP-POST puts it in `body`. Both
+reach the model as text — it is the model's job to base64-decode and read the request if the
+scenario needs it.
 
-**Rationale**: The `samael` crate (0.0.19) is work-in-progress and may constrain LLM flexibility. Manual XML generation
-allows full LLM control over assertion structure, attributes, and signing.
+| Action | Produces |
+|---|---|
+| `send_saml_response` | `200 text/html` — an auto-submitting HTTP-POST form carrying the assertion |
+| `send_metadata` | `200 application/samlmetadata+xml` |
+| `send_error_response` | model-chosen status (default 403), an HTML error page |
 
-## Architecture Decisions
+The event's `.with_actions(...)` holds all three real definitions. That list — not
+`get_sync_actions()` — is what `call_llm` advertises to the model.
 
-### 1. LLM-Controlled Authentication
+Executors return `ActionResult::Output` holding `{"status", "headers", "body"}`, which
+`handle_saml_idp_request` merges into the response.
 
-**Design Philosophy**: All authentication decisions and user attributes are determined by the LLM based on user
-instructions.
+## `acs_url` is required, and used to be missing entirely
 
-**Control Points**:
+`send_saml_response` takes `assertion_xml`, **`acs_url`** and optional `relay_state`.
 
-- Authentication logic (username/password validation, MFA, etc.)
-- User attribute mapping (email, roles, groups)
-- SAML assertion structure and content
-- Session management
-- Error responses
+`acs_url` is new and required. The generated form's action attribute was previously the literal
+string `{{ACS_URL}}` — nothing ever substituted it, and the action had no parameter that could
+have. Every assertion this IDP produced was posted by the browser to a relative path named
+`{{ACS_URL}}` and reached no SP at all: the protocol's central operation did not work. Pass the
+`AssertionConsumerServiceURL` from the AuthnRequest, or the SP's configured ACS endpoint.
 
-**Benefits**:
+## Base64 is ours, not the model's
 
-- Flexible authentication rules
-- Dynamic attribute mapping
-- Testing/demonstration scenarios
-- Honeypot mode
-- Custom authentication flows
+The model supplies **plain assertion XML**. `build_saml_post_form` base64-encodes it into the
+`SAMLResponse` form field. Base64 on the wire is what SAML specifies, but the project rule
+against handing models encoded blobs still applies to the action parameters — do not add a
+parameter that asks for base64, and do not accept pre-encoded XML.
 
-### 2. HTTP-Based Request Handling
+## HTML escaping
 
-**Request Flow**:
+`escape_html` covers `& < > " '` and is applied to `acs_url`, `relay_state` and
+`error_message`. All three are model output derived from an untrusted request; unescaped, a `"`
+broke out of the surrounding attribute and injected markup into a page the browser renders and
+auto-submits. `RelayState` is the sharp one, because it is normally echoed straight back from
+whatever the SP sent.
 
-1. Accept HTTP connection
-2. Parse HTTP request (method, path, query, body)
-3. Create `SAML_IDP_REQUEST_EVENT` with request details
-4. Call LLM with event
-5. Execute action result (send response)
+The base64 `SAMLResponse` field is safe by construction (the alphabet excludes `"` and `<`).
 
-**Supported Paths**:
+## Nothing here may panic
 
-- `/sso` or `/SingleSignOnService` - SSO endpoint (receives AuthnRequest)
-- `/metadata` - IDP metadata endpoint
-- Custom paths (LLM-defined)
+`build_safe_response` is the only place a `Response` is built: an out-of-range status becomes
+500 and a header hyper rejects is dropped with a warning.
 
-**HTTP Bindings**:
+`send_error_response` documents `status_code` as a model-supplied parameter, and the old code
+did `Response::builder().status(status as u16)…body(..).unwrap()`, so `status_code: 1000`
+panicked inside the connection task instead of answering. Local copy of
+`http_common::handler::build_safe_response`, which the `saml-idp` feature cannot reach because
+`http_common` is gated on `feature = "http"`.
 
-- **HTTP-Redirect**: AuthnRequest in query parameter (GET)
-- **HTTP-POST**: AuthnRequest in form body (POST)
+## Storage
 
-### 3. Action-Based Response System
+None, per the project rule. No sessions, no user directory, no issued-assertion log. If a
+scenario needs continuity, the model keeps it in server memory or the instruction states a
+rule.
 
-**Sync Actions** (requires network context):
+## Not implemented
 
-- `send_saml_response` - Send SAML assertion to SP
-- `send_metadata` - Send IDP metadata XML
-- `send_error_response` - Return authentication error
+XML signing and signature verification, certificate/key management, SingleLogout, artifact
+binding, encrypted assertions, MFA, replay protection, and TLS.
 
-**Async Actions** (user-triggered):
+## Examples
 
-- None currently (IDP is request-response)
-
-**Action Execution**:
-
-- LLM returns action with assertion_xml or metadata_xml
-- Action handler builds HTTP response
-- For assertions: HTTP-POST form with auto-submit
-- Response sent to client
-
-### 4. SAML Assertion Structure
-
-**LLM Responsibility**: Generate complete SAML assertion XML including:
-
-- `<saml:Assertion>` - Root element with ID, IssueInstant
-- `<saml:Issuer>` - IDP entity ID
-- `<saml:Subject>` - User identifier (NameID)
-- `<saml:Conditions>` - Validity period (NotBefore, NotOnOrAfter)
-- `<saml:AuthnStatement>` - Authentication method and time
-- `<saml:AttributeStatement>` - User attributes (email, roles, etc.)
-- `<ds:Signature>` - Optional XML signature (can be added by LLM)
-
-**Example Assertion** (simplified):
-
-```xml
-<saml:Assertion ID="_abc123" IssueInstant="2025-01-01T00:00:00Z">
-  <saml:Issuer>https://idp.example.com</saml:Issuer>
-  <saml:Subject>
-    <saml:NameID>testuser</saml:NameID>
-  </saml:Subject>
-  <saml:Conditions NotBefore="2025-01-01T00:00:00Z" NotOnOrAfter="2025-01-01T01:00:00Z"/>
-  <saml:AuthnStatement AuthnInstant="2025-01-01T00:00:00Z"/>
-  <saml:AttributeStatement>
-    <saml:Attribute Name="email">
-      <saml:AttributeValue>test@example.com</saml:AttributeValue>
-    </saml:Attribute>
-  </saml:AttributeStatement>
-</saml:Assertion>
-```
-
-### 5. HTTP-POST Binding
-
-**Auto-Submit Form**: When LLM sends SAML response, the server generates an HTML form with:
-
-- Hidden field `SAMLResponse` - Base64-encoded assertion XML
-- Hidden field `RelayState` - Optional state parameter
-- Form action - SP Assertion Consumer Service (ACS) URL
-- JavaScript auto-submit on page load
-
-**User Experience**: Browser automatically redirects to SP with assertion.
-
-### 6. Connection Management
-
-**HTTP Keep-Alive**: Each request uses a new HTTP connection (hyper default).
-
-**Connection Tracking**:
-
-- Connections tracked in AppState with connection_id
-- Bytes sent/received tracked per request
-- Recent requests stored in ProtocolConnectionInfo::SamlIdp
-
-**Dual Logging**:
-
-- All logs to tracing macros (debug!, info!, etc.)
-- Status updates sent via status_tx channel
-- Request summaries at DEBUG level
-- Full payloads at TRACE level
-
-## LLM Integration
-
-**Event Type**: `SAML_IDP_REQUEST_EVENT`
-
-**Event Data**:
-
-```json
-{
-  "method": "GET",
-  "path": "/sso",
-  "query": "SAMLRequest=...",
-  "headers": [["User-Agent", "Mozilla/5.0"]],
-  "body": null,
-  "client_ip": "127.0.0.1"
-}
-```
-
-**LLM Prompt Context**:
-
-- Available actions: send_saml_response, send_metadata, send_error_response
-- Path information (SSO vs metadata)
-- Client IP (for logging/filtering)
-- Request parameters (SAMLRequest, RelayState)
-
-**Response Actions**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_saml_response",
-      "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
-      "relay_state": "original-sp-url"
-    }
-  ]
-}
-```
-
-**Scripting**: Possible - cache LLM-generated assertions for known requests.
-
-## Limitations
-
-### Not Implemented
-
-1. **XML Signature Verification** - AuthnRequest signatures not verified
-2. **XML Signature Generation** - Assertions not cryptographically signed (LLM can add fake signatures)
-3. **Certificate Management** - No key generation or storage
-4. **Metadata Refresh** - No automatic metadata generation
-5. **Multi-Factor Authentication** - No built-in MFA support
-6. **Session Management** - No persistent sessions
-7. **Logout Support** - No SingleLogoutService endpoint
-8. **Artifact Binding** - Only HTTP-Redirect and HTTP-POST supported
-
-### Current Capabilities
-
-- Serve SAML assertions via LLM
-- Serve IDP metadata via LLM
-- HTTP-Redirect and HTTP-POST bindings
-- Flexible attribute mapping
-- Custom authentication logic
-- Error responses
-
-### Known Issues
-
-- No cryptographic signing (assertions not tamper-proof)
-- No AuthnRequest validation
-- No replay attack prevention
-- LLM must generate well-formed XML
-
-## Example Prompts
-
-### Start a simple IDP
-
-```
+```text
 Start a SAML Identity Provider on port 8080.
-When clients request /sso, authenticate all users as 'testuser' with email 'test@example.com'.
-When clients request /metadata, return a basic EntityDescriptor with SSO endpoint at http://localhost:8080/sso.
+On /metadata return an EntityDescriptor with entityID http://localhost:8080 and an
+HTTP-POST SSO endpoint at http://localhost:8080/sso.
+On /sso authenticate everyone as 'testuser' with email test@example.com, issue an
+assertion valid for one hour, and post it to http://localhost:8081/acs.
 ```
 
-### IDP with attribute mapping
+Deterministic equivalent — no LLM call per request:
 
-```
-Start a SAML IDP on port 8080.
-For user 'alice', return attributes: email=alice@example.com, role=admin.
-For user 'bob', return attributes: email=bob@example.com, role=user.
-For any other user, return an authentication error.
+```json
+"event_handlers": [{"event_pattern": "saml_idp_request", "handler": {"type": "static",
+  "actions": [{"type": "send_saml_response",
+    "assertion_xml": "<saml:Assertion xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\"><saml:Subject><saml:NameID>testuser</saml:NameID></saml:Subject></saml:Assertion>",
+    "acs_url": "http://localhost:8081/acs"}]}}]
 ```
 
-### IDP with custom assertions
+## Tests
 
-```
-Start a SAML IDP on port 8080.
-Generate SAML assertions with:
-- Issuer: https://myidp.example.com
-- Validity: 1 hour
-- AuthnContext: urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport
-Include attributes: email, displayName, memberOf
-```
+**There is no `tests/server/saml_idp/` directory.** This protocol has no test coverage of any
+kind — no E2E suite, no mock expectations. Adding one means creating the directory, the
+`e2e_test.rs`, its `CLAUDE.md`, and a `pub mod saml_idp;` line in `tests/server/mod.rs` (a test
+directory not declared there is silently never compiled).
+
+Pairs naturally with `saml_sp` on another port: point `acs_url` at the SP's `/acs`.
 
 ## References
 
-- [SAML 2.0 Specification](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
-- [SAML 2.0 Web Browser SSO Profile](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)
-- [SAML 2.0 Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf)
-- [Okta SAML Guide](https://developer.okta.com/docs/concepts/saml/)
-
-## Implementation Statistics
-
-| Module       | Lines of Code | Purpose                                 |
-|--------------|---------------|-----------------------------------------|
-| `mod.rs`     | ~270          | HTTP session handling, request parsing  |
-| `actions.rs` | ~330          | Action definitions, response generation |
-| **Total**    | **~600**      | Basic IDP implementation                |
-
-This is an Experimental implementation focused on LLM-controlled authentication and assertion generation for testing,
-demonstration, and honeypot scenarios. Production use requires cryptographic signing and certificate management.
+SAML 2.0 Core, SAML 2.0 Web Browser SSO Profile, SAML 2.0 Bindings (OASIS).
