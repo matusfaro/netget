@@ -1,10 +1,11 @@
 //! Mercurial HTTP protocol actions
 //!
-//! Defines the action system for Mercurial protocol server.
-//! The LLM controls repository discovery, capabilities, branch information, and bundle generation.
+//! Defines the action system for the Mercurial protocol server. The LLM controls
+//! capabilities, heads, branch maps and bookmark namespaces; the server owns the wire
+//! framing and refuses to advertise anything it cannot honour.
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
-use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition};
+use crate::llm::actions::{ActionDefinition, Parameter};
 use crate::protocol::log_template::LogTemplate;
 use crate::protocol::{EventType, SpawnContext};
 use crate::state::app_state::AppState;
@@ -13,6 +14,54 @@ use serde_json::{json, Value};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::LazyLock;
+use tracing::warn;
+
+/// Wire commands this server actually implements.
+///
+/// `capabilities` is answered by the LLM, but a capability the server cannot honour is worse
+/// than a missing one: advertising `unbundle` invites a push that gets a 403, and advertising
+/// `bundle2` makes the client negotiate a format this server never speaks. Anything outside
+/// this list is dropped with a warning.
+const SUPPORTED_CAPABILITIES: &[&str] = &["branchmap", "getbundle", "listkeys"];
+
+/// Filter a model-supplied capability list down to what this server can honour.
+///
+/// Always returns at least the supported set, so a client is never left with nothing to do.
+pub fn sanitize_capabilities(requested: &[String]) -> Vec<String> {
+    for capability in requested {
+        let base = capability.split('=').next().unwrap_or(capability);
+        if !SUPPORTED_CAPABILITIES.contains(&base) {
+            warn!(
+                "Mercurial: dropping advertised capability {:?} - this server does not implement it",
+                capability
+            );
+        }
+    }
+    SUPPORTED_CAPABILITIES
+        .iter()
+        .map(|c| c.to_string())
+        .collect()
+}
+
+/// Build an empty bundle1 changegroup.
+///
+/// `HG10UN` (uncompressed) followed by three empty chunk groups: no changesets, no manifests,
+/// no filelogs. This is a well-formed bundle that a client accepts, and it produces an empty
+/// repository. Generating a *non-empty* changegroup would mean emitting revlog deltas and
+/// manifest entries, which is not implemented - see `CLAUDE.md`.
+pub fn empty_bundle(bundle_type: &str) -> Vec<u8> {
+    if bundle_type != "HG10UN" {
+        warn!(
+            "Mercurial: bundle_type {:?} is not supported, sending HG10UN (uncompressed)",
+            bundle_type
+        );
+    }
+    let mut bundle = b"HG10UN".to_vec();
+    // End-of-changesets, end-of-manifests, end-of-files.
+    bundle.extend_from_slice(&[0u8; 12]);
+    bundle
+}
 
 /// Mercurial HTTP protocol implementation
 #[derive(Clone)]
@@ -29,273 +78,64 @@ impl MercurialProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for MercurialProtocol {
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "default_branch".to_string(),
-                type_hint: "string".to_string(),
-                description: "Default branch name for repositories (e.g., 'default', 'stable')"
-                    .to_string(),
-                required: false,
-                example: json!("default"),
-            },
-            ParameterDefinition {
-                name: "allow_push".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether to allow push operations (true/false)".to_string(),
-                required: false,
-                example: json!(false),
-            },
-        ]
-    }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "create_hg_repository".to_string(),
-                description: "Create a new virtual Mercurial repository".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "name".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Repository name (e.g., 'my-project')".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "description".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Repository description".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "default_branch".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Default branch name".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "create_hg_repository",
-                    "name": "my-project",
-                    "description": "My Mercurial project",
-                    "default_branch": "default"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("Mercurial repository '{name}' created")
-                        .with_debug(
-                            "Mercurial create repository: name={name}, branch={default_branch}",
-                        ),
-                ),
-            },
-            ActionDefinition {
-                name: "delete_hg_repository".to_string(),
-                description: "Delete a virtual Mercurial repository".to_string(),
-                parameters: vec![Parameter {
-                    name: "name".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Repository name to delete".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "delete_hg_repository",
-                    "name": "old-project"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("Mercurial repository '{name}' deleted")
-                        .with_debug("Mercurial delete repository: name={name}"),
-                ),
-            },
-            ActionDefinition {
-                name: "list_hg_repositories".to_string(),
-                description: "List all virtual Mercurial repositories".to_string(),
-                parameters: vec![],
-                example: json!({"type": "list_hg_repositories"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("Mercurial repositories listed")
-                        .with_debug("Mercurial list repositories"),
-                ),
-            },
-        ]
+        // None. create_hg_repository / delete_hg_repository / list_hg_repositories used to be
+        // advertised here; there is no repository store for them to act on (protocols must not
+        // implement storage) and their results were discarded, so calling them did nothing.
+        Vec::new()
     }
+
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
-            ActionDefinition {
-                name: "hg_capabilities".to_string(),
-                description: "Advertise Mercurial server capabilities".to_string(),
-                parameters: vec![Parameter {
-                    name: "capabilities".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Array of capability strings".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "hg_capabilities",
-                    "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup", "pushkey", "unbundle=HG10GZ,HG10BZ,HG10UN"]
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> {capabilities_len} capabilities")
-                        .with_debug("Mercurial capabilities: {capabilities}"),
-                ),
-            },
-            ActionDefinition {
-                name: "hg_heads".to_string(),
-                description: "Provide repository heads (changeset node IDs)".to_string(),
-                parameters: vec![Parameter {
-                    name: "heads".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Array of 40-character hex node IDs".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "hg_heads",
-                    "heads": ["abc123...", "def456..."]
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> {heads_len} heads")
-                        .with_debug("Mercurial heads: {heads_len} nodes"),
-                ),
-            },
-            ActionDefinition {
-                name: "hg_branchmap".to_string(),
-                description: "Provide branch name to node ID mappings".to_string(),
-                parameters: vec![Parameter {
-                    name: "branches".to_string(),
-                    type_hint: "object".to_string(),
-                    description: "Object mapping branch names to arrays of node IDs".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "hg_branchmap",
-                    "branches": {
-                        "default": ["abc123..."],
-                        "stable": ["def456..."]
-                    }
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> branchmap sent")
-                        .with_debug("Mercurial branchmap: {branches}"),
-                ),
-            },
-            ActionDefinition {
-                name: "hg_listkeys".to_string(),
-                description: "Provide key-value mappings for a namespace (bookmarks, tags, etc.)"
-                    .to_string(),
-                parameters: vec![Parameter {
-                    name: "keys".to_string(),
-                    type_hint: "object".to_string(),
-                    description: "Object mapping keys to values".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "hg_listkeys",
-                    "keys": {
-                        "master": "abc123...",
-                        "develop": "def456..."
-                    }
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> listkeys sent")
-                        .with_debug("Mercurial listkeys: {keys}"),
-                ),
-            },
-            ActionDefinition {
-                name: "hg_send_bundle".to_string(),
-                description: "Send a Mercurial bundle (changegroup) for clone/pull operations"
-                    .to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "bundle_type".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Bundle type: HG10UN, HG10GZ, HG10BZ".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "bundle_data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Bundle data (empty string for empty bundle)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "hg_send_bundle",
-                    "bundle_type": "HG10UN",
-                    "bundle_data": ""
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> bundle sent ({bundle_type})")
-                        .with_debug(
-                            "Mercurial send bundle: type={bundle_type}, size={bundle_data_len}B",
-                        ),
-                ),
-            },
-            ActionDefinition {
-                name: "hg_error".to_string(),
-                description: "Send a Mercurial protocol error response".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Error message".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "code".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "HTTP status code".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "hg_error",
-                    "message": "Repository not found",
-                    "code": 404
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> error {code}: {message}")
-                        .with_debug("Mercurial error: code={code}, message={message}"),
-                ),
-            },
+            hg_capabilities_action(),
+            hg_heads_action(),
+            hg_branchmap_action(),
+            hg_listkeys_action(),
+            hg_send_bundle_action(),
+            hg_error_action(),
         ]
     }
+
     fn protocol_name(&self) -> &'static str {
         "Mercurial"
     }
+
     fn get_event_types(&self) -> Vec<EventType> {
-        // Event types define the triggers for LLM calls or script execution
-        // For now, returning empty - Mercurial protocol uses simple request-response pattern
-        vec![]
+        get_mercurial_event_types()
     }
+
     fn stack_name(&self) -> &'static str {
         "ETH>IP>TCP>HTTP>Mercurial"
     }
+
     fn keywords(&self) -> Vec<&'static str> {
         vec!["mercurial", "hg", "hg server", "via mercurial", "via hg"]
     }
+
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual Mercurial HTTP wire protocol, hyper")
-            .llm_control("Capabilities, heads, branches, bookmarks, bundle generation")
-            .e2e_testing("hg clone / hg pull")
-            .notes("Read-only (clone/pull), virtual repositories, no push")
+            .implementation("Hand-rolled Mercurial HTTP wire protocol v1 on hyper")
+            .llm_control("Capabilities, heads, branch map, bookmark namespaces")
+            .e2e_testing("HTTP-level requests; not verified against the hg client")
+            .notes(
+                "Read-only and metadata-only: getbundle always answers with an EMPTY \
+                 changegroup, so a clone produces an empty repository. No changegroup \
+                 generation, no bundle2, no batch/known/lookup commands, no push.",
+            )
             .build()
     }
+
     fn description(&self) -> &'static str {
         "Mercurial HTTP server for serving virtual repositories"
     }
+
     fn example_prompt(&self) -> &'static str {
-        "listen on port 8000 via mercurial. Create repository 'hello-world' with default branch."
+        "listen on port 8000 via mercurial. Serve repository 'hello-world' with one head on the default branch."
     }
+
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
@@ -309,7 +149,7 @@ impl Protocol for MercurialProtocol {
                 "type": "open_server",
                 "port": 8000,
                 "base_stack": "mercurial",
-                "instruction": "Mercurial HTTP server. Serve virtual repository 'hello-world' with default branch. Return capabilities, heads, and branchmap for clone/pull operations."
+                "instruction": "Mercurial HTTP server for repository 'hello-world'. Answer hg_heads with one 40-character hex node, hg_branchmap with a 'default' branch pointing at it, and hg_listkeys with no bookmarks."
             }),
             // Script mode
             json!({
@@ -317,11 +157,11 @@ impl Protocol for MercurialProtocol {
                 "port": 8000,
                 "base_stack": "mercurial",
                 "event_handlers": [{
-                    "event_pattern": "hg_command",
+                    "event_pattern": "hg_heads",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": "respond([{'type': 'hg_heads', 'heads': ['1234567890abcdef1234567890abcdef12345678']}])"
                     }
                 }]
             }),
@@ -330,16 +170,22 @@ impl Protocol for MercurialProtocol {
                 "type": "open_server",
                 "port": 8000,
                 "base_stack": "mercurial",
-                "event_handlers": [{
-                    "event_pattern": "hg_command",
-                    "handler": {
-                        "type": "static",
-                        "actions": [{
-                            "type": "hg_capabilities",
-                            "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "known", "lookup"]
-                        }]
+                "event_handlers": [
+                    {
+                        "event_pattern": "hg_capabilities",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{"type": "hg_capabilities", "capabilities": ["branchmap", "getbundle", "listkeys"]}]
+                        }
+                    },
+                    {
+                        "event_pattern": "hg_heads",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{"type": "hg_heads", "heads": ["1234567890abcdef1234567890abcdef12345678"]}]
+                        }
                     }
-                }]
+                ]
             }),
         )
     }
@@ -354,12 +200,12 @@ impl Server for MercurialProtocol {
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
-                false,
                 ctx.server_id,
             )
             .await
         })
     }
+
     fn execute_action(&self, action: Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -367,43 +213,6 @@ impl Server for MercurialProtocol {
             .ok_or_else(|| anyhow!("Missing action type"))?;
 
         match action_type {
-            "create_hg_repository" => {
-                let name = action
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing repository name"))?;
-
-                // For now, just log the action
-                // In a real implementation, we'd store repository metadata in AppState
-                Ok(ActionResult::Custom {
-                    name: "hg_repository_created".to_string(),
-                    data: serde_json::json!({
-                        "repository": name,
-                        "success": true
-                    }),
-                })
-            }
-            "delete_hg_repository" => {
-                let name = action
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing repository name"))?;
-
-                Ok(ActionResult::Custom {
-                    name: "hg_repository_deleted".to_string(),
-                    data: serde_json::json!({
-                        "repository": name,
-                        "success": true
-                    }),
-                })
-            }
-            "list_hg_repositories" => Ok(ActionResult::Custom {
-                name: "hg_repositories_listed".to_string(),
-                data: serde_json::json!({
-                    "repositories": [],
-                    "success": true
-                }),
-            }),
             "hg_capabilities" => {
                 let capabilities = action
                     .get("capabilities")
@@ -411,9 +220,7 @@ impl Server for MercurialProtocol {
 
                 Ok(ActionResult::Custom {
                     name: "hg_capabilities_response".to_string(),
-                    data: serde_json::json!({
-                        "capabilities": capabilities
-                    }),
+                    data: json!({ "capabilities": capabilities }),
                 })
             }
             "hg_heads" => {
@@ -423,9 +230,7 @@ impl Server for MercurialProtocol {
 
                 Ok(ActionResult::Custom {
                     name: "hg_heads_response".to_string(),
-                    data: serde_json::json!({
-                        "heads": heads
-                    }),
+                    data: json!({ "heads": heads }),
                 })
             }
             "hg_branchmap" => {
@@ -435,9 +240,7 @@ impl Server for MercurialProtocol {
 
                 Ok(ActionResult::Custom {
                     name: "hg_branchmap_response".to_string(),
-                    data: serde_json::json!({
-                        "branches": branches
-                    }),
+                    data: json!({ "branches": branches }),
                 })
             }
             "hg_listkeys" => {
@@ -445,25 +248,18 @@ impl Server for MercurialProtocol {
 
                 Ok(ActionResult::Custom {
                     name: "hg_listkeys_response".to_string(),
-                    data: serde_json::json!({
-                        "keys": keys
-                    }),
+                    data: json!({ "keys": keys }),
                 })
             }
-            "hg_send_bundle" => {
-                let bundle_data = action
-                    .get("bundle_data")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing bundle_data"))?;
-
-                Ok(ActionResult::Custom {
-                    name: "hg_bundle_response".to_string(),
-                    data: serde_json::json!({
-                        "bundle_type": action.get("bundle_type").and_then(|v| v.as_str()).unwrap_or("HG10UN"),
-                        "bundle_data": bundle_data
-                    }),
-                })
-            }
+            "hg_send_bundle" => Ok(ActionResult::Custom {
+                name: "hg_bundle_response".to_string(),
+                data: json!({
+                    "bundle_type": action
+                        .get("bundle_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("HG10UN")
+                }),
+            }),
             "hg_error" => {
                 let message = action
                     .get("message")
@@ -473,13 +269,332 @@ impl Server for MercurialProtocol {
 
                 Ok(ActionResult::Custom {
                     name: "hg_error_response".to_string(),
-                    data: serde_json::json!({
-                        "message": message,
-                        "code": code
-                    }),
+                    data: json!({ "message": message, "code": code }),
                 })
             }
-            _ => Err(anyhow!("Unknown action type: {}", action_type)),
+            _ => Err(anyhow!("Unknown Mercurial action: {}", action_type)),
         }
     }
+}
+
+fn hg_capabilities_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "hg_capabilities".to_string(),
+        description: format!(
+            "Advertise Mercurial server capabilities. Only {} are implemented; anything else \
+             is dropped before it reaches the client.",
+            SUPPORTED_CAPABILITIES.join(", ")
+        ),
+        parameters: vec![Parameter {
+            name: "capabilities".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of capability strings".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "hg_capabilities",
+            "capabilities": ["branchmap", "getbundle", "listkeys"]
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {capabilities_len} capabilities")
+                .with_debug("Mercurial capabilities: {capabilities}"),
+        ),
+    }
+}
+
+fn hg_heads_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "hg_heads".to_string(),
+        description: "Provide repository heads (changeset node IDs)".to_string(),
+        parameters: vec![Parameter {
+            name: "heads".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of node IDs, each exactly 40 hex characters. Entries that are not \
+                 40-character hex are dropped, so write them out in full rather than as \
+                 'abc123...'. An empty array means an empty repository."
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "hg_heads",
+            "heads": ["1234567890abcdef1234567890abcdef12345678"]
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> {heads_len} heads")
+                .with_debug("Mercurial heads: {heads_len} nodes"),
+        ),
+    }
+}
+
+fn hg_branchmap_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "hg_branchmap".to_string(),
+        description: "Provide branch name to node ID mappings".to_string(),
+        parameters: vec![Parameter {
+            name: "branches".to_string(),
+            type_hint: "object".to_string(),
+            description: "Object mapping branch names to arrays of 40-character hex node IDs"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "hg_branchmap",
+            "branches": {
+                "default": ["1234567890abcdef1234567890abcdef12345678"]
+            }
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> branchmap sent")
+                .with_debug("Mercurial branchmap: {branches}"),
+        ),
+    }
+}
+
+fn hg_listkeys_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "hg_listkeys".to_string(),
+        description: "Provide key-value mappings for a namespace (bookmarks, tags, etc.)"
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "keys".to_string(),
+            type_hint: "object".to_string(),
+            description: "Object mapping keys to values; use {} for an empty namespace".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "hg_listkeys",
+            "keys": {
+                "@": "1234567890abcdef1234567890abcdef12345678"
+            }
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> listkeys sent")
+                .with_debug("Mercurial listkeys: {keys}"),
+        ),
+    }
+}
+
+fn hg_send_bundle_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "hg_send_bundle".to_string(),
+        description:
+            "Answer a getbundle request. NOTE: this server can only send an EMPTY changegroup - \
+             a clone against it produces a repository with no changesets. There is no parameter \
+             for changeset data because generating a Mercurial changegroup (revlog deltas, \
+             manifests, filelogs) is not implemented."
+                .to_string(),
+        parameters: vec![Parameter {
+            name: "bundle_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Bundle format; only \"HG10UN\" (uncompressed) is supported".to_string(),
+            required: false,
+        }],
+        example: json!({
+            "type": "hg_send_bundle",
+            "bundle_type": "HG10UN"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> empty bundle ({bundle_type})")
+                .with_debug("Mercurial send bundle: type={bundle_type}"),
+        ),
+    }
+}
+
+fn hg_error_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "hg_error".to_string(),
+        description: "Refuse the request with an HTTP error (e.g. repository not found)"
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error message".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "code".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status code (default: 500)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "hg_error",
+            "message": "Repository not found",
+            "code": 404
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> error {code}: {message}")
+                .with_debug("Mercurial error: code={code}, message={message}"),
+        ),
+    }
+}
+
+fn repository_parameter() -> Parameter {
+    Parameter {
+        name: "repository".to_string(),
+        type_hint: "string".to_string(),
+        description: "Repository name taken from the URL path".to_string(),
+        required: true,
+    }
+}
+
+fn client_ip_parameter() -> Parameter {
+    Parameter {
+        name: "client_ip".to_string(),
+        type_hint: "string".to_string(),
+        description: "Address of the connecting client".to_string(),
+        required: false,
+    }
+}
+
+fn error_alternative() -> Value {
+    json!({
+        "type": "hg_error",
+        "message": "Repository not found",
+        "code": 404
+    })
+}
+
+/// `GET /?cmd=capabilities` - the first request of any hg operation.
+pub static HG_CAPABILITIES_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "hg_capabilities",
+        "Mercurial client asked which capabilities the server supports",
+        json!({
+            "type": "hg_capabilities",
+            "capabilities": ["branchmap", "getbundle", "listkeys"]
+        }),
+    )
+    .with_parameters(vec![repository_parameter(), client_ip_parameter()])
+    .with_actions(vec![hg_capabilities_action(), hg_error_action()])
+    .with_alternative_example(error_alternative())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} hg capabilities {repository}")
+            .with_debug("Mercurial capabilities: repository={repository}"),
+    )
+});
+
+/// `GET /?cmd=heads`
+pub static HG_HEADS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "hg_heads",
+        "Mercurial client asked for the repository heads",
+        json!({
+            "type": "hg_heads",
+            "heads": ["1234567890abcdef1234567890abcdef12345678"]
+        }),
+    )
+    .with_parameters(vec![repository_parameter(), client_ip_parameter()])
+    .with_actions(vec![hg_heads_action(), hg_error_action()])
+    .with_alternative_example(error_alternative())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} hg heads {repository}")
+            .with_debug("Mercurial heads: repository={repository}"),
+    )
+});
+
+/// `GET /?cmd=branchmap`
+pub static HG_BRANCHMAP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "hg_branchmap",
+        "Mercurial client asked for the branch map",
+        json!({
+            "type": "hg_branchmap",
+            "branches": {"default": ["1234567890abcdef1234567890abcdef12345678"]}
+        }),
+    )
+    .with_parameters(vec![repository_parameter(), client_ip_parameter()])
+    .with_actions(vec![hg_branchmap_action(), hg_error_action()])
+    .with_alternative_example(error_alternative())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} hg branchmap {repository}")
+            .with_debug("Mercurial branchmap: repository={repository}"),
+    )
+});
+
+/// `GET /?cmd=listkeys&namespace=...`
+pub static HG_LISTKEYS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "hg_listkeys",
+        "Mercurial client asked for the keys of a namespace (bookmarks, tags, phases)",
+        json!({
+            "type": "hg_listkeys",
+            "keys": {}
+        }),
+    )
+    .with_parameters(vec![
+        repository_parameter(),
+        Parameter {
+            name: "namespace".to_string(),
+            type_hint: "string".to_string(),
+            description: "Namespace requested: bookmarks, tags, phases or namespaces".to_string(),
+            required: true,
+        },
+        client_ip_parameter(),
+    ])
+    .with_actions(vec![hg_listkeys_action(), hg_error_action()])
+    .with_alternative_example(error_alternative())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} hg listkeys {namespace}")
+            .with_debug("Mercurial listkeys: repository={repository}, namespace={namespace}"),
+    )
+});
+
+/// `GET|POST /?cmd=getbundle`
+pub static HG_GETBUNDLE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "hg_getbundle",
+        "Mercurial client asked for changesets (clone or pull). Only an empty changegroup can \
+         be sent.",
+        json!({
+            "type": "hg_send_bundle",
+            "bundle_type": "HG10UN"
+        }),
+    )
+    .with_parameters(vec![
+        repository_parameter(),
+        Parameter {
+            name: "heads".to_string(),
+            type_hint: "string".to_string(),
+            description: "Heads the client asked for, as sent in the request arguments".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "common".to_string(),
+            type_hint: "string".to_string(),
+            description: "Nodes the client already has, as sent in the request arguments"
+                .to_string(),
+            required: false,
+        },
+        client_ip_parameter(),
+    ])
+    .with_actions(vec![hg_send_bundle_action(), hg_error_action()])
+    .with_alternative_example(error_alternative())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} hg getbundle {repository}")
+            .with_debug("Mercurial getbundle: repository={repository}, heads={heads}"),
+    )
+});
+
+pub fn get_mercurial_event_types() -> Vec<EventType> {
+    vec![
+        HG_CAPABILITIES_EVENT.clone(),
+        HG_HEADS_EVENT.clone(),
+        HG_BRANCHMAP_EVENT.clone(),
+        HG_LISTKEYS_EVENT.clone(),
+        HG_GETBUNDLE_EVENT.clone(),
+    ]
 }

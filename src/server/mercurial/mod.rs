@@ -1,17 +1,19 @@
 //! Mercurial HTTP server implementation
 //!
-//! Implements Mercurial's HTTP wire protocol for serving virtual repositories.
-//! The LLM controls repository content, capabilities, and bundle generation.
+//! Implements a subset of Mercurial's HTTP wire protocol (version 1) for serving virtual
+//! repositories. The LLM controls capabilities, heads, branches and bookmarks.
 //!
 //! Protocol URLs:
 //! - GET  /?cmd=capabilities       - Server capabilities
 //! - GET  /?cmd=heads              - Repository heads
 //! - GET  /?cmd=branchmap          - Branch mappings
 //! - GET  /?cmd=listkeys           - List keys (bookmarks, tags, etc.)
-//! - POST /?cmd=getbundle          - Bundle retrieval (clone/pull)
-//! - POST /?cmd=unbundle           - Bundle upload (push)
+//! - POST /?cmd=getbundle          - Changegroup retrieval (clone/pull)
 //!
-//! Read-only implementation (no push support yet).
+//! Read-only: there is no `unbundle` endpoint, so pushes are refused.
+//!
+//! Every command raises an [`Event`] through [`call_llm`], so script and static
+//! `event_handlers` work here as they do for every other protocol.
 
 pub mod actions;
 
@@ -29,14 +31,34 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
-use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
-use crate::server::mercurial::actions::MercurialProtocol;
+use crate::server::mercurial::actions::{
+    empty_bundle, MercurialProtocol, HG_BRANCHMAP_EVENT, HG_CAPABILITIES_EVENT, HG_GETBUNDLE_EVENT,
+    HG_HEADS_EVENT, HG_LISTKEYS_EVENT,
+};
 use crate::state::app_state::AppState;
 use crate::{console_error, console_info};
+
+/// Null node ID: Mercurial's "no changeset" sentinel, and the correct `heads` answer for an
+/// empty repository.
+const NULL_NODE: &str = "0000000000000000000000000000000000000000";
+
+/// Shared per-request context.
+struct RequestContext {
+    llm_client: OllamaClient,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+    protocol: Arc<MercurialProtocol>,
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
+    remote_addr: SocketAddr,
+}
 
 /// Mercurial HTTP server
 pub struct MercurialServer;
@@ -48,7 +70,6 @@ impl MercurialServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
         let listener =
@@ -113,19 +134,16 @@ impl MercurialServer {
 
                             // Create a service that handles Mercurial HTTP requests with LLM
                             let service = service_fn(move |req: Request<Incoming>| {
-                                let llm_clone = llm_client_clone.clone();
-                                let state_clone = app_state_for_service.clone();
-                                let status_clone = status_for_service.clone();
-                                let protocol_clone = protocol_clone.clone();
-                                handle_mercurial_request(
-                                    req,
+                                let ctx = RequestContext {
+                                    llm_client: llm_client_clone.clone(),
+                                    app_state: app_state_for_service.clone(),
+                                    status_tx: status_for_service.clone(),
+                                    protocol: protocol_clone.clone(),
                                     connection_id,
-                                    llm_clone,
-                                    state_clone,
-                                    status_clone,
-                                    protocol_clone,
                                     server_id,
-                                )
+                                    remote_addr,
+                                };
+                                handle_mercurial_request(req, ctx)
                             });
 
                             // Serve HTTP/1 on this connection
@@ -170,149 +188,83 @@ impl MercurialServer {
 /// Handle a Mercurial HTTP request
 async fn handle_mercurial_request(
     req: Request<Incoming>,
-    connection_id: ConnectionId,
-    llm_client: OllamaClient,
-    app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
-    protocol: Arc<MercurialProtocol>,
-    server_id: crate::state::ServerId,
+    ctx: RequestContext,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path = uri.path();
-    let query = uri.query().unwrap_or("");
+    let path = uri.path().to_string();
+    let query = uri.query().unwrap_or("").to_string();
 
     debug!("Mercurial request: {} {}?{}", method, path, query);
-    let _ = status_tx.send(format!("[DEBUG] Mercurial {} {}?{}", method, path, query));
+    let _ = ctx
+        .status_tx
+        .send(format!("[DEBUG] Mercurial {} {}?{}", method, path, query));
 
     // Parse query parameters
-    let params: HashMap<String, String> = parse_query_params(query);
+    let params: HashMap<String, String> = parse_query_params(&query);
     let cmd = params.get("cmd").map(|s| s.as_str()).unwrap_or("");
 
     // Parse repository name from path (e.g., /repo-name or /)
-    let repo_name = parse_repo_name(path);
+    let repo = parse_repo_name(&path);
 
     // Track repository access
-    if let Some(ref name) = repo_name {
-        if let Err(e) = track_repo_access(&app_state, server_id, connection_id, name).await {
-            error!("Failed to track repository access: {}", e);
-        }
-    }
+    track_repo_access(&ctx.app_state, ctx.server_id, ctx.connection_id, &repo).await;
 
-    // Route based on command
     match cmd {
-        "capabilities" => {
-            handle_capabilities(
-                repo_name,
-                &llm_client,
-                &app_state,
-                &status_tx,
-                &protocol,
-                connection_id,
-                server_id,
-            )
-            .await
-        }
-        "heads" => {
-            handle_heads(
-                repo_name,
-                &llm_client,
-                &app_state,
-                &status_tx,
-                &protocol,
-                connection_id,
-                server_id,
-            )
-            .await
-        }
-        "branchmap" => {
-            handle_branchmap(
-                repo_name,
-                &llm_client,
-                &app_state,
-                &status_tx,
-                &protocol,
-                connection_id,
-                server_id,
-            )
-            .await
-        }
+        "capabilities" => Ok(handle_capabilities(&ctx, &repo).await),
+        "heads" => Ok(handle_heads(&ctx, &repo).await),
+        "branchmap" => Ok(handle_branchmap(&ctx, &repo).await),
         "listkeys" => {
             let namespace = params
                 .get("namespace")
                 .map(|s| s.as_str())
                 .unwrap_or("bookmarks");
-            handle_listkeys(
-                repo_name,
-                namespace,
-                &llm_client,
-                &app_state,
-                &status_tx,
-                &protocol,
-                connection_id,
-                server_id,
-            )
-            .await
+            Ok(handle_listkeys(&ctx, &repo, namespace).await)
         }
-        "getbundle" if method == Method::POST => {
-            // Read request body
-            let body_bytes = match req.collect().await {
-                Ok(collected) => collected.to_bytes(),
+        "getbundle" => {
+            // hg sends getbundle as a GET with the arguments in the query string, or as a
+            // POST when they are too long for a URL. Accept both.
+            let body_len = match req.collect().await {
+                Ok(collected) => collected.to_bytes().len(),
                 Err(e) => {
-                    console_error!(status_tx, "Failed to read request body: {}", e);
+                    console_error!(ctx.status_tx, "Failed to read request body: {}", e);
                     return Ok(build_error_response(
                         StatusCode::BAD_REQUEST,
                         "Failed to read request body",
                     ));
                 }
             };
-
-            trace!(
-                "Mercurial getbundle request body ({} bytes)",
-                body_bytes.len()
-            );
-            let _ = status_tx.send(format!(
-                "[TRACE] Mercurial getbundle request: {} bytes",
-                body_bytes.len()
-            ));
-
-            handle_getbundle(
-                repo_name,
-                body_bytes,
-                &llm_client,
-                &app_state,
-                &status_tx,
-                &protocol,
-                connection_id,
-                server_id,
-            )
-            .await
+            if body_len > 0 {
+                record_bytes_received(&ctx, body_len).await;
+                trace!("Mercurial getbundle request body ({} bytes)", body_len);
+            }
+            Ok(handle_getbundle(&ctx, &repo, &params).await)
         }
-        "" => {
-            // No command - could be a root request
-            Ok(build_text_response(
-                StatusCode::OK,
-                "Mercurial HTTP Server - NetGet\nSpecify ?cmd=capabilities to see server capabilities",
+        "unbundle" | "pushkey" => Ok(build_error_response(
+            StatusCode::FORBIDDEN,
+            "Push is not supported: this server serves clone/pull only",
+        )),
+        "" if method == Method::GET => Ok(build_text_response(
+            StatusCode::OK,
+            "Mercurial HTTP Server - NetGet\nSpecify ?cmd=capabilities to see server capabilities",
+        )),
+        other => {
+            debug!("Mercurial: unimplemented command {:?}", other);
+            Ok(build_error_response(
+                StatusCode::NOT_FOUND,
+                &format!("Unknown or unimplemented command: {}", other),
             ))
         }
-        _ => Ok(build_error_response(
-            StatusCode::NOT_FOUND,
-            &format!("Unknown command: {}", cmd),
-        )),
     }
 }
 
 /// Parse repository name from URL path
-fn parse_repo_name(path: &str) -> Option<String> {
-    // Path formats:
-    // /repo-name
-    // / (root repository)
+fn parse_repo_name(path: &str) -> String {
     let trimmed = path.trim_matches('/');
-
     if trimmed.is_empty() {
-        Some("default".to_string())
+        "default".to_string()
     } else {
-        Some(trimmed.to_string())
+        trimmed.to_string()
     }
 }
 
@@ -334,782 +286,289 @@ fn parse_query_params(query: &str) -> HashMap<String, String> {
 }
 
 /// Handle ?cmd=capabilities
-async fn handle_capabilities(
-    repo_name: Option<String>,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<MercurialProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
-
-    debug!("Mercurial capabilities for repository: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Mercurial capabilities for repo: {}", repo));
-
-    // Get sync actions for capabilities response
-    let sync_actions = protocol.get_sync_actions();
-
-    // Build prompt for LLM
-    let model = app_state.get_ollama_model().await;
-
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
-    }
-
-    let prompt = format!(
-        r#"A Mercurial client is requesting capabilities for repository "{}".
-
-{}
-
-You MUST respond with ONE of these actions:
-1. "hg_capabilities" - Provide server capabilities
-2. "hg_error" - If repository doesn't exist or access denied
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "hg_capabilities",
-      "capabilities": ["batch", "branchmap", "getbundle", "httpheader=1024", "httppostargs", "known", "lookup", "pushkey", "unbundle=HG10GZ,HG10BZ,HG10UN"]
-    }}
-  ]
-}}
-
-Provide standard Mercurial capabilities for this repository."#,
-        repo, actions_desc
+async fn handle_capabilities(ctx: &RequestContext, repo: &str) -> Response<Full<Bytes>> {
+    let event = Event::new(
+        &HG_CAPABILITIES_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
 
-    debug!("Calling LLM for Mercurial capabilities: {}", repo);
-    let _ = status_tx.send("[DEBUG] Calling LLM for capabilities".to_string());
-
-    // Call LLM with retry
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
-    };
-    let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            console_error!(status_tx, "LLM call failed: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
-            ));
-        }
+    let data = match resolve(ctx, &event, "hg_capabilities_response").await {
+        Ok(data) => data,
+        Err(response) => return response,
     };
 
-    trace!("LLM response for Mercurial capabilities: {}", llm_response);
-    let _ = status_tx.send("[TRACE] LLM response:".to_string());
-    for line in crate::llm::format_indented_dimmed_lines(&llm_response, 8) {
-        let _ = status_tx.send(format!("[TRACE] {}", line));
-    }
-
-    // Parse LLM response as actions
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
-        Err(e) => {
-            console_error!(status_tx, "Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
-            ));
-        }
-    };
-
-    let actions = actions_result
-        .get("actions")
+    let requested: Vec<String> = data
+        .get("capabilities")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| {
-            error!("LLM response missing 'actions' array");
-            build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            )
-        });
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let actions = match actions {
-        Ok(a) => a,
-        Err(response) => return Ok(response),
-    };
-
-    // Execute the first action
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "hg_capabilities_response" => {
-                // Build capabilities response (newline-separated)
-                let capabilities = data
-                    .get("capabilities")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                    .unwrap_or_else(|| "batch\nbranchmap\ngetbundle\nknown\nlookup".to_string());
-
-                Ok(build_text_response(StatusCode::OK, &capabilities))
-            }
-            Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Error");
-                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
-                    StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                    message,
-                ))
-            }
-            Ok(_) => {
-                error!("LLM returned unexpected action type");
-                Ok(build_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Unexpected action type",
-                ))
-            }
-            Err(e) => {
-                error!("Failed to execute action: {}", e);
-                Ok(build_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("Action execution failed: {}", e),
-                ))
-            }
-        }
-    } else {
-        error!("No actions in LLM response");
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
-    }
+    let capabilities = actions::sanitize_capabilities(&requested);
+    let body = capabilities.join("\n");
+    let _ = ctx.status_tx.send(format!(
+        "→ hg capabilities for '{}': {}",
+        repo,
+        capabilities.join(" ")
+    ));
+    text_response(ctx, &body).await
 }
 
 /// Handle ?cmd=heads
-async fn handle_heads(
-    repo_name: Option<String>,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<MercurialProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
-
-    debug!("Mercurial heads for repository: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Mercurial heads for repo: {}", repo));
-
-    let sync_actions = protocol.get_sync_actions();
-    let model = app_state.get_ollama_model().await;
-
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
-    }
-
-    let prompt = format!(
-        r#"A Mercurial client is requesting repository heads for "{}".
-
-{}
-
-You MUST respond with ONE of these actions:
-1. "hg_heads" - Provide list of head node IDs (40-char hex strings)
-2. "hg_error" - If repository doesn't exist
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "hg_heads",
-      "heads": ["a1b2c3d4e5f6789012345678901234567890abcd", "1234567890abcdef1234567890abcdef12345678"]
-    }}
-  ]
-}}
-
-Node IDs should be 40-character hex strings (can be fake for virtual repos).
-Provide repository heads."#,
-        repo, actions_desc
+async fn handle_heads(ctx: &RequestContext, repo: &str) -> Response<Full<Bytes>> {
+    let event = Event::new(
+        &HG_HEADS_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
 
-    debug!("Calling LLM for Mercurial heads: {}", repo);
-    let _ = status_tx.send("[DEBUG] Calling LLM for heads".to_string());
-
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
-    };
-    let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            console_error!(status_tx, "LLM call failed: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
-            ));
-        }
+    let data = match resolve(ctx, &event, "hg_heads_response").await {
+        Ok(data) => data,
+        Err(response) => return response,
     };
 
-    trace!("LLM response for Mercurial heads: {}", llm_response);
-    let _ = status_tx.send("[TRACE] LLM response:".to_string());
-    for line in crate::llm::format_indented_dimmed_lines(&llm_response, 8) {
-        let _ = status_tx.send(format!("[TRACE] {}", line));
-    }
-
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
-            ));
-        }
-    };
-
-    let actions = match actions_result.get("actions").and_then(|v| v.as_array()) {
-        Some(a) => a,
-        None => {
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            ))
-        }
-    };
-
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "hg_heads_response" => {
-                let heads = data
-                    .get("heads")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                    .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
-
-                Ok(build_text_response(StatusCode::OK, &heads))
-            }
-            Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Error");
-                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
-                    StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                    message,
-                ))
-            }
-            Ok(_) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unexpected action type",
-            )),
-            Err(e) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Action execution failed: {}", e),
-            )),
-        }
+    let heads = node_list(data.get("heads"));
+    let body = if heads.is_empty() {
+        NULL_NODE.to_string()
     } else {
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
-    }
+        heads.join(" ")
+    };
+
+    let _ = ctx
+        .status_tx
+        .send(format!("→ hg heads for '{}': {}", repo, body));
+    text_response(ctx, &body).await
 }
 
 /// Handle ?cmd=branchmap
-async fn handle_branchmap(
-    repo_name: Option<String>,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<MercurialProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
-
-    debug!("Mercurial branchmap for repository: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Mercurial branchmap for repo: {}", repo));
-
-    let sync_actions = protocol.get_sync_actions();
-    let model = app_state.get_ollama_model().await;
-
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
-    }
-
-    let prompt = format!(
-        r#"A Mercurial client is requesting branch mappings for repository "{}".
-
-{}
-
-You MUST respond with ONE of these actions:
-1. "hg_branchmap" - Provide branch name to node ID mappings
-2. "hg_error" - If repository doesn't exist
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "hg_branchmap",
-      "branches": {{
-        "default": ["abc123..."],
-        "stable": ["def456..."]
-      }}
-    }}
-  ]
-}}
-
-Provide branch mappings for this repository."#,
-        repo, actions_desc
+async fn handle_branchmap(ctx: &RequestContext, repo: &str) -> Response<Full<Bytes>> {
+    let event = Event::new(
+        &HG_BRANCHMAP_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
 
-    debug!("Calling LLM for Mercurial branchmap: {}", repo);
-    let _ = status_tx.send("[DEBUG] Calling LLM for branchmap".to_string());
-
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
-    };
-    let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            error!("LLM call failed: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
-            ));
-        }
+    let data = match resolve(ctx, &event, "hg_branchmap_response").await {
+        Ok(data) => data,
+        Err(response) => return response,
     };
 
-    trace!("LLM response for Mercurial branchmap: {}", llm_response);
-
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
-            ));
-        }
-    };
-
-    let actions = match actions_result.get("actions").and_then(|v| v.as_array()) {
-        Some(a) => a,
-        None => {
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            ))
-        }
-    };
-
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "hg_branchmap_response" => {
-                let branches = data.get("branches").and_then(|v| v.as_object());
-                let mut response_text = String::new();
-
-                if let Some(branches_obj) = branches {
-                    for (branch_name, nodes) in branches_obj {
-                        if let Some(nodes_arr) = nodes.as_array() {
-                            let nodes_str = nodes_arr
-                                .iter()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            response_text.push_str(&format!("{} {}\n", branch_name, nodes_str));
-                        }
-                    }
-                } else {
-                    response_text =
-                        "default 0000000000000000000000000000000000000000\n".to_string();
-                }
-
-                Ok(build_text_response(StatusCode::OK, &response_text))
+    // Format: one line per branch, "<branch> <node> <node> ...".
+    let mut body = String::new();
+    if let Some(branches) = data.get("branches").and_then(|v| v.as_object()) {
+        for (branch, nodes) in branches {
+            let nodes = node_list(Some(nodes));
+            if nodes.is_empty() {
+                continue;
             }
-            Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Error");
-                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
-                    StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                    message,
-                ))
-            }
-            Ok(_) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unexpected action type",
-            )),
-            Err(e) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Action execution failed: {}", e),
-            )),
+            body.push_str(&format!("{} {}\n", branch, nodes.join(" ")));
         }
-    } else {
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
     }
+
+    text_response(ctx, &body).await
 }
 
 /// Handle ?cmd=listkeys&namespace=...
 async fn handle_listkeys(
-    repo_name: Option<String>,
+    ctx: &RequestContext,
+    repo: &str,
     namespace: &str,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<MercurialProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
-
-    debug!(
-        "Mercurial listkeys for repository: {}, namespace: {}",
-        repo, namespace
+) -> Response<Full<Bytes>> {
+    let event = Event::new(
+        &HG_LISTKEYS_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "namespace": namespace,
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] Mercurial listkeys for repo: {}, namespace: {}",
-        repo, namespace
-    ));
 
-    let sync_actions = protocol.get_sync_actions();
-    let model = app_state.get_ollama_model().await;
+    let data = match resolve(ctx, &event, "hg_listkeys_response").await {
+        Ok(data) => data,
+        Err(response) => return response,
+    };
 
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
+    // Format: "<key>\t<value>\n" per entry.
+    let mut body = String::new();
+    if let Some(keys) = data.get("keys").and_then(|v| v.as_object()) {
+        for (key, value) in keys {
+            let value = match value.as_str() {
+                Some(v) => v.to_string(),
+                None => value.to_string(),
+            };
+            body.push_str(&format!("{}\t{}\n", key, value));
+        }
     }
 
-    let prompt = format!(
-        r#"A Mercurial client is requesting listkeys for repository "{}" in namespace "{}".
+    text_response(ctx, &body).await
+}
 
-{}
-
-You MUST respond with ONE of these actions:
-1. "hg_listkeys" - Provide key-value mappings for the namespace
-2. "hg_error" - If repository doesn't exist
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "hg_listkeys",
-      "keys": {{
-        "master": "abc123...",
-        "develop": "def456..."
-      }}
-    }}
-  ]
-}}
-
-Common namespaces:
-- bookmarks: Repository bookmarks
-- tags: Repository tags
-- phases: Phase information
-- namespaces: Available namespaces
-
-Provide key-value mappings for this namespace."#,
-        repo, namespace, actions_desc
+/// Handle ?cmd=getbundle
+async fn handle_getbundle(
+    ctx: &RequestContext,
+    repo: &str,
+    params: &HashMap<String, String>,
+) -> Response<Full<Bytes>> {
+    let event = Event::new(
+        &HG_GETBUNDLE_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "heads": params.get("heads").cloned().unwrap_or_default(),
+            "common": params.get("common").cloned().unwrap_or_default(),
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
+
+    let data = match resolve(ctx, &event, "hg_bundle_response").await {
+        Ok(data) => data,
+        Err(response) => return response,
+    };
+
+    let bundle_type = data
+        .get("bundle_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("HG10UN");
+    let bundle = empty_bundle(bundle_type);
 
     debug!(
-        "Calling LLM for Mercurial listkeys: {}, {}",
-        repo, namespace
+        "Mercurial getbundle for '{}': sending empty {} changegroup ({} bytes)",
+        repo,
+        bundle_type,
+        bundle.len()
     );
-    let _ = status_tx.send("[DEBUG] Calling LLM for listkeys".to_string());
+    let _ = ctx.status_tx.send(format!(
+        "→ hg bundle for '{}': empty changegroup ({} bytes)",
+        repo,
+        bundle.len()
+    ));
 
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
-    };
-    let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
-        .await
+    record_bytes_sent(ctx, bundle.len()).await;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/mercurial-0.1")
+        .body(Full::new(Bytes::from(bundle)))
+        .expect("static header values are valid")
+}
+
+/// Raise the event and pick out the one protocol result this command needs.
+///
+/// `hg_error` is honoured for every command; anything else (no action, or an action for a
+/// different command) becomes a 500 with a log line naming the event.
+async fn resolve(
+    ctx: &RequestContext,
+    event: &Event,
+    expected: &str,
+) -> Result<Value, Response<Full<Bytes>>> {
+    let execution_result = match call_llm(
+        &ctx.llm_client,
+        &ctx.app_state,
+        ctx.server_id,
+        Some(ctx.connection_id),
+        event,
+        ctx.protocol.as_ref(),
+    )
+    .await
     {
-        Ok(response) => response,
+        Ok(result) => result,
         Err(e) => {
-            error!("LLM call failed: {}", e);
-            return Ok(build_error_response(
+            error!("Mercurial: handling '{}' failed: {:#}", event.id(), e);
+            let _ = ctx
+                .status_tx
+                .send(format!("✗ Mercurial LLM error on {}: {}", event.id(), e));
+            return Err(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
+                "Server could not answer this command",
             ));
         }
     };
 
-    trace!("LLM response for Mercurial listkeys: {}", llm_response);
+    for message in &execution_result.messages {
+        console_info!(ctx.status_tx, "{}", message);
+    }
 
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
-            ));
-        }
-    };
-
-    let actions = match actions_result.get("actions").and_then(|v| v.as_array()) {
-        Some(a) => a,
-        None => {
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            ))
-        }
-    };
-
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "hg_listkeys_response" => {
-                let keys = data.get("keys").and_then(|v| v.as_object());
-                let mut response_text = String::new();
-
-                if let Some(keys_obj) = keys {
-                    for (key, value) in keys_obj {
-                        if let Some(value_str) = value.as_str() {
-                            response_text.push_str(&format!("{}\t{}\n", key, value_str));
-                        }
-                    }
-                }
-
-                Ok(build_text_response(StatusCode::OK, &response_text))
-            }
-            Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
+    for result in execution_result.protocol_results {
+        match result {
+            ActionResult::Custom { name, data } if name == expected => return Ok(data),
+            ActionResult::Custom { name, data } if name == "hg_error_response" => {
                 let message = data
                     .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Error");
                 let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
+                return Err(build_error_response(
                     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     message,
-                ))
+                ));
             }
-            Ok(_) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unexpected action type",
-            )),
-            Err(e) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Action execution failed: {}", e),
-            )),
+            _ => {}
         }
+    }
+
+    warn!(
+        "Mercurial: '{}' produced no {} and no hg_error action",
+        event.id(),
+        expected
+    );
+    let _ = ctx.status_tx.send(format!(
+        "✗ Mercurial: no usable action for {} (expected {})",
+        event.id(),
+        expected
+    ));
+    Err(build_error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "No answer was provided for this command",
+    ))
+}
+
+/// Extract a list of node IDs from an action field, accepting an array or a
+/// whitespace-separated string, and dropping anything that is not a 40-character hex node.
+fn node_list(value: Option<&Value>) -> Vec<String> {
+    let mut nodes = Vec::new();
+    match value {
+        Some(Value::Array(items)) => {
+            for item in items {
+                if let Some(node) = item.as_str() {
+                    push_node(&mut nodes, node);
+                }
+            }
+        }
+        Some(Value::String(text)) => {
+            for node in text.split_whitespace() {
+                push_node(&mut nodes, node);
+            }
+        }
+        _ => {}
+    }
+    nodes
+}
+
+fn push_node(nodes: &mut Vec<String>, candidate: &str) {
+    let candidate = candidate.trim();
+    if candidate.len() == 40 && candidate.bytes().all(|b| b.is_ascii_hexdigit()) {
+        nodes.push(candidate.to_ascii_lowercase());
     } else {
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
+        // A model that answers "abc123..." would otherwise put an unparseable node on the
+        // wire and the client would fail with an opaque error.
+        warn!(
+            "Mercurial: dropping {:?}, which is not a 40-character hex node ID",
+            candidate
+        );
     }
 }
 
-/// Handle POST ?cmd=getbundle
-async fn handle_getbundle(
-    repo_name: Option<String>,
-    _body: Bytes,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<MercurialProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
-
-    debug!("Mercurial getbundle for repository: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Mercurial getbundle for repo: {}", repo));
-
-    let sync_actions = protocol.get_sync_actions();
-    let model = app_state.get_ollama_model().await;
-
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
-    }
-
-    let prompt = format!(
-        r#"A Mercurial client is requesting a bundle (changegroup) for repository "{}".
-
-{}
-
-You MUST respond with ONE of these actions:
-1. "hg_send_bundle" - Send bundle data (for clone/pull operations)
-2. "hg_error" - If repository doesn't exist or error occurred
-
-For MVP, you can send a minimal bundle or empty bundle. In production, this would contain
-the actual Mercurial changesets requested by the client.
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "hg_send_bundle",
-      "bundle_type": "HG10UN",
-      "bundle_data": ""
-    }}
-  ]
-}}
-
-bundle_type can be: HG10UN (uncompressed), HG10GZ (gzip), HG10BZ (bzip2)
-bundle_data should be empty string for an empty bundle, or actual bundle data.
-
-Generate a bundle response."#,
-        repo, actions_desc
-    );
-
-    debug!("Calling LLM for Mercurial getbundle: {}", repo);
-    let _ = status_tx.send("[DEBUG] Calling LLM for getbundle".to_string());
-
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
-    };
-    let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            error!("LLM call failed: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
-            ));
-        }
-    };
-
-    trace!("LLM response for Mercurial getbundle");
-
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
-            ));
-        }
-    };
-
-    let actions = match actions_result.get("actions").and_then(|v| v.as_array()) {
-        Some(a) => a,
-        None => {
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            ))
-        }
-    };
-
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "hg_bundle_response" => {
-                let bundle_data = data
-                    .get("bundle_data")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                // For now, return empty or minimal bundle
-                let bundle_bytes = if bundle_data.is_empty() {
-                    // Empty bundle
-                    vec![]
-                } else {
-                    // Could decode base64 here if LLM provided bundle data
-                    bundle_data.as_bytes().to_vec()
-                };
-
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("Content-Type", "application/mercurial-0.1")
-                    .body(Full::new(Bytes::from(bundle_bytes)))
-                    .unwrap())
-            }
-            Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Error");
-                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
-                    StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                    message,
-                ))
-            }
-            Ok(_) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unexpected action type",
-            )),
-            Err(e) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Action execution failed: {}", e),
-            )),
-        }
-    } else {
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
-    }
+async fn text_response(ctx: &RequestContext, body: &str) -> Response<Full<Bytes>> {
+    record_bytes_sent(ctx, body.len()).await;
+    build_text_response(StatusCode::OK, body)
 }
 
 /// Track repository access in connection state
@@ -1118,7 +577,7 @@ async fn track_repo_access(
     server_id: crate::state::ServerId,
     connection_id: ConnectionId,
     repo_name: &str,
-) -> anyhow::Result<()> {
+) {
     app_state
         .with_server_mut(server_id, |server| {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
@@ -1142,8 +601,32 @@ async fn track_repo_access(
             }
         })
         .await;
+}
 
-    Ok(())
+async fn record_bytes_sent(ctx: &RequestContext, len: usize) {
+    ctx.app_state
+        .update_connection_stats(
+            ctx.server_id,
+            ctx.connection_id,
+            None,
+            Some(len as u64),
+            None,
+            Some(1),
+        )
+        .await;
+}
+
+async fn record_bytes_received(ctx: &RequestContext, len: usize) {
+    ctx.app_state
+        .update_connection_stats(
+            ctx.server_id,
+            ctx.connection_id,
+            Some(len as u64),
+            None,
+            Some(1),
+            None,
+        )
+        .await;
 }
 
 /// Build an HTTP error response
@@ -1152,14 +635,14 @@ fn build_error_response(status: StatusCode, message: &str) -> Response<Full<Byte
         .status(status)
         .header("Content-Type", "text/plain")
         .body(Full::new(Bytes::from(format!("Error: {}\n", message))))
-        .unwrap()
+        .expect("static header values are valid")
 }
 
 /// Build a text response
 fn build_text_response(status: StatusCode, text: &str) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
-        .header("Content-Type", "text/plain")
+        .header("Content-Type", "application/mercurial-0.1")
         .body(Full::new(Bytes::from(text.to_string())))
-        .unwrap()
+        .expect("static header values are valid")
 }
