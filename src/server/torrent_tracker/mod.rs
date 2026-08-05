@@ -159,9 +159,20 @@ impl TorrentTrackerServer {
             console_trace!(status_tx, "BitTorrent Tracker request: {}", request_str);
         }
 
-        // Parse HTTP request
+        // Parse HTTP request. A malformed request used to propagate out of this function
+        // with `?`, so the connection closed without writing anything and the client saw
+        // an empty reply rather than an error.
         let request_str = String::from_utf8_lossy(&request_data);
-        let (request_type, request_params) = Self::parse_http_request(&request_str)?;
+        let (request_type, request_params) = match Self::parse_http_request(&request_str) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                console_error!(status_tx, "BitTorrent Tracker bad request: {}", e);
+                write_half
+                    .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await?;
+                return Ok(());
+            }
+        };
 
         console_debug!(
             status_tx,
@@ -173,7 +184,18 @@ impl TorrentTrackerServer {
         let event_type = match request_type.as_str() {
             "announce" => &actions::TRACKER_ANNOUNCE_REQUEST_EVENT,
             "scrape" => &actions::TRACKER_SCRAPE_REQUEST_EVENT,
-            _ => &actions::TRACKER_ANNOUNCE_REQUEST_EVENT, // Default to announce
+            // Anything that is neither /announce nor /scrape still reaches the announce
+            // handler, because a tracker has no other reply shape to offer. The event data
+            // carries `request_type` and `path` so a handler can tell the difference and
+            // answer with send_error_response instead.
+            other => {
+                tracing::warn!(
+                    "BitTorrent Tracker: unrecognised path type '{}', routing to \
+                     tracker_announce_request",
+                    other
+                );
+                &actions::TRACKER_ANNOUNCE_REQUEST_EVENT
+            }
         };
         let event = Event::new(event_type, serde_json::json!(request_params));
 
@@ -265,8 +287,19 @@ impl TorrentTrackerServer {
             "unknown"
         };
 
-        // Parse query parameters
+        // Parse query parameters.
+        //
+        // `request_type`, `path` and `compact` are always inserted: they are declared as
+        // event parameters, and a static handler referencing `{{event.compact}}` is a hard
+        // error if the field is missing, which it would be for any client that omits the
+        // query parameter.
         let mut params = HashMap::new();
+        params.insert(
+            "request_type".to_string(),
+            serde_json::json!(request_type.to_string()),
+        );
+        params.insert("path".to_string(), serde_json::json!(path.to_string()));
+        params.insert("compact".to_string(), serde_json::json!(0u64));
         if let Some(query_start) = path.find('?') {
             let query = &path[query_start + 1..];
             for param in query.split('&') {

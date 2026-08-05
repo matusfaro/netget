@@ -110,7 +110,8 @@ impl Protocol for TorrentTrackerProtocol {
                             "interval": 1800,
                             "complete": 10,
                             "incomplete": 5,
-                            "peers": []
+                            "compact": "{{event.compact}}",
+                            "peers": [{"ip": "127.0.0.1", "port": 51413}]
                         }]
                     }
                 }]
@@ -157,6 +158,23 @@ impl Server for TorrentTrackerProtocol {
     }
 }
 
+/// Interpret a JSON value as a BitTorrent "compact" flag.
+///
+/// Clients send `compact=1` in the query string, so the value reaching an action via
+/// `{{event.compact}}` is the number 1, not `true`. Accept both spellings (and the
+/// string forms a model is liable to produce) rather than silently falling back to the
+/// dictionary format that most clients reject.
+fn is_compact(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Number(n)) => n.as_u64().is_some_and(|n| n != 0),
+        Some(serde_json::Value::String(s)) => {
+            matches!(s.as_str(), "1" | "true" | "yes" | "on")
+        }
+        _ => false,
+    }
+}
+
 impl TorrentTrackerProtocol {
     fn execute_send_announce_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let interval = action
@@ -168,36 +186,63 @@ impl TorrentTrackerProtocol {
             .get("incomplete")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as i64;
+        let compact = is_compact(action.get("compact"));
 
-        let peers = action
+        let peer_entries = action
             .get("peers")
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|peer| {
-                        let peer_id = peer
-                            .get("peer_id")
-                            .and_then(|v| v.as_str())?
-                            .as_bytes()
-                            .to_vec();
-                        let ip = peer.get("ip").and_then(|v| v.as_str())?.to_string();
-                        let port = peer.get("port").and_then(|v| v.as_u64())? as i64;
+            .cloned()
+            .unwrap_or_default();
 
-                        let mut dict = std::collections::HashMap::new();
+        // BEP 23: `compact=1` replaces the list of dictionaries with a byte string of
+        // 6-byte entries (4-byte IPv4 + 2-byte big-endian port). Nearly every real client
+        // (transmission, libtorrent, aria2) asks for compact and several refuse the
+        // dictionary form outright, so honouring the flag is what makes this tracker
+        // usable by anything other than a hand-written test client.
+        let peers_value = if compact {
+            let mut bytes = Vec::with_capacity(peer_entries.len() * 6);
+            for peer in &peer_entries {
+                let Some(ip) = peer.get("ip").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(port) = peer.get("port").and_then(|v| v.as_u64()) else {
+                    continue;
+                };
+                let Ok(std::net::IpAddr::V4(addr)) = ip.parse::<std::net::IpAddr>() else {
+                    // IPv6 peers need BEP 7's separate `peers6` key; skip rather than
+                    // emit a malformed 6-byte entry.
+                    continue;
+                };
+                bytes.extend_from_slice(&addr.octets());
+                bytes.extend_from_slice(&(port as u16).to_be_bytes());
+            }
+            serde_bencode::value::Value::Bytes(bytes)
+        } else {
+            let peers = peer_entries
+                .iter()
+                .filter_map(|peer| {
+                    let ip = peer.get("ip").and_then(|v| v.as_str())?.to_string();
+                    let port = peer.get("port").and_then(|v| v.as_u64())? as i64;
+
+                    let mut dict = std::collections::HashMap::new();
+                    // `peer id` is optional in the dictionary model (BEP 3) and a model
+                    // that omits it should still get a well-formed peer entry.
+                    if let Some(peer_id) = peer.get("peer_id").and_then(|v| v.as_str()) {
                         dict.insert(
                             b"peer id".to_vec(),
-                            serde_bencode::value::Value::Bytes(peer_id),
+                            serde_bencode::value::Value::Bytes(peer_id.as_bytes().to_vec()),
                         );
-                        dict.insert(
-                            b"ip".to_vec(),
-                            serde_bencode::value::Value::Bytes(ip.into_bytes()),
-                        );
-                        dict.insert(b"port".to_vec(), serde_bencode::value::Value::Int(port));
-                        Some(serde_bencode::value::Value::Dict(dict))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+                    }
+                    dict.insert(
+                        b"ip".to_vec(),
+                        serde_bencode::value::Value::Bytes(ip.into_bytes()),
+                    );
+                    dict.insert(b"port".to_vec(), serde_bencode::value::Value::Int(port));
+                    Some(serde_bencode::value::Value::Dict(dict))
+                })
+                .collect::<Vec<_>>();
+            serde_bencode::value::Value::List(peers)
+        };
 
         let mut response_dict = std::collections::HashMap::new();
         response_dict.insert(
@@ -212,12 +257,12 @@ impl TorrentTrackerProtocol {
             b"incomplete".to_vec(),
             serde_bencode::value::Value::Int(incomplete),
         );
-        response_dict.insert(b"peers".to_vec(), serde_bencode::value::Value::List(peers));
+        response_dict.insert(b"peers".to_vec(), peers_value);
 
         let bencode_data =
             serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response_dict))?;
         let http_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             bencode_data.len()
         );
         let mut full_response = http_response.into_bytes();
@@ -227,42 +272,55 @@ impl TorrentTrackerProtocol {
     }
 
     fn execute_send_scrape_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let files = action
-            .get("files")
-            .and_then(|v| v.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(info_hash_hex, stats)| {
-                        let info_hash = hex::decode(info_hash_hex).ok()?;
-                        let complete =
-                            stats.get("complete").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
-                        let downloaded = stats
-                            .get("downloaded")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as i64;
-                        let incomplete = stats
-                            .get("incomplete")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as i64;
+        // `files` is documented and modelled two ways and both appear in the wild:
+        //   {"<info_hash hex>": {complete, downloaded, incomplete}, ...}
+        //   [{"info_hash": "<hex>", complete, downloaded, incomplete}, ...]
+        // The executor used to accept only the first, so the array form documented in
+        // CLAUDE.md (and used by the E2E test) silently produced an empty `files` dict.
+        let entries: Vec<(String, &serde_json::Value)> = match action.get("files") {
+            Some(serde_json::Value::Object(obj)) => {
+                obj.iter().map(|(k, v)| (k.clone(), v)).collect()
+            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|entry| {
+                    let hash = entry.get("info_hash").and_then(|v| v.as_str())?;
+                    Some((hash.to_string(), entry))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
 
-                        let mut stats_dict = std::collections::HashMap::new();
-                        stats_dict.insert(
-                            b"complete".to_vec(),
-                            serde_bencode::value::Value::Int(complete),
-                        );
-                        stats_dict.insert(
-                            b"downloaded".to_vec(),
-                            serde_bencode::value::Value::Int(downloaded),
-                        );
-                        stats_dict.insert(
-                            b"incomplete".to_vec(),
-                            serde_bencode::value::Value::Int(incomplete),
-                        );
-                        Some((info_hash, serde_bencode::value::Value::Dict(stats_dict)))
-                    })
-                    .collect::<std::collections::HashMap<_, _>>()
-            })
-            .unwrap_or_default();
+        let mut files = std::collections::HashMap::new();
+        for (info_hash_hex, stats) in entries {
+            let Ok(info_hash) = hex::decode(&info_hash_hex) else {
+                continue;
+            };
+            let complete = stats.get("complete").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
+            let downloaded = stats
+                .get("downloaded")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as i64;
+            let incomplete = stats
+                .get("incomplete")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as i64;
+
+            let mut stats_dict = std::collections::HashMap::new();
+            stats_dict.insert(
+                b"complete".to_vec(),
+                serde_bencode::value::Value::Int(complete),
+            );
+            stats_dict.insert(
+                b"downloaded".to_vec(),
+                serde_bencode::value::Value::Int(downloaded),
+            );
+            stats_dict.insert(
+                b"incomplete".to_vec(),
+                serde_bencode::value::Value::Int(incomplete),
+            );
+            files.insert(info_hash, serde_bencode::value::Value::Dict(stats_dict));
+        }
 
         let mut response_dict = std::collections::HashMap::new();
         response_dict.insert(b"files".to_vec(), serde_bencode::value::Value::Dict(files));
@@ -270,7 +328,7 @@ impl TorrentTrackerProtocol {
         let bencode_data =
             serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response_dict))?;
         let http_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             bencode_data.len()
         );
         let mut full_response = http_response.into_bytes();
@@ -280,8 +338,12 @@ impl TorrentTrackerProtocol {
     }
 
     fn execute_send_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // The action definition, CLAUDE.md and the E2E test all said `failure_reason`
+        // (matching the bencode key BEP 3 defines) while the executor read `error`, so
+        // every documented use produced the literal string "Unknown error". Accept both.
         let error_message = action
-            .get("error")
+            .get("failure_reason")
+            .or_else(|| action.get("error"))
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
 
@@ -294,7 +356,7 @@ impl TorrentTrackerProtocol {
         let bencode_data =
             serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response_dict))?;
         let http_response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             bencode_data.len()
         );
         let mut full_response = http_response.into_bytes();
@@ -304,12 +366,112 @@ impl TorrentTrackerProtocol {
     }
 }
 
+/// Fields every tracker request event carries.
+///
+/// `parse_http_request` guarantees `request_type`, `path` and `compact` are always
+/// present so that a static handler can reference `{{event.compact}}` without the
+/// interpolator failing on a client that omitted the query parameter.
+fn common_request_parameters() -> Vec<Parameter> {
+    vec![
+        Parameter {
+            name: "request_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "\"announce\", \"scrape\" or \"unknown\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request path including the query string".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "info_hash".to_string(),
+            type_hint: "string".to_string(),
+            description: "Torrent info hash, hex-encoded (40 chars). Echo it back as the \
+                          key of a scrape `files` entry."
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "compact".to_string(),
+            type_hint: "number".to_string(),
+            description: "1 if the client wants BEP 23 compact peers, 0 otherwise. \
+                          Always present; pass it straight through to the response action."
+                .to_string(),
+            required: true,
+        },
+    ]
+}
+
 pub static TRACKER_ANNOUNCE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    let mut parameters = common_request_parameters();
+    parameters.extend(vec![
+        Parameter {
+            name: "peer_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Announcing peer's ID, hex-encoded (40 chars)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "port".to_string(),
+            type_hint: "number".to_string(),
+            description: "Port the announcing peer listens on".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "uploaded".to_string(),
+            type_hint: "number".to_string(),
+            description: "Bytes uploaded so far".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "downloaded".to_string(),
+            type_hint: "number".to_string(),
+            description: "Bytes downloaded so far".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "left".to_string(),
+            type_hint: "number".to_string(),
+            description: "Bytes still needed. 0 means the peer is a seeder.".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "event".to_string(),
+            type_hint: "string".to_string(),
+            description: "\"started\", \"completed\", \"stopped\" or absent".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "numwant".to_string(),
+            type_hint: "number".to_string(),
+            description: "How many peers the client would like back".to_string(),
+            required: false,
+        },
+    ]);
+
     EventType::new(
         "tracker_announce_request",
-        "BitTorrent announce request",
-        json!({"type": "placeholder", "event_id": "tracker_announce_request"}),
+        "BitTorrent client announced itself and is asking for peers",
+        json!({
+            "type": "send_announce_response",
+            "interval": 1800,
+            "complete": 1,
+            "incomplete": 0,
+            "compact": "{{event.compact}}",
+            "peers": [{"ip": "127.0.0.1", "port": 51413}]
+        }),
     )
+    .with_parameters(parameters)
+    .with_actions(vec![
+        SEND_ANNOUNCE_RESPONSE_ACTION.clone(),
+        SEND_ERROR_RESPONSE_ACTION.clone(),
+    ])
+    .with_alternative_example(json!({
+        "type": "send_error_response",
+        "failure_reason": "This tracker does not serve that torrent"
+    }))
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} BT announce {event} ({duration_ms}ms)")
@@ -321,9 +483,19 @@ pub static TRACKER_ANNOUNCE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|
 pub static TRACKER_SCRAPE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tracker_scrape_request",
-        "BitTorrent scrape request",
-        json!({"type": "placeholder", "event_id": "tracker_scrape_request"}),
+        "BitTorrent client asked for torrent statistics",
+        json!({
+            "type": "send_scrape_response",
+            "files": {
+                "{{event.info_hash}}": {"complete": 1, "downloaded": 1, "incomplete": 0}
+            }
+        }),
     )
+    .with_parameters(common_request_parameters())
+    .with_actions(vec![
+        SEND_SCRAPE_RESPONSE_ACTION.clone(),
+        SEND_ERROR_RESPONSE_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} BT scrape ({duration_ms}ms)")
@@ -344,13 +516,37 @@ pub static SEND_ANNOUNCE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock:
                 required: false,
             },
             Parameter {
+                name: "complete".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of seeders (default: 0)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "incomplete".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of leechers (default: 0)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "compact".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Encode peers in BEP 23 compact form (4-byte IPv4 + 2-byte \
+                              port). Pass the request's own `compact` value through as \
+                              \"{{event.compact}}\"; most real clients require it. \
+                              Compact form carries no peer_id and IPv6 peers are dropped."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
                 name: "peers".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of peer objects with peer_id, ip, port".to_string(),
+                description: "Array of peer objects with ip and port (and optional \
+                              peer_id, used only in non-compact form)"
+                    .to_string(),
                 required: false,
             },
         ],
-        example: json!({"type": "send_announce_response", "interval": 1800, "complete": 10, "incomplete": 5, "peers": [{"peer_id": "-TR0001-xxxxxxxxxxxx", "ip": "192.168.1.100", "port": 51413}]}),
+        example: json!({"type": "send_announce_response", "interval": 1800, "complete": 10, "incomplete": 5, "compact": "{{event.compact}}", "peers": [{"peer_id": "-TR0001-xxxxxxxxxxxx", "ip": "192.168.1.100", "port": 51413}]}),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> BT announce: {peers_len} peers, interval={interval}s")
@@ -366,10 +562,14 @@ pub static SEND_SCRAPE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
         parameters: vec![Parameter {
             name: "files".to_string(),
             type_hint: "object".to_string(),
-            description: "Dictionary mapping info_hash to stats".to_string(),
+            description: "Either an object keyed by hex info_hash -> \
+                          {complete, downloaded, incomplete}, or an array of objects each \
+                          carrying an `info_hash` field plus those counts. Keys that are \
+                          not valid hex are dropped."
+                .to_string(),
             required: false,
         }],
-        example: json!({"type": "send_scrape_response", "files": {"aabbccdd": {"complete": 10, "downloaded": 100, "incomplete": 5}}}),
+        example: json!({"type": "send_scrape_response", "files": {"{{event.info_hash}}": {"complete": 10, "downloaded": 100, "incomplete": 5}}}),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> BT scrape: {files_len} torrents")
@@ -381,17 +581,19 @@ pub static SEND_SCRAPE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
 pub static SEND_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> =
     LazyLock::new(|| ActionDefinition {
         name: "send_error_response".to_string(),
-        description: "Send error response".to_string(),
+        description: "Refuse the request with a bencode `failure reason` (BEP 3). Clients \
+                      display this and stop announcing to this tracker."
+            .to_string(),
         parameters: vec![Parameter {
-            name: "error".to_string(),
+            name: "failure_reason".to_string(),
             type_hint: "string".to_string(),
-            description: "Error message".to_string(),
+            description: "Message shown to the client (alias: `error`)".to_string(),
             required: true,
         }],
-        example: json!({"type": "send_error_response", "error": "Torrent not found"}),
+        example: json!({"type": "send_error_response", "failure_reason": "Torrent not found"}),
         log_template: Some(
             LogTemplate::new()
-                .with_info("-> BT error: {error}")
-                .with_debug("BT tracker error: {error}"),
+                .with_info("-> BT error: {failure_reason}")
+                .with_debug("BT tracker error: {failure_reason}"),
         ),
     });

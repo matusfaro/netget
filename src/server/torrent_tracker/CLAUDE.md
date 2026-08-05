@@ -54,59 +54,81 @@ impl TorrentTrackerServer {
 
 **Protocol Trait Implementation**: `Server` trait from `crate::llm::actions::protocol_trait`
 
+Both event types call `.with_actions(...)` and `.with_parameters(...)`. Until they did,
+`call_llm` advertised none of the tracker's actions (it builds the model's tool list from
+`event.event_type.actions`, not from `get_sync_actions()`), so every action the model
+returned was rejected as unknown.
+
 **Sync Actions** (network-triggered):
 
 1. **send_announce_response** - Return peer list for a torrent
-    - Parameters: `interval` (seconds), `peers` (array of {ip, port, peer_id})
-    - Output: HTTP response with bencode peer dictionary
+    - Parameters: `interval` (default 1800), `complete`, `incomplete`, `compact`, `peers`
+    - `peers` is an array of `{ip, port}` plus an optional `peer_id` (used only in the
+      non-compact form)
+    - **`compact`**: BEP 23. When truthy, `peers` is encoded as a byte string of 6-byte
+      entries (4-byte IPv4 + 2-byte big-endian port) instead of a list of dictionaries.
+      Nearly every real client asks for `compact=1` and several refuse the dictionary
+      form, so pass the request's own flag through: `"compact": "{{event.compact}}"`.
+      Accepts `true`, `1`, `"1"`, `"true"`, `"yes"`, `"on"`. IPv6 peers are dropped in
+      compact form (they need BEP 7's separate `peers6` key, which is not implemented).
+    - Output: HTTP 200 + `Connection: close` + bencode body
     - Example:
    ```json
    {
      "type": "send_announce_response",
      "interval": 1800,
-     "peers": [
-       {"ip": "192.168.1.100", "port": 51413, "peer_id": "2d5452323934302d..."}
-     ]
+     "complete": 10,
+     "incomplete": 5,
+     "compact": "{{event.compact}}",
+     "peers": [{"ip": "192.168.1.100", "port": 51413}]
    }
    ```
 
 2. **send_scrape_response** - Return statistics for torrents
-    - Parameters: `files` (array of {info_hash, complete, incomplete, downloaded})
-    - Output: HTTP response with bencode scrape data
+    - Parameter: `files`, accepted in **either** shape:
+      - object keyed by hex info_hash: `{"<hex>": {complete, downloaded, incomplete}}`
+      - array of objects each carrying an `info_hash` field
+      The executor previously accepted only the object form, so the array form documented
+      here (and used by the E2E test) silently produced an empty `files` dictionary.
+      Entries whose key is not valid hex are dropped.
+    - The key is the *correlation*: it must be the info_hash the client asked about.
+      Interpolate it: `{"{{event.info_hash}}": {...}}`.
     - Example:
    ```json
    {
      "type": "send_scrape_response",
-     "files": [
-       {
-         "info_hash": "0123456789abcdef0123456789abcdef01234567",
-         "complete": 10,
-         "incomplete": 5,
-         "downloaded": 100
-       }
-     ]
+     "files": {"{{event.info_hash}}": {"complete": 10, "downloaded": 100, "incomplete": 5}}
    }
    ```
 
-3. **send_error_response** - Return error message
-    - Parameters: `failure_reason` (string)
-    - Output: Bencode dictionary with failure reason
+3. **send_error_response** - Return a bencode `failure reason`
+    - Parameter: `failure_reason` (alias `error`). The action definition, these docs and
+      the E2E test all said `failure_reason` while the executor read `error`, so every
+      documented use produced the literal string "Unknown error". Both spellings now work.
     - Example:
    ```json
-   {
-     "type": "send_error_response",
-     "failure_reason": "Torrent not registered"
-   }
+   {"type": "send_error_response", "failure_reason": "Torrent not registered"}
    ```
 
 **Event Types** (incoming requests):
 
+Both events always carry `request_type`, `path` and `compact`, whether or not the client
+sent them. That matters for static handlers: `{{event.compact}}` is a *hard error* if the
+field is missing, and plenty of clients omit `compact` from the query string.
+
 1. **tracker_announce_request** - Client announces presence and requests peers
-    - Payload: `{info_hash, peer_id, port, uploaded, downloaded, left, event, numwant, compact}`
-    - Common events: "started", "completed", "stopped", or empty
+    - Payload: `request_type`, `path`, `compact`, `info_hash`, `peer_id`, `port`,
+      `uploaded`, `downloaded`, `left`, `event`, `numwant`
+    - Actions: `send_announce_response`, `send_error_response`
 
 2. **tracker_scrape_request** - Client requests statistics
-    - Payload: `{info_hashes: [...]}`
+    - Payload: `request_type`, `path`, `compact`, `info_hash`
+    - Actions: `send_scrape_response`, `send_error_response`
+
+A path that is neither `/announce` nor `/scrape` also reaches
+`tracker_announce_request` — a tracker has no third reply shape — but `request_type` is
+`"unknown"` and `path` carries the original, so a handler can answer with
+`send_error_response` instead.
 
 ### Request Parsing
 
@@ -232,17 +254,16 @@ You are a BitTorrent tracker server. Track active peers for torrents and return 
 
 ## Connection State Tracking
 
-**ProtocolConnectionInfo Variant**:
-
-```rust
-TorrentTracker {
-    recent_requests: Vec<(String, Instant)>,  // Request type + timestamp
-}
-```
-
-Tracks announce vs scrape request frequency per connection (though most clients make single requests per connection).
+`protocol_info` is `ProtocolConnectionInfo::empty()`. `ProtocolConnectionInfo` is a
+generic `serde_json::Value` wrapper (`state/server.rs`), not the per-protocol enum earlier
+versions of this file described; there is no `TorrentTracker` variant and no
+`recent_requests` list. Each announce or scrape is a separate short-lived connection.
 
 ## Limitations
+
+0. **No UDP tracker, no IPv6 compact peers, no `min interval`, no `tracker id`.** Compact
+   IPv4 peers (BEP 23) are supported; BEP 7's `peers6` is not, and IPv6 peers passed to
+   `send_announce_response` with `compact` set are silently dropped.
 
 1. **Stateless by design**: Each connection is independent. LLM must track peers across connections using conversation
    history or scheduled tasks.
@@ -253,7 +274,7 @@ Tracks announce vs scrape request frequency per connection (though most clients 
 3. **No UDP support**: Only HTTP tracker protocol. UDP tracker (BEP 15) not implemented.
 
 4. **No IPv6 compact format**: Compact peer format only supports IPv4 (6 bytes per peer). IPv6 requires 18 bytes per
-   peer.
+   peer (BEP 7 `peers6`).
 
 5. **Single-threaded LLM calls**: One LLM call per request. High-traffic trackers may experience latency.
 
@@ -261,7 +282,9 @@ Tracks announce vs scrape request frequency per connection (though most clients 
 
 ## Security Considerations
 
-- **Input validation**: Info hash must be exactly 20 bytes (40 hex chars)
+- **Input validation**: nothing validates that the client's `info_hash` is 20 bytes; it is
+  percent-decoded and hex-encoded as-is. A malformed request line gets HTTP 400 (it used
+  to close the connection with no reply at all)
 - **Port range**: Clients can announce any port (no validation)
 - **IP spoofing**: No verification of client IP (uses peer-provided IP or connection IP)
 - **DoS protection**: No rate limiting (LLM could implement via scheduled tasks)
