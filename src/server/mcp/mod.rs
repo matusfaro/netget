@@ -13,7 +13,6 @@
 
 pub mod actions;
 pub mod jsonrpc;
-pub mod session;
 
 use anyhow::Result;
 use axum::{
@@ -25,10 +24,9 @@ use axum::{
 };
 use jsonrpc::{ErrorCode, JsonRpcError, JsonRpcMessage, JsonRpcResponse};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
 use crate::console_error;
@@ -52,7 +50,7 @@ use actions::{
     MCP_RESOURCES_READ_EVENT, MCP_TOOLS_CALL_EVENT, MCP_TOOLS_LIST_EVENT,
 };
 #[cfg(feature = "mcp")]
-use session::McpSession;
+use jsonrpc::RequestId;
 
 /// MCP server shared state
 #[derive(Clone)]
@@ -67,10 +65,65 @@ pub struct McpServerState {
     pub server_id: ServerId,
     /// Protocol implementation
     pub protocol: Arc<McpProtocol>,
-    /// Active sessions (keyed by session ID)
-    pub sessions: Arc<Mutex<HashMap<String, Arc<Mutex<McpSession>>>>>,
     /// Local address the server is bound to
     pub local_addr: SocketAddr,
+}
+
+/// Largest slice of a request echoed onto the status channel.
+///
+/// The whole request used to be serialized onto `status_tx` on every call. That channel is
+/// unbounded with no backpressure (see the root CLAUDE.md), so a client posting bodies at
+/// axum's 2 MiB default limit could enqueue faster than the TUI drains.
+#[cfg(feature = "mcp")]
+const MAX_TRACE_BYTES: usize = 4096;
+
+/// MCP revisions this server will echo back in an `initialize` reply.
+#[cfg(feature = "mcp")]
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18"];
+
+/// Offered when the client asks for a revision not in the list above.
+#[cfg(feature = "mcp")]
+const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+
+/// Turn an `mcp_error_response` action result into the JSON-RPC error it describes.
+///
+/// `mcp_error_response` is offered to the handler on every MCP event. Nothing used to consume
+/// its result, so the chosen `code` and `message` were dropped and the caller received either
+/// a generic `-32603` or - worse - a *success* reply such as `{"tools": []}`.
+#[cfg(feature = "mcp")]
+fn mcp_error_from_action(data: &Value) -> JsonRpcError {
+    // i64 rather than i32: JSON-RPC codes are small, but `as i32` would wrap a large number
+    // into a valid-looking code. Out-of-range values become InternalError.
+    let code = data
+        .get("code")
+        .and_then(|v| v.as_i64())
+        .and_then(|n| i32::try_from(n).ok())
+        .unwrap_or(ErrorCode::InternalError as i32);
+
+    JsonRpcError {
+        code,
+        message: data
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Internal error")
+            .to_string(),
+        data: data.get("data").cloned(),
+    }
+}
+
+/// Recover a request id from a payload that failed to parse as a JSON-RPC request.
+///
+/// JSON-RPC 2.0 requires the id to be echoed whenever it can be determined. The parse-failure
+/// path used to pass `None` unconditionally, so a request whose `jsonrpc` field was missing or
+/// whose `method` was not a string came back with `"id": null` even though the id was sitting
+/// in the payload, leaving the client unable to match the error to its request.
+#[cfg(feature = "mcp")]
+fn recover_request_id(payload: &Value) -> Option<RequestId> {
+    match payload.get("id")? {
+        Value::String(s) => Some(RequestId::String(s.clone())),
+        Value::Number(n) => n.as_i64().map(RequestId::Number),
+        _ => None,
+    }
 }
 
 /// MCP server that handles Model Context Protocol over HTTP
@@ -93,7 +146,6 @@ impl McpServer {
         let _ = status_tx.send(format!("[INFO] MCP server listening on {}", local_addr));
 
         let protocol = Arc::new(McpProtocol::new());
-        let sessions = Arc::new(Mutex::new(HashMap::new()));
 
         let task_registrar = app_state.clone();
         let server_state = McpServerState {
@@ -102,7 +154,6 @@ impl McpServer {
             status_tx: status_tx.clone(),
             server_id,
             protocol,
-            sessions,
             local_addr,
         };
 
@@ -138,17 +189,29 @@ async fn handle_jsonrpc(
         serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
     );
 
-    let _ = state.status_tx.send(format!(
-        "[TRACE] MCP received: {}",
-        serde_json::to_string(&payload).unwrap_or_default()
-    ));
+    let mut trace_body = serde_json::to_string(&payload).unwrap_or_default();
+    if trace_body.len() > MAX_TRACE_BYTES {
+        // Truncate on a char boundary: byte-slicing LLM- or client-supplied JSON panics on
+        // multi-byte UTF-8 at the cut point.
+        let cut = trace_body
+            .char_indices()
+            .take_while(|(i, _)| *i <= MAX_TRACE_BYTES)
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        trace_body.truncate(cut);
+        trace_body.push_str("… (truncated)");
+    }
+    let _ = state
+        .status_tx
+        .send(format!("[TRACE] MCP received: {}", trace_body));
 
     // Parse JSON-RPC message
     let message = match JsonRpcMessage::from_value(payload.clone()) {
         Ok(msg) => msg,
         Err(e) => {
             error!("Failed to parse JSON-RPC message: {:?}", e);
-            let response = JsonRpcResponse::error(None, e);
+            let response = JsonRpcResponse::error(recover_request_id(&payload), e);
             return Json(response).into_response();
         }
     };
@@ -163,23 +226,19 @@ async fn handle_jsonrpc(
 
             // Route to appropriate handler
             let result = match method.as_str() {
-                "initialize" => handle_initialize(&state, req.params, &payload).await,
+                "initialize" => handle_initialize(&state, req.params).await,
                 "ping" => handle_ping(),
-                "resources/list" => handle_resources_list(&state, &payload).await,
-                "resources/read" => handle_resources_read(&state, req.params, &payload).await,
-                "resources/subscribe" => {
-                    handle_resources_subscribe(&state, req.params, &payload).await
-                }
+                "resources/list" => handle_resources_list(&state).await,
+                "resources/read" => handle_resources_read(&state, req.params).await,
+                "resources/subscribe" => handle_resources_subscribe(&state, req.params).await,
                 "resources/unsubscribe" => handle_resources_unsubscribe(&state, req.params).await,
-                "resources/templates/list" => {
-                    handle_resources_templates_list(&state, &payload).await
-                }
-                "tools/list" => handle_tools_list(&state, &payload).await,
-                "tools/call" => handle_tools_call(&state, req.params, &payload).await,
-                "prompts/list" => handle_prompts_list(&state, &payload).await,
-                "prompts/get" => handle_prompts_get(&state, req.params, &payload).await,
+                "resources/templates/list" => handle_resources_templates_list(&state).await,
+                "tools/list" => handle_tools_list(&state).await,
+                "tools/call" => handle_tools_call(&state, req.params).await,
+                "prompts/list" => handle_prompts_list(&state).await,
+                "prompts/get" => handle_prompts_get(&state, req.params).await,
                 "logging/setLevel" => handle_logging_set_level(&state, req.params).await,
-                "completion/complete" => handle_completion(&state, req.params, &payload).await,
+                "completion/complete" => handle_completion(&state, req.params).await,
                 _ => Err(JsonRpcError::new(ErrorCode::MethodNotFound)),
             };
 
@@ -233,7 +292,22 @@ async fn handle_jsonrpc(
 async fn handle_initialize(
     state: &McpServerState,
     params: Option<Value>,
-    _full_request: &Value,
+) -> Result<Value, JsonRpcError> {
+    let connection_id = ConnectionId::new(state.app_state.get_next_unified_id().await);
+    let result = handle_initialize_inner(state, params, connection_id).await;
+    // Close on every exit path, including the error ones.
+    state
+        .app_state
+        .close_connection_on_server(state.server_id, connection_id)
+        .await;
+    result
+}
+
+#[cfg(feature = "mcp")]
+async fn handle_initialize_inner(
+    state: &McpServerState,
+    params: Option<Value>,
+    connection_id: ConnectionId,
 ) -> Result<Value, JsonRpcError> {
     info!("MCP initialize request");
 
@@ -249,18 +323,25 @@ async fn handle_initialize(
         .status_tx
         .send(format!("→ MCP client initializing: {}", client_info));
 
-    // Create connection for tracking
-    let connection_id = ConnectionId::new(state.app_state.get_next_unified_id().await);
-    let session_id = uuid::Uuid::new_v4().to_string();
-
-    // Track in app_state
+    // Record the initialize exchange as a connection so it shows up in the TUI and MCP
+    // connection lists. It is marked closed at the end of this function: MCP here is
+    // request-scoped HTTP POST with no persistent connection, and leaving every entry Active
+    // meant an unauthenticated client could grow AppState without bound by repeating
+    // `initialize`.
+    //
+    // No session record is created. `McpSession` held initialized/capabilities/subscriptions
+    // plus tools/resources/prompts maps; the map it lived in was write-only - inserted here
+    // and read nowhere in the tree - and every mutator on it (`mark_initialized`,
+    // `subscribe`, `register_tool`, …) had zero call sites. It was both an unbounded leak and
+    // a protocol-level store of tools/resources/prompts, which the no-storage rule forbids.
+    // It is gone rather than left half-built: nothing consumed it, so nothing regresses.
     state
         .app_state
         .add_connection_to_server(
             state.server_id,
             crate::state::ConnectionState {
                 id: connection_id,
-                remote_addr: state.local_addr, // HTTP doesn't have clear remote addr
+                remote_addr: state.local_addr, // HTTP POST carries no peer addr here
                 local_addr: state.local_addr,
                 bytes_sent: 0,
                 bytes_received: 0,
@@ -274,13 +355,12 @@ async fn handle_initialize(
         )
         .await;
 
-    // Create session
-    let session = McpSession::new(session_id.clone(), connection_id);
-    state
-        .sessions
-        .lock()
-        .await
-        .insert(session_id, Arc::new(Mutex::new(session)));
+    let requested_version = params
+        .as_ref()
+        .and_then(|p| p.get("protocolVersion"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
 
     // Create event for LLM
     let event = Event::new(
@@ -288,13 +368,13 @@ async fn handle_initialize(
         serde_json::json!({
             "method": "initialize",
             "client_info": client_info,
-            "protocol_version": params.as_ref().and_then(|p| p.get("protocolVersion")).and_then(|v| v.as_str()).unwrap_or("unknown"),
+            "protocol_version": requested_version,
             "capabilities": params.as_ref().and_then(|p| p.get("capabilities")),
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     debug!("MCP calling LLM for initialize request");
     let _ = state
@@ -345,6 +425,12 @@ async fn handle_initialize(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_initialize" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -353,9 +439,20 @@ async fn handle_initialize(
         }
     }
 
-    // Default response if LLM doesn't provide one
+    // Default response if the handler does not provide one.
+    //
+    // The version is negotiated rather than hardcoded: MCP says the server echoes the client's
+    // requested version if it can speak it, and otherwise offers its own. This used to answer
+    // "2024-11-05" unconditionally, which tells a client on a newer revision that its request
+    // was honored when it was not.
+    let agreed_version = if SUPPORTED_PROTOCOL_VERSIONS.contains(&requested_version.as_str()) {
+        requested_version.as_str()
+    } else {
+        DEFAULT_PROTOCOL_VERSION
+    };
+
     Ok(serde_json::json!({
-        "protocolVersion": "2024-11-05",
+        "protocolVersion": agreed_version,
         "capabilities": {
             "resources": {},
             "tools": {},
@@ -376,10 +473,7 @@ fn handle_ping() -> Result<Value, JsonRpcError> {
 
 /// Handle resources/list request - LLM returns available resources
 #[cfg(feature = "mcp")]
-async fn handle_resources_list(
-    state: &McpServerState,
-    _full_request: &Value,
-) -> Result<Value, JsonRpcError> {
+async fn handle_resources_list(state: &McpServerState) -> Result<Value, JsonRpcError> {
     debug!("MCP resources/list");
     let _ = state
         .status_tx
@@ -393,8 +487,8 @@ async fn handle_resources_list(
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -425,6 +519,12 @@ async fn handle_resources_list(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_resources_list" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -442,7 +542,6 @@ async fn handle_resources_list(
 async fn handle_resources_read(
     state: &McpServerState,
     params: Option<Value>,
-    _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     let uri = params
         .as_ref()
@@ -464,8 +563,8 @@ async fn handle_resources_read(
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -496,6 +595,12 @@ async fn handle_resources_read(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_resources_read" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -516,7 +621,6 @@ async fn handle_resources_read(
 async fn handle_resources_subscribe(
     _state: &McpServerState,
     params: Option<Value>,
-    _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     let uri = params
         .as_ref()
@@ -548,10 +652,7 @@ async fn handle_resources_unsubscribe(
 
 /// Handle resources/templates/list request
 #[cfg(feature = "mcp")]
-async fn handle_resources_templates_list(
-    _state: &McpServerState,
-    _full_request: &Value,
-) -> Result<Value, JsonRpcError> {
+async fn handle_resources_templates_list(_state: &McpServerState) -> Result<Value, JsonRpcError> {
     debug!("MCP resources/templates/list");
 
     // TODO: Add LLM integration
@@ -562,10 +663,7 @@ async fn handle_resources_templates_list(
 
 /// Handle tools/list request - LLM returns available tools
 #[cfg(feature = "mcp")]
-async fn handle_tools_list(
-    state: &McpServerState,
-    _full_request: &Value,
-) -> Result<Value, JsonRpcError> {
+async fn handle_tools_list(state: &McpServerState) -> Result<Value, JsonRpcError> {
     debug!("MCP tools/list");
     let _ = state
         .status_tx
@@ -579,8 +677,8 @@ async fn handle_tools_list(
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -611,6 +709,12 @@ async fn handle_tools_list(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_tools_list" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -628,7 +732,6 @@ async fn handle_tools_list(
 async fn handle_tools_call(
     state: &McpServerState,
     params: Option<Value>,
-    _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     let tool_name = params
         .as_ref()
@@ -653,8 +756,8 @@ async fn handle_tools_call(
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -685,6 +788,12 @@ async fn handle_tools_call(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_tools_call" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -702,10 +811,7 @@ async fn handle_tools_call(
 
 /// Handle prompts/list request - LLM returns available prompts
 #[cfg(feature = "mcp")]
-async fn handle_prompts_list(
-    state: &McpServerState,
-    _full_request: &Value,
-) -> Result<Value, JsonRpcError> {
+async fn handle_prompts_list(state: &McpServerState) -> Result<Value, JsonRpcError> {
     debug!("MCP prompts/list");
     let _ = state
         .status_tx
@@ -719,8 +825,8 @@ async fn handle_prompts_list(
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -751,6 +857,12 @@ async fn handle_prompts_list(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_prompts_list" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -768,7 +880,6 @@ async fn handle_prompts_list(
 async fn handle_prompts_get(
     state: &McpServerState,
     params: Option<Value>,
-    _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     let prompt_name = params
         .as_ref()
@@ -793,8 +904,8 @@ async fn handle_prompts_get(
         }),
     );
 
-    // Get protocol actions
-    let protocol = Arc::new(McpProtocol::new());
+    // Reuse the server's protocol instance rather than allocating a throwaway per request.
+    let protocol = state.protocol.clone();
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -825,6 +936,12 @@ async fn handle_prompts_get(
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
         if let ActionResult::Custom { name, data } = protocol_result {
+            // A handler that returned mcp_error_response used to be ignored entirely: the
+            // loop matched one name and fell through to the hardcoded default, so a chosen
+            // JSON-RPC error was silently converted into a *success* reply. Honor it first.
+            if name == "mcp_error" {
+                return Err(mcp_error_from_action(data));
+            }
             if name == "mcp_prompts_get" {
                 if let Some(response) = data.get("response") {
                     return Ok(response.clone());
@@ -865,11 +982,12 @@ async fn handle_logging_set_level(
 async fn handle_completion(
     _state: &McpServerState,
     _params: Option<Value>,
-    _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     debug!("MCP completion/complete");
 
-    // TODO: Add LLM integration
+    // Not wired to the handler. The mcp_completion event type and the
+    // mcp_completion_response action are no longer advertised, so nobody is told to write a
+    // handler for something that never fires.
     Ok(serde_json::json!({
         "completion": {
             "values": [],

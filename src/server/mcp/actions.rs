@@ -31,12 +31,10 @@ impl Protocol for McpProtocol {
             mcp_initialize_response_action(),
             mcp_resources_list_response_action(),
             mcp_resources_read_response_action(),
-            mcp_resources_subscribe_response_action(),
             mcp_tools_list_response_action(),
             mcp_tools_call_response_action(),
             mcp_prompts_list_response_action(),
             mcp_prompts_get_response_action(),
-            mcp_completion_response_action(),
             mcp_error_response_action(),
         ]
     }
@@ -57,10 +55,21 @@ impl Protocol for McpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("axum HTTP, custom JSON-RPC 2.0, session management")
-            .llm_control("All capabilities: resources, tools, prompts")
-            .e2e_testing("MCP clients / TypeScript SDK")
-            .notes("HTTP POST only, no WebSocket/SSE, in-memory sessions")
+            .implementation("axum HTTP POST at /, hand-written JSON-RPC 2.0")
+            .llm_control(
+                "initialize, resources/list, resources/read, tools/list, tools/call, \
+                 prompts/list and prompts/get, plus the JSON-RPC error on any of them. \
+                 ping, resources/subscribe, resources/unsubscribe, \
+                 resources/templates/list, logging/setLevel and completion/complete are \
+                 answered without consulting the handler.",
+            )
+            .e2e_testing("raw JSON-RPC over reqwest in tests/server/mcp; no MCP SDK client")
+            .notes(
+                "HTTP POST only - no SSE and no GET /sse, so a 2024-11-05 HTTP+SSE client \
+                 cannot connect; use a Streamable-HTTP transport. No batch requests. No \
+                 session state is kept and nothing is gated on the initialized \
+                 notification. No storage: the handler answers every request.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -151,14 +160,10 @@ impl Server for McpProtocol {
             "mcp_initialize_response" => self.execute_mcp_initialize_response(action),
             "mcp_resources_list_response" => self.execute_mcp_resources_list_response(action),
             "mcp_resources_read_response" => self.execute_mcp_resources_read_response(action),
-            "mcp_resources_subscribe_response" => {
-                self.execute_mcp_resources_subscribe_response(action)
-            }
             "mcp_tools_list_response" => self.execute_mcp_tools_list_response(action),
             "mcp_tools_call_response" => self.execute_mcp_tools_call_response(action),
             "mcp_prompts_list_response" => self.execute_mcp_prompts_list_response(action),
             "mcp_prompts_get_response" => self.execute_mcp_prompts_get_response(action),
-            "mcp_completion_response" => self.execute_mcp_completion_response(action),
             "mcp_error_response" => self.execute_mcp_error_response(action),
             _ => Err(anyhow::anyhow!("Unknown MCP action: {}", action_type)),
         }
@@ -208,21 +213,6 @@ impl McpProtocol {
         })
     }
 
-    fn execute_mcp_resources_subscribe_response(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        let response = action
-            .get("response")
-            .context("Missing 'response' parameter")?
-            .clone();
-
-        Ok(ActionResult::Custom {
-            name: "mcp_resources_subscribe".to_string(),
-            data: json!({"response": response}),
-        })
-    }
-
     fn execute_mcp_tools_list_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let response = action
             .get("response")
@@ -267,18 +257,6 @@ impl McpProtocol {
 
         Ok(ActionResult::Custom {
             name: "mcp_prompts_get".to_string(),
-            data: json!({"response": response}),
-        })
-    }
-
-    fn execute_mcp_completion_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let response = action
-            .get("response")
-            .context("Missing 'response' parameter")?
-            .clone();
-
-        Ok(ActionResult::Custom {
-            name: "mcp_completion".to_string(),
             data: json!({"response": response}),
         })
     }
@@ -391,27 +369,6 @@ fn mcp_resources_read_response_action() -> ActionDefinition {
 }
 
 /// Resources subscribe response action
-fn mcp_resources_subscribe_response_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "mcp_resources_subscribe_response".to_string(),
-        description: "Confirm resource subscription".to_string(),
-        parameters: vec![Parameter {
-            name: "response".to_string(),
-            type_hint: "object".to_string(),
-            description: "Empty object to confirm subscription".to_string(),
-            required: true,
-        }],
-        example: serde_json::json!({
-            "type": "mcp_resources_subscribe_response",
-            "response": {}
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> MCP subscribe confirmed")
-                .with_debug("MCP mcp_resources_subscribe_response"),
-        ),
-    }
-}
 
 /// Tools list response action
 fn mcp_tools_list_response_action() -> ActionDefinition {
@@ -509,27 +466,6 @@ fn mcp_prompts_get_response_action() -> ActionDefinition {
 }
 
 /// Completion response action
-fn mcp_completion_response_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "mcp_completion_response".to_string(),
-        description: "Return text completion suggestions".to_string(),
-        parameters: vec![Parameter {
-            name: "response".to_string(),
-            type_hint: "object".to_string(),
-            description: "Completion response with values array and pagination info".to_string(),
-            required: true,
-        }],
-        example: serde_json::json!({
-            "type": "mcp_completion_response",
-            "response": {"completion": {"values": [], "total": 0, "hasMore": false}}
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> MCP completion")
-                .with_debug("MCP mcp_completion_response"),
-        ),
-    }
-}
 
 /// Error response action
 fn mcp_error_response_action() -> ActionDefinition {
@@ -575,7 +511,14 @@ pub static MCP_INITIALIZE_EVENT: std::sync::LazyLock<EventType> = std::sync::Laz
     EventType::new(
         "mcp_initialize",
         "Client sends initialize request to negotiate capabilities",
-        json!({"type": "placeholder", "event_id": "mcp_initialize"}),
+        json!({
+            "type": "mcp_initialize_response",
+            "response": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"resources": {}, "tools": {}, "prompts": {}},
+                "serverInfo": {"name": "netget-mcp", "version": "0.1.0"}
+            }
+        }),
     )
     .with_actions(vec![
         mcp_initialize_response_action(),
@@ -595,7 +538,12 @@ pub static MCP_RESOURCES_LIST_EVENT: std::sync::LazyLock<EventType> =
         EventType::new(
             "mcp_resources_list",
             "Client requests list of available resources",
-            json!({"type": "placeholder", "event_id": "mcp_resources_list"}),
+            json!({
+                "type": "mcp_resources_list_response",
+                "response": {"resources": [
+                    {"uri": "file:///README.md", "name": "README", "mimeType": "text/markdown"}
+                ]}
+            }),
         )
         .with_actions(vec![
             mcp_resources_list_response_action(),
@@ -615,7 +563,12 @@ pub static MCP_RESOURCES_READ_EVENT: std::sync::LazyLock<EventType> =
         EventType::new(
             "mcp_resources_read",
             "Client requests resource content by URI",
-            json!({"type": "placeholder", "event_id": "mcp_resources_read"}),
+            json!({
+                "type": "mcp_resources_read_response",
+                "response": {"contents": [
+                    {"uri": "file:///README.md", "mimeType": "text/markdown", "text": "# Project"}
+                ]}
+            }),
         )
         .with_actions(vec![
             mcp_resources_read_response_action(),
@@ -634,7 +587,16 @@ pub static MCP_TOOLS_LIST_EVENT: std::sync::LazyLock<EventType> = std::sync::Laz
     EventType::new(
         "mcp_tools_list",
         "Client requests list of available tools",
-        json!({"type": "placeholder", "event_id": "mcp_tools_list"}),
+        json!({
+            "type": "mcp_tools_list_response",
+            "response": {"tools": [
+                {"name": "calculate",
+                 "description": "Evaluate a mathematical expression",
+                 "inputSchema": {"type": "object",
+                                 "properties": {"expression": {"type": "string"}},
+                                 "required": ["expression"]}}
+            ]}
+        }),
     )
     .with_actions(vec![
         mcp_tools_list_response_action(),
@@ -653,7 +615,10 @@ pub static MCP_TOOLS_CALL_EVENT: std::sync::LazyLock<EventType> = std::sync::Laz
     EventType::new(
         "mcp_tools_call",
         "Client executes a tool with parameters",
-        json!({"type": "placeholder", "event_id": "mcp_tools_call"}),
+        json!({
+            "type": "mcp_tools_call_response",
+            "response": {"content": [{"type": "text", "text": "4"}], "isError": false}
+        }),
     )
     .with_actions(vec![
         mcp_tools_call_response_action(),
@@ -673,7 +638,12 @@ pub static MCP_PROMPTS_LIST_EVENT: std::sync::LazyLock<EventType> =
         EventType::new(
             "mcp_prompts_list",
             "Client requests list of available prompts",
-            json!({"type": "placeholder", "event_id": "mcp_prompts_list"}),
+            json!({
+                "type": "mcp_prompts_list_response",
+                "response": {"prompts": [
+                    {"name": "code-review", "description": "Review a diff"}
+                ]}
+            }),
         )
         .with_actions(vec![
             mcp_prompts_list_response_action(),
@@ -692,7 +662,12 @@ pub static MCP_PROMPTS_GET_EVENT: std::sync::LazyLock<EventType> = std::sync::La
     EventType::new(
         "mcp_prompts_get",
         "Client requests formatted prompt template",
-        json!({"type": "placeholder", "event_id": "mcp_prompts_get"}),
+        json!({
+            "type": "mcp_prompts_get_response",
+            "response": {"description": "Review a diff",
+                         "messages": [{"role": "user",
+                                       "content": {"type": "text", "text": "Review this:"}}]}
+        }),
     )
     .with_actions(vec![
         mcp_prompts_get_response_action(),
@@ -706,89 +681,21 @@ pub static MCP_PROMPTS_GET_EVENT: std::sync::LazyLock<EventType> = std::sync::La
     )
 });
 
-/// Get MCP event types
+/// The event types advertised to the model and to `get_protocol_docs`.
+///
+/// This returns the same `LazyLock` statics that `mod.rs` actually emits. It used to build a
+/// second, independent set of `EventType`s by hand: they carried no log templates, they were
+/// free to drift from the ones really in use, and two of them - `mcp_resources_subscribe` and
+/// `mcp_completion` - had no static and no `Event::new` anywhere, so anyone who wrote an
+/// `event_pattern` for them got a handler that could never run.
 fn get_mcp_event_types() -> Vec<EventType> {
     vec![
-        EventType::new(
-            "mcp_initialize",
-            "Client sends initialize request to negotiate capabilities",
-            json!({"type": "placeholder", "event_id": "mcp_initialize"}),
-        )
-        .with_actions(vec![
-            mcp_initialize_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_resources_list",
-            "Client requests list of available resources",
-            json!({"type": "placeholder", "event_id": "mcp_resources_list"}),
-        )
-        .with_actions(vec![
-            mcp_resources_list_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_resources_read",
-            "Client requests resource content by URI",
-            json!({"type": "placeholder", "event_id": "mcp_resources_read"}),
-        )
-        .with_actions(vec![
-            mcp_resources_read_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_resources_subscribe",
-            "Client subscribes to resource updates",
-            json!({"type": "placeholder", "event_id": "mcp_resources_subscribe"}),
-        )
-        .with_actions(vec![
-            mcp_resources_subscribe_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_tools_list",
-            "Client requests list of available tools",
-            json!({"type": "placeholder", "event_id": "mcp_tools_list"}),
-        )
-        .with_actions(vec![
-            mcp_tools_list_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_tools_call",
-            "Client executes a tool with parameters",
-            json!({"type": "placeholder", "event_id": "mcp_tools_call"}),
-        )
-        .with_actions(vec![
-            mcp_tools_call_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_prompts_list",
-            "Client requests list of available prompts",
-            json!({"type": "placeholder", "event_id": "mcp_prompts_list"}),
-        )
-        .with_actions(vec![
-            mcp_prompts_list_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_prompts_get",
-            "Client requests formatted prompt template",
-            json!({"type": "placeholder", "event_id": "mcp_prompts_get"}),
-        )
-        .with_actions(vec![
-            mcp_prompts_get_response_action(),
-            mcp_error_response_action(),
-        ]),
-        EventType::new(
-            "mcp_completion",
-            "Client requests text completion suggestions",
-            json!({"type": "placeholder", "event_id": "mcp_completion"}),
-        )
-        .with_actions(vec![
-            mcp_completion_response_action(),
-            mcp_error_response_action(),
-        ]),
+        (*MCP_INITIALIZE_EVENT).clone(),
+        (*MCP_RESOURCES_LIST_EVENT).clone(),
+        (*MCP_RESOURCES_READ_EVENT).clone(),
+        (*MCP_TOOLS_LIST_EVENT).clone(),
+        (*MCP_TOOLS_CALL_EVENT).clone(),
+        (*MCP_PROMPTS_LIST_EVENT).clone(),
+        (*MCP_PROMPTS_GET_EVENT).clone(),
     ]
 }

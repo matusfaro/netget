@@ -1,308 +1,196 @@
 # MCP (Model Context Protocol) Server Implementation
 
-## Overview
+An MCP server whose resources, tools and prompts are all supplied by the handler. JSON-RPC 2.0
+over a single HTTP POST endpoint.
 
-MCP server implementing the Model Context Protocol specification, where the LLM controls all server capabilities:
-resources, tools, and prompts. Built on JSON-RPC 2.0 over HTTP with session management and three-phase initialization.
+**State**: `Experimental` · **Default port**: 8000 · **Stack**: `ETH>IP>TCP>HTTP>MCP`
 
-## Protocol Version
+> Not to be confused with `src/mcp_stdio/`, which is NetGet's *own* MCP server (the `--mcp`
+> flag). This module is the MCP *protocol implementation* that NetGet can serve to others.
 
-- **MCP**: 2024-11-05 specification
-- **Transport**: HTTP POST with JSON-RPC 2.0 messages
-- **Framework**: https://modelcontextprotocol.io/
+## Libraries
 
-## Library Choices
+- **axum** 0.7 — one route, `POST /`.
+- Hand-written JSON-RPC 2.0 in `jsonrpc.rs`.
 
-### Core Dependencies
+## No storage
 
-- **axum** v0.7 - Modern HTTP framework
-    - Chosen for: Clean routing, extractors, better ergonomics than hyper
-    - Used for: HTTP server and JSON-RPC endpoint
-- **serde_json** - JSON handling
-- **uuid** - Session ID generation
-- **tokio** - Async runtime
+The handler answers every request. **No tool, resource or prompt is defined in Rust** —
+`tools/list` and `tools/call` are entirely handler-driven, with hardcoded fallbacks of
+`{"tools": []}` and an error.
 
-### Custom JSON-RPC Implementation
+A `session.rs` used to sit alongside this holding an `McpSession` with `initialized`,
+`capabilities`, `subscriptions`, and `tools`/`resources`/`prompts` maps. It has been deleted.
+It was two problems at once:
 
-**Why Not Use a JSON-RPC Library?**
+- a protocol-level store of tools/resources/prompts, which the no-storage rule forbids; and
+- an unbounded leak — every `initialize` from any unauthenticated client inserted an entry, and
+  the map had no remove, no expiry and no cap.
 
-- MCP has specific JSON-RPC patterns (initialize flow, notifications)
-- Custom implementation provides full control over MCP semantics
-- Simple enough to implement directly
+It was also entirely dead: the map was written here and read nowhere in the tree, and every
+mutator (`mark_initialized`, `subscribe`, `register_tool`, …) had zero call sites. Removing it
+regresses nothing, which is why it was removed rather than left half-built.
 
-### Session Management
+## Methods
 
-**In-Memory Session Store**:
+Handler-driven, each with its own event:
 
-```rust
-HashMap<String, Arc<Mutex<McpSession>>>
-```
+| JSON-RPC method | Event | Action |
+|---|---|---|
+| `initialize` | `mcp_initialize` | `mcp_initialize_response` |
+| `resources/list` | `mcp_resources_list` | `mcp_resources_list_response` |
+| `resources/read` | `mcp_resources_read` | `mcp_resources_read_response` |
+| `tools/list` | `mcp_tools_list` | `mcp_tools_list_response` |
+| `tools/call` | `mcp_tools_call` | `mcp_tools_call_response` |
+| `prompts/list` | `mcp_prompts_list` | `mcp_prompts_list_response` |
+| `prompts/get` | `mcp_prompts_get` | `mcp_prompts_get_response` |
 
-- Sessions keyed by UUID
-- Tracks initialization state, capabilities, subscriptions
+`mcp_error_response` is offered on all seven.
 
-## Architecture Decisions
+Routed but **answered without consulting the handler** — worth knowing before writing an
+instruction that assumes otherwise:
 
-### Three-Phase Initialization
+`ping` → `{}` · `resources/subscribe` → `{}` (the URI is logged and discarded) ·
+`resources/unsubscribe` → `{}` · `resources/templates/list` → `{"resourceTemplates": []}` ·
+`logging/setLevel` → `{}` (the level is not applied) · `completion/complete` → an empty
+completion.
 
-**MCP Handshake**:
+Notifications (`notifications/initialized`, `.../cancelled`, `.../progress`) are logged only.
+Nothing is actually cancelled.
 
-1. **Client → initialize request** (with clientInfo, capabilities)
-2. **Server → initialize response** (with serverInfo, capabilities)
-3. **Client → initialized notification** (confirms connection)
+### The action name is `*_response`
 
-Only after phase 3 can client make resource/tool/prompt requests.
+The action is `mcp_initialize_response`; `mcp_initialize` is the *event id* and the internal
+`ActionResult` name. An earlier version of this document showed `{"type": "mcp_initialize"}`,
+`{"type": "mcp_resources_list"}` and `{"type": "mcp_tools_call"}` in its three worked
+examples — none of those are actions, and `execute_action` rejects them with "Unknown MCP
+action".
 
-### LLM Control Points
+Relatedly, all sixteen event types used to carry `{"type": "placeholder", "event_id": …}` as
+their `response_example`. That field is rendered verbatim into the model's prompt and into
+`get_protocol_docs` output as *the* way to answer the event, and `"placeholder"` is not an
+action, so a model following the example failed every time. Every event now carries a real,
+correctly named example.
 
-**Complete Capability Control** - LLM declares all capabilities:
+## Errors
 
-1. **initialize**: LLM declares supported resources, tools, prompts
-2. **resources/list**: LLM returns available resources
-3. **resources/read**: LLM provides resource content
-4. **tools/list**: LLM returns available tools
-5. **tools/call**: LLM executes tool and returns result
-6. **prompts/list**: LLM returns available prompt templates
-7. **prompts/get**: LLM provides prompt template
+`mcp_error_response` takes `code`, `message` and optional `data`, and now actually produces the
+JSON-RPC error. Nothing used to consume its result: every handler loop matched one action name
+and ignored the rest, so a chosen error was dropped and the caller received either a generic
+`-32603` or — on `tools/list`, `resources/list` and `prompts/list` — a **success** reply of
+`{"tools": []}` / `{"resources": []}` / `{"prompts": []}`. The script handler shipped in
+`get_startup_examples`, which ends `action('mcp_error_response', code=-32601, ...)`, could not
+work before this.
 
-**Action-Based Responses**:
+## Correlation
 
-```json
-{
-  "actions": [
-    {
-      "type": "mcp_initialize",
-      "response": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {
-          "resources": {"subscribe": true},
-          "tools": {},
-          "prompts": {}
-        },
-        "serverInfo": {"name": "netget-mcp", "version": "0.1.0"}
-      }
-    }
-  ]
-}
-```
+The JSON-RPC `id` is echoed on every reply, success and error alike; `handle_jsonrpc` clones it
+before the request is consumed and re-attaches it. Handlers only supply the `result` body, so
+they cannot get it wrong and nothing id-related needs to reach them.
 
-### Capability System
+A parse failure now also echoes the id when it can be recovered from the raw payload
+(`recover_request_id`). It previously passed `None` unconditionally, so a request with a missing
+`jsonrpc` field or a non-string `method` came back with `"id": null` even though the id was
+sitting right there — leaving the client unable to match the error to its request, which the
+spec requires.
 
-**Three Capability Categories**:
+`RequestId` covers strings and `i64` numbers; `null` round-trips correctly. A float id, or one
+larger than `i64::MAX`, still fails to parse and loses correlation. Malformed JSON never reaches
+this code — axum rejects it with an HTTP 400 and a plain-text body rather than a JSON-RPC
+`-32700`, so `ErrorCode::ParseError` is unreachable.
 
-- **Resources** - Files, URLs, data sources (with optional subscriptions)
-- **Tools** - Executable functions (like calculator, search)
-- **Prompts** - Template prompts (like "code-review", "summarize")
+## Robustness
 
-Each capability declared during initialize, then implemented via LLM.
+- **No `unwrap()`, `expect()`, slicing, or signed-to-`usize` casts anywhere in this module.**
+  All framing is axum's; there is no hand-rolled length prefix or line parser.
+- **Trace output is capped** at 4 KiB and truncated on a char boundary. The entire request body
+  used to be serialized onto `status_tx` on every call — an unbounded channel with no
+  backpressure — so a client posting at axum's 2 MiB default limit could enqueue faster than the
+  TUI drains.
+- **Connections no longer leak.** `initialize` registers a connection for visibility and marks
+  it closed on every exit path. Each was previously left `Active` forever, so repeating
+  `initialize` grew `AppState` without bound.
+- **Protocol version is negotiated**, not hardcoded. The fallback response echoes the client's
+  requested revision if it is one of `2024-11-05`, `2025-03-26`, `2025-06-18`, and otherwise
+  offers `2024-11-05`. It used to answer `2024-11-05` unconditionally, telling a client on a
+  newer revision that its request had been honored.
+- Body size is capped only by axum's 2 MiB `DefaultBodyLimit` — a framework default, not a
+  deliberate one. `serde_json`'s 128-level recursion limit is what stops deep nesting.
+- Bind uses `?`; `axum::serve`'s handle is registered via `register_server_task()`, so
+  `stop_server` releases the port.
+- LLM failures return `-32603` rather than leaving the caller hanging, which is better than the
+  project-wide default of writing nothing.
 
-### Connection Management
+## Known limitations
 
-- One HTTP POST endpoint (`/`) handles all JSON-RPC messages
-- Sessions created on initialize, tracked in shared state
-- Axum handles concurrent connections efficiently
+- **HTTP POST only.** There is no `GET /sse`, so a client using the 2024-11-05 HTTP+SSE
+  transport gets a 405 and cannot connect at all. Use a Streamable-HTTP transport.
+- **Notifications answer 204**, where the spec prescribes 202. A 204 carries no `Content-Type`,
+  which some SDK transports reject.
+- **No batch requests.** An array payload has no `id`, so it is treated as a notification, fails
+  to parse, and returns `-32600`.
+- **The handshake is decorative.** `notifications/initialized` is logged and nothing is gated on
+  it — every method is servable before `initialize`. No session id is returned to the client
+  (no `Mcp-Session-Id` header), so a session could not be referenced even if one were kept.
+- **`initialize` is the only method that passes a `connection_id`** to `call_llm`; the other six
+  pass `None`, so per-connection access logging is inactive for them.
+- **Nothing is retained between calls.** A `tools/list` has no memory of what `initialize`
+  declared; consistency across calls comes from the instruction, not from state.
+- `mcp_resources_subscribe_response` and `mcp_completion_response`, and the
+  `mcp_resources_subscribe` and `mcp_completion` event types, have been **removed**. No
+  `Event::new` ever fired them, so an `event_pattern` naming either got a handler that could
+  never run. `get_mcp_event_types()` also used to build a second, independent copy of every
+  event by hand, without log templates and free to drift; it now returns the same statics
+  `mod.rs` emits.
 
-## State Management
+### base64
 
-### Server State
+No action parameter carries raw bytes or hex. But MCP's own wire format puts base64 in two
+places the handler must produce: a resource's `blob` and image content in a tool result
+(`{"type": "image", "data": "<base64>", ...}`). The server passes the handler's `response`
+object through verbatim, so there is no encode/decode asymmetry — but small models emit base64
+poorly, and neither action's example shows those forms. Prefer text resources and text tool
+results.
 
-```rust
-McpServerState {
-    llm_client: OllamaClient,
-    app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
-    server_id: ServerId,
-    protocol: Arc<McpProtocol>,
-    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<McpSession>>>>>,
-    local_addr: SocketAddr,
-}
-```
+## Example
 
-### Per-Session State
-
-```rust
-McpSession {
-    session_id: String,
-    connection_id: ConnectionId,
-    initialized: bool,
-    capabilities: Value,  // Client capabilities
-}
-```
-
-### Per-Connection Protocol Info
-
-```rust
-ProtocolConnectionInfo::Mcp {
-    session_id: String,
-    initialized: bool,
-    capabilities: Value,
-    subscriptions: HashSet<String>,
-    tools: HashMap<String, Value>,
-    resources: HashMap<String, Value>,
-    prompts: HashMap<String, Value>,
-}
-```
-
-## Limitations
-
-### Not Implemented
-
-- **WebSocket transport** - Only HTTP POST supported
-- **SSE (Server-Sent Events)** - No server push notifications
-- **Sampling** - LLM sampling API not exposed
-- **Roots** - File system roots not implemented
-- **Progress notifications** - Progress tracking incomplete
-- **Cancellation** - Request cancellation not fully implemented
-
-### Session Management
-
-- **In-memory only** - Sessions lost on restart
-- **No expiration** - Sessions never timeout
-- **No cleanup** - Closed sessions remain in memory
-
-### Resource Subscriptions
-
-- **Tracking only** - No actual change notifications
-- **No polling** - Server doesn't monitor resources
-
-## Example Prompts and Responses
-
-### Startup
+Startup instruction:
 
 ```
 Listen on port 8000 via MCP.
-
-You are an MCP server that provides:
-
-Resources:
-- file:///README.md - Project documentation
-- file:///config.json - Configuration file
-
-Tools:
-- calculate(expression: string) - Evaluate mathematical expressions
-- search(query: string) - Search files
-
-Prompts:
-- code-review - Generate code review prompts
-- summarize(text: string) - Generate summarization prompts
-
-When initialized, declare all these capabilities.
+Resources: file:///README.md (project documentation).
+Tools: calculate(expression) - evaluate arithmetic.
+Prompts: code-review.
+Declare all of these on initialize.
 ```
 
-### Network Event (Initialize)
-
-**Received**:
+Handler response to `mcp_tools_call`:
 
 ```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {},
-    "clientInfo": {"name": "test-client", "version": "1.0.0"}
-  }
-}
+{"actions": [{"type": "mcp_tools_call_response",
+              "response": {"content": [{"type": "text", "text": "4"}], "isError": false}}]}
 ```
 
-**LLM Response**:
+Handler response reporting an error:
 
 ```json
-{
-  "actions": [
-    {
-      "type": "mcp_initialize",
-      "response": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {
-          "resources": {"subscribe": true},
-          "tools": {},
-          "prompts": {}
-        },
-        "serverInfo": {"name": "netget-mcp", "version": "0.1.0"}
-      }
-    }
-  ]
-}
+{"actions": [{"type": "mcp_error_response", "code": -32601, "message": "Tool not found"}]}
 ```
 
-### Network Event (Resources List)
+## Testing
 
-**Received**:
+`tests/server/mcp/e2e_test.rs` drives raw JSON-RPC over `reqwest` — **no MCP SDK client is used
+anywhere in the repo**, which is why the SSE-transport gap above went unnoticed.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "resources/list"
-}
-```
-
-**LLM Response**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "mcp_resources_list",
-      "response": {
-        "resources": [
-          {
-            "uri": "file:///README.md",
-            "name": "README",
-            "description": "Project documentation"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-### Network Event (Tools Call)
-
-**Received**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 6,
-  "method": "tools/call",
-  "params": {
-    "name": "calculate",
-    "arguments": {"expression": "2+2"}
-  }
-}
-```
-
-**LLM Response**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "mcp_tools_call",
-      "response": {
-        "content": [
-          {"type": "text", "text": "4"}
-        ]
-      }
-    }
-  ]
-}
-```
+**4 of its 9 tests fail, and did so before any of the above changes**
+(`test_mcp_initialize`, `test_mcp_resources_list`, `test_mcp_tools_list`,
+`test_mcp_prompts_list`). Their mocks return `{"type": "send_jsonrpc_response", ...}`, which is
+an action of the *jsonrpc* protocol and not of MCP, so `execute_action` rejects it, the retry
+loop exhausts, and the client gets `-32603`. The fix belongs in the test file — the mocks should
+return `mcp_initialize_response`, `mcp_resources_list_response`, `mcp_tools_list_response` and
+`mcp_prompts_list_response` — and is not made here.
 
 ## References
 
-- [Model Context Protocol Specification](https://modelcontextprotocol.io/)
-- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
-- [axum Documentation](https://docs.rs/axum/)
-
-## Key Design Principles
-
-1. **Full MCP Compliance** - Implements MCP 2024-11-05 spec
-2. **LLM Capability Control** - All capabilities defined by LLM
-3. **Session-Based** - Proper session management per MCP spec
-4. **Action-Based** - Uses standard NetGet action system
-5. **JSON-RPC Foundation** - Built on JSON-RPC 2.0 substrate
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [JSON-RPC 2.0](https://www.jsonrpc.org/specification)
