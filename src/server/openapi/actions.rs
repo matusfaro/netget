@@ -14,7 +14,25 @@ use tracing::{debug, error, warn};
 
 /// OpenAPI request event - triggered when client sends an HTTP request to OpenAPI server
 pub static OPENAPI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("openapi_request", "HTTP request received by OpenAPI server", json!({"type": "placeholder", "event_id": "openapi_request"}))
+    EventType::new(
+        "openapi_request",
+        "HTTP request received by OpenAPI server",
+        json!({
+            "type": "send_openapi_response",
+            "status_code": 200,
+            "headers": {"content-type": "application/json"},
+            "body": "[{\"id\": 1, \"title\": \"Buy milk\", \"done\": false}]"
+        }),
+    )
+    .with_alternative_example(json!({
+        "type": "send_validation_error",
+        "status_code": 400,
+        "message": "Field 'title' is required"
+    }))
+    // `call_llm` builds the model's tool list from `event.event_type.actions`, not from
+    // `get_sync_actions()`. With this list empty the model was told "No specific actions
+    // available for this event" and had no way to answer a request at all.
+    .with_actions(OpenApiProtocol.get_sync_actions())
     .with_parameters(vec![
         Parameter {
             name: "method".to_string(),
@@ -87,6 +105,9 @@ impl Protocol for OpenApiProtocol {
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["openapi", "rest", "rest api", "api", "swagger"]
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![OPENAPI_REQUEST_EVENT.clone()]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
@@ -198,6 +219,12 @@ impl Protocol for OpenApiProtocol {
                             description: "Response body (JSON, XML, plain text, etc.)".to_string(),
                             required: false,
                         },
+                        Parameter {
+                            name: "spec_compliant".to_string(),
+                            type_hint: "boolean".to_string(),
+                            description: "Set false to record that this response deliberately violates the loaded spec (for testing how a client handles a misbehaving server). Only affects logging; the response is sent either way. Default true.".to_string(),
+                            required: false,
+                        },
                     ],
                     example: serde_json::json!({"type": "send_openapi_response", "status_code": 200, "headers": {"content-type": "application/json"}, "body": "[{\"id\": 1, \"title\": \"Buy milk\", \"done\": false}]"}),
                 log_template: Some(
@@ -234,25 +261,25 @@ impl Protocol for OpenApiProtocol {
     }
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         use crate::llm::actions::ParameterDefinition;
-        vec![
-            ParameterDefinition {
-                name: "spec".to_string(),
-                type_hint: "string".to_string(),
-                description: "OpenAPI 3.x specification in YAML or JSON format (inline)"
+        // `spec_file` used to be declared here (and documented on
+        // `OpenApiServer::spawn_with_llm_actions`) but nothing ever read it: spawn only looks
+        // at `spec`, and errors out with "requires 'spec' parameter" when it is absent. A
+        // caller passing only `spec_file` therefore got a hard startup failure. Removed
+        // rather than implemented — the server deliberately wants inline content, and giving
+        // model-supplied input an arbitrary-file-read into an auth-adjacent server is not a
+        // trade worth making. Read the file and pass its contents as `spec`.
+        vec![ParameterDefinition {
+            name: "spec".to_string(),
+            type_hint: "string".to_string(),
+            description:
+                "OpenAPI 3.x specification in YAML or JSON format. Inline content only — to serve \
+                 a spec that lives on disk, read the file and pass its contents here."
                     .to_string(),
-                required: false,
-                example: serde_json::json!(
-                    "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
-                ),
-            },
-            ParameterDefinition {
-                name: "spec_file".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path to OpenAPI specification file (YAML or JSON)".to_string(),
-                required: false,
-                example: serde_json::json!("/path/to/openapi.yaml"),
-            },
-        ]
+            required: false,
+            example: serde_json::json!(
+                "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
+            ),
+        }]
     }
     fn group_name(&self) -> &'static str {
         "AI & API"

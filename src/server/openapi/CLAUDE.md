@@ -1,286 +1,133 @@
-# OpenAPI 3.1 Server Implementation
+# openapi — spec-driven HTTP API server
 
-## Overview
+Loads an OpenAPI 3.x specification, matches requests against its paths, and asks the model to
+produce the response body. `DevelopmentState::Experimental`, group `AI & API`, keywords
+`openapi` / `rest` / `rest api` / `api` / `swagger`. Feature
+`openapi = ["http", "dep:openapi-rs", "dep:matchit"]` — note it pulls in `http`, so
+`http_common` is available here (unlike the other Authentication-group protocols).
 
-OpenAPI 3.1 spec-driven HTTP server where the LLM provides an OpenAPI specification and generates responses based on
-validated requests. Supports route matching, path parameters, request validation, and intentionally non-compliant
-responses for testing/honeypot purposes.
+Not an auth protocol, but it sits next to them because it is the usual way to stand up the
+resource server that consumes the tokens `oauth2` / `openid` hand out. It has no authentication
+layer of its own: `security` schemes in the spec are not enforced, and an `Authorization`
+header just arrives in the event for the model to read.
 
-## Protocol Version
+## Files
 
-- **OpenAPI**: 3.1.0 (compatible with 3.0.x)
-- **Transport**: HTTP/1.1 with JSON request/response bodies
-- **Specification**: https://spec.openapis.org/oas/v3.1.0.html
+| File | Contents |
+|---|---|
+| `mod.rs` | `OpenApiServer::spawn_with_llm_actions`, `OpenApiState`, `build_router`, route matching, `handle_llm_response` |
+| `actions.rs` | `OpenApiProtocol` (`Protocol` + `Server`), three async and three sync actions, `OPENAPI_REQUEST_EVENT` |
 
-## Library Choices
+## Libraries
 
-### Core Dependencies
+- **openapi-rs** (git, `baerwang/openapi-rs`) parses the YAML/JSON spec.
+- **matchit** builds a `Router<RouteMetadata>` keyed `METHOD:PATH`, giving path-template
+  matching (`/users/{id}`) with parameter extraction.
+- **hyper** serves HTTP/1.1.
 
-- **openapi-rs** v1.0 - OpenAPI 3.x parser
-    - Chosen for: Native Rust OpenAPI parsing, no code generation
-    - Used for: Parsing YAML/JSON specs
-- **matchit** v0.8 - Fast path router with parameter extraction
-    - Chosen for: High performance, path template support (`/users/{id}`)
-    - Used for: Route matching against OpenAPI paths
-- **hyper** v1 - HTTP/1.1 server
-- **serde_json** - JSON handling
+No OpenAPI *server framework*: none of them let a model author the response, and the point here
+is that it can also deliberately violate the spec.
 
-### Why Not Use an OpenAPI Server Framework?
+## Two modes
 
-- No Rust framework provides LLM-controlled responses
-- Need full control over spec compliance vs. intentional violations
-- OpenAPI validation libraries exist but don't fit dynamic LLM responses
+**With a spec** (`startup_params.spec`) — the router is built at spawn time. A path or method
+the spec does not contain is answered immediately with 404/405 and **no LLM call**. A matched
+request reaches the model with only the relevant operation attached, not the whole document.
 
-## Architecture Decisions
+**Without a spec** — every request goes to the model, which can load a spec later with
+`reload_spec`.
 
-### Two Operating Modes
+`llm_on_invalid` (default `false`) flips the first mode: set it with `configure_error_handling`
+to have the model author the 404/405/400 bodies too, which is what a honeypot wants.
 
-**1. With Spec (Loaded)** - Fast path:
+## Startup parameters
 
-- LLM provides OpenAPI spec during startup via `startup_params.spec`
-- Server builds route matcher from paths
-- Invalid requests (404/405/400) rejected immediately (no LLM call)
-- Matched requests receive only relevant operation spec, not full spec
+`spec` (string, optional) — inline YAML or JSON. **That is the only one.**
 
-**2. Without Spec (Dynamic)** - Flexible mode:
+`spec_file` used to be declared here and documented on `spawn_with_llm_actions`, but nothing
+ever read it: spawn looks only at `spec` and, when `startup_params` is present without it,
+returns the error "OpenAPI server requires 'spec' parameter". A caller passing only `spec_file`
+got a hard startup failure from a parameter the protocol advertised. It has been removed rather
+than implemented — the server deliberately wants inline content, and giving model-supplied
+input an arbitrary file read is not a trade worth making. Read the file and pass the contents.
 
-- Server starts without spec
-- First request calls LLM, which can load spec via `reload_spec` action
-- All requests call LLM (including 404/405)
+Note the asymmetry: `startup_params` absent entirely ⇒ dynamic mode; `startup_params` present
+but without `spec` ⇒ startup error.
 
-### Route Matching System
+## Event and actions
 
-**Fast Router with matchit**:
+One event, `openapi_request`, carrying `method`, `path`, `uri`, `headers`, `body`, `spec_info`
+and — when a route matched — `matched_route` (`operation_id`, `path_template`, `path_params`,
+and the full `operation` spec).
 
-```rust
-Router<RouteMetadata>  // Maps "METHOD:PATH" -> operation metadata
-```
+`call_llm` advertises `event.event_type.actions`, **not** `get_sync_actions()`.
+`OPENAPI_REQUEST_EVENT` had no `.with_actions(...)`, so the model was told "No specific actions
+available for this event" and had no way to answer a request at all; it now carries
+`.with_actions(OpenApiProtocol.get_sync_actions())`. `get_event_types()` is likewise
+implemented, so `get_protocol_docs` and the script-template prompt can see the event id.
 
-**Match Results**:
+| Action | Kind | Effect |
+|---|---|---|
+| `send_openapi_response` | sync | status, headers, body — the normal answer |
+| `send_validation_error` | sync | status + `{"error": message}` |
+| `provide_openapi_spec` | sync | loads a spec mid-request (surfaces as `load_openapi_spec`) |
+| `reload_spec` | async | replaces the spec and rebuilds the router |
+| `get_spec_info` | async | `NoAction` — logs only, returns nothing to the caller |
+| `configure_error_handling` | async | sets `llm_on_invalid` |
 
-- `Found` - Route exists, extract path params
-- `MethodNotAllowed` - Path exists but wrong method (405)
-- `NotFound` - Path doesn't exist (404)
+**Action name vs result name.** The model emits `provide_openapi_spec`; the executor returns an
+`ActionResult::Custom` *named* `load_openapi_spec`, which is what `handle_llm_response` matches
+on. `load_openapi_spec` is not an action the model can invoke — an earlier version of this file
+showed it as one, and a model copying that example would have had it rejected as unknown.
 
-### LLM Control Points
+`send_openapi_response` also accepts `spec_compliant` (bool, default true). The executor reads
+it but it was undeclared, so the model could not know it existed; it is declared now. It only
+affects the log line — the response is sent either way. That is the switch for "answer 201
+where the spec says 200" scenarios that test client error handling.
 
-**Spec-Driven + LLM Responses**:
+## Nothing here may panic
 
-1. **Startup**: LLM provides OpenAPI spec (optional)
-2. **Request Validation**: matchit validates path/method (if spec loaded)
-3. **Response Generation**: LLM generates response based on operation
-4. **Compliance Control**: LLM can intentionally violate spec (for testing)
+`handle_llm_response` routes through `http_common::handler::build_safe_response`. Both
+`status_code` and every response header are model output: the previous
+`Response::builder().status(status_code)…body(..).unwrap()` panicked inside the connection task
+on a status outside 100–599, or on a header value containing CR/LF (a response-splitting
+attempt). Out-of-range statuses become 500 and bad headers are dropped individually.
 
-**Action-Based Responses**:
+## Storage
 
-```json
-{
-  "actions": [
-    {
-      "type": "send_openapi_response",
-      "status_code": 200,
-      "headers": {"Content-Type": "application/json"},
-      "body": "{\"todos\": [...]}"
-    }
-  ]
-}
-```
+None, per the project rule. The parsed spec and router are configuration, not data: there is no
+resource store behind the paths. `GET /todos` returns whatever the model says, and a `POST`
+that "creates" something creates nothing. If a scenario needs the second request to see the
+first one's effect, the model must keep it in server memory.
 
-Or for spec loading:
+## Not implemented
 
-```json
-{
-  "actions": [
-    {
-      "type": "load_openapi_spec",
-      "spec": "openapi: 3.1.0\n..."
-    }
-  ]
-}
-```
+Request-body and parameter schema validation (route matching only), response validation,
+content negotiation, `multipart/form-data`, and any authentication — `security` schemes in the
+spec are parsed but never enforced.
 
-### Error Handling Configuration
-
-**`llm_on_invalid` Flag**:
-
-- `false` (default) - Immediate 404/405/400 without LLM call (fast)
-- `true` - LLM handles all errors (flexible, allows custom error responses)
-
-Configurable via `configure_error_handling` action.
-
-### Connection Management
-
-- Each HTTP connection spawned as tokio task
-- Connections tracked in `ProtocolConnectionInfo::OpenApi` with operation metadata
-- Route matching happens per-request
-
-## State Management
-
-### Server State
-
-```rust
-OpenApiState {
-    spec: Option<String>,              // Raw YAML/JSON spec
-    spec_valid: bool,                  // Parsing succeeded
-    parsed_spec: Option<OpenAPI>,      // Parsed structure
-    router: Option<Router<RouteMetadata>>,  // Route matcher
-    llm_on_invalid: bool,              // Error handling mode
-}
-```
-
-### Per-Connection State
-
-```rust
-ProtocolConnectionInfo::OpenApi {
-    operation_id: Option<String>,  // Matched operation
-    method: Option<String>,        // HTTP method
-    path: Option<String>,          // Request path
-    validated: bool,               // Validation passed
-}
-```
-
-## Limitations
-
-### Not Implemented
-
-- **Request body validation** - Schema validation not enforced
-- **Response validation** - LLM can return non-compliant responses
-- **Parameter validation** - Types/formats not checked
-- **Content negotiation** - Accept header not processed
-- **OAuth/API key auth** - No authentication layer
-- **Multipart/form-data** - Only JSON supported
-
-### Schema Validation
-
-Currently a no-op - LLM trusted to generate valid responses. Future enhancement: use `jsonschema` crate for validation.
-
-### Performance Considerations
-
-- **Route matching overhead** - matchit is fast but still per-request
-- **Spec parsing** - YAML parsing on startup (5-50ms depending on spec size)
-- **No caching** - LLM generates fresh response each time
-
-## Example Prompts and Responses
-
-### Startup (Inline Spec)
-
-```
-open_server port 3000 base_stack openapi.
-
-Create an OpenAPI 3.1 server for a TODO API:
-
-openapi: 3.1.0
-info:
-  title: TODO API
-  version: 1.0.0
-paths:
-  /todos:
-    get:
-      operationId: listTodos
-      responses:
-        '200':
-          description: List of todos
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id: {type: integer}
-                    title: {type: string}
-                    done: {type: boolean}
-
-When GET /todos is requested, return 3 sample todos.
-```
-
-### Startup (Spec File)
-
-```
-open_server port 3000 base_stack openapi.
-Load OpenAPI spec from /path/to/openapi.yaml
-```
-
-### Network Event (Matched Request)
-
-**Event to LLM**:
+## Examples
 
 ```json
-{
-  "event_type": "openapi_request",
-  "method": "GET",
-  "path": "/todos",
-  "uri": "/todos?completed=false",
-  "headers": {"accept": "application/json"},
-  "body": "",
-  "spec_info": {"spec_loaded": true, "spec_valid": true},
-  "matched_route": {
-    "operation_id": "listTodos",
-    "path_template": "/todos",
-    "path_params": {},
-    "operation": {
-      "operationId": "listTodos",
-      "responses": {...}
-    }
-  }
-}
+{"type": "open_server", "port": 3000, "base_stack": "openapi",
+ "startup_params": {"spec": "openapi: 3.1.0\ninfo:\n  title: TODO API\n  version: 1.0.0\npaths:\n  /todos:\n    get:\n      operationId: listTodos\n      responses:\n        '200':\n          description: List of todos"},
+ "instruction": "Return three plausible todo items for listTodos."}
 ```
 
-**LLM Response**:
+Deterministic equivalent — no LLM call per request:
 
 ```json
-{
-  "actions": [
-    {
-      "type": "send_openapi_response",
-      "status_code": 200,
-      "headers": {"Content-Type": "application/json"},
-      "body": "[{\"id\":1,\"title\":\"Buy milk\",\"done\":false}]"
-    }
-  ]
-}
+"event_handlers": [{"event_pattern": "openapi_request", "handler": {"type": "static",
+  "actions": [{"type": "send_openapi_response", "status_code": 200,
+    "headers": {"content-type": "application/json"}, "body": "{\"status\": \"healthy\"}"}]}}]
 ```
 
-### Intentional Spec Violation
+## Tests
 
-**Event to LLM** (spec says 200, but LLM violates intentionally):
-
-```json
-{
-  "event_type": "openapi_request",
-  "method": "GET",
-  "path": "/todos",
-  ...
-}
-```
-
-**LLM Response** (returns 201 instead of 200 for testing):
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_openapi_response",
-      "status_code": 201,
-      "headers": {"Content-Type": "application/json"},
-      "body": "[...]"
-    }
-  ]
-}
-```
-
-This allows testing client error handling.
+`tests/server/openapi/` exists and is declared in `tests/server/mod.rs`. See
+`tests/server/openapi/CLAUDE.md`.
 
 ## References
 
-- [OpenAPI 3.1 Specification](https://spec.openapis.org/oas/v3.1.0.html)
-- [matchit Router](https://docs.rs/matchit/)
-- [openapi-rs Parser](https://docs.rs/openapi-rs/)
-
-## Key Design Principles
-
-1. **Spec-Driven** - OpenAPI spec defines structure
-2. **LLM Control** - LLM generates all responses
-3. **Fast Validation** - Route matching without LLM (when spec loaded)
-4. **Intentional Violations** - LLM can break spec for testing
-5. **Dynamic Loading** - Spec can be loaded at startup or later
+[OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0.html), [matchit](https://docs.rs/matchit/),
+[openapi-rs](https://github.com/baerwang/openapi-rs).

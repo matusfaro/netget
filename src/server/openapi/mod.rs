@@ -408,17 +408,16 @@ async fn handle_llm_response(
         response_body.len()
     ));
 
-    // Build the HTTP response
-    let mut response = Response::builder().status(status_code);
-
-    // Add headers
-    for (name, value) in response_headers {
-        response = response.header(name, value);
-    }
-
-    Ok(response
-        .body(Full::new(Bytes::from(response_body)))
-        .unwrap())
+    // `status_code` and every header name/value here are model output, so this must not be
+    // `.body(..).unwrap()`: a `status_code` of 1000, or a header value containing CR/LF (a
+    // response-splitting attempt), made the builder return Err and panicked the connection
+    // task. `build_safe_response` clamps the status and drops individual bad headers.
+    Ok(crate::server::http_common::handler::build_safe_response(
+        status_code,
+        response_headers,
+        response_body,
+        "OpenAPI",
+    ))
 }
 
 /// OpenAPI server that uses LLM to handle spec-driven requests
@@ -438,12 +437,10 @@ impl OpenApiServer {
     /// }
     /// ```
     ///
-    /// **Option 2: Spec file path**
-    /// ```json
-    /// {
-    ///   "spec_file": "/path/to/openapi.yaml"
-    /// }
-    /// ```
+    /// There is no `spec_file` option. It was declared in `get_startup_parameters()` and
+    /// documented here, but no code ever read it — a caller passing only `spec_file` hit the
+    /// "requires 'spec' parameter" error below. Read the file yourself and pass its contents
+    /// as `spec`.
     ///
     /// When a spec is provided via startup_params:
     /// - The spec is immediately parsed and validated
