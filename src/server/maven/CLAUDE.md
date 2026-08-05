@@ -112,8 +112,8 @@ The LLM can respond with three action types:
 **send_maven_artifact**: Send artifact file content
 
 - For `.jar`, `.pom`, `.war`, and other files
-- Supports text and binary content
-- Content-Type automatically set based on file type
+- `body` for UTF-8 text, `body_base64` for bytes - exactly one of the two
+- `content_type` sets the Content-Type header (default `application/octet-stream`)
 
 **send_maven_metadata**: Send version listing XML
 
@@ -136,11 +136,22 @@ All Maven operations use dual logging:
 
 ### 6. Binary Content Handling
 
-Maven repositories serve binary files (JARs):
+Maven repositories serve binary files (JARs), but a language model cannot write
+ZIP bytes. The two body fields are therefore split so the encoding is never
+guessed - `"48656c6c6f"` is both valid text and valid hex/base64-looking text:
 
-- Response bodies can be text (for POM, XML, checksums) or binary (for JARs)
-- Binary content can be base64-encoded in LLM response
-- Server handles both string and base64 in action responses
+- `body` - UTF-8 text, sent byte for byte. This is the field a model uses: POM
+  XML, `maven-metadata.xml`, checksum digests, and any placeholder JAR content.
+- `body_base64` - base64, decoded by the server before sending. Meant for a
+  script or static handler that already holds real bytes (e.g. a Python handler
+  that builds a JAR with `zipfile` and base64-encodes it). A model asked to
+  invent JAR bytes will produce a corrupt archive; serve text instead.
+
+Supplying both, or neither, is an error. Invalid base64 is rejected by the
+action executor rather than silently sent as text.
+
+Maven verifies the `.sha1`/`.md5` companion file against the bytes it received,
+so a handler serving `body_base64` must checksum the same bytes.
 
 ## LLM Integration
 
@@ -164,7 +175,7 @@ The LLM responds to Maven artifact requests with actions:
 
 ### Example LLM Responses
 
-**Serving a JAR file:**
+**Serving a JAR file** (real bytes, from a script or static handler):
 
 ```json
 {
@@ -173,7 +184,7 @@ The LLM responds to Maven artifact requests with actions:
       "type": "send_maven_artifact",
       "status": 200,
       "content_type": "application/java-archive",
-      "body": "PK\u0003\u0004..." // JAR file content or base64
+      "body_base64": "UEsDBBQACAgIAAAAIQ..." // real JAR bytes, base64-encoded
     },
     {
       "type": "show_message",
@@ -182,6 +193,10 @@ The LLM responds to Maven artifact requests with actions:
   ]
 }
 ```
+
+A model with no real archive to serve should send text through `body` instead.
+`mvn dependency:get` still succeeds - the JAR simply is not a valid archive when
+something later tries to open it.
 
 **Serving a POM file:**
 
@@ -309,6 +324,22 @@ ProtocolConnectionInfo::Maven {
 - LLM must generate checksums manually
 - No automatic checksum calculation
 - Server doesn't validate checksums
+- The checksum must match the bytes actually served: Maven verifies `.sha1`/
+  `.md5` and fails the build on a mismatch under the default checksum policy
+
+### 7. Path Parsing Gaps
+
+- `maven-metadata.xml.sha256` / `.sha512` are not recognized as metadata
+  checksums (only `.sha1` and `.md5` are); they fall through to the artifact
+  parser and are answered with a 404 without an LLM call
+- A path that does not match the Maven layout returns 404 immediately, so a
+  handler never sees it
+
+### 8. Invalid Response Output
+
+- A status outside 100-599 is rejected by the action executor
+- A header name hyper cannot parse produces a 502 for that request; the
+  connection and server stay up
 
 ## Example Prompts
 
@@ -384,19 +415,25 @@ Return 403 Forbidden for unauthorized requests
 
 ### E2E Testing with mvn CLI
 
-The primary E2E test uses the real Maven CLI (`mvn`) to:
+The mocked tests in `tests/server/maven/e2e_test.rs` run by default. The Maven
+CLI test in the same file is `#[ignore]`d because it needs both `mvn` and a live
+model; run it with `--ignored`.
 
-1. Configure a custom repository pointing to NetGet
-2. Declare a dependency in `pom.xml`
-3. Run `mvn dependency:get` or `mvn compile`
-4. Verify Maven successfully downloads the artifact from NetGet
-5. Check downloaded JAR/POM content
+To exercise the server against `mvn` without a model, start it with a script
+handler and point Maven at it:
+
+```bash
+mvn -B dependency:get \
+  -Dartifact=com.netget.test:maven-test:1.0.0 \
+  -DremoteRepositories=netget::::http://127.0.0.1:8080/ \
+  -Dmaven.repo.local=/tmp/repo
+```
 
 This validates:
 
 - Maven path parsing correctness
 - HTTP compatibility with Maven client
-- Artifact content integrity
+- Artifact content integrity (Maven checks the `.sha1` against what it received)
 - Metadata XML format correctness
 
 ### Test Efficiency Target

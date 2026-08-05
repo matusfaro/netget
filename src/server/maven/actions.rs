@@ -153,20 +153,44 @@ impl Server for MavenProtocol {
     }
 }
 
+/// Escape XML text content so a coordinate containing `&` or `<` cannot produce
+/// a maven-metadata.xml that Maven refuses to parse.
+fn xml_escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+/// Read an HTTP status code from an action, rejecting values hyper cannot build
+/// a response from instead of silently truncating them into a valid-looking one.
+fn status_from_action(action: &serde_json::Value, default: u16) -> Result<u16> {
+    match action.get("status").and_then(|v| v.as_u64()) {
+        None => Ok(default),
+        Some(status) if (100..=599).contains(&status) => Ok(status as u16),
+        Some(status) => Err(anyhow::anyhow!(
+            "Invalid 'status' {status}: HTTP status codes are 100-599"
+        )),
+    }
+}
+
 impl MavenProtocol {
     /// Execute send_maven_artifact sync action
     fn execute_send_maven_artifact(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let status = action.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+        let status = status_from_action(&action, 200)?;
 
         let content_type = action
             .get("content_type")
             .and_then(|v| v.as_str())
             .unwrap_or("application/octet-stream");
-
-        let body = action
-            .get("body")
-            .and_then(|v| v.as_str())
-            .context("Missing 'body' parameter")?;
 
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), content_type.to_string());
@@ -180,11 +204,36 @@ impl MavenProtocol {
             }
         }
 
-        let response_data = json!({
-            "status": status,
-            "headers": headers,
-            "body": body
-        });
+        // The body is either UTF-8 text (POM, checksum, maven-metadata.xml) or
+        // base64-encoded bytes. Exactly one of the two must be present: guessing
+        // would make "48656c6c6f" ambiguous between text and encoded bytes.
+        let body = action.get("body").and_then(|v| v.as_str());
+        let body_base64 = action.get("body_base64").and_then(|v| v.as_str());
+
+        let response_data = match (body, body_base64) {
+            (Some(_), Some(_)) => {
+                anyhow::bail!("Provide either 'body' or 'body_base64', not both")
+            }
+            (None, None) => {
+                anyhow::bail!("Missing 'body' parameter (or 'body_base64' for binary artifacts)")
+            }
+            (Some(text), None) => json!({
+                "status": status,
+                "headers": headers,
+                "body": text
+            }),
+            (None, Some(encoded)) => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .context("'body_base64' is not valid base64")?;
+                json!({
+                    "status": status,
+                    "headers": headers,
+                    "body_base64": encoded
+                })
+            }
+        };
 
         Ok(ActionResult::Output(
             serde_json::to_vec(&response_data)
@@ -213,35 +262,40 @@ impl MavenProtocol {
 
         let release = action.get("release").and_then(|v| v.as_str());
 
-        // Generate maven-metadata.xml
+        // Generate maven-metadata.xml. Element order follows the repository
+        // metadata schema Maven itself writes: latest, release, then versions.
         let mut xml = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <metadata>
   <groupId>{}</groupId>
   <artifactId>{}</artifactId>
   <versioning>
-    <versions>
 "#,
-            group_id, artifact_id
+            xml_escape(group_id),
+            xml_escape(artifact_id)
         );
 
-        for version in versions {
-            if let Some(v) = version.as_str() {
-                xml.push_str(&format!("      <version>{}</version>\n", v));
-            }
-        }
-
-        xml.push_str("    </versions>\n");
-
         if let Some(latest_ver) = latest {
-            xml.push_str(&format!("    <latest>{}</latest>\n", latest_ver));
+            xml.push_str(&format!("    <latest>{}</latest>\n", xml_escape(latest_ver)));
         }
 
         if let Some(release_ver) = release {
-            xml.push_str(&format!("    <release>{}</release>\n", release_ver));
+            xml.push_str(&format!(
+                "    <release>{}</release>\n",
+                xml_escape(release_ver)
+            ));
         }
 
-        xml.push_str("  </versioning>\n</metadata>\n");
+        xml.push_str("    <versions>\n");
+
+        for version in versions {
+            let v = version
+                .as_str()
+                .context("Every entry in 'versions' must be a version string")?;
+            xml.push_str(&format!("      <version>{}</version>\n", xml_escape(v)));
+        }
+
+        xml.push_str("    </versions>\n  </versioning>\n</metadata>\n");
 
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/xml".to_string());
@@ -260,7 +314,7 @@ impl MavenProtocol {
 
     /// Execute send_maven_error sync action
     fn execute_send_maven_error(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let status = action.get("status").and_then(|v| v.as_u64()).unwrap_or(404) as u16;
+        let status = status_from_action(&action, 404)?;
 
         let message = action
             .get("message")
@@ -303,8 +357,14 @@ fn send_maven_artifact_action() -> ActionDefinition {
             Parameter {
                 name: "body".to_string(),
                 type_hint: "string".to_string(),
-                description: "Artifact content (for binary files, use base64 encoding)".to_string(),
-                required: true,
+                description: "Artifact content as UTF-8 text: POM XML, maven-metadata.xml, or a checksum digest. Sent byte for byte. Required unless body_base64 is given".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body_base64".to_string(),
+                type_hint: "string".to_string(),
+                description: "Artifact content as base64-encoded bytes, decoded before sending. Only for a real binary artifact a script or static handler already holds; do not try to write JAR (ZIP) bytes by hand - serve text and a matching Content-Type instead".to_string(),
+                required: false,
             },
             Parameter {
                 name: "headers".to_string(),
@@ -316,8 +376,8 @@ fn send_maven_artifact_action() -> ActionDefinition {
         example: json!({
             "type": "send_maven_artifact",
             "status": 200,
-            "content_type": "application/java-archive",
-            "body": "UEsDBBQACAgIAAAAIQAAAAAAAAAAAAAAAAA..." // base64-encoded JAR
+            "content_type": "application/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>mylib</artifactId>\n  <version>1.0.0</version>\n</project>\n"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -437,8 +497,8 @@ pub static MAVEN_ARTIFACT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
         json!({
             "type": "send_maven_artifact",
             "status": 200,
-            "content_type": "application/java-archive",
-            "body": "UEsDBBQACAgIAAAAIQAAAAAAAAAAAAAAAAA..."
+            "content_type": "application/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>mylib</artifactId>\n  <version>1.0.0</version>\n</project>\n"
         }),
     )
     .with_parameters(vec![

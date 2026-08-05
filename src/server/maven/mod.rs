@@ -298,6 +298,17 @@ impl MavenArtifact {
     }
 }
 
+/// Build the 502 sent when model or handler output cannot be turned into a
+/// valid HTTP response (bad status code, malformed header name, ...).
+fn bad_gateway() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(502)
+        .body(Full::new(Bytes::from(
+            "Bad Gateway: invalid Maven response",
+        )))
+        .expect("502 response with a literal body is always valid")
+}
+
 /// Handle a single Maven artifact request with integrated LLM actions
 async fn handle_maven_request_with_llm(
     req: Request<Incoming>,
@@ -416,21 +427,26 @@ async fn handle_maven_request_with_llm(
                             }
                         }
 
-                        // Handle both string and base64-encoded binary content
-                        if let Some(body) = json_value.get("body") {
-                            if let Some(body_str) = body.as_str() {
-                                response_body = body_str.as_bytes().to_vec();
-                            } else if let Some(body_bytes) =
-                                json_value.get("body_base64").and_then(|v| v.as_str())
-                            {
-                                // Support base64-encoded binary content
-                                use base64::Engine;
-                                if let Ok(decoded) =
-                                    base64::engine::general_purpose::STANDARD.decode(body_bytes)
-                                {
-                                    response_body = decoded;
+                        // Handle both UTF-8 text and base64-encoded binary content.
+                        // body_base64 is checked first: it is only ever set by the
+                        // action executor, which has already validated the encoding.
+                        if let Some(encoded) = json_value.get("body_base64").and_then(|v| v.as_str())
+                        {
+                            use base64::Engine;
+                            match base64::engine::general_purpose::STANDARD.decode(encoded) {
+                                Ok(decoded) => response_body = decoded,
+                                Err(e) => {
+                                    console_error!(
+                                        status_tx,
+                                        "Maven response body_base64 is not valid base64: {}",
+                                        e
+                                    );
                                 }
                             }
+                        } else if let Some(body_str) =
+                            json_value.get("body").and_then(|v| v.as_str())
+                        {
+                            response_body = body_str.as_bytes().to_vec();
                         }
                     }
                 }
@@ -444,7 +460,8 @@ async fn handle_maven_request_with_llm(
                 response_body.len()
             ));
 
-            // Build the HTTP response
+            // Build the HTTP response. Status and header names come from model or
+            // handler output, so an invalid one must not take the connection down.
             let mut response = Response::builder().status(status_code);
 
             // Add headers
@@ -452,9 +469,13 @@ async fn handle_maven_request_with_llm(
                 response = response.header(name, value);
             }
 
-            Ok(response
-                .body(Full::new(Bytes::from(response_body)))
-                .unwrap())
+            match response.body(Full::new(Bytes::from(response_body))) {
+                Ok(resp) => Ok(resp),
+                Err(e) => {
+                    console_error!(status_tx, "Invalid Maven response ({}), sending 502", e);
+                    Ok(bad_gateway())
+                }
+            }
         }
         Err(e) => {
             error!("LLM error generating Maven response: {}", e);
