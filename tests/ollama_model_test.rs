@@ -3,20 +3,32 @@
 /// This test file demonstrates the Ollama model testing framework that allows
 /// evaluating different models and prompts against specific expectations.
 ///
+/// ## Opt-in only
+///
+/// Every test here grades a *real* model's answers against a real Ollama at
+/// `OLLAMA_BASE_URL`. It is therefore an evaluation harness, not a regression suite:
+/// without that exact setup (including the model being pulled) it can only fail, so it
+/// is gated behind the project's standard `--use-ollama` opt-in and skips otherwise.
+///
+/// ```bash
+/// ./test-e2e.sh --use-ollama            # sets NETGET_USE_OLLAMA=1
+/// NETGET_USE_OLLAMA=1 cargo test --test ollama_model_test
+/// ```
+///
 /// ## Running Tests
 ///
 /// ```bash
 /// # Use default model (qwen2.5-coder:7b)
-/// cargo test --test ollama_model_test
+/// NETGET_USE_OLLAMA=1 cargo test --test ollama_model_test
 ///
 /// # Use specific model
-/// OLLAMA_MODEL=qwen3-coder:30b cargo test --test ollama_model_test
+/// NETGET_USE_OLLAMA=1 OLLAMA_MODEL=qwen3-coder:30b cargo test --test ollama_model_test
 ///
 /// # Run single test
-/// cargo test --test ollama_model_test test_open_http_server
+/// NETGET_USE_OLLAMA=1 cargo test --test ollama_model_test test_open_http_server
 ///
 /// # Run with verbose output
-/// cargo test --test ollama_model_test -- --nocapture
+/// NETGET_USE_OLLAMA=1 cargo test --test ollama_model_test -- --nocapture
 /// ```
 ///
 /// ## Environment Variables
@@ -57,6 +69,29 @@ use netget::llm::actions::Parameter;
 use netget::protocol::{Event, EventType};
 use netget::state::ServerId;
 
+/// True when the caller asked for a real Ollama, using the same opt-in the rest of the
+/// suite uses: `test-e2e.sh --use-ollama` exports `NETGET_USE_OLLAMA=1`
+/// (`tests/helpers/netget.rs::should_use_ollama` reads the same variable).
+fn ollama_opt_in() -> bool {
+    std::env::var("NETGET_USE_OLLAMA").is_ok()
+}
+
+/// Skip the calling test unless the `--use-ollama` opt-in is active.
+///
+/// These tests evaluate a live model; with no Ollama (or no such model pulled) they can
+/// only fail, which is a statement about the machine and not about the code.
+macro_rules! require_ollama {
+    () => {
+        if !ollama_opt_in() {
+            eprintln!(
+                "skipped: model-evaluation test, needs a real Ollama. \
+                 Run `./test-e2e.sh --use-ollama` or set NETGET_USE_OLLAMA=1."
+            );
+            return Ok(());
+        }
+    };
+}
+
 // Initialize tracing once for all tests
 static INIT: Once = Once::new();
 
@@ -83,6 +118,7 @@ fn init_tracing() {
 /// Both are valid behaviors.
 #[tokio::test]
 async fn test_server_request_without_docs() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open an http server")
         // NO documentation injected - LLM can either request docs or directly open
@@ -111,6 +147,7 @@ async fn test_server_request_without_docs() -> Result<()> {
 /// Both are valid behaviors.
 #[tokio::test]
 async fn test_client_request_without_docs() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("connect to a redis server at localhost:6379")
         // NO documentation injected - LLM can either request docs or directly connect
@@ -140,6 +177,7 @@ async fn test_client_request_without_docs() -> Result<()> {
 /// an HTTP server and generates the appropriate action.
 #[tokio::test]
 async fn test_open_http_server() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open http server")
         .with_server_documentation("http") // Inject HTTP docs so open_server is available
@@ -156,6 +194,7 @@ async fn test_open_http_server() -> Result<()> {
 /// them in the generated action.
 #[tokio::test]
 async fn test_open_tcp_server_with_port() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open tcp server on port 8080")
         .with_server_documentation("tcp") // Inject TCP docs so open_server is available
@@ -173,6 +212,7 @@ async fn test_open_tcp_server_with_port() -> Result<()> {
 /// in the instruction field.
 #[tokio::test]
 async fn test_open_server_with_instruction() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open an http server that responds with hello world to all requests")
         .with_server_documentation("http") // Inject HTTP docs so open_server is available
@@ -190,6 +230,7 @@ async fn test_open_server_with_instruction() -> Result<()> {
 /// the user specifies a simple, static response pattern.
 #[tokio::test]
 async fn test_dns_server_with_static_response() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open a dns server that always responds with 1.2.3.4 for any query")
         .with_server_documentation("dns") // Inject DNS docs so open_server is available
@@ -212,6 +253,7 @@ async fn test_dns_server_with_static_response() -> Result<()> {
 /// and includes the remote address.
 #[tokio::test]
 async fn test_open_client() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("connect to redis server at localhost:6379")
         .with_client_documentation("redis") // Inject Redis client docs so open_client is available
@@ -247,6 +289,7 @@ async fn test_open_client() -> Result<()> {
 /// and generates appropriate close actions.
 #[tokio::test]
 async fn test_close_server() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("close server 123")
         .expect_action_type("close_server")
@@ -266,6 +309,7 @@ async fn test_close_server() -> Result<()> {
 /// for implementing custom logic.
 #[tokio::test]
 async fn test_http_script_sum_query_params() -> Result<()> {
+    require_ollama!();
     // Create test event (HTTP request with query params)
     let test_event = Event::new(
         Box::leak(Box::new(
@@ -340,6 +384,7 @@ async fn test_http_script_sum_query_params() -> Result<()> {
 /// echo functionality.
 #[tokio::test]
 async fn test_tcp_echo_script() -> Result<()> {
+    require_ollama!();
     // Create test event (TCP data received)
     let test_event = Event::new(
         Box::leak(Box::new(
@@ -384,6 +429,7 @@ async fn test_tcp_echo_script() -> Result<()> {
 /// is required.
 #[tokio::test]
 async fn test_http_conditional_script() -> Result<()> {
+    require_ollama!();
     // Create test event (GET request)
     let test_event_get = Event::new(
         Box::leak(Box::new(
@@ -447,6 +493,7 @@ async fn test_http_conditional_script() -> Result<()> {
 /// based on the server's instruction.
 #[tokio::test]
 async fn test_http_request_with_instruction() -> Result<()> {
+    require_ollama!();
     let event = Event::new(
         Box::leak(Box::new(
             EventType::new(
@@ -510,6 +557,7 @@ async fn test_http_request_with_instruction() -> Result<()> {
 /// Validates that the model generates correct DNS response actions.
 #[tokio::test]
 async fn test_dns_query_response() -> Result<()> {
+    require_ollama!();
     let event = Event::new(
         Box::leak(Box::new(
             EventType::new(
@@ -584,6 +632,7 @@ async fn test_dns_query_response() -> Result<()> {
 /// Validates that the model understands hex-encoded data handling.
 #[tokio::test]
 async fn test_tcp_hex_response() -> Result<()> {
+    require_ollama!();
     let event = Event::new(
         Box::leak(Box::new(
             EventType::new(
@@ -640,6 +689,7 @@ async fn test_tcp_hex_response() -> Result<()> {
 /// that don't fit into standard expectation types.
 #[tokio::test]
 async fn test_custom_validation() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open http server on port 8080 and server cooking recipes")
         .with_server_documentation("http") // Inject HTTP docs so open_server is available
@@ -673,6 +723,7 @@ async fn test_custom_validation() -> Result<()> {
 /// Demonstrates using regex patterns for flexible string matching.
 #[tokio::test]
 async fn test_regex_pattern_matching() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open http server on localhost port 8080")
         .with_server_documentation("http") // Inject HTTP docs so open_server is available
@@ -694,6 +745,7 @@ async fn test_regex_pattern_matching() -> Result<()> {
 /// including scheduled tasks.
 #[tokio::test]
 async fn test_server_with_scheduled_tasks() -> Result<()> {
+    require_ollama!();
     OllamaTestBuilder::new()
         .with_user_input("open http server that sends a heartbeat log every 10 seconds")
         .with_server_documentation("http") // Inject HTTP docs so open_server is available
@@ -718,6 +770,7 @@ async fn test_server_with_scheduled_tasks() -> Result<()> {
 /// Validates that the model can generate multiple actions when appropriate.
 #[tokio::test]
 async fn test_multiple_actions() -> Result<()> {
+    require_ollama!();
     let result = OllamaTestBuilder::new()
         .with_user_input("open both http and tcp servers")
         .with_server_documentation("http") // Inject HTTP docs
@@ -747,6 +800,7 @@ async fn test_multiple_actions() -> Result<()> {
 /// for storing MAC-to-IP address mappings when explicitly requested.
 #[tokio::test]
 async fn test_dhcp_server_with_sqlite_storage() -> Result<()> {
+    require_ollama!();
     let result = OllamaTestBuilder::new()
         .with_user_input(
             "open a DHCP server that stores MAC address to IP mappings in a SQLite database",
@@ -791,6 +845,7 @@ async fn test_dhcp_server_with_sqlite_storage() -> Result<()> {
 /// existing leases in SQLite, the LLM correctly uses execute_sql to query.
 #[tokio::test]
 async fn test_dhcp_request_with_sqlite_query() -> Result<()> {
+    require_ollama!();
     // Create DHCP request event
     let dhcp_event = Event::new(
         Box::leak(Box::new(

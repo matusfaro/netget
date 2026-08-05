@@ -7,7 +7,24 @@ requests are worth an LLM call at all. HTTP/3 (`src/server/http3/`) does **not**
 use any of this — it serves raw QUIC streams and shares no code here.
 
 There is no `Protocol`/`Server` impl in this module, no registry entry, and no
-feature flag of its own; it is compiled whenever `http` or `http2` is enabled.
+feature flag of its own.
+
+## Which features compile it
+
+The `cfg` list lives in `src/server/mod.rs` and must be kept in sync with the
+protocols that serve HTTP themselves:
+
+| How it is reached | Features |
+|---|---|
+| Named in the `cfg` | `http`, `http2`, `oauth2`, `openid`, `saml-idp`, `saml-sp` |
+| Transitively, by enabling `http` | `openapi`, `mercurial`, `pypi` |
+
+The auth family speaks HTTP over hyper without enabling the `http` feature, so
+for a long time it could not see this module at all and each of its four
+protocols carried a private copy of `build_safe_response`. **If you add an HTTP
+protocol that does not depend on `http`, add it to that `cfg` — do not copy
+`build_safe_response`.** All the module's deps (`hyper`, `http-body-util`,
+`bytes`, `regex`) are unconditional, so widening the list costs nothing.
 
 ## Files
 

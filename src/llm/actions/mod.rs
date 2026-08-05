@@ -24,7 +24,8 @@ pub use protocol_trait::{Protocol, Server};
 // Export StartupExamples for protocol implementations
 pub use summary::{summarize_action, summarize_actions};
 pub use tools::{
-    execute_tool, get_all_tool_actions, get_network_event_tool_actions, ToolAction, ToolResult,
+    execute_tool, get_all_tool_actions, get_network_event_tool_actions, is_tool_name, ToolAction,
+    ToolResult, TOOL_ACTION_NAMES,
 };
 
 use crate::protocol::log_template::LogTemplate;
@@ -249,16 +250,14 @@ pub struct ActionDefinition {
 
 impl ActionDefinition {
     /// Check if this is a tool action (returns information and triggers LLM re-invocation)
+    ///
+    /// Delegates to [`tools::is_tool_name`] — the single source of truth shared with
+    /// [`ToolAction::is_tool_action`], which decides at runtime whether the model is
+    /// re-invoked. Classifying here independently is what previously rendered
+    /// `read_documentation` under the "Available Actions" heading, whose boilerplate
+    /// tells the model it will *not* be invoked again — the opposite of what happens.
     pub fn is_tool(&self) -> bool {
-        matches!(
-            self.name.as_str(),
-            "read_file"
-                | "web_search"
-                | "read_base_stack_docs"
-                | "list_network_interfaces"
-                | "list_models"
-                | "generate_random"
-        )
+        tools::is_tool_name(&self.name)
     }
 
     /// Convert to prompt text format for LLM
@@ -312,7 +311,7 @@ impl ActionDefinition {
 
     /// Derive the tool category from the action name
     pub fn category(&self) -> ToolCategory {
-        if self.is_tool() || self.is_documentation_tool() {
+        if self.is_tool() {
             ToolCategory::InformationTool
         } else if self.is_common_action() {
             ToolCategory::Action
@@ -344,20 +343,6 @@ impl ActionDefinition {
                 false
             }
         }
-    }
-
-    /// Check if this is a documentation/info-gathering tool
-    fn is_documentation_tool(&self) -> bool {
-        matches!(
-            self.name.as_str(),
-            "read_documentation"
-                | "read_server_documentation"
-                | "read_client_documentation"
-                | "read_base_stack_docs"
-                | "list_tasks"
-                | "list_databases"
-                | "execute_sql"
-        )
     }
 
     /// Check if this is a common (non-protocol-specific) action

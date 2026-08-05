@@ -363,7 +363,6 @@ All protocols should support mock testing (no Ollama required). Mocks work regar
 
 ## Related Documentation
 
-- **COMPILATION_ERROR_REPORT.md** - Detailed error analysis from build attempts
 - **CLAUDE.md** - Main project documentation (see "Claude Code for Web Environment" section)
 - **am_i_claude_code_for_web.sh** - Environment detection script
 - **Cargo.toml** - Feature definitions and dependencies

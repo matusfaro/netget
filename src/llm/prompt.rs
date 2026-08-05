@@ -924,11 +924,54 @@ Understand what the user wants and respond with the appropriate actions to make 
     pub async fn build_network_event_action_prompt_for_server(
         state: &AppState,
         server_id: ServerId,
-        mut all_actions: Vec<ActionDefinition>,
+        all_actions: Vec<ActionDefinition>,
     ) -> String {
-        // Add tool actions to network events (excluding documentation tools)
+        Self::build_network_event_action_prompt_for_server_with_actions(
+            state, server_id, all_actions,
+        )
+        .await
+        .0
+    }
+
+    /// The exact list of actions a network-event prompt advertises, given the assembled list.
+    ///
+    /// Two adjustments separate what a caller assembles from what the model is actually
+    /// offered:
+    ///
+    /// * the network-event tools (`read_file`, `generate_random`, `list_tasks`, …) are added;
+    /// * [`Self::filter_actions_by_scripting_mode`] removes `update_script` and the
+    ///   script parameters of `open_server` when scripting is Off.
+    ///
+    /// A caller that validates the model's response against its own pre-adjustment list
+    /// therefore accepts actions that were never advertised (`update_script` with scripting
+    /// Off) and offers native tool schemas that omit ones that were. Validate against this.
+    pub async fn advertised_network_event_actions(
+        state: &AppState,
+        mut all_actions: Vec<ActionDefinition>,
+    ) -> Vec<ActionDefinition> {
         let web_search_mode = state.get_web_search_mode().await;
         all_actions.extend(get_network_event_tool_actions(web_search_mode));
+
+        let selected_mode = state.get_selected_scripting_mode().await;
+        let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Off;
+        Self::filter_actions_by_scripting_mode(all_actions, has_scripting)
+    }
+
+    /// Build a network-event system prompt and return the actions it advertises.
+    ///
+    /// The second element is what the caller must validate the model's response against and
+    /// what it must hand to `with_native_tools` — see
+    /// [`Self::advertised_network_event_actions`].
+    pub async fn build_network_event_action_prompt_for_server_with_actions(
+        state: &AppState,
+        server_id: ServerId,
+        all_actions: Vec<ActionDefinition>,
+    ) -> (String, Vec<ActionDefinition>) {
+        // Add tool actions to network events (excluding documentation tools) and drop the
+        // script actions the current scripting mode does not allow. This is the list the
+        // model sees, so it is also the list returned to the caller to validate against.
+        let web_search_mode = state.get_web_search_mode().await;
+        let advertised = Self::advertised_network_event_actions(state, all_actions).await;
 
         // Note: all_actions already contains common + protocol + custom actions
         // They are pre-assembled by the action_helper, so we don't add common actions here
@@ -951,15 +994,20 @@ Understand what the user wants and respond with the appropriate actions to make 
 
         // Network events don't need base stack docs (server already running, handling specific event)
         // Network events don't use conversation history
-        Self::build_action_prompt(
+        //
+        // `build_action_prompt` re-applies the scripting-mode filter; it is idempotent, so the
+        // rendered list is exactly `advertised`.
+        let prompt = Self::build_action_prompt(
             state,
             Some(server_id),
             &instructions_str,
-            all_actions,
+            advertised.clone(),
             false,
             None,
         )
-        .await
+        .await;
+
+        (prompt, advertised)
     }
 
     /// Build event trigger message for network events

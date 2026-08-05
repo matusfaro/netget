@@ -6,11 +6,19 @@ use std::io::{self, IsTerminal, Read};
 use tracing::Level;
 
 /// Get default log level based on build type
-/// Development builds (debug_assertions) default to "trace"
+/// Development builds (debug_assertions) default to "debug"
 /// Release builds default to "info"
+///
+/// Dev builds used to default to `trace`. TRACE is the level at which NetGet
+/// writes whole network payloads and whole LLM prompts/responses to
+/// `netget.log` - which is both a 481 MB-per-day disk problem and a disclosure
+/// one, since those payloads can carry credentials from the wire. DEBUG keeps
+/// the per-event summaries that make development logs useful and stops short of
+/// the payloads; `--log-level trace` still turns them back on for the sessions
+/// that genuinely need byte-level detail.
 fn default_log_level() -> String {
     if cfg!(debug_assertions) {
-        "trace".to_string()
+        "debug".to_string()
     } else {
         "info".to_string()
     }
@@ -55,7 +63,8 @@ pub struct Args {
     pub model: Option<String>,
 
     /// Log level (off, error, warn, info, debug, trace)
-    /// Development builds default to 'trace', release builds default to 'info'
+    /// Development builds default to 'debug', release builds default to 'info'
+    /// ('trace' additionally writes full network payloads and LLM prompts to netget.log)
     #[clap(
         short = 'l',
         long = "log-level",

@@ -140,13 +140,19 @@ pub async fn call_llm_with_actions(
         all_actions.len()
     );
 
-    // Build system prompt using action system (NO trigger - that goes in user message)
-    let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
-        state,
-        server_id,
-        all_actions.clone(),
-    )
-    .await;
+    // Build system prompt using action system (NO trigger - that goes in user message).
+    //
+    // The builder returns the list it advertised: it adds the network-event tools and drops
+    // the script actions the current scripting mode disallows. Validating against the
+    // pre-adjustment `all_actions` accepted `update_script` with scripting Off and withheld
+    // native schemas for tools the prompt offered, so the advertised list is used from here on.
+    let (system_prompt, advertised_actions) =
+        PromptBuilder::build_network_event_action_prompt_for_server_with_actions(
+            state,
+            server_id,
+            all_actions,
+        )
+        .await;
 
     // Create conversation handler for network event with tracking
     let truncated_desc = format!(
@@ -164,7 +170,7 @@ pub async fn call_llm_with_actions(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
-    .with_native_tools(&all_actions)
+    .with_native_tools(&advertised_actions)
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -185,7 +191,7 @@ pub async fn call_llm_with_actions(
 
     // Generate actions with tool calling and retry
     let action_values = conversation
-        .generate_with_tools_and_retry(approval_tx, web_search_mode, all_actions.clone())
+        .generate_with_tools_and_retry(approval_tx, web_search_mode, advertised_actions)
         .await
         .context("LLM generate with tools failed")?;
 
@@ -499,13 +505,16 @@ pub async fn call_llm(
     // Use the event's prompt description
     let event_description = event.to_prompt_description();
 
-    // Build system prompt using action system (NO trigger - that goes in user message)
-    let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
-        state,
-        server_id,
-        all_actions.clone(),
-    )
-    .await;
+    // Build system prompt using action system (NO trigger - that goes in user message).
+    // `advertised_actions` is what the prompt actually offered (tools added, script actions
+    // filtered by scripting mode); everything downstream validates against that list.
+    let (system_prompt, advertised_actions) =
+        PromptBuilder::build_network_event_action_prompt_for_server_with_actions(
+            state,
+            server_id,
+            all_actions,
+        )
+        .await;
 
     // Create conversation handler for network event with tracking
     // Note: Network events don't use tools (immediate response), but get retry logic
@@ -524,7 +533,7 @@ pub async fn call_llm(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
-    .with_native_tools(&all_actions)
+    .with_native_tools(&advertised_actions)
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -547,7 +556,7 @@ pub async fn call_llm(
         .generate_with_tools_and_retry(
             None,                                        // No web approval for network events
             crate::state::app_state::WebSearchMode::Off, // No web search for network events
-            all_actions,
+            advertised_actions,
         )
         .await
         .context("✗  LLM failed to generate valid response after retries.")?;

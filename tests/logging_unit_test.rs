@@ -13,7 +13,14 @@ mod logging_unit_tests {
         let action = append_to_log_action();
 
         assert_eq!(action.name, "append_to_log");
-        assert!(action.description.contains("log file"));
+        // Deliberately not asserting on the wording of `description`: it is prose written
+        // for the model and gets reworded (e75043df reworded "log file" to "append logs to
+        // a file", which broke the old literal check). Assert it is non-empty, then assert
+        // on behaviour below.
+        assert!(
+            !action.description.trim().is_empty(),
+            "action must carry a description for the model"
+        );
         assert_eq!(action.parameters.len(), 2);
 
         // Check output_name parameter
@@ -27,6 +34,23 @@ mod logging_unit_tests {
         assert_eq!(content_param.name, "content");
         assert_eq!(content_param.type_hint, "string");
         assert!(content_param.required);
+
+        // Behavioural check that replaces the old description-substring assertion: the
+        // example we show the model must itself parse back into the action it documents.
+        // This fails if the example drifts from the parameter list, which is the thing
+        // the prose check was standing in for.
+        match CommonAction::from_json(&action.example)
+            .expect("the advertised example must parse as an append_to_log action")
+        {
+            CommonAction::AppendToLog {
+                output_name,
+                content,
+            } => {
+                assert!(!output_name.is_empty());
+                assert!(!content.is_empty());
+            }
+            other => panic!("example parsed as the wrong action: {other:?}"),
+        }
     }
 
     #[test]

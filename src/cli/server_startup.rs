@@ -519,6 +519,8 @@ pub async fn start_server_from_action(
                 Duration::from_secs(task_def.delay_secs.unwrap_or(0))
             };
 
+            let task_name = task_def.task_id.clone();
+
             let task = ScheduledTask {
                 id: TaskId::new(rand::random()),
                 name: task_def.task_id,
@@ -533,7 +535,35 @@ pub async fn start_server_from_action(
                 failure_count: 0,
             };
 
-            state.add_task(task).await;
+            let task_id_num = state.add_task(task).await;
+
+            // Report it exactly as the standalone `schedule_task` action does
+            // (src/events/handler.rs). Creating a task through `open_server`'s
+            // `scheduled_tasks` array used to be completely silent - nothing in
+            // the TUI, nothing over MCP - so the two paths disagreed about
+            // whether task creation is an observable event. It is.
+            if task_def.recurring {
+                let interval = task_def.interval_secs.unwrap_or(60);
+                let max_info = match task_def.max_executions {
+                    Some(max) => format!(" (max {} executions)", max),
+                    None => String::new(),
+                };
+                let msg = format!(
+                    "[TASK] Scheduled recurring task '{}' (ID: {}) to execute every {}s{}",
+                    task_name, task_id_num, interval, max_info
+                );
+                tracing::info!("{}", msg);
+                let _ = status_tx.send(msg);
+            } else {
+                let msg = format!(
+                    "[TASK] Scheduled one-shot task '{}' (ID: {}) to execute in {}s",
+                    task_name,
+                    task_id_num,
+                    task_def.delay_secs.unwrap_or(0)
+                );
+                tracing::info!("{}", msg);
+                let _ = status_tx.send(msg);
+            }
         }
     }
 

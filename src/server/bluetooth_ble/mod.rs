@@ -66,6 +66,42 @@ struct ServerData {
     queued_events: Vec<PeripheralEvent>,
 }
 
+/// Parse a BLE UUID, expanding the 16- and 32-bit shorthands.
+///
+/// Bluetooth assigns short UUIDs (`180D` for Heart Rate, `2A37` for its
+/// measurement characteristic) that stand for the full 128-bit value
+/// `0000XXXX-0000-1000-8000-00805F9B34FB`. Every example in this protocol's
+/// actions and CLAUDE.md uses that shorthand, and the docs stated it was
+/// "expanded to" the long form — but nothing expanded it, and
+/// `Uuid::parse_str("180D")` fails, so a model copying the protocol's own
+/// documented example got `Invalid service UUID`.
+///
+/// Accepts a 4-hex-digit (16-bit) or 8-hex-digit (32-bit) shorthand, or any
+/// form `Uuid::parse_str` already understands.
+///
+/// `pub` so `tests/` can exercise it directly — CLAUDE.md forbids `#[cfg(test)]`
+/// modules in `src/`, so an internal helper has to be reachable to be tested.
+#[cfg(feature = "bluetooth-ble")]
+pub fn parse_ble_uuid(s: &str) -> Result<Uuid> {
+    let t = s.trim();
+    let is_hex = |v: &str| v.chars().all(|c| c.is_ascii_hexdigit());
+
+    if (t.len() == 4 || t.len() == 8) && is_hex(t) {
+        // Left-pad the 16-bit form to 32 bits, then splice into the BLE base UUID.
+        let short = format!("{:0>8}", t.to_ascii_lowercase());
+        let full = format!("{short}-0000-1000-8000-00805f9b34fb");
+        return Uuid::parse_str(&full)
+            .with_context(|| format!("Invalid BLE short UUID {t:?} (expanded to {full})"));
+    }
+
+    Uuid::parse_str(t).with_context(|| {
+        format!(
+            "Invalid UUID {t:?}. Use a 16-bit shorthand like \"180D\", a 32-bit one, \
+             or a full 128-bit UUID."
+        )
+    })
+}
+
 /// Bluetooth Low Energy GATT server
 pub struct BluetoothBle;
 
@@ -229,7 +265,7 @@ impl BluetoothBle {
             .context("add_service requires 'uuid' field")?;
         let primary = action["primary"].as_bool().unwrap_or(true);
 
-        let uuid = Uuid::parse_str(uuid_str).context("Invalid service UUID")?;
+        let uuid = parse_ble_uuid(uuid_str).context("Invalid service UUID")?;
 
         let chars_json = action["characteristics"]
             .as_array()
@@ -243,7 +279,7 @@ impl BluetoothBle {
                 .as_str()
                 .context("characteristic requires 'uuid' field")?;
             let char_uuid =
-                Uuid::parse_str(char_uuid_str).context("Invalid characteristic UUID")?;
+                parse_ble_uuid(char_uuid_str).context("Invalid characteristic UUID")?;
 
             // Parse properties
             let props_json = char_json["properties"]
@@ -362,7 +398,7 @@ impl BluetoothBle {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
-                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .filter_map(|s| parse_ble_uuid(s).ok())
                     .collect()
             })
             .unwrap_or_else(Vec::new);
@@ -419,7 +455,7 @@ impl BluetoothBle {
             .as_str()
             .context("send_notification requires 'value' field (hex-encoded)")?;
 
-        let char_uuid = Uuid::parse_str(char_uuid_str).context("Invalid characteristic UUID")?;
+        let char_uuid = parse_ble_uuid(char_uuid_str).context("Invalid characteristic UUID")?;
         let value_str = value_str.trim_start_matches("0x");
         let value = hex::decode(value_str).context("Value must be hex-encoded")?;
 

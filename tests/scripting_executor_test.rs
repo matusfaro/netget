@@ -3,6 +3,31 @@ use netget::scripting::types::{
     ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
 };
 
+/// Both Perl cases below `use JSON`, which is a CPAN module rather than part of core
+/// Perl — Homebrew's perl, among others, ships without it. Its absence says nothing
+/// about NetGet's script executor, so probe for it and skip rather than fail.
+fn perl_json_available() -> bool {
+    std::process::Command::new("perl")
+        .args(["-e", "use JSON; 1"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+macro_rules! require_perl_json {
+    () => {
+        if !perl_json_available() {
+            eprintln!(
+                "skipped: perl is missing the JSON CPAN module \
+                 (install with `cpan JSON`); this is an environment gap, not a defect."
+            );
+            return;
+        }
+    };
+}
+
 #[test]
 fn test_execute_python_simple() {
     let code = r#"
@@ -196,6 +221,7 @@ fmt.Println(string(jsonBytes))
 
 #[test]
 fn test_execute_perl_simple() {
+    require_perl_json!();
     let code = r#"
 use JSON;
 
@@ -246,6 +272,7 @@ print encode_json($response);
 
 #[test]
 fn test_execute_perl_with_event_data() {
+    require_perl_json!();
     let code = r#"
 use JSON;
 

@@ -357,6 +357,47 @@ fn ensure_fifo(_path: &std::path::Path) -> anyhow::Result<()> {
     anyhow::bail!("--llm-agent-pipe (named pipes) is only supported on Unix platforms")
 }
 
+/// How often the MCP-mode reaper runs. Matches the TUI's cleanup tick.
+const REAPER_INTERVAL_SECS: u64 = 5;
+/// How long a `Stopped` server stays visible before being reclaimed.
+const SERVER_CLEANUP_TIMEOUT_SECS: u64 = 30;
+/// How long a closed connection stays visible before being reclaimed.
+const CONNECTION_CLEANUP_TIMEOUT_SECS: u64 = 10;
+/// How long an idle connectionless (UDP-style) connection stays visible.
+const CONNECTIONLESS_CLEANUP_TIMEOUT_SECS: u64 = 10;
+
+/// Start the background reaper that reclaims stopped servers, closed connections
+/// and finished conversations in MCP mode.
+///
+/// The TUI drives this from its own event loop; MCP mode has no such loop, so
+/// without this task nothing ever called `cleanup_old_servers`. `close_server`
+/// (whether issued by the LLM or by the `stop_server` tool's TUI-equivalent path)
+/// only marks a server `Stopped`, so those entries — and, before the cleanup moved
+/// into `remove_server`, their scheduled tasks — accumulated for the life of the
+/// process.
+///
+/// The handle is deliberately dropped: the reaper lives as long as the process, and
+/// there is nothing to stop it for.
+fn spawn_state_reaper(app_state: AppState) {
+    tokio::spawn(async move {
+        let mut ticker =
+            tokio::time::interval(std::time::Duration::from_secs(REAPER_INTERVAL_SECS));
+        loop {
+            ticker.tick().await;
+            app_state
+                .cleanup_old_servers(SERVER_CLEANUP_TIMEOUT_SECS)
+                .await;
+            app_state
+                .cleanup_closed_connections(CONNECTION_CLEANUP_TIMEOUT_SECS)
+                .await;
+            app_state
+                .cleanup_old_connections(CONNECTIONLESS_CLEANUP_TIMEOUT_SECS)
+                .await;
+            app_state.cleanup_old_conversations().await;
+        }
+    });
+}
+
 // === Tool implementations ===
 
 #[tool_router]
@@ -411,6 +452,13 @@ impl NetGetMcpService {
         if let Some(ref model) = args.model {
             app_state.set_ollama_model(Some(model.clone())).await;
         }
+
+        // Reap stopped servers, closed connections and finished conversations.
+        // Without this, MCP mode never reclaims them: `cleanup_old_servers` was only
+        // ticked by the TUI event loop, so an LLM-initiated `close_server` (which
+        // marks the server Stopped rather than removing it) left the entry — and its
+        // scheduled tasks — in AppState for the life of the process.
+        spawn_state_reaper(app_state.clone());
 
         let state = Arc::new(SharedState {
             app_state,

@@ -18,8 +18,24 @@ pub mod connection;
 pub mod server_trait;
 pub mod socket_helpers;
 
-// Shared HTTP/HTTP2 implementation components
-#[cfg(any(feature = "http", feature = "http2"))]
+// Shared HTTP request/response infrastructure: request extraction, the request
+// filter, and `build_safe_response` — the only non-panicking way to turn
+// model-supplied status/headers/body into a hyper `Response`.
+//
+// Keep this list in sync with the protocols that serve HTTP themselves. It is
+// not just `http`/`http2`: the auth family (`oauth2`, `openid`, `saml-idp`,
+// `saml-sp`) speaks HTTP over hyper without enabling the `http` feature, so it
+// could not reach `build_safe_response` and each carried its own local copy of
+// it. Protocols that reach it by enabling `http` transitively (`openapi`,
+// `mercurial`, `pypi`) need no entry here.
+#[cfg(any(
+    feature = "http",
+    feature = "http2",
+    feature = "oauth2",
+    feature = "openid",
+    feature = "saml-idp",
+    feature = "saml-sp"
+))]
 pub mod http_common;
 
 // TLS certificate management for DoT, DoH, HTTP, HTTP/2, HTTP/3, SMTP, POP3 and TLS protocols.

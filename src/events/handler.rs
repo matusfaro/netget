@@ -14,9 +14,36 @@ use crate::llm::{execute_actions, CommonAction, Server};
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
 
-/// Whether to require documentation reading before enabling open_server/open_client actions
-/// Set to `false` to allow opening servers/clients immediately without reading docs first
-/// Set to `true` to require calling read_documentation tool before these actions are available
+/// Whether reading the protocol documentation is a precondition for
+/// `open_server` / `open_client`.
+///
+/// This is the *only* switch for that policy. It governs both halves of it:
+///
+/// 1. whether the two actions are offered in the action list at all
+///    (`is_open_server_enabled` / `is_open_client_enabled` below), and
+/// 2. whether the first `open_server` / `open_client` of the process is answered
+///    with `ActionExecutionError::DocumentationRequired` instead of being
+///    executed (see `execute_server_management_action`).
+///
+/// The second half used to be unconditional, which cost a full extra model
+/// round-trip on the first server or client opened by every process while
+/// telling the model nothing it could not already ask for: the handler fetches
+/// the documentation itself and marks the protocol documented *before* raising
+/// the error, so falling through and starting the server loses no information.
+/// It also meant every mocked test had to answer a retry it never asked for.
+///
+/// Note the gate is process-global, not per-protocol: `is_server_docs_read()`
+/// returns `!documented_server_protocols.is_empty()`, so with the flag on it
+/// fires once per process and then never again, whatever protocol comes next.
+///
+/// Deliberately still a `const` rather than a runtime setting: it selects
+/// between two *prompting strategies*, not between two behaviours a user would
+/// want to switch per run — there is no CLI flag, MCP argument or settings key
+/// that would sensibly carry it, and promoting it would mean threading a new
+/// field through `AppState` (and the prompt builder, which reads the docs state
+/// separately) to expose a knob whose `true` side we have measured to be worse.
+/// If it ever needs to vary at runtime, that is the moment to add it to
+/// `Settings`, not before.
 const REQUIRE_DOCS_FOR_OPEN_ACTIONS: bool = false;
 
 /// Log detailed open_server action summary to the status channel
@@ -836,9 +863,11 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
-                // Check if documentation has been read for this protocol
-                // If not, return DocumentationRequired error which will trigger a retry with docs
-                if !self.state.is_server_docs_read().await {
+                // Documentation gate (off by default, see REQUIRE_DOCS_FOR_OPEN_ACTIONS):
+                // when enabled, the first open_server of the process fetches the
+                // protocol documentation and returns DocumentationRequired, which
+                // makes the model retry the same action with the docs in context.
+                if REQUIRE_DOCS_FOR_OPEN_ACTIONS && !self.state.is_server_docs_read().await {
                     // Fetch documentation for this protocol
                     use crate::llm::actions::tools::{execute_tool, ToolAction};
                     let doc_tool = ToolAction::ReadDocumentation {
@@ -1262,9 +1291,11 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
-                // Check if documentation has been read for this protocol
-                // If not, return DocumentationRequired error which will trigger a retry with docs
-                if !self.state.is_client_docs_read().await {
+                // Documentation gate (off by default, see REQUIRE_DOCS_FOR_OPEN_ACTIONS):
+                // when enabled, the first open_client of the process fetches the
+                // protocol documentation and returns DocumentationRequired, which
+                // makes the model retry the same action with the docs in context.
+                if REQUIRE_DOCS_FOR_OPEN_ACTIONS && !self.state.is_client_docs_read().await {
                     // Fetch documentation for this protocol
                     use crate::llm::actions::tools::{execute_tool, ToolAction};
                     let doc_tool = ToolAction::ReadDocumentation {

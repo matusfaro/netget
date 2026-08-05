@@ -144,6 +144,40 @@ fn default_read_mode() -> String {
     "full".to_string()
 }
 
+/// The single source of truth for which action names are *tools*.
+///
+/// A tool gathers information, returns its result to the model, and causes the model to be
+/// invoked again with that result. Everything that has to agree on "is this a tool?" reads
+/// this list:
+///
+/// * [`ToolAction::is_tool_action`] — routes a returned action to the tool loop at runtime.
+/// * [`ToolAction::from_json`] — accepts a tool name for parsing.
+/// * [`crate::llm::actions::ActionDefinition::is_tool`] — partitions the prompt into the
+///   "Available Tools" and "Available Actions" sections, whose boilerplate makes opposite
+///   promises about re-invocation.
+///
+/// Keeping these on one list is what prevents the prompt from advertising a re-invocation
+/// the runtime will not perform (or vice versa). Adding a variant to [`ToolAction`] means
+/// adding its name here.
+pub const TOOL_ACTION_NAMES: &[&str] = &[
+    "read_file",
+    "web_search",
+    "read_base_stack_docs",
+    "read_server_documentation",
+    "read_client_documentation",
+    "read_documentation",
+    "list_models",
+    "generate_random",
+    "list_tasks",
+    "execute_sql",
+    "list_databases",
+];
+
+/// Whether `name` is a tool — see [`TOOL_ACTION_NAMES`].
+pub fn is_tool_name(name: &str) -> bool {
+    TOOL_ACTION_NAMES.contains(&name)
+}
+
 impl ToolAction {
     /// Merge protocols array with optional single protocol (for backwards compatibility)
     fn merge_protocols(protocols: &[String], protocol: &Option<String>) -> Vec<String> {
@@ -160,21 +194,12 @@ impl ToolAction {
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         // Check if the tool type is recognized first
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            if !matches!(
-                action_type,
-                "read_file"
-                    | "web_search"
-                    | "read_base_stack_docs"
-                    | "read_server_documentation"
-                    | "read_client_documentation"
-                    | "read_documentation"
-                    | "list_models"
-                    | "generate_random"
-                    | "list_tasks"
-                    | "execute_sql"
-                    | "list_databases"
-            ) {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_documentation, list_models, generate_random, list_tasks, execute_sql, list_databases", action_type);
+            if !is_tool_name(action_type) {
+                anyhow::bail!(
+                    "Unknown tool type: '{}'. Valid tools: {}",
+                    action_type,
+                    TOOL_ACTION_NAMES.join(", ")
+                );
             }
         }
 
@@ -183,24 +208,10 @@ impl ToolAction {
 
     /// Check if a JSON value is a tool action
     pub fn is_tool_action(value: &serde_json::Value) -> bool {
-        if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            matches!(
-                action_type,
-                "read_file"
-                    | "web_search"
-                    | "read_base_stack_docs"
-                    | "read_server_documentation"
-                    | "read_client_documentation"
-                    | "read_documentation"
-                    | "list_models"
-                    | "generate_random"
-                    | "list_tasks"
-                    | "execute_sql"
-                    | "list_databases"
-            )
-        } else {
-            false
-        }
+        value
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(is_tool_name)
     }
 
     /// Get a brief description of this tool action for logging

@@ -358,6 +358,63 @@ struct AppStateInner {
     /// touched through `register_client_task` / `remove_client`, and `ClientInstance`
     /// is constructed by callers outside this module.
     client_tasks: HashMap<ClientId, Vec<tokio::task::JoinHandle<()>>>,
+    /// Background tasks owned by each live server (accept loops, datagram readers,
+    /// interface readers, …).
+    ///
+    /// A `Vec` per server for the same reason as `client_tasks`: a protocol may
+    /// legitimately own more than one long-lived loop. WireGuard has a UDP listener
+    /// and a TUN reader; OpenVPN had to fuse both under a single `select!` task
+    /// purely because the previous single-slot registry silently dropped whichever
+    /// handle was registered first, leaving `stop_server` able to abort only the
+    /// last one.
+    ///
+    /// Lives here rather than on `ServerInstance` because the handles are only ever
+    /// touched through `register_server_task` / `remove_server`, and `ServerInstance`
+    /// is constructed by callers outside this module.
+    server_tasks: HashMap<ServerId, Vec<tokio::task::JoinHandle<()>>>,
+}
+
+impl AppStateInner {
+    /// Tear down everything a server owns, other than its own map entry.
+    ///
+    /// Called from every path that drops a server — [`AppState::remove_server`] and
+    /// [`AppState::cleanup_old_servers`] — so that no caller can forget one half of
+    /// it. Forgetting used to be easy and expensive: the MCP `stop_server` /
+    /// `stop_all` tools called `remove_server` without the scheduled-task cleanup the
+    /// TUI does, and every orphaned recurring task then kept firing on its interval,
+    /// each tick producing an LLM prompt for a server that no longer existed.
+    fn teardown_server(&mut self, server_id: ServerId) {
+        // Dropping a JoinHandle only DETACHES the task in Tokio, so the abort is what
+        // actually releases the listening socket.
+        for handle in self.server_tasks.remove(&server_id).unwrap_or_default() {
+            handle.abort();
+        }
+        self.drop_tasks_for_server(server_id);
+    }
+
+    /// Remove the scheduled tasks scoped to a server, including the tasks scoped to
+    /// that server's individual connections.
+    fn drop_tasks_for_server(&mut self, server_id: ServerId) {
+        use crate::state::task::TaskScope;
+
+        let task_ids_to_remove: Vec<TaskId> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| match &task.scope {
+                TaskScope::Server(sid) => *sid == server_id,
+                // A connection cannot outlive its server, so its tasks go too.
+                TaskScope::Connection(sid, _) => *sid == server_id,
+                _ => false,
+            })
+            .map(|(&id, _)| id)
+            .collect();
+
+        for id in task_ids_to_remove {
+            if let Some(task) = self.tasks.remove(&id) {
+                self.task_names.remove(&task.name);
+            }
+        }
+    }
 }
 
 /// Default ceiling on LLM calls per client session.
@@ -451,6 +508,7 @@ impl AppState {
                 client_llm_call_limit: client_llm_call_limit_from_env(),
                 client_llm_calls: HashMap::new(),
                 client_tasks: HashMap::new(),
+                server_tasks: HashMap::new(),
             })),
         }
     }
@@ -499,19 +557,22 @@ impl AppState {
         id
     }
 
-    /// Remove a server instance
+    /// Remove a server instance, aborting its background tasks and cancelling the
+    /// scheduled tasks scoped to it.
+    ///
+    /// The cleanup is done here rather than left to callers: MCP's `stop_server` and
+    /// `stop_all` did the removal without it, so every server- and connection-scoped
+    /// scheduled task survived its server and kept firing on its interval.
     pub async fn remove_server(&self, id: ServerId) -> Option<ServerInstance> {
         let mut inner = self.inner.write().await;
         let server = inner.servers.remove(&id);
 
-        // Abort the server's background task (the accept loop) so its listening
-        // socket is released immediately. Dropping a JoinHandle only DETACHES the
-        // task in Tokio — it keeps running and holds the port — so we must abort
-        // explicitly. Without this, stop_server leaks the listener until process exit.
-        if let Some(s) = &server {
-            if let Some(handle) = &s.handle {
-                handle.abort();
-            }
+        inner.teardown_server(id);
+
+        // Defensive: nothing writes `ServerInstance.handle` any more (see the field's
+        // docs), but abort it if some caller ever does.
+        if let Some(handle) = server.as_ref().and_then(|s| s.handle.as_ref()) {
+            handle.abort();
         }
 
         // Set mode to Idle if no more servers and no clients
@@ -522,17 +583,38 @@ impl AppState {
         server
     }
 
-    /// Register the background task that owns a server's listening socket so it
-    /// can be aborted on stop. Protocol `spawn` implementations call this with the
-    /// `JoinHandle` of their accept loop right after spawning it. If the server was
-    /// already removed (raced with stop), the task is aborted immediately to avoid
-    /// leaking the listener.
+    /// Register a background task owned by a server so it can be aborted on stop.
+    ///
+    /// Protocol `spawn` implementations call this with the `JoinHandle` of every
+    /// long-lived task they spawn — accept loop, datagram reader, interface reader —
+    /// right after spawning it. Handles ACCUMULATE: registering a second task no
+    /// longer discards the first, so a protocol with two loops gets both aborted.
+    ///
+    /// Finished handles are pruned on each registration so a protocol that registers
+    /// a task per connection cannot grow the vector without bound.
+    ///
+    /// If the server was already removed (raced with stop), the task is aborted
+    /// immediately to avoid leaking the listener.
     pub async fn register_server_task(&self, id: ServerId, handle: tokio::task::JoinHandle<()>) {
         let mut inner = self.inner.write().await;
-        match inner.servers.get_mut(&id) {
-            Some(server) => server.handle = Some(handle),
-            None => handle.abort(),
+        if !inner.servers.contains_key(&id) {
+            handle.abort();
+            return;
         }
+        let tasks = inner.server_tasks.entry(id).or_default();
+        tasks.retain(|h| !h.is_finished());
+        tasks.push(handle);
+    }
+
+    /// Number of background tasks currently tracked for a server
+    pub async fn server_task_count(&self, id: ServerId) -> usize {
+        self.inner
+            .read()
+            .await
+            .server_tasks
+            .get(&id)
+            .map(|t| t.len())
+            .unwrap_or(0)
     }
 
     /// Get a server instance (cloned)
@@ -1012,6 +1094,15 @@ impl AppState {
     }
 
     /// Cleanup old stopped/error servers (removes servers that have been stopped/error for more than max_age_secs)
+    ///
+    /// Reaping a server here runs the same teardown as [`Self::remove_server`]:
+    /// background tasks aborted, scoped scheduled tasks cancelled. It previously
+    /// dropped the map entry alone, which detached (rather than aborted) whatever
+    /// the server was still running and left its scheduled tasks firing.
+    ///
+    /// Must be driven by *some* loop or it never runs. The TUI ticks it; MCP mode has
+    /// its own reaper (`mcp_stdio::tools::spawn_state_reaper`), without which an
+    /// LLM-initiated `close_server` left entries in `AppState` forever.
     pub async fn cleanup_old_servers(&self, max_age_secs: u64) {
         use super::server::ServerStatus;
         let now = std::time::Instant::now();
@@ -1031,6 +1122,7 @@ impl AppState {
 
         for id in to_remove {
             inner.servers.remove(&id);
+            inner.teardown_server(id);
         }
 
         // Set mode to Idle if no more servers and no clients
@@ -2111,26 +2203,18 @@ impl AppState {
         }
     }
 
-    /// Clean up tasks associated with a server
+    /// Clean up the scheduled tasks associated with a server.
+    ///
+    /// Both server-scoped tasks and the connection-scoped tasks of *that server's*
+    /// connections are removed: a connection cannot outlive its server, so leaving
+    /// its tasks behind leaves them firing against a server that no longer exists.
+    ///
+    /// Callers rarely need this — [`Self::remove_server`] and
+    /// [`Self::cleanup_old_servers`] already do it. It stays public for the TUI,
+    /// which marks a server `Stopped` and leaves the entry in place for the reaper.
     pub async fn cleanup_server_tasks(&self, server_id: ServerId) {
-        use crate::state::task::TaskScope;
-
         let mut inner = self.inner.write().await;
-
-        // Collect task IDs to remove
-        let task_ids_to_remove: Vec<TaskId> = inner
-            .tasks
-            .iter()
-            .filter(|(_, task)| matches!(&task.scope, TaskScope::Server(sid) if *sid == server_id))
-            .map(|(&id, _)| id)
-            .collect();
-
-        // Remove tasks and their name mappings
-        for id in task_ids_to_remove {
-            if let Some(task) = inner.tasks.remove(&id) {
-                inner.task_names.remove(&task.name);
-            }
-        }
+        inner.drop_tasks_for_server(server_id);
     }
 
     /// Clean up tasks associated with a connection
