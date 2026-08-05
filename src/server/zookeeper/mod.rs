@@ -185,9 +185,15 @@ impl ZookeeperServer {
                 .await;
         }
 
-        let result =
-            Self::run_connection(stream, server, status_tx, connection_id, app_state.clone(), server_id)
-                .await;
+        let result = Self::run_connection(
+            stream,
+            server,
+            status_tx,
+            connection_id,
+            app_state.clone(),
+            server_id,
+        )
+        .await;
 
         if let Some(server_id) = server_id {
             app_state
@@ -293,11 +299,9 @@ impl ZookeeperServer {
                                     .map(|v| v as i32)
                                     .unwrap_or(request_info.xid);
                                 let zxid = data.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let error_code = data
-                                    .get("error_code")
-                                    .and_then(|v| v.as_i64())
-                                    .unwrap_or(0)
-                                    as i32;
+                                let error_code =
+                                    data.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0)
+                                        as i32;
                                 let body = data
                                     .get("body_hex")
                                     .and_then(|v| v.as_str())

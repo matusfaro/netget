@@ -109,8 +109,9 @@ pub static ZOOKEEPER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),
-            description: "ZNode path (e.g., /myapp/config). Empty when the request carries no path."
-                .to_string(),
+            description:
+                "ZNode path (e.g., /myapp/config). Empty when the request carries no path."
+                    .to_string(),
             required: false,
         },
     ])
