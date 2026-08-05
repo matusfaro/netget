@@ -41,6 +41,24 @@ struct ConnectionData {
     write_half: Arc<Mutex<tokio::io::WriteHalf<UnixStream>>>,
 }
 
+/// Describe a file type for the "refusing to unlink" error message.
+fn describe_file_type(ft: &std::fs::FileType) -> &'static str {
+    use std::os::unix::fs::FileTypeExt;
+    if ft.is_dir() {
+        "directory"
+    } else if ft.is_symlink() {
+        "symlink"
+    } else if ft.is_fifo() {
+        "FIFO"
+    } else if ft.is_char_device() {
+        "character device"
+    } else if ft.is_block_device() {
+        "block device"
+    } else {
+        "regular file"
+    }
+}
+
 /// Unix domain socket server that listens for incoming connections
 pub struct SocketFileServer;
 
@@ -54,11 +72,35 @@ impl SocketFileServer {
         send_first: bool,
         server_id: crate::state::ServerId,
     ) -> Result<PathBuf> {
-        // Remove existing socket file if present
-        if socket_path.exists() {
-            std::fs::remove_file(&socket_path).with_context(|| {
-                format!("Failed to remove existing socket file: {:?}", socket_path)
-            })?;
+        // Remove a stale socket file, but ONLY if the path really is a socket.
+        //
+        // `socket_path` comes from the LLM or an MCP caller, so an unconditional
+        // `remove_file` here is an arbitrary-file delete: "./netget.sock" typo'd as
+        // "./netget.rs", or a deliberately chosen "~/.ssh/id_ed25519", would be unlinked
+        // before the bind. `symlink_metadata` deliberately does not follow symlinks, so a
+        // symlink pointing at a regular file is refused rather than followed and deleted.
+        match std::fs::symlink_metadata(&socket_path) {
+            Ok(meta) => {
+                use std::os::unix::fs::FileTypeExt;
+                if !meta.file_type().is_socket() {
+                    anyhow::bail!(
+                        "Refusing to remove {:?}: it exists but is not a Unix domain socket \
+                         (it is a {}). Delete it yourself if that is really what you want, or \
+                         pass a different socket_path.",
+                        socket_path,
+                        describe_file_type(&meta.file_type())
+                    );
+                }
+                std::fs::remove_file(&socket_path).with_context(|| {
+                    format!("Failed to remove existing socket file: {:?}", socket_path)
+                })?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Nothing there - normal case.
+            }
+            Err(e) => {
+                return Err(e).with_context(|| format!("Failed to stat {:?}", socket_path));
+            }
         }
 
         // Create and bind Unix domain socket server
@@ -115,27 +157,46 @@ impl SocketFileServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        // Handle connection (send data first if needed)
-                        let llm_client_clone = llm_client.clone();
-                        let app_state_clone = app_state.clone();
-                        let status_tx_clone = status_tx.clone();
-                        let connections_clone = connections.clone();
-                        let write_half_for_conn = write_half_arc.clone();
-                        let protocol_clone = protocol.clone();
-                        tokio::spawn(async move {
-                            Self::handle_connection_with_actions(
-                                connection_id,
-                                server_id,
-                                llm_client_clone,
-                                app_state_clone,
-                                status_tx_clone,
-                                send_first,
-                                connections_clone,
-                                write_half_for_conn,
-                                protocol_clone,
-                            )
-                            .await;
-                        });
+                        // Register the connection HERE, before either task is spawned.
+                        //
+                        // This used to be the first thing the banner task did, racing the
+                        // reader task: handle_data_with_actions returns silently when the
+                        // connection is not in the map, so a client that wrote immediately
+                        // after connecting (`printf ping | nc -U ...`) had its first payload
+                        // dropped with no response and no log line. Inserting synchronously
+                        // in the accept loop closes the window.
+                        connections.lock().await.insert(
+                            connection_id,
+                            ConnectionData {
+                                state: ConnectionState::Idle,
+                                queued_data: Vec::new(),
+                                memory: String::new(),
+                                write_half: write_half_arc.clone(),
+                            },
+                        );
+
+                        // Send the greeting banner, if this server was asked for one.
+                        if send_first {
+                            let llm_client_clone = llm_client.clone();
+                            let app_state_clone = app_state.clone();
+                            let status_tx_clone = status_tx.clone();
+                            let connections_clone = connections.clone();
+                            let write_half_for_conn = write_half_arc.clone();
+                            let protocol_clone = protocol.clone();
+                            tokio::spawn(async move {
+                                Self::send_banner(
+                                    connection_id,
+                                    server_id,
+                                    llm_client_clone,
+                                    app_state_clone,
+                                    status_tx_clone,
+                                    connections_clone,
+                                    write_half_for_conn,
+                                    protocol_clone,
+                                )
+                                .await;
+                            });
+                        }
 
                         // Spawn reader task
                         let llm_client_clone = llm_client.clone();
@@ -252,31 +313,21 @@ impl SocketFileServer {
         Ok(socket_path)
     }
 
-    /// Handle new connection with LLM actions
-    async fn handle_connection_with_actions(
+    /// Send the greeting banner for a new connection (`send_first` servers only).
+    ///
+    /// The connection is already registered by the accept loop by the time this runs.
+    #[allow(clippy::too_many_arguments)]
+    async fn send_banner(
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        send_first: bool,
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         write_half: Arc<Mutex<tokio::io::WriteHalf<UnixStream>>>,
         protocol: Arc<SocketFileProtocol>,
     ) {
-        // Add connection to tracking
-        connections.lock().await.insert(
-            connection_id,
-            ConnectionData {
-                state: ConnectionState::Idle,
-                queued_data: Vec::new(),
-                memory: String::new(),
-                write_half: write_half.clone(),
-            },
-        );
-
-        // Send data first if requested
-        if send_first {
+        {
             // Create connection opened event
             let event = Event::new(&SOCKET_FILE_CONNECTION_OPENED_EVENT, serde_json::json!({}));
 
@@ -440,21 +491,24 @@ impl SocketFileServer {
                 return; // Connection not found
             };
 
-            // Format data for event parameter
-            let data_str = if all_data
+            // Format data for event parameter. Printable ASCII is passed through as text,
+            // anything else is hex-encoded. `encoding` tells the LLM which one it got, so it
+            // can echo the payload back with a matching `encoding` on send_socket_data.
+            let (data_str, data_encoding) = if all_data
                 .iter()
                 .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
             {
-                String::from_utf8_lossy(&all_data).to_string()
+                (String::from_utf8_lossy(&all_data).to_string(), "utf8")
             } else {
-                hex::encode(&all_data)
+                (hex::encode(&all_data), "hex")
             };
 
             // Create data received event
             let event = Event::new(
                 &SOCKET_FILE_DATA_RECEIVED_EVENT,
                 serde_json::json!({
-                    "data": data_str
+                    "data": data_str,
+                    "encoding": data_encoding
                 }),
             );
 

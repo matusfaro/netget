@@ -9,63 +9,44 @@ use crate::llm::actions::{
 };
 use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
-use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::Mutex;
-
-/// Connection data for socket file protocol
-pub struct ConnectionData {
-    pub write_half: Arc<Mutex<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
-}
+use std::sync::LazyLock;
 
 /// Socket file protocol action handler
-pub struct SocketFileProtocol {
-    /// Map of active connections (for async actions)
-    connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
-}
+///
+/// Stateless: the server ([`crate::server::socket_file::SocketFileServer`]) owns the
+/// connection map, because only it holds the write halves. This type previously kept a
+/// second, always-empty map of its own to back `send_to_connection` / `list_connections`
+/// async actions; nothing ever inserted into it and nothing routed their results to a
+/// connection, so those actions were advertised to the model and did nothing. They are gone.
+pub struct SocketFileProtocol;
 
 impl SocketFileProtocol {
     pub fn new() -> Self {
-        Self {
-            connections: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    pub fn with_connections(
-        connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
-    ) -> Self {
-        Self { connections }
-    }
-
-    /// Add a connection to the protocol handler
-    pub async fn add_connection(
-        &self,
-        connection_id: ConnectionId,
-        write_half: Arc<Mutex<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
-    ) {
-        self.connections
-            .lock()
-            .await
-            .insert(connection_id, ConnectionData { write_half });
-    }
-
-    /// Remove a connection from the protocol handler
-    pub async fn remove_connection(&self, connection_id: &ConnectionId) {
-        self.connections.lock().await.remove(connection_id);
-    }
-
-    /// Get list of active connection IDs
-    pub async fn list_connection_ids(&self) -> Vec<ConnectionId> {
-        self.connections.lock().await.keys().copied().collect()
+        Self
     }
 }
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SocketFileProtocol {
+    /// A Unix socket has no host and no port.
+    ///
+    /// Without this, `server_startup.rs` treats the protocol as "unmigrated" and *requires* a
+    /// `port`, so `start_server {"protocol": "socket_file", "socket_path": "..."}` failed with
+    /// "requires 'port' parameter" and there was no way to start this protocol over MCP at
+    /// all. Declaring empty binding defaults opts into the path where port is optional; the
+    /// listen address that path computes is ignored, since the server binds `socket_path`.
+    fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
+        Some(crate::protocol::BindingDefaults {
+            mac_address: None,
+            interface: None,
+            host: None,
+            port: None,
+        })
+    }
+
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         vec![
             crate::llm::actions::ParameterDefinition {
@@ -86,11 +67,10 @@ impl Protocol for SocketFileProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            send_to_connection_action(),
-            close_connection_action(),
-            list_connections_action(),
-        ]
+        // No user-triggered actions: a Unix socket server has nothing to say to a connection
+        // outside a request/response exchange, and there is no mechanism to route an async
+        // action's output to a specific connection.
+        Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -245,43 +225,11 @@ impl Server for SocketFileProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_to_connection" => {
-                // Async action - not fully implemented here, needs to be handled by caller
-                let connection_id_str = action
-                    .get("connection_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'connection_id' parameter")?;
-
-                let data = action
-                    .get("data")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'data' parameter")?;
-
-                let _connection_id = ConnectionId::from_string(connection_id_str)
-                    .context("Invalid connection_id format")?;
-
-                // Return the data with connection ID embedded
-                Ok(ActionResult::Output(data.as_bytes().to_vec()))
-            }
-            "close_connection" => {
-                // Async action - signal that connection should be closed
-                let connection_id_str = action
-                    .get("connection_id")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'connection_id' parameter")?;
-
-                let _connection_id = ConnectionId::from_string(connection_id_str)
-                    .context("Invalid connection_id format")?;
-
-                Ok(ActionResult::CloseConnection)
-            }
-            "list_connections" => {
-                // This needs to be handled specially by the caller
-                Ok(ActionResult::NoAction)
-            }
             "send_socket_data" => self.execute_send_socket_data(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
-            "close_this_connection" => Ok(ActionResult::CloseConnection),
+            // `close_this_connection` is the advertised name; `close_connection` is accepted
+            // as an alias because models reach for it out of habit.
+            "close_this_connection" | "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown socket file action: {action_type}")),
         }
     }
@@ -295,79 +243,48 @@ impl SocketFileProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        Ok(ActionResult::Output(decode_outbound_data(data, &action)?))
     }
 }
 
-/// Action definition for send_to_connection (async)
-fn send_to_connection_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "send_to_connection".to_string(),
-        description: "Send data to a specific socket file connection (async action)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "connection_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Connection ID to send to".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "Data to send".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "send_to_connection",
-            "connection_id": "conn_12345",
-            "data": "Hello from socket file"
+/// Turn the `data` field of an outbound action into the exact bytes to put on the wire,
+/// honouring the action's optional `encoding` field.
+///
+/// - `encoding` absent or `"utf8"`: the string's UTF-8 bytes are sent verbatim.
+/// - `encoding` = `"hex"`: `data` is decoded as hex, so `"48656c6c6f"` sends `Hello`.
+///
+/// There is deliberately no auto-detection: `"48656c6c6f"` is both valid text and valid hex,
+/// so the caller must say which it means. Inbound data carries the same `encoding` field on
+/// the `socket_file_data_received` event, which makes echoing a payload back symmetric.
+fn decode_outbound_data(data: &str, action: &serde_json::Value) -> Result<Vec<u8>> {
+    let encoding = action
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf8");
+
+    match encoding {
+        "utf8" => Ok(data.as_bytes().to_vec()),
+        "hex" => hex::decode(data).map_err(|e| {
+            anyhow::anyhow!(
+                "'data' was declared as \"encoding\": \"hex\" but is not valid hex ({e}). \
+                 Hex payloads are two hex digits per byte with no separators. To send this \
+                 value as literal text, omit 'encoding' or set it to \"utf8\"."
+            )
         }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SOCK send to {connection_id} ({data_len}B)")
-                .with_debug("SOCK send_to_connection: conn={connection_id} data_len={data_len}"),
-        ),
+        other => Err(anyhow::anyhow!(
+            "Invalid 'encoding' value {other:?}. Valid values are \"utf8\" (default, send the \
+             characters of 'data' as-is) and \"hex\" (decode 'data' as hex-encoded bytes)."
+        )),
     }
 }
 
-/// Action definition for close_connection (async)
-fn close_connection_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "close_connection".to_string(),
-        description: "Close a specific socket file connection (async action)".to_string(),
-        parameters: vec![Parameter {
-            name: "connection_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Connection ID to close".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "close_connection",
-            "connection_id": "conn_12345"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SOCK close {connection_id}")
-                .with_debug("SOCK close_connection: conn={connection_id}"),
-        ),
-    }
-}
-
-/// Action definition for list_connections (async)
-fn list_connections_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_connections".to_string(),
-        description: "List all active socket file connections (async action)".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_connections"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SOCK list connections")
-                .with_debug("SOCK list_connections"),
-        ),
+/// Shared `encoding` parameter for every action that carries an outbound `data` field.
+fn encoding_parameter() -> Parameter {
+    Parameter {
+        name: "encoding".to_string(),
+        type_hint: "string".to_string(),
+        description: "How to convert 'data' into the bytes put on the wire. \"utf8\" (the default when omitted) sends the characters of 'data' unchanged - use it for text protocols. \"hex\" decodes 'data' as hex-encoded bytes, two hex digits per byte - use it for binary protocols, e.g. {\"data\": \"48656c6c6f\", \"encoding\": \"hex\"} sends the 5 bytes 'Hello', whereas the same 'data' without \"encoding\": \"hex\" sends the 10 characters 4-8-6-5-6-c-6-c-6-f. No other values are accepted".to_string(),
+        required: false,
     }
 }
 
@@ -375,16 +292,20 @@ fn list_connections_action() -> ActionDefinition {
 fn send_socket_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_socket_data".to_string(),
-        description: "Send data over the current socket file connection".to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Data to send".to_string(),
-            required: true,
-        }],
+        description: "Send data over the current Unix domain socket connection. The 'data' field holds the payload and the optional 'encoding' field says how to turn it into bytes: omit 'encoding' (or use \"utf8\") to send the string's characters as-is, or set \"encoding\": \"hex\" to send 'data' decoded from hex. There is no auto-detection - a string like \"48656c6c6f\" is sent literally unless you set \"encoding\": \"hex\".".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Data to send. Interpreted according to 'encoding': by default the characters of this string are sent as-is (UTF-8)".to_string(),
+                required: true,
+            },
+            encoding_parameter(),
+        ],
         example: json!({
             "type": "send_socket_data",
-            "data": "ACK\n"
+            "data": "ACK\n",
+            "encoding": "utf8"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -471,12 +392,20 @@ pub static SOCKET_FILE_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(
             "data": "ACK\n"
         }),
     )
-    .with_parameters(vec![Parameter {
-        name: "data".to_string(),
-        type_hint: "string".to_string(),
-        description: "The data received (as hex string or UTF-8 if printable)".to_string(),
-        required: true,
-    }])
+    .with_parameters(vec![
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "The data received from the client. Read it according to the 'encoding' field of this event".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How to read 'data': \"utf8\" means 'data' is the received bytes as literal text, \"hex\" means 'data' is the received bytes hex-encoded (two hex digits per byte, used whenever the bytes are not all printable ASCII). To echo the received bytes back unchanged, pass the same 'data' and 'encoding' to send_socket_data".to_string(),
+            required: true,
+        },
+    ])
     .with_actions(vec![
         SEND_SOCKET_DATA_ACTION.clone(),
         WAIT_FOR_MORE_ACTION.clone(),

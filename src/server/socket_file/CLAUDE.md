@@ -1,314 +1,119 @@
-# Socket File Protocol Implementation
+# Socket File (Unix Domain Socket) Protocol Implementation
 
-## Overview
+Raw byte-stream server over a Unix domain socket. The model sees exactly the
+bytes the client sent and decides exactly what bytes go back — the same contract
+as `tcp`, addressed by filesystem path instead of IP:port.
 
-Unix domain socket server implementing raw socket file handling where the LLM has full control over the byte stream.
-This protocol enables inter-process communication (IPC) using filesystem socket files instead of TCP IP:port addresses.
+**State**: Experimental. **Platform**: Unix only; the whole module is
+`#![cfg(unix)]`. **Privilege**: none — access is controlled by filesystem
+permissions on the socket file, not by port numbers.
 
-**Status**: Experimental (Core Protocol)
-**Platform**: Linux/Unix/macOS only (uses Unix domain sockets, not available on Windows)
-**Compilation**: Gated with `#[cfg(unix)]` - will not compile on non-Unix platforms
+## Startup
 
-## Library Choices
+| Parameter | Required | Meaning |
+|---|---|---|
+| `socket_path` | yes | path to create, e.g. `./netget.sock` |
+| `send_first` | no | send a banner on connect (raises `socket_file_connection_opened`) |
 
-- **tokio::net::UnixListener** - Async Unix domain socket server from Tokio runtime
-- **tokio::net::UnixStream** - Async Unix stream socket
-- **tokio::io::{AsyncReadExt, AsyncWriteExt}** - Async I/O traits for reading/writing
-- **Manual byte-level handling** - LLM receives raw bytes and constructs responses
+No port is involved. `default_binding()` returns empty binding defaults so that
+`server_startup.rs` does not demand one; without that declaration this protocol
+could not be started over MCP at all ("requires 'port' parameter").
 
-**Rationale**: Unix domain sockets are a standard IPC mechanism on Unix-like systems, offering lower overhead than TCP
-for local communication. The implementation mirrors TCP but uses filesystem paths for addressing.
+**A stale socket is removed only if it really is a socket.** `socket_path` comes
+from the model or an MCP caller, so an unconditional `remove_file` is an
+arbitrary-file delete — a typo'd or hostile path would unlink whatever is there
+before binding. The server stats the path with `symlink_metadata` (which does not
+follow symlinks) and refuses to start unless it is a socket, naming what it found.
 
-## Architecture Decisions
+## What the model sees and controls
 
-### 1. Raw Byte Control
+**Events**
 
-Identical to TCP - the LLM receives the exact bytes sent by the client and can respond with any byte sequence. This
-allows the LLM to:
+- `socket_file_connection_opened` — only when `send_first` is set. No fields.
+- `socket_file_data_received` — `data` plus `encoding`.
 
-- Implement any IPC protocol
-- Handle binary protocols
-- Mix text and binary data
-- Create custom protocol parsers
+**Actions**: `send_socket_data` (`data`, `encoding`), `wait_for_more`,
+`close_this_connection` (`close_connection` is accepted as an alias).
 
-### 2. Connection State Machine
+There are no async actions. `send_to_connection`, `close_connection` and
+`list_connections` used to be advertised as async actions backed by a second,
+always-empty connection map inside `SocketFileProtocol`; nothing ever inserted
+into it and nothing routed their output to a connection, so all three were
+inert. The server owns the only connection map, because it holds the write
+halves.
 
-Each connection has three states:
+### Encoding is explicit in both directions
 
-- **Idle**: Ready to process new data
-- **Processing**: LLM is generating a response
-- **Accumulating**: LLM requested `wait_for_more` to accumulate additional data
+Inbound: `data` is the received bytes as text when every byte is printable
+ASCII, hex otherwise, and `encoding` (`"utf8"` / `"hex"`) says which.
 
-This prevents concurrent LLM calls for the same connection and ensures ordered processing.
+Outbound: `send_socket_data` reads the same `encoding` field, defaulting to
+`"utf8"`. There is deliberately no auto-detection — `"48656c6c6f"` is both valid
+text and valid hex — so echoing a payload back unchanged means passing back the
+same `data` *and* `encoding`. Invalid hex is an action error, not a panic.
 
-### 3. Data Queueing
+This mirrors the fix made to `send_tcp_data`; before it, the docs advertised hex
+support that the executor did not implement, and a model following them put
+literal ASCII on the wire.
 
-When data arrives while the LLM is processing:
+## Connection handling
 
-1. Data is queued in `ConnectionData.queued_data`
-2. After LLM response, queued data is merged and processed
-3. Loop continues until all queued data is processed
+Per connection: `ReadHalf` owned by a reader task, `WriteHalf` behind
+`Arc<Mutex<…>>` in the shared map, and an Idle → Processing → Accumulating state
+machine that serialises LLM calls and queues data that arrives mid-call.
 
-This ensures no data loss even under high traffic.
+**The connection is registered in the accept loop, before either task is
+spawned.** It used to be registered by the banner task, which raced the reader:
+`handle_data_with_actions` returns silently when the connection is not in the
+map, so a client that wrote immediately after connecting
+(`printf ping | nc -U …`) had its first payload dropped with no response and no
+log line. Verified: before the fix the log stopped at "received 5 bytes"; after
+it, the handler runs.
 
-### 4. Optional Banner Support
+Dual logging throughout: DEBUG summaries with a 100-character preview, TRACE full
+payloads (text as a string, binary as hex), to both `netget.log` and the TUI.
 
-The `send_first` parameter allows servers to send a banner before receiving client data:
+## Not implemented
 
-- Used for protocols that send greeting on connection
-- Triggers `SOCKET_FILE_CONNECTION_OPENED_EVENT` which the LLM handles
-- Banner is sent immediately after connection acceptance
+Peer credentials (`SO_PEERCRED` — a Unix socket can identify the connecting
+process; the model is not told), idle timeouts, half-close, backpressure, and any
+bound on how much `wait_for_more` accumulates. `SocketAddr` is required by
+internal APIs, so connections report the placeholder `127.0.0.1:0`; the real path
+is in `protocol_info.socket_path`.
 
-### 5. Stream Splitting
-
-UnixStream is split into `(ReadHalf, WriteHalf)` using `tokio::io::split()`:
-
-- **ReadHalf**: Owned by dedicated reader task
-- **WriteHalf**: Wrapped in `Arc<Mutex<WriteHalf>>` and stored in connection map
-- This allows concurrent reading and writing without cloning the stream
-
-### 6. Socket File Management
-
-- **Creation**: Socket file is created at the specified path when server starts
-- **Cleanup**: Existing socket file is removed before binding (if present)
-- **Permissions**: Socket file inherits directory permissions
-- **Platform**: Unix/Linux only - not supported on Windows
-
-### 7. Dual Logging
-
-All data operations use **dual logging**:
-
-- **DEBUG**: Data summary with 100-char preview (for both text and binary)
-- **TRACE**: Full payload (text as string, binary as hex)
-- Both go to `netget.log` (via tracing) and TUI Status panel (via status_tx)
-
-## LLM Integration
-
-### Action-Based Response Model
-
-The LLM responds to socket file events with actions:
-
-**Events**:
-
-- `socket_file_connection_opened` - New connection accepted (only if `send_first=true`)
-- `socket_file_data_received` - Data received from client
-
-**Available Actions**:
-
-- `send_socket_data` - Send raw bytes to client (text or hex)
-- `close_connection` - Close the connection
-- `wait_for_more` - Enter Accumulating state to buffer more data
-- Common actions: `show_message`, `update_instruction`, etc.
-
-### Example LLM Response
+## Example prompts
 
 ```json
-{
-  "actions": [
-    {
-      "type": "send_socket_data",
-      "data": "ACK: Message received\n"
-    },
-    {
-      "type": "show_message",
-      "message": "Sent acknowledgment via socket file"
-    }
-  ]
-}
+{"type": "start_server", "protocol": "socket_file",
+ "startup_params": {"socket_path": "/tmp/nge.sock"},
+ "event_handlers": [{"event_pattern": "socket_file_data_received",
+   "handler": {"type": "static", "actions": [{"type": "send_socket_data", "data": "ACK\n"}]}}]}
 ```
 
-### Data Format
-
-- **Text data**: Sent as-is in the `data` field
-- **Binary data**: Sent as hex string (e.g., `"48656c6c6f"` for "Hello")
-- **Received data**: Formatted as text if all bytes are ASCII printable, otherwise hex
-
-## Connection Management
-
-### Connection Lifecycle
-
-1. **Accept**: `UnixListener::accept()` creates new connection
-2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo`
-3. **Split**: Stream split into ReadHalf and WriteHalf
-4. **Track**: WriteHalf stored in `connections` HashMap with `ConnectionData`
-5. **Handle**: Separate tasks for reading and LLM processing
-6. **Close**: Connection removed from maps when client disconnects or LLM closes
-
-### Connection Data Structure
-
-```rust
-struct ConnectionData {
-    state: ConnectionState,           // Idle/Processing/Accumulating
-    queued_data: Vec<u8>,              // Data queued while processing
-    memory: String,                    // Per-connection memory (unused currently)
-    write_half: Arc<Mutex<WriteHalf>>, // For sending responses
-}
+```
+Create socket file at ./echo.sock and echo back any data received, passing the
+same encoding you were given.
 ```
 
-### State Updates
-
-- Connection state tracked in `ServerInstance.connections`
-- Updates include: bytes sent/received, packets sent/received, last_activity
-- UI automatically refreshes on state changes via `__UPDATE_UI__` message
-- Socket path stored in `protocol_info` field
-
-## Startup Parameters
-
-### Required Parameters
-
-- **socket_path** (string): Filesystem path for the Unix domain socket file
-    - Example: `./netget.sock`
-    - Must be a valid path with write permissions
-    - Existing socket files are removed automatically
-
-### Optional Parameters
-
-- **send_first** (boolean, default: false): Send banner on connection
-    - If true, LLM generates initial message via `socket_file_connection_opened` event
-
-## Known Limitations
-
-### 1. Platform-Specific
-
-- Unix/Linux only - not supported on Windows
-- Requires Unix domain socket support in the OS
-
-### 2. No Connection Timeouts
-
-- Connections remain open indefinitely until client closes or LLM sends `close_connection`
-- No idle timeout mechanism
-
-### 3. No Backpressure Handling
-
-- All received data is processed immediately
-- Large bursts of data may overwhelm the LLM processing queue
-
-### 4. Memory Accumulation
-
-- `wait_for_more` accumulates data in memory without limits
-- Long-running accumulating connections could exhaust memory
-
-### 5. No Half-Close Support
-
-- Closing a connection closes both read and write directions
-- Socket half-close not supported
-
-### 6. No Credential Passing
-
-- Unix domain sockets can pass credentials (PID, UID, GID)
-- This feature is not currently exposed to the LLM
-
-### 7. Dummy SocketAddr
-
-- Internal APIs expect `SocketAddr` but Unix sockets use paths
-- Uses dummy address `127.0.0.1:0` internally
-- Actual socket path stored in protocol_info
-
-## Example Prompts
-
-### Echo Server
-
 ```
-Create socket file at ./echo.sock
-When you receive any data, echo it back exactly
+Listen on ./greeter.sock with send_first=true. Send "READY\n" on connect, then
+answer HELLO with "GREETINGS\n" and QUIT with "BYE\n" followed by
+close_this_connection.
 ```
 
-### Line-Based Protocol
+## Verified
 
-```
-Listen on socket file ./myapp.sock
-Wait for complete lines (ending with \n)
-Respond with "OK: <line>\n" for each line received
-```
+Started over MCP with `startup_params.socket_path`, with static handlers (zero
+LLM calls):
 
-### Binary Protocol
+- A Python `AF_UNIX` client that writes immediately after connect gets the reply
+  (this is the race described above).
+- `{"data": "48454c4c4f0a", "encoding": "hex"}` puts `HELLO\n` on the wire.
+- Pointing `socket_path` at a regular file is refused — "it exists but is not a
+  Unix domain socket (it is a regular file)" — and the file is left intact.
+- `nc -U` works, but macOS `nc` exits on stdin EOF, so
+  `printf ping | nc -U …` can miss the reply; keep stdin open or use a real
+  client.
 
-```
-Create socket at ./binary.sock
-Receive 4-byte big-endian integers
-Respond with the integer doubled, also as 4-byte big-endian
-Use hex encoding for binary data
-```
-
-### Greeting Banner
-
-```
-Listen on ./greeter.sock with send_first=true
-Send "READY\n" when client connects
-Then wait for commands: HELLO or QUIT
-HELLO -> respond "GREETINGS\n"
-QUIT -> respond "BYE\n" and close connection
-```
-
-### IPC Command Server
-
-```
-Socket file: ./commands.sock
-Wait for JSON commands: {"action": "ping"} or {"action": "status"}
-Respond with JSON: {"result": "pong"} or {"result": "ok"}
-```
-
-## Performance Characteristics
-
-### Latency
-
-- One LLM call per received data chunk (unless using `wait_for_more`)
-- Typical latency: 2-5 seconds per request with qwen3-coder:30b
-- Lower overhead than TCP (no network stack)
-
-### Throughput
-
-- Limited by LLM response time
-- Concurrent connections processed in parallel (each on separate tokio task)
-- Queue mechanism prevents data loss but doesn't improve throughput
-
-### Concurrency
-
-- Unlimited concurrent connections (bounded by system resources)
-- Each connection has independent state and processing
-- Ollama lock serializes LLM API calls across all connections
-
-## Comparison to TCP
-
-### Similarities
-
-- Same connection state machine
-- Same data queueing mechanism
-- Same LLM integration model
-- Same action/event system
-
-### Differences
-
-- **Addressing**: Socket file paths instead of IP:port
-- **Platform**: Unix/Linux only (TCP is cross-platform)
-- **Performance**: Lower overhead for local IPC
-- **Security**: Filesystem permissions instead of firewall rules
-- **Discovery**: File-based (no DNS/service discovery)
-
-## Use Cases
-
-### 1. Inter-Process Communication
-
-- Local services communicating without network overhead
-- Process coordination and control
-
-### 2. Development/Testing
-
-- Testing protocol implementations locally
-- Debugging without network exposure
-
-### 3. Container Communication
-
-- Communication between containers on same host
-- Lower latency than TCP localhost
-
-### 4. Unix Tool Integration
-
-- Integration with traditional Unix tools (nc -U, socat, etc.)
-- Shell scripts and command-line clients
-
-## References
-
-- [Unix Domain Sockets (man 7 unix)](https://man7.org/linux/man-pages/man7/unix.7.html)
-- [Tokio UnixListener](https://docs.rs/tokio/latest/tokio/net/struct.UnixListener.html)
-- [Tokio UnixStream](https://docs.rs/tokio/latest/tokio/net/struct.UnixStream.html)
+`tests/server/socket_file/` exists but is **not declared in
+`tests/server/mod.rs`**, so it is never compiled or run.
