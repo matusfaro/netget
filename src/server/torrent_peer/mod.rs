@@ -137,19 +137,24 @@ impl TorrentPeerServer {
     ) -> Result<()> {
         use tokio::io::AsyncReadExt;
 
-        let mut buffer = vec![0u8; 16384];
+        let mut chunk = vec![0u8; 16384];
+        // The peer wire protocol is length-prefixed over a byte stream, so a `read()` is
+        // not a message. Previously each read was parsed as exactly one frame, which meant
+        // the bitfield a client sends in the same segment as its handshake was discarded,
+        // two coalesced messages became one, and a message split across two reads was
+        // dropped and left the stream misaligned for everything after it. Accumulate and
+        // drain complete frames instead.
+        let mut pending: Vec<u8> = Vec::new();
         let mut handshake_complete = false;
 
-        loop {
-            let n = read_half.read(&mut buffer).await?;
+        'read: loop {
+            let n = read_half.read(&mut chunk).await?;
             if n == 0 {
                 debug!("BitTorrent Peer connection closed by peer");
                 let _ =
                     status_tx.send("[DEBUG] BitTorrent Peer connection closed by peer".to_string());
                 break;
             }
-
-            let data = buffer[..n].to_vec();
 
             console_debug!(
                 status_tx,
@@ -159,80 +164,103 @@ impl TorrentPeerServer {
             );
 
             // TRACE: Log full payload
-            let hex_str = hex::encode(&data);
-            console_trace!(status_tx, "BitTorrent Peer data (hex): {}", hex_str);
+            console_trace!(
+                status_tx,
+                "BitTorrent Peer data (hex): {}",
+                hex::encode(&chunk[..n])
+            );
 
-            // Parse message
-            if !handshake_complete {
-                // Parse handshake
-                match Self::parse_handshake(&data) {
-                    Ok((info_hash, peer_id)) => {
-                        console_debug!(
-                            status_tx,
-                            "BitTorrent Peer handshake: info_hash={}, peer_id={}",
-                            info_hash,
-                            peer_id
-                        );
+            pending.extend_from_slice(&chunk[..n]);
 
-                        handshake_complete = true;
+            // A peer that never completes a frame would otherwise grow this buffer without
+            // bound. The largest legitimate frame is a piece message, capped well under
+            // this by every client in use.
+            const MAX_PENDING: usize = 2 * 1024 * 1024;
+            if pending.len() > MAX_PENDING {
+                console_error!(
+                    status_tx,
+                    "BitTorrent Peer {} buffered {} bytes without a complete message, closing",
+                    peer_addr,
+                    pending.len()
+                );
+                break;
+            }
 
-                        // Create event for LLM
-                        let event = Event::new(
-                            &actions::PEER_HANDSHAKE_EVENT,
-                            serde_json::json!({
-                                "info_hash": info_hash,
-                                "peer_id": peer_id,
-                            }),
-                        );
-
-                        debug!("BitTorrent Peer calling LLM for handshake");
-                        let _ = status_tx
-                            .send("[DEBUG] BitTorrent Peer calling LLM for handshake".to_string());
-
-                        // Call LLM
-                        match call_llm(
-                            &llm_client,
-                            &app_state,
-                            server_id,
-                            Some(connection_id),
-                            &event,
-                            protocol.as_ref(),
-                        )
-                        .await
-                        {
-                            Ok(execution_result) => {
-                                Self::process_llm_response(
-                                    execution_result,
-                                    &write_half,
-                                    peer_addr,
-                                    &status_tx,
-                                )
-                                .await?;
-                            }
-                            Err(e) => {
-                                error!("BitTorrent Peer LLM call failed: {}", e);
-                                let _ =
-                                    status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        console_error!(status_tx, "Failed to parse handshake: {}", e);
+            loop {
+                if !handshake_complete {
+                    if pending.len() < 68 {
                         break;
                     }
+                    let handshake: Vec<u8> = pending.drain(..68).collect();
+                    match Self::parse_handshake(&handshake) {
+                        Ok((info_hash, peer_id, peer_id_hex)) => {
+                            console_debug!(
+                                status_tx,
+                                "BitTorrent Peer handshake: info_hash={}, peer_id={}",
+                                info_hash,
+                                peer_id
+                            );
+
+                            handshake_complete = true;
+
+                            let event = Event::new(
+                                &actions::PEER_HANDSHAKE_EVENT,
+                                serde_json::json!({
+                                    "info_hash": info_hash,
+                                    "peer_id": peer_id,
+                                    "peer_id_hex": peer_id_hex,
+                                }),
+                            );
+
+                            Self::dispatch_event(
+                                event,
+                                &write_half,
+                                peer_addr,
+                                connection_id,
+                                &llm_client,
+                                &app_state,
+                                &status_tx,
+                                server_id,
+                                &protocol,
+                            )
+                            .await?;
+                        }
+                        Err(e) => {
+                            console_error!(status_tx, "Failed to parse handshake: {}", e);
+                            break 'read;
+                        }
+                    }
+                    continue;
                 }
-            } else {
-                // Parse peer wire message
-                match Self::parse_message(&data) {
+
+                // Keep-alive and regular messages are both `<4-byte length><body>`.
+                if pending.len() < 4 {
+                    break;
+                }
+                let length =
+                    u32::from_be_bytes([pending[0], pending[1], pending[2], pending[3]]) as usize;
+                if pending.len() < 4 + length {
+                    break;
+                }
+                let frame: Vec<u8> = pending.drain(..4 + length).collect();
+
+                match Self::parse_message(&frame) {
                     Ok((message_type, message_data)) => {
                         console_debug!(status_tx, "BitTorrent Peer message type: {}", message_type);
 
-                        // Create event for LLM
                         let event_type = match message_type.as_str() {
-                            "choke" => &actions::PEER_CHOKE_MESSAGE_EVENT,
+                            // One event covers the four payload-free state messages; they
+                            // share a reply vocabulary and carry `message_type` so a
+                            // handler can still tell them apart.
+                            "choke" | "unchoke" | "interested" | "not_interested" => {
+                                &actions::PEER_CHOKE_MESSAGE_EVENT
+                            }
                             "request" => &actions::PEER_REQUEST_MESSAGE_EVENT,
                             "bitfield" => &actions::PEER_BITFIELD_MESSAGE_EVENT,
-                            _ => &actions::PEER_CHOKE_MESSAGE_EVENT, // Default
+                            // have / piece / cancel / keepalive / unrecognised ids used to
+                            // be announced to the model as "peer_choke_message", which is
+                            // simply false.
+                            _ => &actions::PEER_MESSAGE_EVENT,
                         };
                         let event = Event::new(event_type, message_data);
 
@@ -242,32 +270,18 @@ impl TorrentPeerServer {
                             message_type
                         );
 
-                        // Call LLM
-                        match call_llm(
+                        Self::dispatch_event(
+                            event,
+                            &write_half,
+                            peer_addr,
+                            connection_id,
                             &llm_client,
                             &app_state,
+                            &status_tx,
                             server_id,
-                            Some(connection_id),
-                            &event,
-                            protocol.as_ref(),
+                            &protocol,
                         )
-                        .await
-                        {
-                            Ok(execution_result) => {
-                                Self::process_llm_response(
-                                    execution_result,
-                                    &write_half,
-                                    peer_addr,
-                                    &status_tx,
-                                )
-                                .await?;
-                            }
-                            Err(e) => {
-                                error!("BitTorrent Peer LLM call failed: {}", e);
-                                let _ =
-                                    status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
-                            }
-                        }
+                        .await?;
                     }
                     Err(e) => {
                         console_error!(status_tx, "Failed to parse peer message: {}", e);
@@ -276,6 +290,41 @@ impl TorrentPeerServer {
             }
         }
 
+        Ok(())
+    }
+
+    /// Call the LLM for one event and write whatever it produced back to the peer.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_event(
+        event: Event,
+        write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
+        peer_addr: SocketAddr,
+        connection_id: ConnectionId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
+        protocol: &Arc<TorrentPeerProtocol>,
+    ) -> Result<()> {
+        match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(execution_result) => {
+                Self::process_llm_response(execution_result, write_half, peer_addr, status_tx)
+                    .await?;
+            }
+            Err(e) => {
+                error!("BitTorrent Peer LLM call failed: {}", e);
+                let _ = status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
+            }
+        }
         Ok(())
     }
 
@@ -298,11 +347,14 @@ impl TorrentPeerServer {
             execution_result.protocol_results.len()
         );
 
-        // Send responses
+        // Send responses. Every output is written, in order: a handshake reply is
+        // routinely followed by a bitfield and an unchoke, and dropping all but the first
+        // would leave the peer waiting.
         for protocol_result in execution_result.protocol_results {
-            if let Some(output_data) = protocol_result.get_all_output().first() {
+            for output_data in protocol_result.get_all_output() {
                 let mut write = write_half.lock().await;
-                write.write_all(output_data).await?;
+                write.write_all(&output_data).await?;
+                drop(write);
 
                 console_debug!(
                     status_tx,
@@ -312,7 +364,7 @@ impl TorrentPeerServer {
                 );
 
                 // TRACE: Log full response
-                let hex_str = hex::encode(output_data);
+                let hex_str = hex::encode(&output_data);
                 console_trace!(status_tx, "BitTorrent Peer sent (hex): {}", hex_str);
             }
         }
@@ -320,7 +372,13 @@ impl TorrentPeerServer {
         Ok(())
     }
 
-    fn parse_handshake(data: &[u8]) -> Result<(String, String)> {
+    /// Parse the fixed 68-byte handshake.
+    ///
+    /// Returns `(info_hash_hex, peer_id_text, peer_id_hex)`. The peer ID is 20 arbitrary
+    /// bytes: most clients use printable ASCII but the trailing random section frequently
+    /// is not, so the lossy text form can contain replacement characters and must not be
+    /// echoed back. `peer_id_hex` is the faithful form.
+    fn parse_handshake(data: &[u8]) -> Result<(String, String, String)> {
         // Handshake format: <pstrlen><pstr><reserved><info_hash><peer_id>
         // pstrlen = 19, pstr = "BitTorrent protocol"
 
@@ -341,13 +399,17 @@ impl TorrentPeerServer {
         // reserved = 8 bytes (bytes 20-27)
         let info_hash = hex::encode(&data[28..48]);
         let peer_id = String::from_utf8_lossy(&data[48..68]).to_string();
+        let peer_id_hex = hex::encode(&data[48..68]);
 
-        Ok((info_hash, peer_id))
+        Ok((info_hash, peer_id, peer_id_hex))
     }
 
     fn parse_message(data: &[u8]) -> Result<(String, serde_json::Value)> {
         if data.is_empty() {
-            return Ok(("keepalive".to_string(), serde_json::json!({})));
+            return Ok((
+                "keepalive".to_string(),
+                serde_json::json!({"message_type": "keepalive"}),
+            ));
         }
 
         if data.len() < 4 {
@@ -357,7 +419,10 @@ impl TorrentPeerServer {
         let length = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
         if length == 0 {
-            return Ok(("keepalive".to_string(), serde_json::json!({})));
+            return Ok((
+                "keepalive".to_string(),
+                serde_json::json!({"message_type": "keepalive"}),
+            ));
         }
 
         if data.len() < 4 + length {
@@ -440,6 +505,14 @@ impl TorrentPeerServer {
                 serde_json::json!({"id": message_id, "payload_hex": hex::encode(payload)}),
             ),
         };
+
+        // Several message types share one event, so the event payload has to say which
+        // one actually arrived; without it a handler on peer_choke_message cannot tell a
+        // choke from an "interested".
+        let mut message_data = message_data;
+        if let Some(obj) = message_data.as_object_mut() {
+            obj.insert("message_type".to_string(), serde_json::json!(message_type));
+        }
 
         Ok((message_type.to_string(), message_data))
     }

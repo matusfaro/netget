@@ -29,9 +29,12 @@ impl Protocol for TorrentPeerProtocol {
             SEND_HANDSHAKE_ACTION.clone(),
             SEND_CHOKE_ACTION.clone(),
             SEND_UNCHOKE_ACTION.clone(),
+            SEND_INTERESTED_ACTION.clone(),
+            SEND_NOT_INTERESTED_ACTION.clone(),
             SEND_BITFIELD_ACTION.clone(),
             SEND_HAVE_ACTION.clone(),
             SEND_PIECE_ACTION.clone(),
+            SEND_KEEPALIVE_ACTION.clone(),
         ]
     }
     fn protocol_name(&self) -> &'static str {
@@ -43,6 +46,7 @@ impl Protocol for TorrentPeerProtocol {
             PEER_CHOKE_MESSAGE_EVENT.clone(),
             PEER_REQUEST_MESSAGE_EVENT.clone(),
             PEER_BITFIELD_MESSAGE_EVENT.clone(),
+            PEER_MESSAGE_EVENT.clone(),
         ]
     }
     fn stack_name(&self) -> &'static str {
@@ -114,7 +118,7 @@ impl Protocol for TorrentPeerProtocol {
                             "actions": [
                                 {
                                     "type": "send_handshake",
-                                    "info_hash": "0123456789abcdef0123456789abcdef01234567",
+                                    "info_hash": "{{event.info_hash}}",
                                     "peer_id": "-NT0001-xxxxxxxxxxxx"
                                 },
                                 {
@@ -182,16 +186,29 @@ impl TorrentPeerProtocol {
                 .and_then(|v| v.as_str())
                 .context("Missing info_hash")?,
         )?;
-        let peer_id = action
-            .get("peer_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-NT0001-xxxxxxxxxxxx");
+        // A peer ID is 20 arbitrary bytes. `peer_id` covers the ASCII case models
+        // actually produce; `peer_id_hex` covers the rest and wins when both are given.
+        let peer_id_bytes = match action.get("peer_id_hex").and_then(|v| v.as_str()) {
+            Some(hex_str) => hex::decode(hex_str).context("peer_id_hex is not valid hex")?,
+            None => action
+                .get("peer_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("-NT0001-xxxxxxxxxxxx")
+                .as_bytes()
+                .to_vec(),
+        };
 
         if info_hash.len() != 20 {
-            return Err(anyhow::anyhow!("info_hash must be 20 bytes"));
+            return Err(anyhow::anyhow!(
+                "info_hash must be 20 bytes (40 hex chars), got {}",
+                info_hash.len()
+            ));
         }
-        if peer_id.len() != 20 {
-            return Err(anyhow::anyhow!("peer_id must be 20 characters"));
+        if peer_id_bytes.len() != 20 {
+            return Err(anyhow::anyhow!(
+                "peer_id must be 20 bytes, got {}",
+                peer_id_bytes.len()
+            ));
         }
 
         let mut handshake = Vec::new();
@@ -199,7 +216,7 @@ impl TorrentPeerProtocol {
         handshake.extend_from_slice(b"BitTorrent protocol");
         handshake.extend_from_slice(&[0u8; 8]);
         handshake.extend_from_slice(&info_hash);
-        handshake.extend_from_slice(peer_id.as_bytes());
+        handshake.extend_from_slice(&peer_id_bytes);
 
         Ok(ActionResult::Output(handshake))
     }
@@ -261,12 +278,65 @@ impl TorrentPeerProtocol {
     }
 }
 
+/// Every action a peer-wire event can answer with.
+///
+/// The peer wire protocol has no correlation id and no request/response pairing beyond
+/// the handshake: any message is legal at any point after it, so narrowing per event
+/// would only hide legitimate replies. The one thing an event must not do is advertise
+/// nothing, which is what all four of these used to do.
+fn all_peer_actions() -> Vec<ActionDefinition> {
+    vec![
+        SEND_HANDSHAKE_ACTION.clone(),
+        SEND_CHOKE_ACTION.clone(),
+        SEND_UNCHOKE_ACTION.clone(),
+        SEND_INTERESTED_ACTION.clone(),
+        SEND_NOT_INTERESTED_ACTION.clone(),
+        SEND_BITFIELD_ACTION.clone(),
+        SEND_HAVE_ACTION.clone(),
+        SEND_PIECE_ACTION.clone(),
+        SEND_KEEPALIVE_ACTION.clone(),
+    ]
+}
+
 pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "peer_handshake",
-        "BitTorrent peer handshake received",
-        json!({"type": "placeholder", "event_id": "peer_handshake"}),
+        "BitTorrent peer opened a connection and sent its handshake. Reply with a \
+         handshake echoing the same info_hash, then usually a bitfield and an unchoke.",
+        json!({
+            "type": "send_handshake",
+            "info_hash": "{{event.info_hash}}",
+            "peer_id": "-NG0001-netgetserver"
+        }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "info_hash".to_string(),
+            type_hint: "string".to_string(),
+            description: "Torrent the peer wants, hex-encoded (40 chars). The handshake \
+                          reply must echo it or the peer disconnects; use \
+                          \"{{event.info_hash}}\"."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Remote peer's ID rendered as lossy UTF-8. Informational only — \
+                          the trailing bytes are usually random, so this may contain \
+                          replacement characters."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_id_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Remote peer's 20-byte ID, hex-encoded (40 chars). Faithful form."
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(all_peer_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} BT peer handshake ({duration_ms}ms)")
@@ -278,22 +348,67 @@ pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static PEER_CHOKE_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "peer_choke_message",
-        "Peer choke message",
-        json!({"type": "placeholder", "event_id": "peer_choke_message"}),
+        "Peer sent a payload-free state message: choke, unchoke, interested or \
+         not_interested. Check `message_type` to see which.",
+        json!({"type": "send_unchoke"}),
     )
+    .with_parameters(vec![Parameter {
+        name: "message_type".to_string(),
+        type_hint: "string".to_string(),
+        description: "\"choke\", \"unchoke\", \"interested\" or \"not_interested\"".to_string(),
+        required: true,
+    }])
+    .with_actions(all_peer_actions())
     .with_log_template(
         LogTemplate::new()
-            .with_info("{client_ip} BT choke/unchoke")
-            .with_debug("BT peer choke/unchoke from {client_ip}"),
+            .with_info("{client_ip} BT {message_type}")
+            .with_debug("BT peer {message_type} from {client_ip}"),
     )
 });
 
 pub static PEER_REQUEST_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "peer_request_message",
-        "Peer piece request",
-        json!({"type": "placeholder", "event_id": "peer_request_message"}),
+        "Peer requested a block of a piece. Answer with send_piece, or with send_choke to \
+         refuse.",
+        json!({
+            "type": "send_piece",
+            "index": "{{event.index}}",
+            "begin": "{{event.begin}}",
+            "block_hex": "48656c6c6f20576f726c64"
+        }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Always \"request\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "index".to_string(),
+            type_hint: "number".to_string(),
+            description: "Piece index. Echo it in send_piece or the peer discards the block."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "begin".to_string(),
+            type_hint: "number".to_string(),
+            description: "Byte offset within the piece. Echo it in send_piece.".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "length".to_string(),
+            type_hint: "number".to_string(),
+            description: "Bytes requested, typically 16384. send_piece should return \
+                          exactly this many bytes."
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(all_peer_actions())
+    .with_alternative_example(json!({"type": "send_choke"}))
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} BT request piece {index}")
@@ -304,9 +419,26 @@ pub static PEER_REQUEST_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static PEER_BITFIELD_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "peer_bitfield_message",
-        "Peer bitfield message",
-        json!({"type": "placeholder", "event_id": "peer_bitfield_message"}),
+        "Peer announced which pieces it holds",
+        json!({"type": "send_interested"}),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Always \"bitfield\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bitfield".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded bitfield, one bit per piece, most significant bit \
+                          first. \"ff\" means the peer has pieces 0-7."
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(all_peer_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} BT bitfield")
@@ -315,29 +447,130 @@ pub static PEER_BITFIELD_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
 });
 
+pub static PEER_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "peer_message",
+        "Peer sent a have, piece, cancel or keep-alive message, or a message id this \
+         server does not decode. Check `message_type`.",
+        json!({"type": "send_keepalive"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "\"have\", \"piece\", \"cancel\", \"keepalive\" or \"unknown\""
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "piece_index".to_string(),
+            type_hint: "number".to_string(),
+            description: "Piece the peer now has (message_type \"have\" only)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "index".to_string(),
+            type_hint: "number".to_string(),
+            description: "Piece index (message_type \"piece\" or \"cancel\")".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "begin".to_string(),
+            type_hint: "number".to_string(),
+            description: "Byte offset (message_type \"piece\" or \"cancel\")".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "block_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded block the peer sent (message_type \"piece\")".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "id".to_string(),
+            type_hint: "number".to_string(),
+            description: "Raw message id (message_type \"unknown\")".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "payload_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded undecoded payload (message_type \"unknown\")".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(all_peer_actions())
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} BT {message_type}")
+            .with_debug("BT peer {message_type} from {client_ip}")
+            .with_trace("BT message: {json_pretty(.)}"),
+    )
+});
+
 pub static SEND_HANDSHAKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
     name: "send_handshake".to_string(),
-    description: "Send BitTorrent handshake".to_string(),
+    description: "Send the 68-byte BitTorrent handshake. The info_hash must match the one \
+                  the peer sent or it will drop the connection."
+        .to_string(),
     parameters: vec![
         Parameter {
             name: "info_hash".to_string(),
             type_hint: "string".to_string(),
-            description: "Torrent info hash (hex, 20 bytes)".to_string(),
+            description: "Torrent info hash, hex-encoded (exactly 40 hex chars = 20 bytes). \
+                          Use \"{{event.info_hash}}\" to echo the peer's."
+                .to_string(),
             required: true,
         },
         Parameter {
             name: "peer_id".to_string(),
             type_hint: "string".to_string(),
-            description: "Peer ID (20 characters)".to_string(),
+            description: "Our peer ID as exactly 20 ASCII bytes (default \
+                          \"-NT0001-xxxxxxxxxxxx\"). For a non-ASCII ID use peer_id_hex \
+                          instead."
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "peer_id_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Our peer ID as 40 hex chars. Takes precedence over peer_id.".to_string(),
             required: false,
         },
     ],
-    example: json!({"type": "send_handshake", "info_hash": "0123456789abcdef0123456789abcdef01234567", "peer_id": "-NT0001-xxxxxxxxxxxx"}),
+    example: json!({"type": "send_handshake", "info_hash": "{{event.info_hash}}", "peer_id": "-NT0001-xxxxxxxxxxxx"}),
     log_template: Some(
         LogTemplate::new()
             .with_info("-> BT handshake")
             .with_debug("BT send handshake: peer_id={peer_id}"),
     ),
+});
+
+pub static SEND_INTERESTED_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
+        name: "send_interested".to_string(),
+        description: "Tell the peer we want pieces it holds".to_string(),
+        parameters: vec![],
+        example: json!({"type": "send_interested"}),
+        log_template: Some(LogTemplate::new().with_info("-> BT interested")),
+    });
+
+pub static SEND_NOT_INTERESTED_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
+        name: "send_not_interested".to_string(),
+        description: "Tell the peer we want nothing it holds".to_string(),
+        parameters: vec![],
+        example: json!({"type": "send_not_interested"}),
+        log_template: Some(LogTemplate::new().with_info("-> BT not_interested")),
+    });
+
+pub static SEND_KEEPALIVE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
+    name: "send_keepalive".to_string(),
+    description: "Send a zero-length keep-alive so the peer does not time the connection out"
+        .to_string(),
+    parameters: vec![],
+    example: json!({"type": "send_keepalive"}),
+    log_template: Some(LogTemplate::new().with_info("-> BT keepalive")),
 });
 
 pub static SEND_CHOKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {

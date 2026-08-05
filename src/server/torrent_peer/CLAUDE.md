@@ -34,7 +34,7 @@ impl TorrentPeerServer {
     pub async fn spawn_with_llm_actions(...) -> Result<SocketAddr>
     async fn handle_connection(...) -> Result<()>
     async fn process_llm_response(...) -> Result<()>
-    fn parse_handshake(data: &[u8]) -> Result<(String, String)>
+    fn parse_handshake(data: &[u8]) -> Result<(String, String, String)>
     fn parse_message(data: &[u8]) -> Result<(String, serde_json::Value)>
 }
 ```
@@ -42,17 +42,28 @@ impl TorrentPeerServer {
 **Connection Flow**:
 
 1. Accept TCP connection
-2. Wait for handshake (68 bytes)
-3. Parse handshake (protocol string, info_hash, peer_id)
-4. Send handshake to LLM
-5. LLM returns handshake response
-6. Enter message loop:
-    - Read length-prefixed message
+2. Append every read into a `pending` buffer and drain complete frames from it
+3. First 68 bytes are the handshake (protocol string, info_hash, peer_id)
+4. Fire `peer_handshake`; write whatever the handler returned
+5. Then, repeatedly, while `pending` holds a whole `<4-byte length><body>` frame:
     - Parse message type and payload
-    - Convert to JSON for LLM
-    - LLM returns action (send_choke, send_piece, etc.)
-    - Send binary message back to peer
-7. Connection persists until closed by peer or error
+    - Fire the matching event
+    - Write every output the handler returned, in order
+6. Connection persists until closed by peer or error
+
+**Framing (this is the part that used to be wrong).** The peer wire protocol is
+length-prefixed over a byte stream, so a `read()` is not a message. The previous
+implementation parsed each read as exactly one frame, which meant:
+
+- the bitfield a client sends in the *same segment* as its handshake was discarded (the
+  handshake parser looked at `data[..68]` and threw the rest away) — and sending
+  handshake + bitfield + interested in one write is what every real client does;
+- two coalesced messages became one, the second silently lost;
+- a message split across two reads produced "Incomplete message", was dropped, and left
+  the stream misaligned so every byte after it was garbage.
+
+`pending` is capped at 2 MiB; a peer that never completes a frame is disconnected rather
+than allowed to grow the buffer without bound.
 
 ### Binary Message Format
 
@@ -98,10 +109,27 @@ payload: Variable length (depends on message type)
 
 **Protocol Trait Implementation**: `Server` trait from `crate::llm::actions::protocol_trait`
 
+Every event type calls `.with_actions(...)` and `.with_parameters(...)`. Until they did,
+`call_llm` advertised none of these actions — it builds the model's tool list from
+`event.event_type.actions`, not from `get_sync_actions()` — so every peer-wire action the
+model produced was rejected as unknown.
+
+The peer wire protocol has no correlation id and no request/response pairing beyond the
+handshake: any message is legal at any point after it. So every event advertises the full
+action set rather than a narrowed one. What *is* correlated is the handshake's `info_hash`
+(the reply must echo it or the peer disconnects) and a request's `index`/`begin` (a piece
+carrying different values is discarded). Static handlers echo them with
+`{{event.info_hash}}`, `{{event.index}}`, `{{event.begin}}`.
+
+`send_interested`, `send_not_interested` and `send_keepalive` were implemented in
+`execute_action` but missing from `get_sync_actions()`, so they were undiscoverable; they
+are now declared.
+
 **Sync Actions** (network-triggered):
 
 1. **send_handshake** - Respond to peer handshake
-    - Parameters: `info_hash` (hex, 40 chars), `peer_id` (20 chars, optional)
+    - Parameters: `info_hash` (hex, 40 chars), `peer_id` (20 ASCII bytes, optional),
+      `peer_id_hex` (40 hex chars, optional, takes precedence)
     - Output: 68-byte binary handshake
     - Example:
    ```json
@@ -172,21 +200,32 @@ payload: Variable length (depends on message type)
 
 **Event Types** (incoming messages):
 
-1. **peer_handshake** - Peer initiates connection
-    - Payload: `{info_hash: "abc...", peer_id: "xyz..."}`
-    - Must respond with send_handshake
+Every message event carries `message_type`, naming the message that actually arrived.
 
-2. **peer_choke_message** - Peer state change (choke/unchoke/interested/not_interested)
-    - Payload: Empty `{}`
-    - Can respond with complementary message
+1. **peer_handshake** - Peer initiates connection
+    - Payload: `{info_hash, peer_id, peer_id_hex}`
+    - `peer_id` is lossy UTF-8 and may contain replacement characters: a peer ID is 20
+      arbitrary bytes and the trailing random section usually is not text. `peer_id_hex`
+      is the faithful form; never echo `peer_id` back for a non-ASCII peer.
+    - Must respond with send_handshake echoing `{{event.info_hash}}`
+
+2. **peer_choke_message** - Peer state change
+    - Fires for choke, unchoke, interested *and* not_interested
+    - Payload: `{message_type}`
 
 3. **peer_request_message** - Peer requests piece block
-    - Payload: `{index: 0, begin: 0, length: 16384}`
-    - Should respond with send_piece (if unchoked and have piece)
+    - Payload: `{message_type, index, begin, length}`
+    - Should respond with send_piece echoing `index` and `begin`
 
 4. **peer_bitfield_message** - Peer announces pieces
-    - Payload: `{bitfield: "ff00..."}`
-    - Can respond with send_interested or send_not_interested
+    - Payload: `{message_type, bitfield}`
+
+5. **peer_message** - have, piece, cancel, keep-alive, or an undecoded message id
+    - Payload: `{message_type}` plus whichever of `piece_index`, `index`, `begin`,
+      `block_hex`, `id`, `payload_hex` apply
+    - This event is new. `have`, `piece`, `cancel`, keep-alives and unknown ids used to be
+      announced to the model as `peer_choke_message`, which is simply false — as was
+      routing `interested` there while calling it a "choke message".
 
 ### Message Parsing
 
@@ -290,26 +329,17 @@ You are a BitTorrent leecher. You have no pieces initially. Respond to handshake
 
 ## Connection State Tracking
 
-**ProtocolConnectionInfo Variant**:
+`protocol_info` is `ProtocolConnectionInfo::empty()`. `ProtocolConnectionInfo` is a generic
+`serde_json::Value` wrapper (`state/server.rs`), not the per-protocol enum earlier versions
+of this file described: there is no `TorrentPeer` variant carrying a write half, a state
+machine or the negotiated info_hash.
 
-```rust
-TorrentPeer {
-    write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
-    state: ProtocolState,                  // Idle, Processing, Accumulating
-    queued_data: Vec<u8>,                  // Buffered data during Processing
-    handshake_complete: bool,
-    peer_id: Option<String>,
-    info_hash: Option<String>,
-}
-```
-
-**State Machine**:
-
-- **Idle**: Ready for next message
-- **Processing**: LLM call in progress, queue incoming data
-- **Accumulating**: Data queued, will process after current LLM call
-
-This prevents concurrent LLM calls for the same connection (would cause confusion).
+**There is no per-connection Idle/Processing/Accumulating state machine here.** The
+connection task reads, calls the LLM, writes, and reads again — strictly serially — so
+concurrent LLM calls on one connection are impossible by construction, but data arriving
+during a call is not queued and dispatched separately; it simply waits in the socket
+buffer and is drained on the next read. Earlier versions of this file described a state
+machine that was never implemented.
 
 ## Logging Strategy
 
@@ -352,7 +382,12 @@ This prevents concurrent LLM calls for the same connection (would cause confusio
 
 6. **Stateless Pieces**: Server restart = lost piece data (unless LLM uses filesystem).
 
-7. **Single-threaded LLM**: One LLM call per connection at a time. High piece request rate may cause queueing.
+7. **Single-threaded LLM**: the connection task blocks on each LLM call, so a high piece
+   request rate serialises behind it. Use a script or static handler for anything
+   throughput-sensitive.
+
+8. **No SHA-1 anything**: `info_hash` is never verified against piece data, and piece
+   blocks are whatever the handler supplies.
 
 ## Security Considerations
 
