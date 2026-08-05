@@ -1043,6 +1043,26 @@ Third instance of this exact shape, so it is a pattern rather than a slip:
 The action-name validation added in `0069d90c` catches this at `start_server` time for
 handlers. Extending the same check to mock rules would catch it in tests.
 
+### 73b. Final test state at HEAD **[verified]**
+
+Measured in a clean worktree on the CI feature set (`tcp,http,dns,udp,redis,mcp-stdio`) with
+`--no-fail-fast`: **289 passed, 27 failed, 26 ignored**, against 5/24 on the protocol suite at
+session start.
+
+`tests/server.rs` — the protocol E2E suite — is **fully green**. Every remaining failure is
+attributed, and only five are real:
+
+| Suite | Failing | Cause |
+|---|---|---|
+| `ollama_model_test` | 20 | A model-*evaluation* harness needing a real Ollama with `qwen2.5-coder:7b`. Neither `#[ignore]`d nor feature-gated, so it fails for anyone without that exact setup and would fail CI. Should move behind the existing `--use-ollama` opt-in. |
+| `client` | 4 | Genuine — the only real product failures left. |
+| `scripting_executor_test` | 2 | This machine's Homebrew Perl lacks the `JSON` CPAN module. Environmental; the test should detect and skip. |
+| `logging_unit_test` | 1 | Asserts a description contains the literal `"log file"`; reworded in `e75043df` (2025-12-29), so failing since long before this session. |
+
+The doctest failure that made `cargo test --doc` fail repo-wide is fixed (`f4fb7dcf`).
+
+Gating `ollama_model_test` would take the visible failure count from 27 to 7.
+
 ### 74. Protocol review coverage: 114 of 114 **[complete]**
 
 Every server protocol directory has now had a full 9-point review. Final demotion tally — nine
