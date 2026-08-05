@@ -53,7 +53,12 @@ fn default_log_level() -> String {
                       netget --env llm show version\n\
                   \n\
                   Server configuration:\n\
-                      netget --listen-addr 0.0.0.0 listen on port 8080",
+                      netget --listen-addr 0.0.0.0 listen on port 8080\n\
+                  \n\
+                  Connect a client without a model round-trip:\n\
+                      netget --client redis --connect 127.0.0.1:6379\n\
+                      netget --client tcp --connect 10.0.0.5:9000 log every banner you receive\n\
+                      netget --client-list",
     trailing_var_arg = true,
     allow_hyphen_values = true
 )]
@@ -263,6 +268,48 @@ pub struct Args {
         help = "List available simple protocols that can be started with --simple"
     )]
     pub simple_list: bool,
+
+    /// Connect a protocol client to a remote server (non-interactive)
+    #[clap(
+        long = "client",
+        value_name = "PROTOCOL",
+        help = "Connect a client of PROTOCOL to the address given by --connect, without asking the model to do it. Any trailing text is used as the client's instruction. Use --client-list to see available protocols."
+    )]
+    pub client_protocol: Option<String>,
+
+    /// Remote address for --client
+    #[clap(
+        long = "connect",
+        value_name = "ADDRESS",
+        requires = "client_protocol",
+        help = "Remote address the --client connects to, e.g. 127.0.0.1:6379"
+    )]
+    pub client_addr: Option<String>,
+
+    /// Startup parameters for --client
+    #[clap(
+        long = "client-params",
+        value_name = "JSON",
+        requires = "client_protocol",
+        help = "JSON object of startup parameters for --client (same keys as the MCP start_client tool's startup_params)"
+    )]
+    pub client_params: Option<String>,
+
+    /// Event handlers for --client
+    #[clap(
+        long = "client-handlers",
+        value_name = "JSON",
+        requires = "client_protocol",
+        help = "JSON array of event handlers for --client (script or static handlers run in-process with NO LLM call, which is what makes a scripted client deterministic)"
+    )]
+    pub client_handlers: Option<String>,
+
+    /// List available client protocols
+    #[clap(
+        long = "client-list",
+        help = "List protocols that can be connected as clients with --client"
+    )]
+    pub client_list: bool,
 
     /// Run as MCP STDIO server (for Claude Desktop/Code integration)
     #[clap(
@@ -495,6 +542,52 @@ impl Args {
                     }
                 };
                 Ok(Some(parsed_mode))
+            }
+        }
+    }
+
+    /// Instruction for a `--client`: the trailing text if any was given,
+    /// otherwise the same default the MCP `start_client` tool uses.
+    pub fn client_instruction(&self, protocol: &str, remote_addr: &str) -> String {
+        let trailing = self.prompt.join(" ").trim().to_string();
+        if trailing.is_empty() {
+            format!(
+                "You are a {} client connected to {}. Handle responses appropriately.",
+                protocol, remote_addr
+            )
+        } else {
+            trailing
+        }
+    }
+
+    /// Parse `--client-params` into a JSON object
+    pub fn parse_client_params(&self) -> Result<Option<serde_json::Value>> {
+        match &self.client_params {
+            None => Ok(None),
+            Some(raw) => {
+                let value: serde_json::Value = serde_json::from_str(raw)
+                    .map_err(|e| anyhow::anyhow!("--client-params is not valid JSON: {}", e))?;
+                if !value.is_object() {
+                    anyhow::bail!("--client-params must be a JSON object, e.g. '{{\"db\": 0}}'");
+                }
+                Ok(Some(value))
+            }
+        }
+    }
+
+    /// Parse `--client-handlers` into a list of event handler definitions
+    pub fn parse_client_handlers(&self) -> Result<Option<Vec<serde_json::Value>>> {
+        match &self.client_handlers {
+            None => Ok(None),
+            Some(raw) => {
+                let value: serde_json::Value = serde_json::from_str(raw)
+                    .map_err(|e| anyhow::anyhow!("--client-handlers is not valid JSON: {}", e))?;
+                match value {
+                    serde_json::Value::Array(handlers) => Ok(Some(handlers)),
+                    _ => anyhow::bail!(
+                        "--client-handlers must be a JSON array of handler objects, e.g. '[{{\"event\": \"redis_response_received\", \"handler_type\": \"static\", \"response\": []}}]'"
+                    ),
+                }
             }
         }
     }

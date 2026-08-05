@@ -76,6 +76,30 @@ pub async fn run() -> Result<()> {
         return run_simple_protocol(protocol, &args).await;
     }
 
+    // Handle --client-list flag (list protocols available as clients and exit)
+    if args.client_list {
+        println!("Available client protocols:");
+        println!();
+        let mut protocols = crate::protocol::CLIENT_REGISTRY.list_protocols();
+        protocols.sort();
+        if protocols.is_empty() {
+            println!("  No client protocols available (check compiled features)");
+        } else {
+            for name in protocols {
+                println!("  - {}", name);
+            }
+        }
+        println!();
+        println!("Usage: netget --client <protocol> --connect <address> [instruction]");
+        println!("Example: netget --client redis --connect 127.0.0.1:6379");
+        return Ok(());
+    }
+
+    // Handle --client <protocol> flag (connect a client in non-interactive mode)
+    if let Some(ref protocol) = args.client_protocol {
+        return run_client(protocol, &args).await;
+    }
+
     // Handle --mcp-stdio flag (run as MCP STDIO server)
     #[cfg(feature = "mcp-stdio")]
     if args.mcp_stdio {
@@ -294,6 +318,162 @@ pub async fn run() -> Result<()> {
              Please provide a prompt via arguments or stdin."
         )
     }
+}
+
+/// Connect a client in non-interactive mode (`--client <PROTOCOL> --connect <ADDR>`)
+///
+/// The deterministic counterpart to the `open_client` LLM action: starting a
+/// client from a shell or a test used to require a model round-trip just to
+/// decide to do the thing the caller already asked for. This routes straight to
+/// `client_startup::start_client_from_action`, the same function the MCP
+/// `start_client` tool and the actions-JSON loader use.
+///
+/// Model selection deliberately mirrors `run_with_actions` rather than
+/// `run_simple_protocol`: no `select_or_validate_model()` call, so a client
+/// whose behaviour is fully described by `--client-handlers` connects and runs
+/// without an LLM backend being reachable at all. A model is still configured
+/// when one was requested, for clients that fall back to the `instruction`.
+async fn run_client(protocol: &str, args: &Args) -> Result<()> {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+
+    // Setup logging (non-interactive mode)
+    setup::init_logging(args, false)?;
+
+    let remote_addr = args.client_addr.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "--client requires --connect <ADDRESS>\n   Example: netget --client {} --connect 127.0.0.1:6379",
+            protocol
+        )
+    })?;
+
+    // Resolve the protocol before doing any setup work, so an unknown name
+    // fails immediately with the registry's own diagnostic.
+    let canonical = client_startup::resolve_client_protocol(protocol).ok_or_else(|| {
+        let mut available = crate::protocol::CLIENT_REGISTRY.list_protocols();
+        available.sort();
+        anyhow::anyhow!(
+            "Unknown client protocol: {}\n   Available in this build: {}\n   (see --client-list)",
+            protocol,
+            if available.is_empty() {
+                "none".to_string()
+            } else {
+                available.join(", ")
+            }
+        )
+    })?;
+
+    let startup_params = args.parse_client_params()?;
+    let event_handlers = args.parse_client_handlers()?;
+    let instruction = args.client_instruction(&canonical, &remote_addr);
+
+    let settings = Settings::load();
+
+    // Create application state
+    let base_url = args
+        .openai_url
+        .clone()
+        .or_else(|| args.ollama_url.clone())
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+    let state =
+        AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+
+    state
+        .configure_rate_limiter(args.build_rate_limiter_config())
+        .await?;
+
+    if let Some(model) = args.model.clone().or_else(|| settings.model.clone()) {
+        state.set_ollama_model(Some(model)).await;
+    }
+
+    if let Some(mode) = args
+        .parse_scripting_mode()?
+        .or_else(|| settings.parse_scripting_mode())
+    {
+        state.set_selected_scripting_mode(mode).await;
+    }
+
+    if let Some(handler_mode) = args.parse_event_handler_mode()? {
+        state.set_event_handler_mode(handler_mode).await;
+    }
+
+    // ASK web-search mode has no way to prompt without a TUI
+    let mut web_search_mode = settings.get_web_search_mode();
+    if web_search_mode == crate::state::app_state::WebSearchMode::Ask {
+        web_search_mode = crate::state::app_state::WebSearchMode::Off;
+    }
+    state.set_web_search_mode(web_search_mode).await;
+
+    let lock_enabled = state.get_ollama_lock_enabled().await;
+    let llm = create_llm_client(args, lock_enabled)?
+        .with_mock_config_file(args.mock_config_file.clone())
+        .with_app_state(state.clone());
+    state.set_llm_client(llm.clone()).await;
+
+    println!(
+        "[CLIENT] Connecting {} client to {}",
+        canonical, remote_addr
+    );
+
+    let client_id = client_startup::start_client_from_action(
+        &state,
+        &canonical,
+        &remote_addr,
+        instruction,
+        startup_params,
+        None, // initial_memory
+        event_handlers,
+        None, // scheduled_tasks
+        None, // feedback_instructions
+        llm,
+    )
+    .await?;
+
+    println!(
+        "[CLIENT] Client #{} ({}) connected to {}. Press Ctrl+C to stop.",
+        client_id.as_u32(),
+        canonical,
+        remote_addr
+    );
+
+    // Set up Ctrl+C handler
+    let shutdown = Arc::new(Mutex::new(false));
+    let shutdown_clone = shutdown.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let mut shutdown = shutdown_clone.lock().await;
+        *shutdown = true;
+    });
+
+    // Run until interrupted or the client goes away
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if *shutdown.lock().await {
+            println!("\n[CLIENT] Shutting down...");
+            break;
+        }
+        match state.get_client(client_id).await {
+            Some(client) => {
+                if matches!(
+                    client.status,
+                    crate::state::client::ClientStatus::Disconnected
+                        | crate::state::client::ClientStatus::Error(_)
+                ) {
+                    println!(
+                        "[CLIENT] Client #{} is {:?}",
+                        client_id.as_u32(),
+                        client.status
+                    );
+                    break;
+                }
+            }
+            None => break,
+        }
+    }
+
+    println!("[CLIENT] Client stopped.");
+    Ok(())
 }
 
 /// Run a simple protocol in non-interactive mode
