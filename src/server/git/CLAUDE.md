@@ -156,6 +156,12 @@ Against `git` 2.54 with a static handler on 127.0.0.1:
   objects`, with the server-side ERROR naming both hashes.
 - `../escape.txt` → `500` naming the rejected path.
 
-`tests/server/git/` exists but is **not declared in `tests/server/mod.rs`**, so
-it is never compiled or run; it also still targets the removed
-`git_advertise_refs` / `git_send_pack` actions.
+`tests/server/git/` is declared at `tests/server/mod.rs:71-72` and runs; the suite is 5/5
+green against the action surface above. It was briefly red after that redesign because its
+mocks still answered with the removed `git_advertise_refs` / `git_send_pack`, repaired in
+`80b0bf0f`.
+
+Those mocks had a second, older defect worth knowing about: they matched on prompt *substrings*
+(`"Git client is requesting references"`) that appear in no prompt template — stale from the day
+they were written. They now match on `.on_event("git_info_refs" | "git_upload_pack")`, the raw
+event id the mock harness extracts, which cannot drift with prompt wording.
