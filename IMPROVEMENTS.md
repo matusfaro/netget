@@ -47,6 +47,9 @@ Delete an entry once its context is no longer useful.
 | — test targets broken under narrow features | `57a4c42f` | `server_stop_releases_port_test` (stale arity after `ec79eda5`) and `examples` (empty feature-gated vec, E0282) failed to *compile* with `--features telnet`, silently disabling every test in those targets |
 | — proxy/tunneling family | `2cf3d4f2`, `ec4231ab`, `a3e101a9`, `a0d8a6cb`, `32a30f83` | Suite went **21 failures → 5**. Proxy's certificate cache returned a regenerated certificate paired with the *cached* key, so every repeat MITM connection to a host failed with `KeyMismatch`; `certificate_mode: "load_from_file"` read the operator's key, **ignored the certificate file entirely** and minted a different CA, so clients trusting the real one rejected everything while the config looked correct; absolute-form request targets were forwarded verbatim, which `curl --proxy` caught and our tests never did. SOCKS5 ended three paths with no reply at all. TLS had the `d70bb5b5` defect again — hex documented, never decoded. TURN demoted to `Incomplete`: it cannot relay a byte, as no relay socket is ever bound |
 | 56 (part) — STUN's actions were invisible | `a0d8a6cb` | STUN's event never called `.with_actions(...)`, so every response was rejected as unknown; five E2E tests failed. Its shipped static example also used three nonexistent fields and a 6-byte transaction id |
+| 43 — `Http2Server` dead code | `a9ae64c9` | 349 lines removed; `src/server/mod.rs` now exports the live `H2Server`. That dead path is why HTTP/2's `request_filter` was silently inert |
+| 66 — `http_common` gated too narrowly | `ab04a5c2` | Gate widened to include `oauth2`, `openid`, `saml-idp`, `saml-sp`; all its deps are unconditional so it costs nothing. Four local `build_safe_response` copies are now deletable by those files' owners |
+| 44 — connection stats never updated | `515b8b7a` | **My justification was wrong and the truth was worse.** The TUI never renders these counters. The real reader is `cleanup_old_connections`, which retains only connections with `last_activity` under 10s and runs in both the TUI loop and the MCP reaper — so with `last_activity` frozen at accept time, **every HTTP connection was evicted from the state map ~10-15s after opening, while still serving**. Measured: `t=0s {0,0}` → `t=15s {'connection': None}` before; `t=28s {0,422}` after. Connection-scoped scheduled tasks also fed those constant zeros straight into the model's prompt, so the idle-timeout use case CLAUDE.md advertises was reading nothing real |
 | 29 + 39 + 50 — two documentation gates | `ab04a5c2` | `REQUIRE_DOCS_FOR_OPEN_ACTIONS` now gates both halves; the `DocumentationRequired` retry was unconditional. Measured A/B on the DNS suite: doc-gate round-trips **4 → 0**, total LLM requests **13 → 9**, same 4 tests passing. Note MCP `start_server` never went through this gate — it calls `start_server_from_action` directly |
 | 52 — `scheduled_tasks` created silently | `ab04a5c2` | The `open_server` array path now logs like the standalone `schedule_task` action |
 | 33 — dev builds defaulted to TRACE | `ab04a5c2`, `d6225b03` | Now DEBUG. TRACE is the only level carrying full payloads and full prompts, so it was both the 481 MB/day problem and a credential-disclosure one; `--log-level trace` is unchanged |
@@ -625,25 +628,30 @@ log records it as though it ran. This is why the HTTP executor was deliberately 
 rather than strict, and it is the same root cause as item 7. Fixing it properly means
 propagating action errors into the access log and the tool result.
 
-### 42. `http3` is the QUIC transport, not HTTP/3 **[static]**
+### 42. `http3` is the QUIC transport, not HTTP/3 — **awaiting a naming decision** **[verified]**
 
-The server implements QUIC streams, not HTTP/3 semantics. Metadata and docs now say so
-(`e32cf485`), but two consequences remain: `Cargo.toml:240` pulls `h3`/`h3-quinn` into the
-`http3` feature although only `src/client/http3/` uses them, and NetGet's own HTTP/3 client
-therefore cannot talk to NetGet's own HTTP/3 server. Decide whether to implement HTTP/3 over
-the existing QUIC layer or rename the protocol to `quic`.
+Correction to the original item: I wrote that `h3`/`h3-quinn` could be dropped because only the
+client uses them. **They cannot.** `http3` is a single feature gate over both halves, and
+`src/client/http3/mod.rs:175-176` is built on those crates. There is no `Cargo.toml` dependency
+saving here, and anyone attempting the rename for that reason should stop — the dependency
+survives it.
 
-### 43. `Http2Server` is dead code **[static]**
+The reviewed recommendation is **rename the protocol to `quic`, and do not implement RFC 9114
+here**, on these grounds: what runs today is coherent and tested (multiplexed bidirectional QUIC
+streams under TLS 1.3 with the model owning every byte), and nothing else in NetGet offers a raw
+QUIC stream — converting deletes that and buys a third request/response HTTP server duplicating
+HTTP/2's surface. `h3` is also pre-1.0 with a server API that has moved repeatedly. And it would
+be a rewrite of `handle_stream_with_actions` plus a new event/action pair, breaking every prompt
+written against `http3_stream_opened`/`send_http3_data` — not a patch.
 
-`Http2Protocol::spawn()` calls `H2Server::spawn_with_push_support`, never the hyper-based
-`Http2Server` still re-exported at `src/server/mod.rs:64`. That dead path is why HTTP/2's
-`request_filter` was silently inert. Remove the re-export and the module.
+Landed already: `keywords()` leads with `quic`, so a model asking for a QUIC server resolves to
+the protocol that is one. **Not landed, needs a decision** — the rename touches `Cargo.toml`,
+both registries, `cli/server_startup.rs`, `src/server/mod.rs`, the directory itself and
+`tests/server/http3/`, plus a call on whether the real HTTP/3 *client* keeps the `http3` name.
+The full table is in `src/server/http3/CLAUDE.md`.
 
-### 44. HTTP connection statistics are never updated **[static]**
-
-For all three HTTP protocols, `bytes_sent`, `bytes_received`, `packets_*`, `last_activity` and
-`recent_requests` keep their initial values, so the TUI's per-connection counters stay at zero
-and only connect/disconnect are visible. Needs accessors in `src/state/server.rs`.
+If HTTP/3 is wanted later, add it *beside* `quic`, modelled on `http2/h2_server.rs` — the `h3`
+server API mirrors `h2`'s — and reusing `http_common`.
 
 ### 45. The mock harness misroutes the pre-`open_server` documentation step **[verified]**
 
