@@ -11,20 +11,21 @@ requested port is actually below 1024. **RFC**: 7540 / 7541.
 Shared plumbing (request extraction, response building, request filter) lives in
 `src/server/http_common/` — read `src/server/http_common/CLAUDE.md`.
 
-## Two servers in this module — know which one runs
+## One server — `h2_server.rs`
 
-| Type | File | Used by `spawn()`? |
-|---|---|---|
-| `H2Server` (`spawn_with_push_support`) | `h2_server.rs` | **Yes.** This is the live path. |
-| `Http2Server` (`spawn_with_llm_actions`) | `mod.rs` | No. hyper-based variant, kept but never spawned. |
+`Http2Protocol::spawn()` calls `H2Server::spawn_with_push_support`
+(`h2_server.rs`), because hyper's service API cannot express server push. All
+request handling lives there; `mod.rs` is module declarations and the `H2Server`
+re-export only.
 
-`Http2Protocol::spawn()` calls `H2Server::spawn_with_push_support`, because
-hyper's service API cannot express server push. `Http2Server` in `mod.rs` is the
-plain hyper request/response implementation; it compiles and is exported
-(`server::Http2Server`) but nothing routes traffic to it. **Anything you change
-in `mod.rs` has no effect on a running server** — mirror it into `h2_server.rs`.
-This bit the request filter: it was wired only into `mod.rs`, so `request_filter`
-was silently ignored for HTTP/2 until it was added to `h2_server.rs` as well.
+There used to be a second, hyper-based `Http2Server` in `mod.rs`. It compiled and
+was exported as `server::Http2Server`, but nothing ever routed traffic to it, so
+edits to it had no effect on a running server. That bit the request filter: it
+was wired only into the dead path, so `request_filter` was accepted and silently
+ignored for HTTP/2 until it was added to `h2_server.rs` as well. The dead server
+was removed rather than kept as a "reference implementation" — a second copy of
+request handling that no test and no client ever exercises only invites the same
+mistake again. **Do not reintroduce a second server here.**
 
 The `h2c` upgrade path from HTTP/1.1 (`src/server/http/mod.rs`) also lands in
 `h2_server::handle_h2_request`, carrying the HTTP/1.1 connection's filter with it.

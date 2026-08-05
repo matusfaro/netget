@@ -64,7 +64,7 @@ pub mod http2;
 #[cfg(feature = "http2")]
 pub use http2::actions::Http2Protocol;
 #[cfg(feature = "http2")]
-pub use http2::Http2Server;
+pub use http2::H2Server;
 
 #[cfg(feature = "pypi")]
 pub mod pypi;
