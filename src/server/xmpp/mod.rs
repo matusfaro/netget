@@ -17,6 +17,13 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use actions::{XmppProtocol, XMPP_DATA_RECEIVED_EVENT};
 
+/// Upper bound on the un-consumed XML a single connection may accumulate.
+///
+/// `wait_for_more` deliberately keeps the buffer across events, so without a ceiling a peer
+/// that never completes a stanza - or a model that answers `wait_for_more` forever - grows it
+/// without limit, and every subsequent event re-sends the whole thing to the model.
+const MAX_XMPP_BUFFER_BYTES: usize = 256 * 1024;
+
 /// XMPP server that forwards XML stanzas to LLM
 pub struct XmppServer;
 
@@ -28,14 +35,21 @@ impl XmppServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        domain: String,
     ) -> Result<SocketAddr> {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("XMPP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] XMPP server listening on {}", local_addr));
+        info!(
+            "XMPP server (action-based) listening on {} for domain {}",
+            local_addr, domain
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] XMPP server listening on {} (domain {})",
+            local_addr, domain
+        ));
 
-        let protocol = Arc::new(XmppProtocol::new());
+        let protocol = Arc::new(XmppProtocol::with_domain(domain));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -105,6 +119,22 @@ impl XmppServer {
                                     Ok(n) => {
                                         buffer.extend_from_slice(&temp_buf[..n]);
 
+                                        if buffer.len() > MAX_XMPP_BUFFER_BYTES {
+                                            error!(
+                                                "XMPP connection {} buffered {} bytes without \
+                                                 completing a stanza (limit {}), closing",
+                                                connection_id,
+                                                buffer.len(),
+                                                MAX_XMPP_BUFFER_BYTES
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[ERROR] XMPP connection {} exceeded {} byte \
+                                                 buffer limit, closing",
+                                                connection_id, MAX_XMPP_BUFFER_BYTES
+                                            ));
+                                            break;
+                                        }
+
                                         // DEBUG: Log summary
                                         debug!(
                                             "XMPP received {} bytes on connection {}",
@@ -168,6 +198,7 @@ impl XmppServer {
                                                 ));
 
                                                 let mut should_close = false;
+                                                let mut wait_for_more = false;
 
                                                 for protocol_result in
                                                     execution_result.protocol_results
@@ -198,6 +229,7 @@ impl XmppServer {
                                                         }
                                                         ActionResult::WaitForMore => {
                                                             // Keep buffer and wait for more data
+                                                            wait_for_more = true;
                                                             debug!("XMPP waiting for more data");
                                                             let _ = status_clone.send("[DEBUG] XMPP waiting for more data".to_string());
                                                         }
@@ -209,10 +241,19 @@ impl XmppServer {
                                                     break;
                                                 }
 
-                                                // Clear buffer after successful processing
-                                                buffer.clear();
+                                                // Only consume the buffer once the model has
+                                                // acted on it. Clearing unconditionally made
+                                                // `wait_for_more` a no-op: the partial stanza
+                                                // it asked to hold on to was thrown away, and
+                                                // the continuation arrived without its opening
+                                                // tag.
+                                                if !wait_for_more {
+                                                    buffer.clear();
+                                                }
                                             }
                                             Err(e) => {
+                                                // Keep the buffer: the model never saw this
+                                                // data, so dropping it would lose a stanza.
                                                 error!("XMPP LLM call failed: {}", e);
                                                 let _ = status_clone
                                                     .send(format!("[ERROR] XMPP LLM error: {}", e));

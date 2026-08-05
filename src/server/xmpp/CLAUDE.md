@@ -66,21 +66,28 @@ XMPP uses persistent XML streams:
 - **Stanza exchange**: Messages, presence, IQ stanzas exchanged
 - **Stream close**: Either side sends `</stream:stream>`
 
-### 4. Client State Tracking
+### 4. No Server-Side Session State
 
-`XmppProtocol` maintains per-connection state:
+`XmppProtocol` holds only the configured `domain`. An `XmppClientState` map (JID,
+authenticated, stream id, resource) with setters used to live here, but nothing ever called
+them - no JID was recorded and `authenticated` was never set - so it was removed. Session state
+belongs to the model, which sees the whole stream.
 
-```rust
-struct XmppClientState {
-    jid: Option<String>,           // Jabber ID (user@domain/resource)
-    authenticated: bool,
-    stream_id: Option<String>,
-    resource: Option<String>,
-}
-```
+The `domain` startup parameter is the server's domain and supplies the default `from` on
+`send_stream_header`. It was declared but never read for a while, so a server opened with
+`domain: "example.com"` still announced `localhost`.
 
-**Note**: State tracking is basic. Full roster management, presence distribution, and multi-user chat are not
-implemented. The LLM maintains conversation context for session management.
+### 4a. XML Escaping
+
+Everything the model puts into a structured stanza - message bodies, status text, JIDs, stream
+ids, SASL mechanism names - is XML-escaped. Interpolating it raw meant a body containing `&`,
+`<` or an apostrophe produced a malformed stanza, and a real client's parser drops the entire
+stream on the first well-formedness error rather than skipping one stanza.
+
+`send_raw_xml`'s `xml` and `send_iq_result`'s `payload` are deliberately **not** escaped: they
+exist so the model can emit markup. `send_iq_error`'s `condition` and `send_auth_failure`'s
+`reason` become element *names*, so they are validated against `[A-Za-z0-9-]+` and rejected
+rather than escaped.
 
 ### 5. Dual Logging
 
@@ -93,7 +100,8 @@ implemented. The LLM maintains conversation context for session management.
 Each XMPP client gets:
 
 - Unique `ConnectionId`
-- Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::Xmpp`
+- Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::empty()` (XMPP stores no
+  protocol-specific connection info)
 - Tracked bytes sent/received, packets sent/received
 - State: Active until client closes or LLM sends `close_stream`
 
@@ -115,7 +123,8 @@ Send XMPP stream header to initiate XML stream.
 
 Parameters:
 
-- `from` (optional) - Server domain name (default: "localhost")
+- `from` (optional) - Server domain name (defaults to the server's `domain` startup parameter,
+  itself defaulting to "localhost")
 - `stream_id` (optional) - Unique stream identifier
 
 Example:
@@ -243,7 +252,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 ### Connection Lifecycle
 
 1. **Accept**: TCP listener accepts connection
-2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Xmpp`
+2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::empty()`
 3. **Split**: Stream split into ReadHalf and WriteHalf
 4. **Track**: WriteHalf stored in `Arc<Mutex<WriteHalf>>` for sending
 5. **Read Loop**: Continuous byte reading and XML buffering until disconnect
@@ -251,10 +260,16 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 
 ### State Management
 
-- `ProtocolState`: Idle/Processing/Accumulating (prevents concurrent LLM calls)
-- `queued_data`: XML data buffered while LLM is processing
+- **No per-connection state machine.** XMPP does not implement Idle/Processing/Accumulating and
+  has no `queued_data`; the read loop awaits each LLM call before reading again.
+- **Read buffer**: bytes accumulate in one `Vec<u8>` per connection. It is cleared once the
+  model has acted on it, but **kept** when the model answers `wait_for_more` (that is the whole
+  point of the action - clearing it unconditionally threw away the partial stanza the model
+  asked to hold) and kept when the LLM call fails, since the model never saw that data.
+- **Bounded**: `MAX_XMPP_BUFFER_BYTES` (256 KiB) caps it. Without a ceiling a peer that never
+  completes a stanza grows it without limit and every subsequent event re-sends the whole thing
+  to the model. Exceeding it logs an error and closes the connection.
 - Connection stays in ServerInstance until closed
-- UI updates on every message (bytes sent/received, last activity)
 
 ## Known Limitations
 

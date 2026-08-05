@@ -6,78 +6,58 @@ use crate::llm::actions::{
 };
 use crate::protocol::log_template::LogTemplate;
 use crate::protocol::EventType;
-use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::Mutex;
+use std::sync::LazyLock;
 use tracing::debug;
 
-/// XMPP client state for tracking JID and authentication
-#[derive(Clone, Debug)]
-pub struct XmppClientState {
-    pub jid: Option<String>, // Jabber ID (user@domain/resource)
-    pub authenticated: bool,
-    pub stream_id: Option<String>,
-    pub resource: Option<String>,
-}
+/// Default server domain when the `domain` startup parameter is not supplied.
+pub const DEFAULT_XMPP_DOMAIN: &str = "localhost";
 
-impl XmppClientState {
-    pub fn new() -> Self {
-        Self {
-            jid: None,
-            authenticated: false,
-            stream_id: None,
-            resource: None,
+/// Escape text for inclusion in XML character data or a single-quoted attribute value.
+///
+/// Every string reaching an XMPP stanza here comes from the model - message bodies, status
+/// text, JIDs, error conditions. Interpolating them raw meant a body containing `&`, `<` or an
+/// apostrophe emitted a malformed stanza, and a real client's XML parser drops the whole
+/// stream on the first well-formedness error rather than skipping the stanza.
+///
+/// `send_raw_xml` and `send_iq_result`'s `payload` are deliberately *not* escaped: they exist
+/// precisely so the model can emit markup, and both say so in their descriptions.
+fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '\'' => out.push_str("&apos;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
         }
     }
+    out
 }
 
 /// XMPP protocol action handler
+///
+/// Holds only the configured server domain. An `XmppClientState` map (JID, authenticated,
+/// stream id, resource) with insert/update/lookup helpers used to live here, but nothing ever
+/// called any of it - no JID was ever recorded and `authenticated` was never set. Session
+/// state belongs to the model, not to the protocol.
 pub struct XmppProtocol {
-    /// Map of active connections to their XMPP state
-    clients: Arc<Mutex<HashMap<ConnectionId, XmppClientState>>>,
+    /// Server domain, used as the default `from` on stream headers.
+    domain: String,
 }
 
 impl XmppProtocol {
     pub fn new() -> Self {
-        Self {
-            clients: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self::with_domain(DEFAULT_XMPP_DOMAIN.to_string())
     }
 
-    /// Add a connection to the protocol handler
-    pub async fn add_connection(&self, connection_id: ConnectionId) {
-        self.clients
-            .lock()
-            .await
-            .insert(connection_id, XmppClientState::new());
-    }
-
-    /// Remove a connection from the protocol handler
-    pub async fn remove_connection(&self, connection_id: &ConnectionId) {
-        self.clients.lock().await.remove(connection_id);
-    }
-
-    /// Set client JID
-    pub async fn set_jid(&self, connection_id: ConnectionId, jid: String) {
-        if let Some(client) = self.clients.lock().await.get_mut(&connection_id) {
-            client.jid = Some(jid);
-        }
-    }
-
-    /// Mark client as authenticated
-    pub async fn set_authenticated(&self, connection_id: ConnectionId, authenticated: bool) {
-        if let Some(client) = self.clients.lock().await.get_mut(&connection_id) {
-            client.authenticated = authenticated;
-        }
-    }
-
-    /// Get client state
-    pub async fn get_client_state(&self, connection_id: &ConnectionId) -> Option<XmppClientState> {
-        self.clients.lock().await.get(connection_id).cloned()
+    /// Build a handler bound to a specific server domain (the `domain` startup parameter).
+    pub fn with_domain(domain: String) -> Self {
+        Self { domain }
     }
 }
 
@@ -128,10 +108,16 @@ impl Protocol for XmppProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual XML stream parsing")
-            .llm_control("All XMPP stanzas (message, presence, iq)")
-            .e2e_testing("Manual XMPP client")
-            .notes("No roster management, simplified authentication")
+            .implementation(
+                "No XML parser: raw bytes are buffered and handed to the model as text, which \
+                 decides where stanzas begin and end",
+            )
+            .llm_control("All XMPP stanzas (message, presence, iq) and the SASL outcome")
+            .e2e_testing("Raw TCP client exchanging stream headers and stanzas")
+            .notes(
+                "Core stanzas only. No roster, no presence distribution, no MUC, no S2S, no \
+                 TLS/STARTTLS, and no credential checking - the model decides every auth outcome.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -198,12 +184,24 @@ impl Server for XmppProtocol {
     > {
         Box::pin(async move {
             use crate::server::xmpp::XmppServer;
+
+            // `domain` was declared as a startup parameter but never read, so a server started
+            // with domain='example.com' still announced 'localhost' in its stream header.
+            let domain = ctx
+                .startup_params
+                .as_ref()
+                .map(|p| p.get_optional_string("domain"))
+                .transpose()?
+                .flatten()
+                .unwrap_or_else(|| DEFAULT_XMPP_DOMAIN.to_string());
+
             XmppServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                domain,
             )
             .await
         })
@@ -234,10 +232,12 @@ impl Server for XmppProtocol {
 // Action implementation methods
 impl XmppProtocol {
     fn execute_send_stream_header(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Defaults to the domain the server was started with, so a server opened with
+        // `domain: "example.com"` announces that even when the model omits `from`.
         let from = action
             .get("from")
             .and_then(|v| v.as_str())
-            .unwrap_or("localhost");
+            .unwrap_or(&self.domain);
 
         let stream_id = action
             .get("stream_id")
@@ -246,7 +246,8 @@ impl XmppProtocol {
 
         let xml = format!(
             r#"<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='{}' id='{}' version='1.0'>"#,
-            from, stream_id
+            xml_escape(from),
+            xml_escape(stream_id)
         );
 
         debug!("XMPP sending stream header");
@@ -260,7 +261,7 @@ impl XmppProtocol {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
-                    .map(|s| format!("<mechanism>{}</mechanism>", s))
+                    .map(|s| format!("<mechanism>{}</mechanism>", xml_escape(s)))
                     .collect::<Vec<_>>()
                     .join("")
             })
@@ -298,7 +299,10 @@ impl XmppProtocol {
 
         let xml = format!(
             r#"<message from='{}' to='{}' type='{}'><body>{}</body></message>"#,
-            from, to, msg_type, body
+            xml_escape(from),
+            xml_escape(to),
+            xml_escape(msg_type),
+            xml_escape(body)
         );
 
         debug!("XMPP sending message from {} to {}", from, to);
@@ -320,19 +324,19 @@ impl XmppProtocol {
         let mut xml = if from.is_empty() {
             "<presence".to_string()
         } else {
-            format!("<presence from='{}'", from)
+            format!("<presence from='{}'", xml_escape(from))
         };
 
         if presence_type != "available" {
-            xml.push_str(&format!(" type='{}'", presence_type));
+            xml.push_str(&format!(" type='{}'", xml_escape(presence_type)));
         }
         xml.push('>');
 
         if let Some(s) = show {
-            xml.push_str(&format!("<show>{}</show>", s));
+            xml.push_str(&format!("<show>{}</show>", xml_escape(s)));
         }
         if let Some(s) = status {
-            xml.push_str(&format!("<status>{}</status>", s));
+            xml.push_str(&format!("<status>{}</status>", xml_escape(s)));
         }
 
         xml.push_str("</presence>");
@@ -351,11 +355,16 @@ impl XmppProtocol {
 
         let payload = action.get("payload").and_then(|v| v.as_str()).unwrap_or("");
 
-        let to_attr = to.map(|t| format!(" to='{}'", t)).unwrap_or_default();
+        let to_attr = to
+            .map(|t| format!(" to='{}'", xml_escape(t)))
+            .unwrap_or_default();
 
+        // `payload` is intentionally raw - it is documented as an XML payload.
         let xml = format!(
             r#"<iq type='result' id='{}'{}>{}</iq>"#,
-            id, to_attr, payload
+            xml_escape(id),
+            to_attr,
+            payload
         );
 
         debug!("XMPP sending IQ result");
@@ -378,9 +387,25 @@ impl XmppProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("feature-not-implemented");
 
+        // `condition` becomes an element *name*, so anything but a bare RFC 6120 condition
+        // token would produce garbage no amount of escaping fixes - reject it instead.
+        if !condition
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            || condition.is_empty()
+        {
+            anyhow::bail!(
+                "Invalid 'condition' {:?}: must be an XMPP stanza error condition such as \
+                 'feature-not-implemented', 'item-not-found' or 'service-unavailable'",
+                condition
+            );
+        }
+
         let xml = format!(
             r#"<iq type='error' id='{}'><error type='{}'><{} xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>"#,
-            id, error_type, condition
+            xml_escape(id),
+            xml_escape(error_type),
+            condition
         );
 
         debug!("XMPP sending IQ error");
@@ -398,6 +423,19 @@ impl XmppProtocol {
             .get("reason")
             .and_then(|v| v.as_str())
             .unwrap_or("not-authorized");
+
+        // Same as send_iq_error: this is an element name, not text.
+        if reason.is_empty()
+            || !reason
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            anyhow::bail!(
+                "Invalid 'reason' {:?}: must be a SASL failure condition such as \
+                 'not-authorized', 'temporary-auth-failure' or 'invalid-mechanism'",
+                reason
+            );
+        }
 
         let xml = format!(
             r#"<failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><{}/></failure>"#,
@@ -745,13 +783,15 @@ fn close_stream_action() -> ActionDefinition {
 pub static XMPP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "xmpp_data_received",
-        "XML data received from XMPP client",
-        json!({"type": "placeholder", "event_id": "xmpp_data_received"}),
+        "XML received from an XMPP client. This is whatever bytes have arrived, not a parsed \
+         stanza: it may hold several stanzas or half of one. If it is incomplete, answer with \
+         wait_for_more and the next event will carry it appended to what you already saw.",
+        json!({"type": "send_stream_header", "from": "localhost", "stream_id": "stream-123"}),
     )
     .with_parameters(vec![Parameter {
         name: "xml_data".to_string(),
         type_hint: "string".to_string(),
-        description: "Raw XML data received".to_string(),
+        description: "Raw XML text received so far on this stream".to_string(),
         required: true,
     }])
     .with_actions(vec![
