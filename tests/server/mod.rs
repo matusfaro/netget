@@ -154,6 +154,10 @@ pub mod rip;
 pub mod rss;
 #[cfg(feature = "s3")]
 pub mod s3;
+#[cfg(feature = "saml-idp")]
+pub mod saml_idp;
+#[cfg(feature = "saml-sp")]
+pub mod saml_sp;
 #[cfg(feature = "sip")]
 pub mod sip;
 #[cfg(feature = "smb")]

@@ -2,24 +2,24 @@
 //!
 //! Tests the full OIDC flow using HTTP requests.
 //!
-//! ## BLOCKED: `openid` does not compile standalone (Cargo.toml/src bug, out of test-owner scope)
+//! These tests drive the **`openid`** protocol. They previously started
+//! `"base_stack": "http"` and mocked `http_request_received`, which exercised the generic
+//! HTTP server and never touched `src/server/openid/` at all — and made the suite
+//! unbuildable in a `--features openid` build, because that build has no HTTP protocol to
+//! start. They now open an `openid` server, answer its `openid_request` event, and assert
+//! on the documents the OIDC layer builds from those actions rather than on bodies the
+//! mock supplied verbatim.
 //!
-//! `Cargo.toml` declares `openid = []` (no dependencies), but
-//! `src/server/openid/mod.rs` uses `urlencoding::decode`/`urlencoding::encode`
-//! unconditionally (e.g. lines 74, 88, 89, 151, 154, 157, 164), which fails with
-//! E0433 "cannot find module or crate `urlencoding`" whenever `openid` is built
-//! without another feature that happens to also pull in `urlencoding` (e.g.
-//! `http`, `npm`, `oauth2`). Fix (out of scope here): add `"urlencoding"` to the
-//! `openid` feature's dependency list in `Cargo.toml`, matching how `http`,
-//! `pypi`, `npm`, `oauth2`, `saml-sp`, `openidconnect`, and `mercurial` already do.
-//! This suite is wired into `tests/server/mod.rs` per the "no orphaned test dirs"
-//! policy, but cannot compile — even alone — until that Cargo.toml/src fix lands.
+//! **Nothing here is signed or verified.** NetGet mints no keys: the `id_token` below is a
+//! string the handler chose and the JWKS is whatever it returned. The assertions
+//! deliberately check structure and round-tripping, never that a signature validates,
+//! because no signature is ever produced.
 
 #![cfg(all(test, feature = "openid"))]
 
 use crate::helpers::*;
 use reqwest;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::time::Duration;
 
 /// Test OpenID Connect discovery endpoint and token flow
@@ -27,29 +27,14 @@ use std::time::Duration;
 async fn test_openid_connect_flow() -> E2EResult<()> {
     println!("\n=== E2E Test: OpenID Connect Flow ===");
 
-    let instruction = r#"OpenID Connect server with issuer http://localhost:{AVAILABLE_PORT}.
+    let instruction = r#"OpenID Connect provider.
 
-When receiving requests:
-
-1. For /.well-known/openid-configuration (discovery):
-   - Return discovery document with all endpoints
-   - Set authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri
-   - Supported scopes: ["openid", "profile", "email"]
-   - Supported response types: ["code", "id_token", "token id_token"]
-
-2. For /authorize (authorization):
-   - Accept any client_id
-   - Redirect to redirect_uri with code=AUTH_CODE_123 and preserve state parameter
-
-3. For /token (token endpoint):
-   - Accept any authorization code
-   - Return access_token, token_type: "Bearer", id_token (JWT), expires_in: 3600, scope
-
-4. For /userinfo (user info):
-   - Return user claims: sub, name, email, email_verified
-
-5. For /jwks.json (public keys):
-   - Return JWKS with one RSA key
+Answer each openid_request according to its endpoint_type:
+- discovery: send_discovery_document with all endpoints and scopes openid/profile/email
+- authorization: send_authorization_response redirecting with code AUTH_CODE_123, state preserved
+- token: send_token_response with access_token, id_token, expires_in 3600
+- userinfo: send_userinfo_response with sub, name, email, email_verified
+- jwks: send_jwks_response with one RSA key
 "#;
 
     let server_config = NetGetConfig::new(format!(
@@ -58,111 +43,94 @@ When receiving requests:
     ))
     .with_mock(|mock| {
         mock
-            // Mock 1: Server startup
+            // Mock 1: Server startup — base_stack `openid`, so the OIDC server is what runs.
             .on_instruction_containing("OpenID Connect server")
             .respond_with_actions(serde_json::json!([
                 {
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "http",
+                    "base_stack": "openid",
                     "instruction": instruction
                 }
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2: Discovery endpoint
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/.well-known/openid-configuration")
+            // Mock 2: Discovery endpoint. `endpoint_type` is classified by the OIDC server
+            // from the path, so matching on it proves the request reached that classifier.
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "discovery")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 200,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": serde_json::json!({
-                        "issuer": "http://localhost:{AVAILABLE_PORT}",
-                        "authorization_endpoint": "http://localhost:{AVAILABLE_PORT}/authorize",
-                        "token_endpoint": "http://localhost:{AVAILABLE_PORT}/token",
-                        "userinfo_endpoint": "http://localhost:{AVAILABLE_PORT}/userinfo",
-                        "jwks_uri": "http://localhost:{AVAILABLE_PORT}/jwks.json",
-                        "scopes_supported": ["openid", "profile", "email"],
-                        "response_types_supported": ["code", "id_token", "token id_token"]
-                    }).to_string()
+                    "type": "send_discovery_document",
+                    "issuer": "http://localhost/oidc",
+                    "authorization_endpoint": "http://localhost/oidc/authorize",
+                    "token_endpoint": "http://localhost/oidc/token",
+                    "userinfo_endpoint": "http://localhost/oidc/userinfo",
+                    "jwks_uri": "http://localhost/oidc/jwks.json",
+                    "supported_scopes": ["openid", "profile", "email"],
+                    "supported_response_types": ["code", "id_token", "token id_token"]
                 }
             ]))
             .expect_calls(1)
             .and()
             // Mock 3: Authorization endpoint
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/authorize")
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "authorization")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 302,
-                    "headers": {
-                        "Location": "http://localhost:9999/callback?code=AUTH_CODE_123&state=random_state_123"
-                    },
-                    "body": ""
+                    "type": "send_authorization_response",
+                    "redirect_uri": "http://localhost:9999/callback",
+                    "code": "AUTH_CODE_123",
+                    "state": "random_state_123"
                 }
             ]))
             .expect_calls(1)
             .and()
             // Mock 4: Token endpoint
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/token")
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "token")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 200,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": serde_json::json!({
-                        "access_token": "ACCESS_TOKEN_XYZ",
-                        "token_type": "Bearer",
-                        "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwibmFtZSI6IkpvaG4gRG9lIiwiZW1haWwiOiJqb2huQGV4YW1wbGUuY29tIiwiaWF0IjoxNjAwMDAwMDAwLCJleHAiOjE2MDAwMDM2MDB9.signature",
-                        "expires_in": 3600,
-                        "scope": "openid profile email"
-                    }).to_string()
+                    "type": "send_token_response",
+                    "access_token": "ACCESS_TOKEN_XYZ",
+                    "token_type": "Bearer",
+                    "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.not-a-real-signature",
+                    "expires_in": 3600,
+                    "scope": "openid profile email"
                 }
             ]))
             .expect_calls(1)
             .and()
             // Mock 5: UserInfo endpoint
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/userinfo")
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "userinfo")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 200,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": serde_json::json!({
-                        "sub": "user123",
-                        "name": "John Doe",
-                        "email": "john@example.com",
-                        "email_verified": true
-                    }).to_string()
+                    "type": "send_userinfo_response",
+                    "sub": "user123",
+                    "name": "John Doe",
+                    "email": "john@example.com",
+                    "email_verified": true
                 }
             ]))
             .expect_calls(1)
             .and()
             // Mock 6: JWKS endpoint
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/jwks.json")
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "jwks")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 200,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": serde_json::json!({
-                        "keys": [
-                            {
-                                "kty": "RSA",
-                                "use": "sig",
-                                "kid": "key1",
-                                "alg": "RS256",
-                                "n": "0vx7agoebGcQve...",
-                                "e": "AQAB"
-                            }
-                        ]
-                    }).to_string()
+                    "type": "send_jwks_response",
+                    "keys": [
+                        {
+                            "kty": "RSA",
+                            "use": "sig",
+                            "kid": "key1",
+                            "alg": "RS256",
+                            "n": "0vx7agoebGcQve",
+                            "e": "AQAB"
+                        }
+                    ]
                 }
             ]))
             .expect_calls(1)
@@ -174,7 +142,9 @@ When receiving requests:
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
 
     // Test 1: Discovery endpoint
     println!("Testing discovery endpoint...");
@@ -187,19 +157,48 @@ When receiving requests:
         .await?;
 
     assert_eq!(discovery_resp.status(), 200, "Discovery should return 200");
+    assert_eq!(
+        discovery_resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json"),
+        "discovery document must be served as JSON"
+    );
     let discovery: Value = discovery_resp.json().await?;
 
-    assert!(
-        discovery["issuer"].as_str().unwrap().contains("localhost"),
-        "Issuer should contain localhost"
+    assert_eq!(discovery["issuer"], "http://localhost/oidc");
+    assert_eq!(
+        discovery["authorization_endpoint"],
+        "http://localhost/oidc/authorize"
     );
-    assert!(
-        discovery["authorization_endpoint"].as_str().is_some(),
-        "Authorization endpoint should be present"
+    assert_eq!(discovery["token_endpoint"], "http://localhost/oidc/token");
+    assert_eq!(
+        discovery["userinfo_endpoint"],
+        "http://localhost/oidc/userinfo"
     );
-    assert!(
-        discovery["token_endpoint"].as_str().is_some(),
-        "Token endpoint should be present"
+    assert_eq!(discovery["jwks_uri"], "http://localhost/oidc/jwks.json");
+    assert_eq!(
+        discovery["scopes_supported"],
+        serde_json::json!(["openid", "profile", "email"]),
+        "the handler's `supported_scopes` is renamed to the spec's `scopes_supported`"
+    );
+    assert_eq!(
+        discovery["response_types_supported"],
+        serde_json::json!(["code", "id_token", "token id_token"]),
+        "`supported_response_types` is renamed to `response_types_supported`"
+    );
+    // These two are supplied by the OIDC layer itself, not by the mock, so they prove the
+    // document was assembled by `src/server/openid/` and not echoed from the handler.
+    assert_eq!(
+        discovery["subject_types_supported"],
+        serde_json::json!(["public"]),
+        "the OIDC layer must add the required subject_types_supported"
+    );
+    assert_eq!(
+        discovery["id_token_signing_alg_values_supported"],
+        serde_json::json!(["RS256"]),
+        "the layer must default the required signing-alg list rather than emit null"
     );
     println!("✓ Discovery endpoint works");
 
@@ -229,13 +228,11 @@ When receiving requests:
         .expect("Missing Location header")
         .to_str()?;
 
-    assert!(
-        location.contains("code=AUTH_CODE_123"),
-        "Redirect should contain authorization code"
-    );
-    assert!(
-        location.contains("state=random_state_123"),
-        "Redirect should preserve state parameter"
+    // The redirect URL is built by the OIDC layer from redirect_uri + code + state; the
+    // handler supplied the parts, not the assembled string.
+    assert_eq!(
+        location, "http://localhost:9999/callback?code=AUTH_CODE_123&state=random_state_123",
+        "the layer must assemble the redirect from the handler's parts"
     );
     println!("✓ Authorization endpoint works");
 
@@ -253,13 +250,31 @@ When receiving requests:
         .await?;
 
     assert_eq!(token_resp.status(), 200, "Token should return 200");
+    // RFC 6749 §5.1 requires a token response to be uncacheable.
+    assert_eq!(
+        token_resp
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store"),
+        "token responses must be no-store"
+    );
     let token: Value = token_resp.json().await?;
 
     assert_eq!(token["access_token"], "ACCESS_TOKEN_XYZ");
     assert_eq!(token["token_type"], "Bearer");
-    assert!(token["id_token"].is_string(), "ID token should be present");
     assert_eq!(token["expires_in"], 3600);
     assert_eq!(token["scope"], "openid profile email");
+    // The id_token is checked for shape only. NetGet signs nothing, so asserting anything
+    // about its signature would assert a capability that does not exist.
+    let id_token = token["id_token"]
+        .as_str()
+        .expect("id_token must be a string");
+    assert_eq!(
+        id_token.split('.').count(),
+        3,
+        "id_token must at least be JWT-shaped"
+    );
     println!("✓ Token endpoint works");
 
     // Test 4: UserInfo endpoint
@@ -289,16 +304,18 @@ When receiving requests:
     assert_eq!(jwks_resp.status(), 200, "JWKS should return 200");
     let jwks: Value = jwks_resp.json().await?;
 
-    assert!(jwks["keys"].is_array(), "JWKS should have keys array");
-    let keys = jwks["keys"].as_array().expect("keys should be array");
-    assert!(!keys.is_empty(), "JWKS should have at least one key");
+    let keys = jwks["keys"]
+        .as_array()
+        .expect("JWKS must have a keys array");
+    assert_eq!(keys.len(), 1, "the handler's single key must be served");
 
     let key = &keys[0];
     assert_eq!(key["kty"], "RSA");
     assert_eq!(key["use"], "sig");
     assert_eq!(key["alg"], "RS256");
-    assert!(key["n"].is_string(), "RSA modulus (n) should be present");
-    assert!(key["e"].is_string(), "RSA exponent (e) should be present");
+    assert_eq!(key["kid"], "key1");
+    assert_eq!(key["n"], "0vx7agoebGcQve");
+    assert_eq!(key["e"], "AQAB");
     println!("✓ JWKS endpoint works");
 
     println!("\n✅ All OpenID Connect endpoints tested successfully!");
@@ -317,15 +334,12 @@ When receiving requests:
 async fn test_openid_error_handling() -> E2EResult<()> {
     println!("\n=== E2E Test: OpenID Connect Error Handling ===");
 
-    let instruction = r#"OpenID Connect server with error handling.
+    let instruction = r#"OpenID Connect provider with error handling.
 
-For any request to /authorize with missing required parameters (client_id or redirect_uri):
-- Respond with 400 Bad Request
-- Return JSON error: {"error": "invalid_request", "error_description": "Missing required parameter"}
-
-For any request to /token with invalid grant_type:
-- Respond with 400 Bad Request
-- Return JSON error: {"error": "unsupported_grant_type", "error_description": "Only authorization_code is supported"}
+For /authorize with missing client_id or redirect_uri, answer send_error_response with
+error invalid_request and status_code 400.
+For /token with an unsupported grant_type, answer send_error_response with error
+unsupported_grant_type and status_code 400.
 "#;
 
     let server_config = NetGetConfig::new(format!(
@@ -340,40 +354,34 @@ For any request to /token with invalid grant_type:
                 {
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "http",
+                    "base_stack": "openid",
                     "instruction": instruction
                 }
             ]))
             .expect_calls(1)
             .and()
             // Mock 2: Invalid authorization request
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/authorize")
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "authorization")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 400,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": serde_json::json!({
-                        "error": "invalid_request",
-                        "error_description": "Missing required parameter"
-                    }).to_string()
+                    "type": "send_error_response",
+                    "error": "invalid_request",
+                    "error_description": "Missing required parameter",
+                    "status_code": 400
                 }
             ]))
             .expect_calls(1)
             .and()
             // Mock 3: Invalid token request
-            .on_event("http_request_received")
-            .and_event_data_contains("path", "/token")
+            .on_event("openid_request")
+            .and_event_data_contains("endpoint_type", "token")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 400,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": serde_json::json!({
-                        "error": "unsupported_grant_type",
-                        "error_description": "Only authorization_code is supported"
-                    }).to_string()
+                    "type": "send_error_response",
+                    "error": "unsupported_grant_type",
+                    "error_description": "Only authorization_code is supported",
+                    "status_code": 400
                 }
             ]))
             .expect_calls(1)
@@ -395,9 +403,12 @@ For any request to /token with invalid grant_type:
         .send()
         .await?;
 
+    // The status comes from the handler's `status_code`; the body is assembled by the
+    // OIDC layer into the RFC 6749 §5.2 error shape.
     assert_eq!(resp.status(), 400, "Should return 400 for invalid request");
     let error: Value = resp.json().await?;
     assert_eq!(error["error"], "invalid_request");
+    assert_eq!(error["error_description"], "Missing required parameter");
     println!("✓ Invalid authorization request handled correctly");
 
     // Test invalid token request (unsupported grant type)
@@ -411,6 +422,10 @@ For any request to /token with invalid grant_type:
     assert_eq!(resp.status(), 400, "Should return 400 for invalid grant");
     let error: Value = resp.json().await?;
     assert_eq!(error["error"], "unsupported_grant_type");
+    assert_eq!(
+        error["error_description"],
+        "Only authorization_code is supported"
+    );
     println!("✓ Invalid token request handled correctly");
 
     println!("\n✅ Error handling tests passed!");
