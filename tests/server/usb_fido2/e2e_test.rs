@@ -36,11 +36,8 @@ mod tests {
     async fn test_fido2_server_startup_with_llm() {
         // Create test infrastructure
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-        let llm_client = OllamaClient::new(
-            "http://localhost:11434".to_string(),
-            "qwen3-coder:30b".to_string(),
-        );
-        let app_state = Arc::new(AppState::new(llm_client.clone()));
+        let llm_client = OllamaClient::new("http://localhost:11434");
+        let app_state = Arc::new(AppState::new());
         let server_id = netget::state::ServerId::new(1);
 
         // Start server with auto-approve mode
