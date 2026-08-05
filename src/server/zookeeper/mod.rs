@@ -1,4 +1,21 @@
-//! ZooKeeper server implementation
+//! ZooKeeper server implementation.
+//!
+//! # INCOMPLETE — read before using
+//!
+//! This server is marked [`DevelopmentState::Incomplete`] and is hidden from the LLM. It
+//! parses the ZooKeeper request header and hands the fields to a handler, but it does not
+//! implement the session handshake: a client's opening `ConnectRequest` (protocol version,
+//! last zxid seen, timeout, session id, password) has no xid and no opcode, so it is misread
+//! here as an ordinary request, and the `ConnectResponse` a client waits for is never sent.
+//! No real ZooKeeper client can get a session out of it.
+//!
+//! The reply body is also left to the model as hand-encoded Jute hex, which violates the
+//! project's no-bytes rule and which no model does reliably.
+//!
+//! See `src/server/zookeeper/CLAUDE.md` for the route back to `Experimental`.
+//!
+//! [`DevelopmentState::Incomplete`]: crate::protocol::metadata::DevelopmentState::Incomplete
+
 pub mod actions;
 
 use crate::console_debug;
@@ -15,7 +32,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 /// ZooKeeper server implementation
 pub struct ZookeeperServer {
@@ -60,6 +77,14 @@ impl ZookeeperServer {
             "[INFO] ZooKeeper server listening on {}",
             actual_addr
         ));
+        warn!(
+            "ZooKeeper server is INCOMPLETE: no session handshake is implemented, so a real \
+             ZooKeeper client cannot establish a session. See src/server/zookeeper/CLAUDE.md."
+        );
+        let _ = status_tx.send(
+            "[WARN] ZooKeeper is INCOMPLETE: no session handshake, no real client can connect"
+                .to_string(),
+        );
 
         let server = Arc::new(ZookeeperServer::new(
             llm_client,
@@ -104,7 +129,15 @@ impl ZookeeperServer {
                         });
                     }
                     Err(e) => {
-                        error!("ZooKeeper accept error: {}", e);
+                        // A persistent accept error (EMFILE, ENFILE, socket torn down) recurs
+                        // immediately, so continuing here spins a hot loop that floods the
+                        // unbounded status channel. Give up the listener instead.
+                        error!("ZooKeeper accept error, stopping accept loop: {}", e);
+                        let _ = status_tx_clone.send(format!(
+                            "[ERROR] ZooKeeper accept failed, listener stopped: {}",
+                            e
+                        ));
+                        break;
                     }
                 }
             }
@@ -119,6 +152,53 @@ impl ZookeeperServer {
 
     /// Handle a single ZooKeeper connection
     async fn handle_connection(
+        stream: TcpStream,
+        server: Arc<ZookeeperServer>,
+        status_tx: mpsc::UnboundedSender<String>,
+        connection_id: ConnectionId,
+        app_state: Arc<AppState>,
+        server_id: Option<crate::state::ServerId>,
+    ) -> Result<()> {
+        let peer_addr = stream.peer_addr().ok();
+        let local_addr = stream.local_addr().ok();
+
+        // Track the connection so the TUI/MCP connection list and stop_server see it.
+        if let (Some(server_id), Some(remote_addr)) = (server_id, peer_addr) {
+            let now = std::time::Instant::now();
+            app_state
+                .add_connection_to_server(
+                    server_id,
+                    crate::state::server::ConnectionState {
+                        id: connection_id,
+                        remote_addr,
+                        local_addr: local_addr.unwrap_or(remote_addr),
+                        bytes_sent: 0,
+                        bytes_received: 0,
+                        packets_sent: 0,
+                        packets_received: 0,
+                        last_activity: now,
+                        status: crate::state::server::ConnectionStatus::Active,
+                        status_changed_at: now,
+                        protocol_info: crate::state::server::ProtocolConnectionInfo::empty(),
+                    },
+                )
+                .await;
+        }
+
+        let result =
+            Self::run_connection(stream, server, status_tx, connection_id, app_state.clone(), server_id)
+                .await;
+
+        if let Some(server_id) = server_id {
+            app_state
+                .close_connection_on_server(server_id, connection_id)
+                .await;
+        }
+
+        result
+    }
+
+    async fn run_connection(
         stream: TcpStream,
         server: Arc<ZookeeperServer>,
         _status_tx: mpsc::UnboundedSender<String>,
@@ -144,11 +224,19 @@ impl ZookeeperServer {
                 }
             }
 
-            let len = i32::from_be_bytes(len_buf) as usize;
-            if len > 1024 * 1024 {
-                // Max 1MB
-                return Err(anyhow::anyhow!("Request too large: {} bytes", len));
+            // The length prefix is a signed jute int and arrives from the network. Validate it
+            // as i32 *before* widening: `negative as usize` sign-extends to ~1.8e19, and any
+            // check performed after the cast is checking a number the sender never sent.
+            let declared_len = i32::from_be_bytes(len_buf);
+            if declared_len < MIN_REQUEST_BYTES || declared_len > MAX_REQUEST_BYTES {
+                return Err(anyhow::anyhow!(
+                    "ZooKeeper request length out of range: {} (expected {}..={})",
+                    declared_len,
+                    MIN_REQUEST_BYTES,
+                    MAX_REQUEST_BYTES
+                ));
             }
+            let len = declared_len as usize;
 
             // Read payload
             let mut payload = vec![0u8; len];
@@ -163,13 +251,16 @@ impl ZookeeperServer {
             // Parse request (simplified - just extract op type)
             let request_info = Self::parse_request(&payload)?;
 
-            // Call LLM with request event
+            // Call LLM with request event. The xid must be in the event data: it is the only
+            // thing a client uses to match a reply to its request, and without it neither the
+            // model nor a script/static handler can echo it back.
             let event = Event::new(
                 &ZOOKEEPER_REQUEST_EVENT,
                 serde_json::json!({
+                    "xid": request_info.xid,
                     "operation": request_info.operation,
+                    "op_code": request_info.op_code,
                     "path": request_info.path,
-                    "data_hex": hex::encode(&request_info.data),
                 }),
             );
 
@@ -192,22 +283,46 @@ impl ZookeeperServer {
                     for result in execution_result.protocol_results {
                         match result {
                             ActionResult::Custom { name, data } if name == "zookeeper_response" => {
-                                if let Some(response_hex) =
-                                    data.get("response_hex").and_then(|v| v.as_str())
-                                {
-                                    if let Ok(response_bytes) = hex::decode(response_hex) {
-                                        // Send response with length prefix
-                                        let len_bytes = (response_bytes.len() as i32).to_be_bytes();
-                                        write_half.write_all(&len_bytes).await?;
-                                        write_half.write_all(&response_bytes).await?;
+                                // A handler that omitted the xid gets the request's own xid
+                                // rather than 0: xid 0 is never a valid reply to a real
+                                // request (negative xids are reserved for pings and watch
+                                // notifications) and leaves the client waiting forever.
+                                let xid = data
+                                    .get("xid")
+                                    .and_then(|v| v.as_i64())
+                                    .map(|v| v as i32)
+                                    .unwrap_or(request_info.xid);
+                                let zxid = data.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let error_code = data
+                                    .get("error_code")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as i32;
+                                let body = data
+                                    .get("body_hex")
+                                    .and_then(|v| v.as_str())
+                                    .map(hex::decode)
+                                    .transpose()
+                                    .unwrap_or_default()
+                                    .unwrap_or_default();
 
-                                        trace!(
-                                            "ZooKeeper sent {} bytes to connection {}",
-                                            response_bytes.len() + 4,
-                                            connection_id
-                                        );
-                                    }
-                                }
+                                // Reply header: xid (4) + zxid (8) + error_code (4) + body
+                                let mut response = Vec::with_capacity(16 + body.len());
+                                response.extend_from_slice(&xid.to_be_bytes());
+                                response.extend_from_slice(&zxid.to_be_bytes());
+                                response.extend_from_slice(&error_code.to_be_bytes());
+                                response.extend_from_slice(&body);
+
+                                let len_bytes = (response.len() as i32).to_be_bytes();
+                                write_half.write_all(&len_bytes).await?;
+                                write_half.write_all(&response).await?;
+
+                                trace!(
+                                    "ZooKeeper sent {} bytes to connection {} (xid={})",
+                                    response.len() + 4,
+                                    connection_id,
+                                    xid
+                                );
                             }
                             ActionResult::CloseConnection => {
                                 debug!("ZooKeeper closing connection {}", connection_id);
@@ -226,18 +341,23 @@ impl ZookeeperServer {
         Ok(())
     }
 
-    /// Parse ZooKeeper request (simplified)
+    /// Parse the ZooKeeper request header.
+    ///
+    /// Only the header (xid, opcode) and the leading path string are read; the rest of the
+    /// Jute-encoded body is not decoded. A `ConnectRequest` has neither an xid nor an opcode,
+    /// so it lands here as `operation: "unknown"` — see the module docs.
     fn parse_request(payload: &[u8]) -> Result<ZookeeperRequest> {
         if payload.len() < 8 {
             return Ok(ZookeeperRequest {
-                operation: "Unknown".to_string(),
-                path: "".to_string(),
-                data: vec![],
+                xid: 0,
+                op_code: 0,
+                operation: "unknown".to_string(),
+                path: String::new(),
             });
         }
 
         // Read xid (transaction id)
-        let _xid = i32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        let xid = i32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
 
         // Read op type
         let op_type = i32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
@@ -259,29 +379,40 @@ impl ZookeeperServer {
             _ => "unknown",
         };
 
-        // Try to extract path (if present)
-        let path = if payload.len() > 12 {
-            let path_len =
-                i32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]) as usize;
-            if payload.len() >= 12 + path_len {
-                String::from_utf8_lossy(&payload[12..12 + path_len]).to_string()
+        // Try to extract the path (a jute ustring: signed length + bytes).
+        //
+        // The length is validated as i32 against the bytes actually remaining. Casting first
+        // was a remote panic: a length of -1 became usize::MAX, `12 + usize::MAX` wrapped to
+        // 11, `payload.len() >= 11` passed, and `&payload[12..11]` panicked with start > end.
+        let path = if payload.len() >= 12 {
+            let declared = i32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
+            let available = payload.len() - 12;
+            if declared > 0 && (declared as usize) <= available {
+                String::from_utf8_lossy(&payload[12..12 + declared as usize]).to_string()
             } else {
-                "".to_string()
+                String::new()
             }
         } else {
-            "".to_string()
+            String::new()
         };
 
         Ok(ZookeeperRequest {
+            xid,
+            op_code: op_type,
             operation: operation.to_string(),
             path,
-            data: payload.to_vec(),
         })
     }
 }
 
+/// Smallest payload that can carry a request header (xid + opcode).
+const MIN_REQUEST_BYTES: i32 = 8;
+/// Matches ZooKeeper's own `jute.maxbuffer` default of 1 MiB.
+const MAX_REQUEST_BYTES: i32 = 1024 * 1024;
+
 struct ZookeeperRequest {
+    xid: i32,
+    op_code: i32,
     operation: String,
     path: String,
-    data: Vec<u8>,
 }

@@ -1,126 +1,131 @@
 # ZooKeeper Server Implementation
 
-## Overview
+## Status: INCOMPLETE — hidden from the LLM
 
-ZooKeeper is a distributed coordination service that provides a hierarchical namespace (similar to a file system) for configuration management, synchronization, and group services. This implementation provides a simplified ZooKeeper server that uses LLM to handle client requests.
+`metadata()` declares `DevelopmentState::Incomplete`, so `is_available_to_llm()` returns false
+and the model is never offered this protocol. The port can still be opened explicitly (MCP
+`start_server`, `--base-stack zookeeper`), and the server logs a WARN saying so on startup.
 
-## Implementation
+It was demoted from `Experimental` for the same reason Kafka was: **no real ZooKeeper client
+can complete a session against it.**
 
-### Library Choices
+### Why it is Incomplete
 
-- **Protocol Parsing**: Manual binary protocol parsing
-- **No external library**: Implemented from scratch to allow LLM control over responses
-- **Binary Format**: ZooKeeper uses Jute serialization with length-prefixed messages
+1. **No session handshake.** A ZooKeeper client's first message is a `ConnectRequest`:
 
-### Architecture
+   ```
+   [4 len][4 protocolVersion][8 lastZxidSeen][4 timeOut][8 sessionId][4+16 passwd][1 readOnly]
+   ```
 
-**Message Format**:
-```
-[4 bytes length][payload]
+   It carries neither an xid nor an opcode. `parse_request` reads bytes 0..4 as the xid and
+   4..8 as the opcode, so a connect attempt is reported as `operation: "unknown"`, and the
+   `ConnectResponse` the client blocks on — a different frame shape entirely
+   (`protocolVersion, timeOut, sessionId, passwd`) — is never produced. `zkCli.sh`, `kazoo`
+   and `zookeeper-async` all hang or abort at this point. Nothing downstream of the handshake
+   has ever run against a real client.
 
-Payload for request:
-[4 bytes xid][4 bytes op_type][variable data]
+2. **The reply body is hand-encoded Jute hex.** `zookeeper_response` takes `data_hex`, so
+   answering `getData` means the model must emit a Jute-serialized `GetDataResponse` — a
+   `byte[]` vector followed by a 68-byte `Stat` — as a hex string. This violates the project's
+   no-bytes rule (`CLAUDE.md`, "Action & event design rules"), and models do not produce it
+   correctly. It is documented rather than removed because removing it without a structured
+   encoder leaves a server that cannot answer anything at all.
 
-Payload for response:
-[4 bytes xid][8 bytes zxid][4 bytes error_code][variable data]
-```
+3. **Only the request header is parsed.** The xid, the opcode and the leading path string are
+   extracted; every other request field (watch flag, znode data on `create`/`setData`, ACLs,
+   version numbers) is discarded and never reaches the handler.
 
-**Operation Types**:
-- 1: create
-- 2: delete
-- 3: exists
-- 4: getData
-- 5: setData
-- 6: getACL
-- 7: setACL
-- 8: getChildren
-- 9: sync
-- 11: ping
-- 12: getChildren2
-- 13: check
-- 14: multi
+### Route back to Experimental
 
-### Protocol State Machine
+In order:
 
-1. **Connection**: Client connects via TCP
-2. **Request**: Client sends length-prefixed request
-3. **Parse**: Server parses operation type and path
-4. **LLM**: Server calls LLM with request event
-5. **Response**: LLM generates response action
-6. **Send**: Server sends length-prefixed response
+1. Detect and answer the `ConnectRequest` before entering the request loop, and emit a
+   `zookeeper_session_request` event so a handler can set the negotiated timeout and session id.
+2. Replace `data_hex` with structured per-operation actions — `zookeeper_data` (`data`, `stat`),
+   `zookeeper_children` (`children[]`, `stat`), `zookeeper_stat`, `zookeeper_create_result`
+   (`path`) — and do the Jute encoding in Rust.
+3. Decode the full request body per opcode so `create`/`setData` payloads reach the handler.
+4. Add an E2E test driven by a real ZooKeeper client rather than hand-built byte sequences.
 
-### LLM Integration
+Implement watches only after all four; watches need a second, server-initiated frame path.
 
-**LLM Control Points**:
-- ZNode data (what to return for getData)
-- ZNode children (what to return for getChildren)
-- ZNode existence (exists check)
-- ZNode creation/deletion acknowledgment
-- Error codes (permission denied, no node, etc.)
-
-**Actions**:
-- `zookeeper_response`: Send response with xid, zxid, error_code, and data
-
-**Events**:
-- `zookeeper_request`: Triggered when client sends a request
-
-### Logging
-
-**Dual logging** to both `netget.log` and TUI:
-- INFO: Connection lifecycle
-- DEBUG: Request summaries (operation, path)
-- TRACE: Full payloads (hex-encoded)
-
-## Limitations
-
-1. **No Persistent Storage**: ZNodes are not stored. LLM provides all data on-demand per CLAUDE.md protocol memory policy.
-2. **Simplified Protocol**: Only basic operations supported (create, delete, getData, setData, getChildren)
-3. **No Watches**: Watch mechanism not implemented
-4. **No Sessions**: Session management simplified (no session timeout, keepalive)
-5. **No ACLs**: Access control not enforced
-6. **No Multi**: Multi-operation transactions not supported
-7. **Simplified Parsing**: Request parsing extracts operation type and path only
-
-## Example Prompts
-
-### Basic ZooKeeper Server
+## Wire format handled today
 
 ```
-Open ZooKeeper server on port 2181
-
-Instruction: "Act as a ZooKeeper server. Store configuration data for a distributed application.
-When clients read /config/database, return connection string 'postgres://localhost:5432'.
-When clients read /config/cache, return 'redis://localhost:6379'.
-For any other path, return empty data."
+Request   [4 len][4 xid][4 opcode][4 pathLen][pathLen path]... (rest not decoded)
+Reply     [4 len][4 xid][8 zxid][4 err][body]
 ```
 
-### ZooKeeper with Hierarchy
+Opcodes recognized by name: 1 create, 2 delete, 3 exists, 4 getData, 5 setData, 6 getACL,
+7 setACL, 8 getChildren, 9 sync, 11 ping, 12 getChildren2, 13 check, 14 multi. Anything else
+is reported as `unknown` with the numeric `op_code` alongside.
 
-```
-Open ZooKeeper server on port 2181
+## Event
 
-Instruction: "Act as a ZooKeeper server with the following hierarchy:
-/services (container)
-/services/web (data: 'http://10.0.0.1:8080')
-/services/api (data: 'http://10.0.0.2:8000')
-/config (container)
-/config/timeout (data: '30')
-/config/retries (data: '3')
+### `zookeeper_request`
 
-Respond to getData with the appropriate data. Respond to getChildren with child names."
-```
+| Field | Type | Meaning |
+|---|---|---|
+| `xid` | integer | Request transaction id. **Echo this back.** |
+| `operation` | string | Opcode name, or `"unknown"` |
+| `op_code` | integer | Numeric opcode |
+| `path` | string | Leading path string, or `""` when absent/undecodable |
 
-### ZooKeeper with Dynamic Updates
+Declared on the event type via `.with_actions([zookeeper_response])`, so the model is offered
+the action rather than falling back to the protocol's full sync set.
 
-```
-Open ZooKeeper server on port 2181
+## Action
 
-Instruction: "Act as a ZooKeeper server. Track service registrations.
-When clients create znodes under /services, store their data in memory.
-When clients read /services, list all registered services.
-When clients delete a service znode, remove it from the list."
-```
+### `zookeeper_response`
 
-## Testing Strategy
+| Field | Required | Meaning |
+|---|---|---|
+| `xid` | no | Reply transaction id. **Omit it and the request's own xid is used.** |
+| `zxid` | yes | Server change counter |
+| `error_code` | yes | 0 OK, -101 NONODE, -110 NODEEXISTS, -102 NOAUTH |
+| `data_hex` | no | Jute-serialized reply body, hex. Invalid hex is a hard error. |
 
-See `tests/server/zookeeper/CLAUDE.md` for E2E testing approach.
+### Correlation
+
+A client matches replies to requests by xid alone. Two things guarantee it here:
+
+- `xid` is carried in the event data, so a script handler can read it and a static handler can
+  interpolate it — `"xid": "{{event.xid}}"`.
+- If the action omits `xid`, the connection loop substitutes the xid of the request being
+  answered. It never defaults to 0; xid 0 is not a valid reply to a real request (negative
+  xids are reserved for pings and watch notifications) and leaves the client waiting forever.
+
+## No storage
+
+The server keeps no znode tree, no session table and no data of any kind. Every reply comes
+from the handler. This is the only rubric item ZooKeeper has always passed.
+
+## Robustness
+
+Fixed while demoting, because the port can still be opened:
+
+- **Remote panic (fixed).** `parse_request` cast the path length to `usize` before checking it.
+  A length of `-1` became `usize::MAX`, `12 + usize::MAX` wrapped to `11`, the guard
+  `payload.len() >= 11` passed, and `&payload[12..11]` panicked with start > end. Four
+  attacker-chosen bytes killed the connection task. The length is now validated as `i32`
+  against the bytes actually remaining, before any widening.
+- **Frame length.** The 4-byte prefix is validated as `i32` in `8..=1048576` (ZooKeeper's own
+  `jute.maxbuffer` default) before being widened. Casting first meant a negative length
+  sign-extended to ~1.8e19 and any later check tested a number the sender never sent.
+- **Accept loop.** A persistent accept error (EMFILE) used to be logged and retried
+  immediately, spinning a hot loop that flooded the unbounded status channel. The loop now
+  breaks and the listener stops.
+- **Connection tracking.** Connections are now registered with `add_connection_to_server` and
+  marked closed on exit; previously they never appeared in the TUI or MCP connection list.
+- **Invalid `data_hex`** used to be silently dropped, sending a header with no body and
+  desynchronizing the client for the rest of the connection. It is now an error.
+
+The accept-loop `JoinHandle` is registered via `AppState::register_server_task()`, so
+`stop_server` releases the port. Per-connection tasks are still untracked — a project-wide gap,
+noted in the root `CLAUDE.md`.
+
+## Testing
+
+`tests/server/zookeeper/e2e_test.rs` builds request bytes by hand over a raw `TcpStream` and
+never sends a `ConnectRequest`, which is why the handshake gap went unnoticed. See
+`tests/server/zookeeper/CLAUDE.md`.

@@ -11,6 +11,66 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+/// The single response action. Declared here rather than inline so the event type and
+/// `get_sync_actions()` hand the model the same definition.
+fn zookeeper_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "zookeeper_response".to_string(),
+        description: "Send a ZooKeeper reply. The reply header (xid, zxid, error code) is built \
+                      for you; `data_hex` is the Jute-serialized reply body, which you must \
+                      encode by hand — see the known limitation in src/server/zookeeper/CLAUDE.md."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "xid".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Transaction ID. Must be the `xid` of the request being answered — \
+                              a ZooKeeper client matches replies to requests by this value and \
+                              will hang or desynchronize if it does not match. Omit it and the \
+                              request's own xid is used."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "zxid".to_string(),
+                type_hint: "integer".to_string(),
+                description: "ZooKeeper transaction ID (server-assigned change counter)"
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error_code".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Error code (0 = OK, -101 = NONODE, -110 = NODEEXISTS, -102 = NOAUTH)"
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_hex".to_string(),
+                type_hint: "string".to_string(),
+                description: "Jute-serialized reply body, hex encoded. Omit or leave empty for \
+                              operations whose reply carries no body."
+                    .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "zookeeper_response",
+            "xid": 1,
+            "zxid": 100,
+            "error_code": 0,
+            "data_hex": "0000000000000064"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> ZooKeeper response (err={error_code})")
+                .with_debug(
+                    "ZooKeeper zookeeper_response: xid={xid} zxid={zxid} error_code={error_code}",
+                ),
+        ),
+    }
+}
+
 // Event type constants
 pub static ZOOKEEPER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
@@ -18,7 +78,7 @@ pub static ZOOKEEPER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "ZooKeeper client sent a request (create, delete, getData, setData, etc.)",
         json!({
             "type": "zookeeper_response",
-            "xid": 1,
+            "xid": "{{event.xid}}",
             "zxid": 100,
             "error_code": 0,
             "data_hex": "0000000000000064"
@@ -26,24 +86,41 @@ pub static ZOOKEEPER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
     .with_parameters(vec![
         Parameter {
+            name: "xid".to_string(),
+            type_hint: "integer".to_string(),
+            description: "Request transaction ID. Echo this back as the response `xid` — a \
+                          static handler can do so with {{event.xid}}."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
             name: "operation".to_string(),
             type_hint: "string".to_string(),
             description: "Operation type (create, delete, getData, setData, etc.)".to_string(),
             required: true,
         },
         Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "ZNode path (e.g., /myapp/config)".to_string(),
+            name: "op_code".to_string(),
+            type_hint: "integer".to_string(),
+            description: "Numeric ZooKeeper opcode, for operations with no name mapping"
+                .to_string(),
             required: true,
         },
         Parameter {
-            name: "data_hex".to_string(),
+            name: "path".to_string(),
             type_hint: "string".to_string(),
-            description: "Request data in hex format".to_string(),
+            description: "ZNode path (e.g., /myapp/config). Empty when the request carries no path."
+                .to_string(),
             required: false,
         },
     ])
+    .with_actions(vec![zookeeper_response_action()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("ZooKeeper {operation} {path}")
+            .with_debug("ZooKeeper request xid={xid} op={operation} path={path}")
+            .with_trace("ZooKeeper request: {json_pretty(.)}"),
+    )
 });
 
 /// ZooKeeper protocol implementation
@@ -62,50 +139,7 @@ impl Protocol for ZookeeperProtocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "zookeeper_response".to_string(),
-                description: "Send a ZooKeeper response to the client".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "xid".to_string(),
-                        type_hint: "integer".to_string(),
-                        description: "Transaction ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "zxid".to_string(),
-                        type_hint: "integer".to_string(),
-                        description: "ZooKeeper transaction ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "error_code".to_string(),
-                        type_hint: "integer".to_string(),
-                        description: "Error code (0 = success)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "data_hex".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Response data in hex format".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "zookeeper_response",
-                    "xid": 1,
-                    "zxid": 100,
-                    "error_code": 0,
-                    "data_hex": "0000000000000064"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> ZooKeeper response (err={error_code})")
-                        .with_debug("ZooKeeper zookeeper_response: xid={xid} zxid={zxid} error_code={error_code}"),
-                ),
-            },
-        ]
+        vec![zookeeper_response_action()]
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -128,11 +162,25 @@ impl Protocol for ZookeeperProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("Manual ZooKeeper binary protocol parsing")
-            .llm_control("ZNode operations (create, delete, getData, setData, getChildren)")
-            .e2e_testing("zookeeper-async Rust client")
-            .notes("Binary protocol with Jute serialization, no persistent storage")
+            .state(DevelopmentState::Incomplete)
+            .implementation(
+                "Hand-rolled parsing of the ZooKeeper request header only. No session \
+                 handshake: a client's opening ConnectRequest is misread as an ordinary \
+                 request and no ConnectResponse is ever produced, so no real ZooKeeper \
+                 client can establish a session.",
+            )
+            .llm_control(
+                "Reply header (xid, zxid, error code) only. The reply body must be \
+                 hand-encoded as Jute hex by the model, which it cannot do reliably.",
+            )
+            .e2e_testing(
+                "Hand-built byte sequences over a raw TcpStream. No real ZooKeeper client \
+                 has ever completed a session against this server.",
+            )
+            .notes(
+                "INCOMPLETE - hidden from the LLM. See src/server/zookeeper/CLAUDE.md for \
+                 the route back to Experimental. No storage: the model answers every request.",
+            )
             .build()
     }
 
@@ -185,7 +233,8 @@ impl Protocol for ZookeeperProtocol {
                         "type": "static",
                         "actions": [{
                             "type": "zookeeper_response",
-                            "xid": 1,
+                            // Echo the request's xid; a literal would break correlation.
+                            "xid": "{{event.xid}}",
                             "zxid": 1,
                             "error_code": 0,
                             "data_hex": ""
@@ -235,33 +284,33 @@ impl Server for ZookeeperProtocol {
 
         match action_type {
             "zookeeper_response" => {
-                let xid = action.get("xid").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                let zxid = action.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
+                // `xid` is deliberately passed through as an Option rather than defaulted to 0
+                // here: the connection loop knows the xid of the request being answered and
+                // substitutes it when the handler omitted one. Defaulting to 0 at this layer
+                // would put a reply on the wire that no client can correlate.
+                let xid = action.get("xid").and_then(|v| v.as_i64()).map(|v| v as i32);
+                let zxid = action.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0);
                 let error_code = action
                     .get("error_code")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32;
-                let data_hex = action
-                    .get("data_hex")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
 
-                // Build response: xid (4) + zxid (8) + error_code (4) + data
-                let mut response = Vec::new();
-                response.extend_from_slice(&xid.to_be_bytes());
-                response.extend_from_slice(&zxid.to_be_bytes());
-                response.extend_from_slice(&error_code.to_be_bytes());
-
-                if !data_hex.is_empty() {
-                    if let Ok(data_bytes) = hex::decode(data_hex) {
-                        response.extend_from_slice(&data_bytes);
-                    }
-                }
+                // Reject invalid hex loudly instead of silently sending a body-less reply:
+                // a truncated body desynchronizes the client for the rest of the connection.
+                let body = match action.get("data_hex").and_then(|v| v.as_str()) {
+                    Some(s) if !s.is_empty() => hex::decode(s).map_err(|e| {
+                        anyhow!("zookeeper_response: 'data_hex' is not valid hex: {}", e)
+                    })?,
+                    _ => Vec::new(),
+                };
 
                 Ok(ActionResult::Custom {
                     name: "zookeeper_response".to_string(),
                     data: json!({
-                        "response_hex": hex::encode(&response)
+                        "xid": xid,
+                        "zxid": zxid,
+                        "error_code": error_code,
+                        "body_hex": hex::encode(&body),
                     }),
                 })
             }
