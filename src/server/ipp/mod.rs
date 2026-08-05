@@ -1,7 +1,18 @@
-//! IPP (Internet Printing Protocol) server implementation
+//! IPP (Internet Printing Protocol) server implementation.
 //!
-//! IPP runs over HTTP on port 631. The LLM controls printer attributes,
-//! job handling, and responses.
+//! IPP is HTTP POST with a binary body (RFC 8010/8011); hyper carries the HTTP and this module
+//! parses just enough of the body to name the operation. The LLM supplies the answer as
+//! structured attributes and `actions.rs` encodes it — no action carries bytes.
+//!
+//! There is no job queue and no printer state here: a `Print-Job` is not recorded anywhere, so
+//! a following `Get-Job-Attributes` is answered by the model from its own memory, not from a
+//! store this protocol keeps. That is deliberate.
+//!
+//! **Request parsing is shallow.** Only the 8-byte header is decoded (version, operation-id,
+//! request-id). Attribute groups in the *request* are not parsed, so the model is told which
+//! operation was asked for but not, for instance, which `printer-uri` or `document-format` the
+//! client asked about, nor the document data of a Print-Job. Add attribute-group decoding here
+//! if the model needs to see it.
 
 pub mod actions;
 
@@ -190,14 +201,32 @@ async fn handle_ipp_request_with_llm(
         body_bytes.len()
     ));
 
-    // Parse IPP request if body is present
-    let operation_name = if !body_bytes.is_empty() {
-        parse_ipp_operation(&body_bytes).unwrap_or_else(|| "Unknown".to_string())
-    } else {
-        "Empty".to_string()
-    };
+    // Parse the IPP header. The request-id must be echoed in the response or clients discard
+    // it as unmatched, so it is parsed here and stamped in below - the model is never asked
+    // for it and cannot get it wrong.
+    let header = parse_ipp_header(&body_bytes);
+    let operation_name = header
+        .as_ref()
+        .map(|h| h.operation.clone())
+        .unwrap_or_else(|| {
+            if body_bytes.is_empty() {
+                "Empty".to_string()
+            } else {
+                "Malformed".to_string()
+            }
+        });
+    let request_id = header.as_ref().map(|h| h.request_id).unwrap_or(0);
+    let ipp_version = header
+        .as_ref()
+        .map(|h| format!("{}.{}", h.version_major, h.version_minor))
+        .unwrap_or_else(|| "unknown".to_string());
 
-    trace!("IPP operation: {}", operation_name);
+    trace!(
+        "IPP operation: {} (request-id {}, v{})",
+        operation_name,
+        request_id,
+        ipp_version
+    );
 
     // Create IPP request event
     let event = crate::protocol::Event::new(
@@ -206,6 +235,8 @@ async fn handle_ipp_request_with_llm(
             "method": method,
             "uri": uri,
             "operation": operation_name,
+            "request_id": request_id,
+            "ipp_version": ipp_version,
         }),
     );
 
@@ -227,19 +258,25 @@ async fn handle_ipp_request_with_llm(
                 match result {
                     ActionResult::Custom { name, data } => {
                         if name == "ipp_response" {
-                            let status =
-                                data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
-                            let body_hex = data.get("body").and_then(|v| v.as_str()).unwrap_or("");
-                            let body = hex::decode(body_hex).unwrap_or_default();
+                            let status = data
+                                .get("http_status")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(200) as u16;
+                            let body_hex =
+                                data.get("body_hex").and_then(|v| v.as_str()).unwrap_or("");
+                            let mut body = hex::decode(body_hex).unwrap_or_default();
 
-                            debug!("IPP response: status={}", status);
+                            stamp_response_header(&mut body, header.as_ref(), request_id);
+
+                            debug!(
+                                "IPP response: http={} request-id={} ({} bytes)",
+                                status,
+                                request_id,
+                                body.len()
+                            );
                             let _ = status_tx.send(format!("[DEBUG] IPP → {} response", status));
 
-                            return Ok(Response::builder()
-                                .status(status)
-                                .header("Content-Type", "application/ipp")
-                                .body(Full::new(Bytes::from(body)))
-                                .unwrap());
+                            return Ok(ipp_http_response(status, body));
                         }
                     }
                     _ => {
@@ -248,36 +285,124 @@ async fn handle_ipp_request_with_llm(
                 }
             }
 
-            // No IPP response found, return default OK
-            debug!("No IPP response from LLM, returning 200 OK");
-            Ok(Response::builder()
-                .status(200)
-                .header("Content-Type", "application/ipp")
-                .body(Full::new(Bytes::new()))
-                .unwrap())
+            // The LLM produced no IPP response action. An empty 200 is not a valid IPP message
+            // and clients report it as a truncated response, so send a well-formed
+            // server-error-internal-error instead of a body the client cannot parse.
+            debug!("No IPP response action from LLM, returning server-error-internal-error");
+            let _ = status_tx.send(
+                "[WARN] IPP: LLM returned no ipp_* response action, sending \
+                 server-error-internal-error"
+                    .to_string(),
+            );
+            Ok(ipp_http_response(
+                200,
+                internal_error_body(header.as_ref(), request_id),
+            ))
         }
         Err(e) => {
             console_error!(status_tx, "LLM error for IPP request: {}", e);
 
-            Ok(Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::from("Internal Server Error")))
-                .unwrap())
+            // Answer with a parseable IPP message rather than an HTTP 500 with a text body:
+            // an IPP client shown "Internal Server Error" reports a protocol error with no
+            // indication of what went wrong.
+            Ok(ipp_http_response(
+                200,
+                internal_error_body(header.as_ref(), request_id),
+            ))
         }
     }
 }
 
-/// Parse IPP operation from raw bytes to extract operation name
-fn parse_ipp_operation(body: &[u8]) -> Option<String> {
-    // IPP format: version(2) + operation-id(2) + request-id(4) + attributes
+/// Build the HTTP envelope IPP requires.
+fn ipp_http_response(status: u16, body: Vec<u8>) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/ipp")
+        .body(Full::new(Bytes::from(body)))
+        // Only fails on an invalid status code, and `status` comes from a u16 we control or
+        // clamp; fall back to a bare 500 rather than panicking in a connection task.
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::new()))
+                .expect("500 with an empty body is always constructible")
+        })
+}
+
+/// A minimal, well-formed `server-error-internal-error` message.
+fn internal_error_body(header: Option<&IppHeader>, request_id: u32) -> Vec<u8> {
+    let mut body = vec![
+        0x02, 0x00, // version 2.0
+        0x05, 0x00, // server-error-internal-error
+        0x00, 0x00, 0x00, 0x00, // request-id, stamped below
+        0x01, // operation-attributes-tag
+        0x47, // charset
+    ];
+    body.extend_from_slice(&[0x00, 0x12]);
+    body.extend_from_slice(b"attributes-charset");
+    body.extend_from_slice(&[0x00, 0x05]);
+    body.extend_from_slice(b"utf-8");
+    body.push(0x48); // naturalLanguage
+    body.extend_from_slice(&[0x00, 0x1b]);
+    body.extend_from_slice(b"attributes-natural-language");
+    body.extend_from_slice(&[0x00, 0x05]);
+    body.extend_from_slice(b"en-us");
+    body.push(0x03); // end-of-attributes-tag
+    stamp_response_header(&mut body, header, request_id);
+    body
+}
+
+/// Write the request's own version and id into an encoded response.
+///
+/// Both are echoed by the server rather than asked of the model, so correctness cannot depend
+/// on it repeating a number back — the same class of bug that made DNS and NTP responses go
+/// unmatched by their clients.
+///
+/// - **request-id**: RFC 8011 requires the response's to equal the request's.
+/// - **version**: RFC 8011 §4.1.8 requires the response to carry the version the client sent.
+///   The encoders write 2.0; `ipptool`, which speaks 1.1 by default, failed every response
+///   with "Bad version 2.0 in response - expected 1.1" until this echoed it back.
+fn stamp_response_header(body: &mut [u8], header: Option<&IppHeader>, request_id: u32) {
+    use actions::REQUEST_ID_OFFSET;
+
+    if let (Some(header), true) = (header, body.len() >= 2) {
+        body[0] = header.version_major;
+        body[1] = header.version_minor;
+    }
+    if body.len() >= REQUEST_ID_OFFSET + 4 {
+        body[REQUEST_ID_OFFSET..REQUEST_ID_OFFSET + 4].copy_from_slice(&request_id.to_be_bytes());
+    }
+}
+
+/// The fixed 8-byte IPP message header.
+struct IppHeader {
+    version_major: u8,
+    version_minor: u8,
+    operation: String,
+    request_id: u32,
+}
+
+/// Parse the IPP header: version(2) + operation-id(2) + request-id(4).
+///
+/// Every index below is covered by the length check; there is no slicing past it.
+fn parse_ipp_header(body: &[u8]) -> Option<IppHeader> {
     if body.len() < 8 {
         return None;
     }
 
-    // Extract operation ID (bytes 2-3, big endian)
     let operation_id = u16::from_be_bytes([body[2], body[3]]);
+    let request_id = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
 
-    // Map common operation IDs to names
+    Some(IppHeader {
+        version_major: body[0],
+        version_minor: body[1],
+        operation: ipp_operation_name(operation_id),
+        request_id,
+    })
+}
+
+/// Map an IPP operation id to its name.
+fn ipp_operation_name(operation_id: u16) -> String {
     let name = match operation_id {
         0x0002 => "Print-Job",
         0x0003 => "Print-URI",
@@ -295,8 +420,13 @@ fn parse_ipp_operation(body: &[u8]) -> Option<String> {
         0x000F => "Pause-Printer",
         0x0010 => "Resume-Printer",
         0x0011 => "Purge-Jobs",
-        _ => return Some(format!("Operation-0x{:04X}", operation_id)),
+        0x0012 => "Set-Printer-Attributes",
+        0x0013 => "Set-Job-Attributes",
+        0x003B => "Close-Job",
+        0x003C => "Identify-Printer",
+        0x003D => "Validate-Document",
+        _ => return format!("Operation-0x{:04X}", operation_id),
     };
 
-    Some(name.to_string())
+    name.to_string()
 }

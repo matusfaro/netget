@@ -1,318 +1,185 @@
 # IPP Protocol Implementation
 
-## Overview
+**Status**: `DevelopmentState::Experimental`.
+**Privilege**: `PrivilegeRequirement::PrivilegedPort(631)` — 631 is below 1024 and is where every
+IPP client looks by default, so the preflight check in `server_startup.rs` fires rather than
+letting the bind fail with a bare EPERM.
 
-IPP (Internet Printing Protocol) server implementing RFC 2910 (Internet Printing Protocol/1.1) over HTTP. The protocol
-uses HTTP POST requests to send IPP operations encoded in a binary format.
+IPP/1.1 and 2.0 (RFC 8010 wire format, RFC 8011 semantics) over HTTP POST. `hyper` carries the
+HTTP; the IPP body is parsed and built here.
 
-**Protocol**: IPP/1.1 and IPP/2.0
-**Transport**: HTTP/1.1 over TCP
-**Port**: 631 (standard), configurable
-**Status**: Alpha
+## No storage
 
-## Library Choices
+There is no job queue and no printer state. A `Print-Job` is not recorded anywhere; a
+following `Get-Job-Attributes` is answered by the model out of its own memory. Printer
+attributes likewise come from the model on every request.
 
-- **hyper** (v1.x) - HTTP server foundation, handles connection management
-- **Manual IPP parsing** - Custom parsing of IPP binary format
-    - IPP uses custom binary encoding for operations and attributes
-    - Version + Operation ID + Request ID + Attribute groups
-    - No existing Rust IPP library suitable for LLM control
+`list_print_jobs` used to be declared as an async action and returned a hardcoded
+`{"jobs": []}` next to a `// This is a placeholder` comment. It was removed rather than
+implemented: implementing it would mean keeping a job store, which is exactly what a protocol
+must not do.
 
-**Why manual parsing?**
+## Actions
 
-- IPP protocol is relatively simple: 8-byte header + attribute groups
-- Full control over response generation for LLM
-- Avoids dependency on incomplete IPP libraries
+Three, all advertised on `ipp_request_received`:
 
-## Architecture Decisions
+| action | purpose | key fields |
+|---|---|---|
+| `ipp_response` | status-only answer (acknowledge, reject) | `ipp_status`, `status_message`, `http_status` |
+| `ipp_printer_attributes` | Get-Printer-Attributes | `attributes` (object), `ipp_status` |
+| `ipp_job_attributes` | Print-Job / Get-Job-Attributes / Create-Job | `attributes` (object), `ipp_status` |
 
-### HTTP-Based Protocol
+`ipp_status` is a **name**, not a number: `successful-ok`, `client-error-not-found`,
+`server-error-not-accepting-jobs`, and so on (full list in `ipp_status_code`). An unrecognised
+name encodes `server-error-internal-error` and logs a warning — telling a client everything is
+fine because the model invented a status name is the worse failure.
 
-IPP runs over HTTP, so we use hyper's HTTP/1 server infrastructure:
+`http_status` is separate and rarely needed: IPP errors belong in `ipp_status` with HTTP 200.
+`status` is accepted as an alias for `http_status` because prompts in the wild use it.
 
-- Each connection handled by hyper's service_fn
-- IPP requests arrive as HTTP POST with Content-Type: application/ipp
-- IPP responses returned as HTTP 200 OK with application/ipp body
+### The bytes-in-an-action bug that was removed
 
-### LLM Control Points
+`ipp_response` used to take a `body` parameter documented in three places as
+"hex-encoded IPP response data", with examples like `"body": "02000000000000010347001200..."`.
+The executor did:
 
-The LLM controls:
-
-1. **Printer attributes** - printer-name, printer-state, capabilities
-2. **Job handling** - Accept/reject print jobs, assign job IDs
-3. **IPP responses** - Status codes, attribute groups
-
-### Operation Parsing
-
-Simple operation ID extraction from first 8 bytes:
-
-- Bytes 0-1: IPP version (0x02 0x00 for v2.0)
-- Bytes 2-3: Operation ID (big-endian u16)
-- Bytes 4-7: Request ID
-
-Common operation IDs:
-
-- 0x0002: Print-Job
-- 0x000B: Get-Printer-Attributes
-- 0x0009: Get-Job-Attributes
-- 0x000A: Get-Jobs
-
-### Response Format
-
-LLM generates IPP responses via `ipp_response` action:
-
-```json
-{
-  "type": "ipp_response",
-  "status": 200,
-  "body": "hex-encoded IPP response data"
-}
+```rust
+let body = action.get("body").and_then(|v| v.as_str()).unwrap_or("");
+... "body": hex::encode(body.as_bytes())
 ```
 
-The hex-encoded body contains:
+`hex::encode` of the *ASCII text*. A model following the documentation put the literal
+characters `0`, `2`, `0`, `0`, … on the wire as the IPP response body. Every such response was
+unparseable garbage.
 
-- IPP status code (successful-ok, client-error, etc.)
-- Response attributes (printer-uri, job-id, etc.)
+The parameter is gone. Nothing the model writes reaches the wire as bytes; it names a status
+and supplies attributes, and the encoder here produces the message. (Hex still appears in
+`ActionResult::Custom`'s `body_hex` between the executor and the HTTP handler, because
+`Custom` carries a `serde_json::Value` and JSON has no byte type. That is server-internal —
+the model never sees or writes it.)
 
-## Connection Management
+## Attribute encoding
 
-### HTTP Request-Response Cycle
+`push_attribute_value` picks the IPP value tag from the JSON type and the attribute name:
 
-Each IPP operation follows HTTP request-response:
+| JSON | attribute name | tag |
+|---|---|---|
+| number | any | `integer` (0x21) |
+| bool | any | `boolean` (0x22) |
+| string | `printer-state`, `job-state` | `enum` (0x23), mapped from `idle`/`processing`/`completed`/… |
+| string | contains `charset` | `charset` (0x47) |
+| string | contains `natural-language` | `naturalLanguage` (0x48) |
+| string | ends `-uri` / `-uri-supported` | `uri` (0x45) |
+| string | contains `document-format` | `mimeMediaType` (0x49) |
+| string | ends `-name` | `nameWithoutLanguage` (0x42) |
+| string | ends `-supported`/`-default`/`-requested`/`-reasons` | `keyword` (0x44) |
+| string | otherwise | `textWithoutLanguage` (0x41) |
+| array | any | first value carries the name, the rest a zero-length name (RFC 8010 additional value) |
 
-1. Client sends HTTP POST with IPP request body
-2. Server parses HTTP headers and body
-3. LLM processes operation and generates response
-4. Server sends HTTP 200 with IPP response body
+Everything used to be encoded as `nameWithoutLanguage` regardless of type, so integers went
+out as decimal text and `printer-state` as a keyword where clients expect an enum. Name
+lengths were also written as `[0x00, len as u8]`, silently truncating any name of 256 bytes or
+more into an unparseable message; they are now proper two-byte big-endian.
 
-### Connection Tracking
+Known gap: `operations-supported` is `1setOf type2 enum` in the spec and is encoded here as
+`1setOf integer` because the values arrive as JSON numbers. `ipptool` accepts it; a strict
+client might not.
 
-Connections tracked in ServerInstance state:
+## Request-id and version are echoed by the server, not by the model
 
-- Connection ID assigned per HTTP connection
-- Protocol-specific info: `ProtocolConnectionInfo::Ipp { recent_jobs }`
-- Stats: bytes_sent, bytes_received, packets_sent, packets_received
-- Status updated on connection close
+RFC 8011 requires a response to carry the request's request-id and the request's version. Both
+are parsed from the 8-byte header in `parse_ipp_header` and written into the encoded response
+by `stamp_response_header` — the encoders emit version 2.0 and request-id 0 as placeholders.
 
-### Concurrency
+No action carries either field, deliberately: correlation must not depend on a model repeating
+a number back. That is the same failure mode that made DNS and NTP responses go unmatched.
 
-Multiple concurrent connections supported:
+Both were real bugs, both caught by a real client:
 
-- Each connection handled in separate tokio task
-- hyper manages HTTP/1 multiplexing
-- No shared state between connections (stateless HTTP)
+- request-id was **hardcoded to 1** in the attribute builders. A client using any other id got
+  a response it should discard as unmatched.
+- version was **hardcoded to 2.0**. `ipptool` speaks 1.1 by default and failed every response
+  with `Bad version 2.0 in response - expected 1.1 (RFC 2911 section 3.1.8)` — this was the
+  only failure in an otherwise perfect decode, and it would have failed against CUPS too.
 
-## State Management
+## Events
 
-### Per-Connection State
+One: `ipp_request_received`, carrying `method`, `uri`, `operation`, `request_id`,
+`ipp_version`. It advertises all three response actions via `.with_actions(...)`.
 
-Minimal state required since IPP is stateless over HTTP:
+The response example used to be `{"type": "placeholder", "event_id": "ipp_request_received"}`,
+which is rendered verbatim into the prompt and taught the model an action named `placeholder`.
+It is now a real `ipp_printer_attributes` response, with `ipp_job_attributes` and a rejecting
+`ipp_response` as alternatives.
 
-- Connection ID for tracking
-- Recent jobs list (for UI display)
+## Request parsing is shallow
 
-### No Session State
+Only the 8-byte header is decoded. **Attribute groups in the request are not parsed**, so the
+model is told the operation name but not which `printer-uri` was asked about, which
+`document-format` was requested, or what a `Print-Job`'s document data contains. If the model
+needs any of that, decode the request's attribute groups in `handle_ipp_request_with_llm` and
+add them to the event.
 
-IPP doesn't maintain sessions:
+`parse_ipp_header` reads five fixed offsets after one `body.len() < 8` check; there is no
+attacker-controlled length arithmetic in it.
 
-- Each operation is independent
-- Job IDs returned to client for future reference
-- Printer state managed by LLM (in memory or instructions)
+## Failure behaviour
+
+Two paths used to give a client something it could not parse:
+
+- **LLM error** → HTTP 500 with the text body `Internal Server Error`. An IPP client reports
+  that as a protocol error with no useful detail.
+- **LLM returned no `ipp_*` action** → HTTP 200 with an *empty* body, which is not a valid IPP
+  message; clients report a truncated response.
+
+Both now return a well-formed `server-error-internal-error` message with the correct version
+and request-id, and the second logs a WARN.
 
 ## Limitations
 
-### Not Implemented
+- No IPPS (IPP over TLS), no authentication.
+- No CUPS extensions.
+- Request attribute groups not parsed (above).
+- No document data: `Print-Job` bodies are read into memory to size them and then discarded.
+- `operations-supported` encoded as integer rather than enum (above).
+- No job store, by design (above).
 
-- **CUPS extensions** - CUPS-specific IPP extensions not supported
-- **IPP/2.x features** - Only basic IPP/1.1 and 2.0 operations
-- **Authentication** - No IPP authentication (could be added)
-- **Encryption** - No IPP-over-HTTPS support (plain HTTP only)
-- **Job persistence** - Jobs not stored, only logged
+## Manual verification
 
-### Simplified Implementation
+```bash
+./cargo-isolated.sh run --release --no-default-features --features ipp
+# start on 10631 with a static ipp_printer_attributes handler, then:
 
-- **Attribute parsing** - Minimal attribute parsing, relies on operation ID
-- **Response encoding** - LLM must provide properly formatted hex data
-- **Status codes** - Limited IPP status code mapping
-
-### Testing Limitations
-
-- Real IPP clients (CUPS) may expect specific attributes
-- Some clients require full IPP/1.1 compliance
-- Testing mostly uses raw HTTP POST requests
-
-## LLM Integration
-
-### Action-Based Responses
-
-LLM returns actions via structured JSON:
-
-**ipp_response** - Send IPP response:
-
-```json
+cat > /tmp/getattrs.test <<'EOF'
 {
-  "type": "ipp_response",
-  "status": 200,
-  "body": "020000000000000103..."
+    NAME "Get-Printer-Attributes"
+    OPERATION Get-Printer-Attributes
+    GROUP operation-attributes-tag
+    ATTR charset attributes-charset utf-8
+    ATTR language attributes-natural-language en
+    ATTR uri printer-uri $uri
+    STATUS successful-ok
+    DISPLAY printer-name
+    DISPLAY printer-state
 }
+EOF
+ipptool -tv ipp://127.0.0.1:10631/printers/netget /tmp/getattrs.test
 ```
 
-**show_message** - Display message in UI:
+Verified output (2026-08-05): `[PASS]`, with `printer-name (nameWithoutLanguage)`,
+`printer-state (enum) = idle`, `printer-is-accepting-jobs (boolean) = true`,
+`printer-uri-supported (uri)`, `document-format-supported (1setOf mimeMediaType)`,
+`operations-supported (1setOf integer)` — i.e. every value tag decoded as intended. A raw POST
+with request-id `0x12345678` and version 1.1 came back with exactly that id and version.
 
-```json
-{
-  "type": "show_message",
-  "message": "Print job accepted"
-}
-```
+## Testing
 
-### Event-Based Processing
-
-IPP operations trigger `IPP_REQUEST_EVENT`:
-
-```json
-{
-  "method": "POST",
-  "uri": "/printers/netget",
-  "operation": "Print-Job"
-}
-```
-
-LLM receives:
-
-- HTTP method and URI
-- Parsed operation name
-- Request context
-
-### Scripting Support
-
-IPP operations can be scripted for repetitive responses:
-
-- Scripting mode generates Python/JS handlers
-- Fast responses without LLM calls
-- Good for printer attribute queries
-
-## Example Prompts and Responses
-
-### Example 1: Get-Printer-Attributes
-
-**Prompt:**
-
-```
-Listen on port 631 via IPP. When clients send Get-Printer-Attributes,
-respond with printer-name="NetGet Printer", printer-state="idle".
-```
-
-**LLM Response:**
-
-```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Received Get-Printer-Attributes request"
-    },
-    {
-      "type": "ipp_response",
-      "status": 200,
-      "body": "02000000000000010347001200..."
-    }
-  ]
-}
-```
-
-### Example 2: Print-Job
-
-**Prompt:**
-
-```
-Listen on port 631 via IPP. Accept all print jobs with job-id=1,
-job-state="processing".
-```
-
-**LLM Response:**
-
-```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Accepted print job: test.pdf"
-    },
-    {
-      "type": "ipp_response",
-      "status": 200,
-      "body": "02000000000000010421000600..."
-    }
-  ]
-}
-```
-
-### Example 3: Rejecting Jobs
-
-**Prompt:**
-
-```
-Listen on port 631 via IPP. Reject all print jobs from clients,
-return client-error-not-authorized.
-```
-
-**LLM Response:**
-
-```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Rejected print job - not authorized"
-    },
-    {
-      "type": "ipp_response",
-      "status": 401,
-      "body": "02000502000000010103..."
-    }
-  ]
-}
-```
+`tests/server/ipp/test.rs` — Get-Printer-Attributes, Print-Job, and a plain HTTP GET. The
+tests assert HTTP 200 and print the IPP status; they do not decode the attribute groups, which
+is why the value-tag and version bugs survived them. `ipptool` is the check that catches those.
 
 ## References
 
-- [RFC 2910: Internet Printing Protocol/1.1](https://tools.ietf.org/html/rfc2910)
-- [RFC 8011: Internet Printing Protocol/1.1 (updated)](https://tools.ietf.org/html/rfc8011)
-- [IPP Registrations](https://www.pwg.org/ipp/ipp-registrations.xml)
-- [CUPS Implementation Guide](https://www.cups.org/doc/spec-ipp.html)
-- [hyper HTTP library](https://docs.rs/hyper)
-
-## Logging
-
-### Structured Logging Levels
-
-**TRACE** - Full IPP packet details:
-
-- Complete hex dump of request/response
-- Pretty-printed IPP structures
-- Attribute group parsing
-
-**DEBUG** - IPP operation summaries:
-
-- Operation name and request ID
-- HTTP status and response size
-- "IPP GET-PRINTER-ATTRIBUTES (123 bytes)"
-
-**INFO** - High-level events:
-
-- Connection open/close
-- "IPP connection from 192.168.1.100"
-- "IPP connection closed"
-
-**WARN** - Non-fatal issues:
-
-- Malformed IPP requests
-- Unknown operation IDs
-
-**ERROR** - Critical failures:
-
-- HTTP parsing errors
-- LLM communication failures
-
-All logs use dual logging pattern (tracing macros + status_tx).
+- [RFC 8010: IPP/1.1 Encoding and Transport](https://tools.ietf.org/html/rfc8010)
+- [RFC 8011: IPP/1.1 Model and Semantics](https://tools.ietf.org/html/rfc8011)
+- [PWG IPP registrations](https://www.pwg.org/ipp/ipp-registrations.xml)
