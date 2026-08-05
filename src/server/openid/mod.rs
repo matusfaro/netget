@@ -175,7 +175,8 @@ async fn handle_llm_response(
                                 .unwrap_or(json!(["RS256"])),
                         });
 
-                        if let Some(scopes) = data.get("supported_scopes").filter(|v| !v.is_null()) {
+                        if let Some(scopes) = data.get("supported_scopes").filter(|v| !v.is_null())
+                        {
                             discovery["scopes_supported"] = scopes.clone();
                         }
 
@@ -536,7 +537,10 @@ async fn handle_openid_request(
     let body_text = String::from_utf8_lossy(&body_bytes).to_string();
 
     // Parse query parameters
-    let query_params = query_str.as_deref().map(parse_urlencoded).unwrap_or_default();
+    let query_params = query_str
+        .as_deref()
+        .map(parse_urlencoded)
+        .unwrap_or_default();
 
     // Parse form data if Content-Type is application/x-www-form-urlencoded
     let form_data = if headers

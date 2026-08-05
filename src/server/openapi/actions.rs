@@ -276,9 +276,7 @@ impl Protocol for OpenApiProtocol {
                  a spec that lives on disk, read the file and pass its contents here."
                     .to_string(),
             required: false,
-            example: serde_json::json!(
-                "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
-            ),
+            example: serde_json::json!("openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"),
         }]
     }
     fn group_name(&self) -> &'static str {
