@@ -19,7 +19,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::console_info;
 use crate::llm::action_helper::call_llm;
@@ -27,10 +27,87 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::oauth2::actions::{
-    OAuth2Protocol, OAUTH2_AUTHORIZE_EVENT, OAUTH2_INTROSPECT_EVENT, OAUTH2_REVOKE_EVENT,
-    OAUTH2_TOKEN_EVENT,
+    OAuth2Protocol, OAUTH2_AUTHORIZE_EVENT, OAUTH2_INTROSPECT_EVENT, OAUTH2_RESULT_KEY,
+    OAUTH2_REVOKE_EVENT, OAUTH2_TOKEN_EVENT,
 };
 use crate::state::app_state::AppState;
+
+/// Build a response from parts that came from the model or from the request, without ever
+/// panicking.
+///
+/// Every `Response::builder()` chain here used to end in `.body(..).unwrap()`. That is a
+/// remotely reachable panic: `/authorize` puts the client-supplied `redirect_uri` straight
+/// into the `Location` header, and `parse_query_params` percent-decodes it first, so
+/// `?redirect_uri=http://x/%0D%0A` yields a header value containing CRLF. hyper rejects it,
+/// `.body()` returns `Err`, and the `unwrap()` kills the connection task. (Had hyper
+/// accepted it, the same input would have been response-splitting.)
+///
+/// This is a local copy of `http_common::handler::build_safe_response`, which the `oauth2`
+/// feature cannot reach because `http_common` is gated on `feature = "http"`.
+fn build_safe_response(
+    status: u16,
+    headers: impl IntoIterator<Item = (String, String)>,
+    body: String,
+) -> Response<Full<Bytes>> {
+    let status_code = StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!("OAuth2: invalid HTTP status {status}, sending 500 instead");
+        StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    let mut builder = Response::builder().status(status_code);
+    for (name, value) in headers {
+        match (
+            hyper::header::HeaderName::from_bytes(name.as_bytes()),
+            hyper::header::HeaderValue::from_str(&value),
+        ) {
+            (Ok(n), Ok(v)) => builder = builder.header(n, v),
+            _ => warn!("OAuth2: dropping invalid response header {name:?}"),
+        }
+    }
+
+    builder
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|e| {
+            error!("OAuth2: failed to build response ({e}), sending bare 500");
+            let mut fallback = Response::new(Full::new(Bytes::from_static(
+                br#"{"error":"server_error"}"#.as_slice(),
+            )));
+            *fallback.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            fallback
+        })
+}
+
+/// JSON response with the no-store/no-cache headers RFC 6749 §5.1 requires on token replies.
+fn json_response(status: u16, body: String) -> Response<Full<Bytes>> {
+    build_safe_response(
+        status,
+        [
+            ("content-type".to_string(), "application/json".to_string()),
+            ("cache-control".to_string(), "no-store".to_string()),
+            ("pragma".to_string(), "no-cache".to_string()),
+        ],
+        body,
+    )
+}
+
+/// The single JSON payload an OAuth2 executor produced, if the model emitted one.
+///
+/// `execute_action` tags each payload with [`OAUTH2_RESULT_KEY`] so the caller can tell an
+/// approval from a denial. The old code just scanned for a `code` field, which meant an
+/// `oauth2_error_response` — the model's only way to refuse — looked identical to "no
+/// action at all" and was replaced by the hardcoded success default.
+fn first_oauth2_payload(
+    results: Vec<crate::llm::ActionResult>,
+) -> Option<(String, serde_json::Value)> {
+    results.into_iter().find_map(|result| {
+        let crate::llm::ActionResult::Output(bytes) = result else {
+            return None;
+        };
+        let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let kind = value.get(OAUTH2_RESULT_KEY)?.as_str()?.to_string();
+        Some((kind, value))
+    })
+}
 
 /// OAuth2 authorization server
 pub struct OAuth2Server;
@@ -225,17 +302,14 @@ async fn handle_oauth2_request(
         }
         _ => {
             debug!("OAuth2: Unknown endpoint {} {}", method, path);
-            Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": "invalid_request",
-                        "error_description": "Unknown endpoint"
-                    })
-                    .to_string(),
-                )))
-                .unwrap())
+            Ok(json_response(
+                404,
+                json!({
+                    "error": "invalid_request",
+                    "error_description": "Unknown endpoint"
+                })
+                .to_string(),
+            ))
         }
     };
 
@@ -319,68 +393,116 @@ async fn handle_authorize_request(
     .await
     {
         Ok(execution_result) => {
-            // Extract authorize response from LLM action results (oauth2_authorize_response action)
-            // The action should contain code and state fields
-            let mut code = "AUTH_CODE_123".to_string(); // Default
-            let mut state_from_llm: Option<String> = None;
-
-            for result in execution_result.protocol_results {
-                if let crate::llm::ActionResult::Output(bytes) = result {
-                    if let Ok(json_str) = String::from_utf8(bytes) {
-                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_str)
-                        {
-                            // Extract code and state from LLM response
-                            if let Some(code_value) =
-                                json_value.get("code").and_then(|v| v.as_str())
-                            {
-                                code = code_value.to_string();
-                            }
-                            if let Some(state_value) =
-                                json_value.get("state").and_then(|v| v.as_str())
-                            {
-                                state_from_llm = Some(state_value.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-
-            let state = state_from_llm
-                .or_else(|| params.get("state").cloned())
-                .unwrap_or_default();
             let redirect_uri = params
                 .get("redirect_uri")
                 .cloned()
-                .unwrap_or("urn:ietf:wg:oauth:2.0:oob".to_string());
+                .unwrap_or_else(|| "urn:ietf:wg:oauth:2.0:oob".to_string());
+            let request_state = params.get("state").cloned();
 
-            let location = if redirect_uri.contains('?') {
-                format!("{}&code={}&state={}", redirect_uri, code, state)
-            } else {
-                format!("{}?code={}&state={}", redirect_uri, code, state)
-            };
-
-            info!("OAuth2 authorization approved, redirecting to {}", location);
-            Ok(Response::builder()
-                .status(StatusCode::FOUND)
-                .header("Location", location)
-                .body(Full::new(Bytes::new()))
-                .unwrap())
+            match first_oauth2_payload(execution_result.protocol_results) {
+                // Approval: redirect with the code the model minted.
+                Some((kind, payload)) if kind == "authorize" => {
+                    let Some(code) = payload.get("code").and_then(|v| v.as_str()) else {
+                        error!("OAuth2 authorize action carried no code; refusing the request");
+                        return Ok(authorize_redirect(
+                            &redirect_uri,
+                            &[
+                                ("error", "server_error"),
+                                ("error_description", "authorization action produced no code"),
+                            ],
+                            request_state.as_deref(),
+                        ));
+                    };
+                    info!("OAuth2 authorization approved for {}", redirect_uri);
+                    Ok(authorize_redirect(
+                        &redirect_uri,
+                        &[("code", code)],
+                        payload
+                            .get("state")
+                            .and_then(|v| v.as_str())
+                            .or(request_state.as_deref()),
+                    ))
+                }
+                // Denial. RFC 6749 §4.1.2.1: report it by redirecting with `error`, never by
+                // handing back a code. The previous code looked for `code`, found none, and
+                // used its `AUTH_CODE_123` default — so every refusal the model expressed was
+                // delivered to the client as a successful authorization.
+                Some((kind, payload)) if kind == "error" => {
+                    let error = payload
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("access_denied");
+                    let description = payload.get("error_description").and_then(|v| v.as_str());
+                    warn!("OAuth2 authorization denied: {}", error);
+                    let mut pairs = vec![("error", error)];
+                    if let Some(d) = description {
+                        pairs.push(("error_description", d));
+                    }
+                    Ok(authorize_redirect(
+                        &redirect_uri,
+                        &pairs,
+                        request_state.as_deref(),
+                    ))
+                }
+                // Anything else — no action, or an action that belongs to another endpoint.
+                // Fail closed: an authorization server that mints a code when it was told
+                // nothing is worse than one that errors.
+                other => {
+                    if let Some((kind, _)) = other {
+                        warn!("OAuth2 authorize got a '{kind}' result; treating as no decision");
+                    } else {
+                        warn!("OAuth2 authorize produced no action; denying");
+                    }
+                    Ok(authorize_redirect(
+                        &redirect_uri,
+                        &[
+                            ("error", "server_error"),
+                            (
+                                "error_description",
+                                "no authorization decision was produced",
+                            ),
+                        ],
+                        request_state.as_deref(),
+                    ))
+                }
+            }
         }
         Err(e) => {
             error!("OAuth2 authorization error: {}", e);
-            Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": "server_error",
-                        "error_description": format!("{}", e)
-                    })
-                    .to_string(),
-                )))
-                .unwrap())
+            Ok(json_response(
+                400,
+                json!({
+                    "error": "server_error",
+                    "error_description": format!("{}", e)
+                })
+                .to_string(),
+            ))
         }
     }
+}
+
+/// Build the 302 that answers `/authorize`, percent-encoding every value.
+///
+/// `code`, `state` and the error strings all reach here unescaped — from the model, or
+/// echoed from the client's own query string — so a value containing `&` or `=` used to
+/// inject extra parameters into the callback URL.
+fn authorize_redirect(
+    redirect_uri: &str,
+    pairs: &[(&str, &str)],
+    state: Option<&str>,
+) -> Response<Full<Bytes>> {
+    let mut query: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+        .collect();
+    if let Some(state) = state.filter(|s| !s.is_empty()) {
+        query.push(format!("state={}", urlencoding::encode(state)));
+    }
+
+    let separator = if redirect_uri.contains('?') { "&" } else { "?" };
+    let location = format!("{}{}{}", redirect_uri, separator, query.join("&"));
+
+    build_safe_response(302, [("location".to_string(), location)], String::new())
 }
 
 /// Handle /token endpoint (RFC 6749 Section 3.2)
@@ -397,17 +519,14 @@ async fn handle_token_request(
     let body_bytes = match req.into_body().collect().await {
         Ok(body) => body.to_bytes(),
         Err(_) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": "invalid_request",
-                        "error_description": "Failed to read request body"
-                    })
-                    .to_string(),
-                )))
-                .unwrap());
+            return Ok(json_response(
+                400,
+                json!({
+                    "error": "invalid_request",
+                    "error_description": "Failed to read request body"
+                })
+                .to_string(),
+            ));
         }
     };
 
@@ -448,50 +567,61 @@ async fn handle_token_request(
     )
     .await
     {
-        Ok(execution_result) => {
-            // Extract token response from LLM action results (oauth2_token_response action)
-            let response_json = execution_result
-                .protocol_results
-                .into_iter()
-                .find_map(|result| match result {
-                    crate::llm::ActionResult::Output(bytes) => String::from_utf8(bytes).ok(),
-                    _ => None,
-                })
-                .unwrap_or_else(|| {
-                    // Default response if LLM didn't provide one
-                    json!({
-                        "access_token": "ACCESS_TOKEN_123",
-                        "token_type": "Bearer",
-                        "expires_in": 3600,
-                        "refresh_token": "REFRESH_TOKEN_123",
-                        "scope": params.get("scope").cloned().unwrap_or("".to_string())
-                    })
-                    .to_string()
-                });
-
-            info!("OAuth2 token issued");
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .header("Cache-Control", "no-store")
-                .header("Pragma", "no-cache")
-                .body(Full::new(Bytes::from(response_json)))
-                .unwrap())
-        }
-        Err(e) => {
-            error!("OAuth2 token error: {}", e);
-            Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
+        Ok(execution_result) => match first_oauth2_payload(execution_result.protocol_results) {
+            Some((kind, mut payload)) if kind == "token" => {
+                strip_envelope(&mut payload);
+                info!("OAuth2 token issued");
+                Ok(json_response(200, payload.to_string()))
+            }
+            // A denial must carry an error status. RFC 6749 §5.2 says 400 (401 for
+            // invalid_client); the old code returned the error body with 200, so a
+            // conforming client parsed a refusal as a successful token response.
+            Some((kind, mut payload)) if kind == "error" => {
+                let status = payload
+                    .get("status_code")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(400) as u16;
+                strip_envelope(&mut payload);
+                warn!("OAuth2 token request denied ({status})");
+                Ok(json_response(status, payload.to_string()))
+            }
+            // Fail closed: minting the old hardcoded `ACCESS_TOKEN_123` whenever the model
+            // said nothing meant an LLM outage silently issued working credentials.
+            other => {
+                if let Some((kind, _)) = other {
+                    warn!("OAuth2 token got a '{kind}' result; no token issued");
+                } else {
+                    warn!("OAuth2 token request produced no action; refusing");
+                }
+                Ok(json_response(
+                    400,
                     json!({
                         "error": "invalid_grant",
-                        "error_description": format!("{}", e)
+                        "error_description": "no token decision was produced"
                     })
                     .to_string(),
-                )))
-                .unwrap())
+                ))
+            }
+        },
+        Err(e) => {
+            error!("OAuth2 token error: {}", e);
+            Ok(json_response(
+                400,
+                json!({
+                    "error": "invalid_grant",
+                    "error_description": format!("{}", e)
+                })
+                .to_string(),
+            ))
         }
+    }
+}
+
+/// Drop the internal routing fields before the payload goes on the wire.
+fn strip_envelope(payload: &mut serde_json::Value) {
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove(OAUTH2_RESULT_KEY);
+        obj.remove("status_code");
     }
 }
 
@@ -509,16 +639,7 @@ async fn handle_introspect_request(
     let body_bytes = match req.into_body().collect().await {
         Ok(body) => body.to_bytes(),
         Err(_) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "active": false
-                    })
-                    .to_string(),
-                )))
-                .unwrap());
+            return Ok(json_response(400, json!({"active": false}).to_string()));
         }
     };
 
@@ -547,44 +668,33 @@ async fn handle_introspect_request(
     )
     .await
     {
-        Ok(execution_result) => {
-            // Extract response from LLM action results (oauth2_introspect_response action)
-            let response_json = execution_result
-                .protocol_results
-                .into_iter()
-                .find_map(|result| match result {
-                    crate::llm::ActionResult::Output(bytes) => String::from_utf8(bytes).ok(),
-                    _ => None,
-                })
-                .unwrap_or_else(|| {
-                    // Default response if LLM didn't provide one
-                    json!({
-                        "active": true,
-                        "scope": "read write",
-                        "client_id": "client123",
-                        "token_type": "Bearer",
-                        "exp": 1234567890,
-                    })
-                    .to_string()
-                });
-
-            info!("OAuth2 token introspected");
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(response_json)))
-                .unwrap())
-        }
-        Err(_) => Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/json")
-            .body(Full::new(Bytes::from(
-                json!({
-                    "active": false
-                })
-                .to_string(),
-            )))
-            .unwrap()),
+        Ok(execution_result) => match first_oauth2_payload(execution_result.protocol_results) {
+            Some((kind, mut payload)) if kind == "introspect" => {
+                strip_envelope(&mut payload);
+                info!("OAuth2 token introspected");
+                Ok(json_response(200, payload.to_string()))
+            }
+            Some((kind, mut payload)) if kind == "error" => {
+                let status = payload
+                    .get("status_code")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(400) as u16;
+                strip_envelope(&mut payload);
+                Ok(json_response(status, payload.to_string()))
+            }
+            // Fail closed. The old default was `{"active": true, ...}`, so any token at all
+            // introspected as valid whenever the model produced nothing — a resource server
+            // trusting this endpoint would have accepted every bearer token in existence.
+            other => {
+                if let Some((kind, _)) = other {
+                    warn!("OAuth2 introspect got a '{kind}' result; reporting inactive");
+                } else {
+                    warn!("OAuth2 introspect produced no action; reporting inactive");
+                }
+                Ok(json_response(200, json!({"active": false}).to_string()))
+            }
+        },
+        Err(_) => Ok(json_response(200, json!({"active": false}).to_string())),
     }
 }
 
@@ -602,10 +712,7 @@ async fn handle_revoke_request(
     let body_bytes = match req.into_body().collect().await {
         Ok(body) => body.to_bytes(),
         Err(_) => {
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(Full::new(Bytes::new()))
-                .unwrap());
+            return Ok(build_safe_response(200, [], String::new()));
         }
     };
 
@@ -635,23 +742,30 @@ async fn handle_revoke_request(
     .await;
 
     info!("OAuth2 token revoked");
-    // RFC 7009: The authorization server responds with HTTP status code 200
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .body(Full::new(Bytes::new()))
-        .unwrap())
+    // RFC 7009 §2.2: answer 200 whether or not the token was valid. Nothing the model says
+    // changes this, which is why OAUTH2_REVOKE_EVENT declares .with_no_actions().
+    Ok(build_safe_response(200, [], String::new()))
 }
 
-/// Parse URL-encoded query parameters
+/// Parse `application/x-www-form-urlencoded` data (query string or POST body).
+///
+/// `+` means space in this encoding, which the previous version did not handle: a
+/// `scope=read+write` body arrived at the model as the literal string `read+write`.
+/// A pair whose key or value is not valid percent-encoding is skipped rather than
+/// collapsed into an empty-string key, which previously made two malformed pairs
+/// overwrite each other.
 fn parse_query_params(query: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();
     for pair in query.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            params.insert(
-                urlencoding::decode(key).unwrap_or_default().to_string(),
-                urlencoding::decode(value).unwrap_or_default().to_string(),
-            );
-        }
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.replace('+', " "), value.replace('+', " "));
+        let (Ok(key), Ok(value)) = (urlencoding::decode(&key), urlencoding::decode(&value)) else {
+            debug!("OAuth2: skipping malformed form parameter {pair:?}");
+            continue;
+        };
+        params.insert(key.into_owned(), value.into_owned());
     }
     params
 }

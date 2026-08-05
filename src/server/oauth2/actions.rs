@@ -57,13 +57,26 @@ impl Protocol for OAuth2Protocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual OAuth2 implementation over hyper HTTP")
-            .llm_control("Authorization decisions, token generation, client validation")
+            .implementation(
+                "Manual RFC 6749/7662/7009 endpoints over hyper HTTP/1.1. Simulator: tokens are \
+                 opaque strings the model invents, nothing is signed, nothing is stored, and no \
+                 credential is ever verified.",
+            )
+            .llm_control(
+                "Whether to approve an authorization request, what token strings to return, and \
+                 what a token introspects as. Client id/secret are handed to the model as text; \
+                 the server itself checks nothing.",
+            )
             .e2e_testing("reqwest HTTP client - OAuth2 flow testing")
+            .notes(
+                "Not an authorization server: no signing keys, no token database, no client \
+                 registry, no PKCE, no TLS. Suitable for exercising OAuth2 clients and for \
+                 honeypots, never for guarding anything real.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "OAuth2 authorization server for token-based authentication"
+        "OAuth2 authorization-server simulator (LLM decides; no tokens are signed or stored)"
     }
     fn example_prompt(&self) -> &'static str {
         "Act as an OAuth2 server on port 8080. Accept client 'testapp' with secret 'secret123'. Issue tokens with 1-hour expiry."
@@ -169,6 +182,16 @@ impl Server for OAuth2Protocol {
     }
 }
 
+/// Envelope key identifying which OAuth2 action produced an [`ActionResult::Output`].
+///
+/// Every executor below wraps its payload as `{"oauth2_result": <kind>, ...}` so the
+/// HTTP layer in `mod.rs` can tell an *approval* from a *denial*. Before this existed the
+/// handlers just fished a `code` field out of whatever JSON came back, so an
+/// `oauth2_error_response` — the only way the model can say "no" — parsed as "no code
+/// present", fell through to the hardcoded default, and the client received a redirect
+/// carrying a perfectly usable authorization code. A denial silently became an approval.
+pub const OAUTH2_RESULT_KEY: &str = "oauth2_result";
+
 impl OAuth2Protocol {
     /// Execute oauth2_authorize_response sync action
     fn execute_oauth2_authorize_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -176,11 +199,12 @@ impl OAuth2Protocol {
             .get("code")
             .and_then(|v| v.as_str())
             .context("Missing 'code' field")?;
-        let state = action.get("state").and_then(|v| v.as_str()).unwrap_or("");
+        let state = action.get("state").and_then(|v| v.as_str());
 
         let response = json!({
+            OAUTH2_RESULT_KEY: "authorize",
             "code": code,
-            "state": state
+            "state": state,
         });
         let bytes = serde_json::to_vec(&response)?;
         Ok(ActionResult::Output(bytes))
@@ -202,6 +226,7 @@ impl OAuth2Protocol {
             .unwrap_or(3600);
 
         let mut response = json!({
+            OAUTH2_RESULT_KEY: "token",
             "access_token": access_token,
             "token_type": token_type,
             "expires_in": expires_in
@@ -230,6 +255,7 @@ impl OAuth2Protocol {
             .unwrap_or(false);
 
         let mut response = json!({
+            OAUTH2_RESULT_KEY: "introspect",
             "active": active
         });
 
@@ -261,6 +287,7 @@ impl OAuth2Protocol {
             .context("Missing 'error' field")?;
 
         let mut response = json!({
+            OAUTH2_RESULT_KEY: "error",
             "error": error
         });
 
@@ -270,6 +297,14 @@ impl OAuth2Protocol {
         if let Some(error_uri) = action.get("error_uri").and_then(|v| v.as_str()) {
             response["error_uri"] = json!(error_uri);
         }
+        // RFC 6749 §5.2: the token/introspection endpoints answer an error with 400, except
+        // invalid_client which is 401. The model may override, but the default must never be
+        // the 200 that the previous code sent for every error.
+        let status = action
+            .get("status_code")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(if error == "invalid_client" { 401 } else { 400 });
+        response["status_code"] = json!(status);
 
         let bytes = serde_json::to_vec(&response)?;
         Ok(ActionResult::Output(bytes))
@@ -392,12 +427,20 @@ fn oauth2_introspect_response_action() -> ActionDefinition {
                 description: "Expiration timestamp".to_string(),
                 required: false,
             },
+            Parameter {
+                name: "token_type".to_string(),
+                type_hint: "string".to_string(),
+                description: "Token type, typically 'Bearer' (only echoed back when active=true)"
+                    .to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "oauth2_introspect_response",
             "active": true,
             "scope": "read write",
             "client_id": "client123",
+            "token_type": "Bearer",
             "exp": 1234567890
         }),
         log_template: Some(
@@ -432,6 +475,14 @@ fn oauth2_error_response_action() -> ActionDefinition {
                 description: "URI with error information".to_string(),
                 required: false,
             },
+            Parameter {
+                name: "status_code".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status for the error (default: 400, or 401 for invalid_client). \
+                              Ignored on /authorize, which answers errors with a redirect per RFC 6749 §4.1.2.1."
+                    .to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "oauth2_error_response",
@@ -457,8 +508,17 @@ pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_authorize",
         "OAuth2 authorization request received",
-        json!({"type": "placeholder", "event_id": "oauth2_authorize"}),
+        json!({
+            "type": "oauth2_authorize_response",
+            "code": "AUTH_CODE_xyz123",
+            "state": "echo the state parameter from the request"
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "oauth2_error_response",
+        "error": "unauthorized_client",
+        "error_description": "Client 'evilapp' is not registered"
+    }))
     .with_parameters(vec![
         Parameter {
             name: "response_type".to_string(),
@@ -491,29 +551,13 @@ pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    // These must be the *real* definitions. `call_llm` advertises `event.event_type.actions`,
+    // not `get_sync_actions()`, so the stubs that used to live here (`parameters: vec![]`,
+    // `example: json!({})`) were the entire vocabulary the model got: it was told
+    // `oauth2_authorize_response` existed but never told that it takes a `code`.
     .with_actions(vec![
-        ActionDefinition {
-            name: "oauth2_authorize_response".to_string(),
-            description: "Approve authorization and return code".to_string(),
-            parameters: vec![],
-            example: json!({}),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> OAuth2 authorize approved")
-                    .with_debug("OAuth2 oauth2_authorize_response"),
-            ),
-        },
-        ActionDefinition {
-            name: "oauth2_error_response".to_string(),
-            description: "Deny authorization with error".to_string(),
-            parameters: vec![],
-            example: json!({}),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> OAuth2 error")
-                    .with_debug("OAuth2 oauth2_error_response"),
-            ),
-        },
+        oauth2_authorize_response_action(),
+        oauth2_error_response_action(),
     ])
     .with_log_template(
         LogTemplate::new()
@@ -528,8 +572,19 @@ pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_token",
         "OAuth2 token request received",
-        json!({"type": "placeholder", "event_id": "oauth2_token"}),
+        json!({
+            "type": "oauth2_token_response",
+            "access_token": "ACCESS_xyz123",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "read write"
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "oauth2_error_response",
+        "error": "invalid_grant",
+        "error_description": "Authorization code has expired"
+    }))
     .with_parameters(vec![
         Parameter {
             name: "grant_type".to_string(),
@@ -589,28 +644,8 @@ pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![
-        ActionDefinition {
-            name: "oauth2_token_response".to_string(),
-            description: "Issue access token".to_string(),
-            parameters: vec![],
-            example: json!({}),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> OAuth2 token issued")
-                    .with_debug("OAuth2 oauth2_token_response"),
-            ),
-        },
-        ActionDefinition {
-            name: "oauth2_error_response".to_string(),
-            description: "Deny token request with error".to_string(),
-            parameters: vec![],
-            example: json!({}),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> OAuth2 token error")
-                    .with_debug("OAuth2 oauth2_error_response"),
-            ),
-        },
+        oauth2_token_response_action(),
+        oauth2_error_response_action(),
     ])
     .with_log_template(
         LogTemplate::new()
@@ -625,8 +660,19 @@ pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_introspect",
         "OAuth2 token introspection request",
-        json!({"type": "placeholder", "event_id": "oauth2_introspect"}),
+        json!({
+            "type": "oauth2_introspect_response",
+            "active": true,
+            "scope": "read write",
+            "client_id": "client123",
+            "token_type": "Bearer",
+            "exp": 1234567890
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "oauth2_introspect_response",
+        "active": false
+    }))
     .with_parameters(vec![
         Parameter {
             name: "token".to_string(),
@@ -641,17 +687,10 @@ pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
-    .with_actions(vec![ActionDefinition {
-        name: "oauth2_introspect_response".to_string(),
-        description: "Return token introspection result".to_string(),
-        parameters: vec![],
-        example: json!({}),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> OAuth2 introspect result")
-                .with_debug("OAuth2 oauth2_introspect_response"),
-        ),
-    }])
+    .with_actions(vec![
+        oauth2_introspect_response_action(),
+        oauth2_error_response_action(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("OAuth2 introspect")
@@ -664,9 +703,18 @@ pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static OAUTH2_REVOKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_revoke",
-        "OAuth2 token revocation request",
-        json!({"type": "placeholder", "event_id": "oauth2_revoke"}),
+        "OAuth2 token revocation request. RFC 7009 §2.2 requires the server to answer 200 \
+         whether or not the token existed, so the response body is fixed and no protocol \
+         action can change it; note the revocation in memory if it matters later.",
+        json!({
+            "type": "append_memory",
+            "value": "revoked token: ACCESS_xyz123"
+        }),
     )
+    // Deliberately no protocol actions, hence with_no_actions() rather than an empty list:
+    // the reply is fixed by RFC 7009 and mod.rs sends it regardless of what the model says.
+    // Left empty, `call_llm` would log a BUG and (in debug builds) trip a debug_assert.
+    .with_no_actions()
     .with_parameters(vec![
         Parameter {
             name: "token".to_string(),
