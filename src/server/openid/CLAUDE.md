@@ -1,210 +1,148 @@
-# OpenID Connect Server Implementation
+# openid — OpenID Connect provider simulator
 
-## Overview
+Serves the five OIDC endpoints over hyper HTTP/1.1 and asks the model what each should answer.
+`DevelopmentState::Experimental`, group `Authentication`, keywords `openid` / `oidc` /
+`openid connect` / `sso` / `authentication`. Feature `openid = ["urlencoding"]`.
 
-OpenID Connect (OIDC) is an authentication layer built on top of OAuth 2.0. This implementation provides a fully
-LLM-controlled OIDC provider that can handle all standard OIDC endpoints and flows.
+**Read this first: NetGet holds no signing key and performs no cryptography.** An `id_token`
+is whatever string the model returns — it is not signed here, and NetGet cannot tell a real
+JWT from `"hello"`. The JWKS served at `/jwks.json` is whatever keys the model invented; it has
+no relationship to any signature, because there are no signatures. No access token is ever
+verified, and no user exists. This is a simulator for exercising OIDC *relying parties* and for
+honeypots.
 
-## Library Choices
+That is a deliberate design, not a gap: it lets you hand a relying party an expired token, a
+token signed with the wrong key, a token with a mismatched `aud`, or a deliberately malformed
+one, just by asking. But it means the protocol must never be described as "issuing signed ID
+tokens", and `metadata()` says so.
 
-### HTTP Server
+## Files
 
-- **Hyper** (via `hyper` and `hyper-util`): HTTP/1.1 server
-- **http-body-util**: Body handling utilities
-- **bytes**: Zero-copy byte buffer handling
+| File | Contents |
+|---|---|
+| `mod.rs` | `OpenIdServer::spawn_with_llm_actions`, `classify_endpoint`, `parse_urlencoded`, `handle_llm_response`, `build_safe_response` |
+| `actions.rs` | `OpenIdProtocol` (`Protocol` + `Server`), one async and six sync actions, `OPENID_REQUEST_EVENT` |
 
-### URL Handling
+## Endpoints
 
-- **urlencoding**: Query parameter and form data encoding/decoding
+One event, `openid_request`, fires for every request. `classify_endpoint` sets `endpoint_type`
+so the model knows which endpoint it is answering:
 
-### Why No Dedicated OIDC Library?
+| Path | `endpoint_type` | Expected answer |
+|---|---|---|
+| `/.well-known/openid-configuration` | `discovery` | `send_discovery_document` |
+| `/authorize` | `authorization` | `send_authorization_response` (302) |
+| `/token` | `token` | `send_token_response` |
+| `/userinfo` | `userinfo` | `send_userinfo_response` |
+| `/jwks.json`, `/jwks` | `jwks` | `send_jwks_response` |
+| anything else | `unknown` | `send_error_response` |
 
-The Rust ecosystem lacks mature OIDC **provider** libraries. Available libraries focus on OIDC **clients** (relying
-parties):
+The event carries `method`, `path`, `query_params`, `headers`, `body`, `form_data` and
+`endpoint_type`. `form_data` is the body parsed as `application/x-www-form-urlencoded` when the
+Content-Type says so — that is where `/token` parameters (`grant_type`, `code`, `client_id`,
+`client_secret`) arrive, and it must stay declared in the event's `parameters`: the model
+cannot use a field it was never told about.
 
-- `openidconnect-rs`: Client library for consuming OIDC providers
-- `openid`: Client library supporting OIDC Core 1.0 and Discovery 1.0
+Unlike `oauth2`, routing is advisory. The server does not enforce that a `token` request is
+answered with `send_token_response`; whatever action the model returns is rendered. That is
+what makes the deliberate-misbehaviour scenarios above possible.
 
-Building a lightweight HTTP-based provider allows the LLM complete control over all responses, making this ideal for:
+## The event must carry the action list
 
-- Testing OIDC clients
-- Security research and honeypot scenarios
-- Customized authentication flows
+`call_llm` builds the model's tool list from `event.event_type.actions`, **not** from
+`get_sync_actions()`. `OPENID_REQUEST_EVENT` had no `.with_actions(...)` at all, so the prompt
+said "No specific actions available for this event", the model got only
+`set_memory` / `show_message` / `append_to_log`, and every OIDC action it produced was
+rejected as unknown, retried twice, and failed — leaving the server to answer every request
+with its `500` "LLM did not generate a response" fallback. In debug builds it also tripped the
+`debug_assert!` in `action_helper.rs`.
 
-## Architecture
+It now carries `.with_actions(OpenIdProtocol.get_sync_actions())`. Since every endpoint shares
+one event, the full sync set is correct here; do not narrow it without a reason, and if you
+ever do want an event with no protocol actions, say so with `.with_no_actions()`.
 
-### Endpoints
+`get_event_types()` is implemented so `get_protocol_docs` and the script-template prompt can
+see `openid_request`. It used to fall back to the trait's empty default while
+`get_startup_examples()` advertised an `openid_request` script handler.
 
-The server implements the following OIDC endpoints:
+## Discovery document
 
-1. **Discovery** (`/.well-known/openid-configuration`)
-    - Returns provider metadata (endpoints, supported features)
-    - Always responds with JSON
+`send_discovery_document` requires `issuer` and the four endpoint URLs. Optional
+`supported_scopes`, `supported_response_types` and `id_token_signing_alg_values_supported` are
+merged in **only when present** — the executor previously wrote `action.get(k)` straight into
+the payload, which serializes an absent key as JSON `null`, so the downstream
+`.unwrap_or(default)` never fired and a document that omitted `supported_response_types` went
+out with `"response_types_supported": null`. That field is REQUIRED and an array; relying
+parties reject `null`. Both the executor and `handle_llm_response` now filter nulls.
 
-2. **Authorization** (`/authorize`)
-    - Handles authentication and authorization requests
-    - Responds with 302 redirect containing authorization code or error
-    - Query parameters: `response_type`, `client_id`, `redirect_uri`, `scope`, `state`, etc.
+`id_token_signing_alg_values_supported` defaults to `["RS256"]` for compatibility with
+relying parties that refuse `"none"`. It is an **advertisement only** — nothing signs. If you
+tell the model to return unsigned tokens, tell it to advertise `["none"]` too, or the RP will
+reject the mismatch.
 
-3. **Token** (`/token`)
-    - Exchanges authorization code for tokens
-    - POST request with form-encoded body
-    - Returns access_token, id_token (JWT), refresh_token
+## Nothing here may panic
 
-4. **UserInfo** (`/userinfo`)
-    - Returns user profile information
-    - Requires Authorization header with access token
-    - Returns JSON with user claims (sub, name, email, etc.)
+`build_safe_response` is the only place a `Response` is constructed: an out-of-range status
+becomes 500 and a header hyper rejects is dropped with a warning.
 
-5. **JWKS** (`/jwks.json`)
-    - Provides public keys for JWT verification
-    - Returns JSON Web Key Set (JWKS)
+The previous `.body(..).unwrap()` was reachable from model output. `send_authorization_response`
+puts `redirect_uri` into the `Location` header; a value containing CR/LF makes hyper refuse the
+header, `.body()` return `Err`, and the `unwrap()` kill the connection task. (Had hyper
+accepted it, the same input would have been response splitting.) Local copy of
+`http_common::handler::build_safe_response`, which the `openid` feature cannot reach because
+`http_common` is gated on `feature = "http"`.
 
-### State Management
+`send_authorization_response` percent-encodes `code`, `state`, `error` and `error_description`
+into the redirect URL; `redirect_uri` itself is used as given.
 
-The server maintains minimal state:
+## Parsing
 
-- **Issuer URL**: Provider's base URL
-- **Supported Scopes**: OAuth scopes (default: `["openid", "profile", "email"]`)
+`parse_urlencoded` serves both the query string and form bodies. It decodes `+` as space (a
+`scope=openid+profile` body used to reach the model as `openid+profile`) and skips pairs with
+invalid percent-encoding rather than collapsing them to an empty-string key.
 
-All other state (authorization codes, tokens, user sessions) is managed by the LLM on a per-request basis.
+## Startup parameters
 
-### Request Flow
+`issuer` (string) and `supported_scopes` (array). Both are stored in `OpenIdState` and, at
+present, are **only informational** — `handle_openid_request` takes `_openid_state` and does
+not read it, so neither value reaches the model or the responses. The model must be told the
+issuer through the instruction. Either wire `OpenIdState` into the event data or drop the
+parameters; do not assume they are in effect.
 
+## Storage
+
+None, per the project rule. Authorization codes, tokens and sessions live in the model's memory
+or in a rule stated in the instruction, never in Rust. Do not add a token table.
+
+## Not implemented
+
+Signing or verification of anything, PKCE validation, device flow, dynamic client
+registration, token introspection/revocation (use the `oauth2` protocol), session management,
+and TLS.
+
+## Examples
+
+```text
+Start an OpenID Connect provider on port 8080 with issuer http://localhost:8080.
+Serve discovery, then accept any client_id at /authorize and redirect with a code.
+At /token, return an id_token whose claims are sub=user123, email=test@example.com,
+aud=<the client_id>, and a matching userinfo response.
 ```
-Client Request
-    ↓
-Classify Endpoint (discovery, authorization, token, userinfo, jwks)
-    ↓
-Parse Request (method, path, query params, headers, body, form data)
-    ↓
-Create Event → Send to LLM
-    ↓
-LLM Responds with Action (send_discovery_document, send_token_response, etc.)
-    ↓
-Build HTTP Response (JSON, redirect, etc.)
-    ↓
-Send to Client
-```
 
-### LLM Integration
-
-The LLM has complete control over:
-
-1. **Discovery Documents**: Endpoint URLs, supported features, algorithms
-2. **Authorization Responses**: Authorization codes, redirect URLs, errors
-3. **Token Generation**: JWT structure, claims, expiration, signing algorithm
-4. **User Information**: Profile data, custom claims
-5. **Public Keys**: JWKS format, key rotation
-6. **Error Handling**: OAuth error codes, descriptions
-
-#### Structured Data Pattern
-
-Following NetGet's design principles, actions use structured data instead of raw bytes:
-
-**Good** (Structured):
+Deterministic equivalent — no LLM call per request:
 
 ```json
-{
-  "type": "send_token_response",
-  "access_token": "eyJhbGci...",
-  "id_token": "eyJhbGci...",
-  "token_type": "Bearer",
-  "expires_in": 3600
-}
+"event_handlers": [{"event_pattern": "openid_request", "handler": {"type": "script",
+  "language": "python", "code":
+  "e = event.get('endpoint_type','')\nif e == 'discovery':\n    action('send_discovery_document', issuer='http://localhost:8080', authorization_endpoint='http://localhost:8080/authorize', token_endpoint='http://localhost:8080/token', userinfo_endpoint='http://localhost:8080/userinfo', jwks_uri='http://localhost:8080/jwks.json')\nelif e == 'userinfo':\n    action('send_userinfo_response', sub='user123', email='test@example.com')\nelse:\n    action('send_error_response', error='invalid_request')"}}]
 ```
 
-**Bad** (Avoided):
+## Tests
 
-```json
-{
-  "type": "send_response",
-  "data": "eyJhY2Nlc3NfdG9rZW4iOi..."  // Base64-encoded
-}
-```
+`tests/server/openid/` exists and is declared in `tests/server/mod.rs`. See
+`tests/server/openid/CLAUDE.md`.
 
-## Logging Strategy
+## References
 
-Dual logging to both `netget.log` and TUI:
-
-- **DEBUG**: Request summaries (method, path, endpoint type, size)
-- **TRACE**: Full request details (headers, body, query params, form data)
-- **INFO**: Provider configuration, connection lifecycle
-- **WARN**: OAuth errors, invalid requests
-- **ERROR**: Server errors, LLM failures
-
-Example:
-
-```
-[DEBUG] OpenID GET /.well-known/openid-configuration (discovery)
-→ OpenID GET /.well-known/openid-configuration → 200 (523 bytes)
-```
-
-## JWT Token Handling
-
-The LLM is responsible for:
-
-1. **Generating JWT tokens** (access_token, id_token)
-2. **Including proper claims** (sub, iss, aud, exp, iat, nonce)
-3. **Signing tokens** (or providing unsigned tokens for testing)
-4. **Providing matching public keys** in JWKS endpoint
-
-This design allows:
-
-- Testing with valid/invalid signatures
-- Custom claim structures
-- Expired tokens for error testing
-- Multiple signing algorithms
-
-## Limitations
-
-1. **No Built-in Cryptography**: LLM generates JWT strings directly (no automatic signing)
-2. **No Session Management**: Stateless by design (LLM manages authorization codes/tokens)
-3. **No User Database**: LLM fabricates user data for each request
-4. **HTTP Only**: HTTPS requires external reverse proxy
-5. **Single Protocol**: OAuth 2.0 flows only (no SAML, CAS, etc.)
-
-## Security Considerations
-
-This is a **testing/research** server, not production-ready:
-
-- ⚠️ No persistent state or user validation
-- ⚠️ LLM-generated tokens may not be cryptographically secure
-- ⚠️ Designed for localhost/lab environments only
-- ✅ Useful for testing OIDC clients
-- ✅ Useful for security research and fuzzing
-- ✅ Useful for honeypot scenarios
-
-## Example Prompts
-
-### Basic Provider
-
-```
-Start an OpenID Connect server on port 8080 with issuer http://localhost:8080
-```
-
-### Custom Scopes
-
-```
-Start an OIDC server on 9000 supporting scopes: openid, profile, email, admin
-```
-
-### Testing Scenario
-
-```
-Start an OIDC provider on 4443 that:
-1. Accepts any client_id
-2. Issues tokens with 1-hour expiration
-3. Includes custom claim "department": "engineering"
-```
-
-## Future Enhancements
-
-Potential improvements:
-
-- OAuth 2.0 Device Flow support
-- PKCE (Proof Key for Code Exchange) validation
-- Client registration endpoint
-- Token introspection endpoint
-- Token revocation endpoint
-- Session management endpoint
+OpenID Connect Core 1.0, OpenID Connect Discovery 1.0, RFC 7517 (JWK), RFC 6749 (the OAuth2
+layer underneath — see the `oauth2` protocol).

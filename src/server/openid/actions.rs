@@ -14,7 +14,45 @@ use tracing::{debug, error, info, warn};
 
 /// OpenID Connect request event - triggered when client sends an HTTP request to OIDC server
 pub static OPENID_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("openid_request", "HTTP request received by OpenID Connect server", json!({"type": "placeholder", "event_id": "openid_request"}))
+    EventType::new(
+        "openid_request",
+        "HTTP request received by OpenID Connect server. Answer according to endpoint_type.",
+        json!({
+            "type": "send_discovery_document",
+            "issuer": "http://localhost:8080",
+            "authorization_endpoint": "http://localhost:8080/authorize",
+            "token_endpoint": "http://localhost:8080/token",
+            "userinfo_endpoint": "http://localhost:8080/userinfo",
+            "jwks_uri": "http://localhost:8080/jwks.json"
+        }),
+    )
+    .with_alternative_example(json!({
+        "type": "send_token_response",
+        "access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImtleTEifQ.eyJzdWIiOiJ1c2VyMTIzIn0.SIGNATURE",
+        "token_type": "Bearer",
+        "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImtleTEifQ.eyJzdWIiOiJ1c2VyMTIzIn0.SIGNATURE",
+        "expires_in": 3600,
+        "scope": "openid profile email"
+    }))
+    .with_alternative_example(json!({
+        "type": "send_userinfo_response",
+        "sub": "user123",
+        "name": "John Doe",
+        "email": "john@example.com",
+        "email_verified": true
+    }))
+    .with_alternative_example(json!({
+        "type": "send_error_response",
+        "error": "invalid_client",
+        "error_description": "Client authentication failed",
+        "status_code": 401
+    }))
+    // `call_llm` builds the model's tool list from `event.event_type.actions`, NOT from
+    // `get_sync_actions()`. This list was missing entirely: the model was told
+    // "No specific actions available for this event", got only set_memory/show_message/
+    // append_to_log, and every OIDC action it invented was rejected as unknown, retried
+    // twice, and failed — so the server answered every request with its 500 fallback.
+    .with_actions(OpenIdProtocol.get_sync_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} OIDC {method} {path} ({endpoint_type}) ({duration_ms}ms)")
@@ -53,6 +91,12 @@ pub static OPENID_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
         Parameter {
+            name: "form_data".to_string(),
+            type_hint: "object".to_string(),
+            description: "Body parsed as application/x-www-form-urlencoded, when the Content-Type says so. This is where /token parameters (grant_type, code, client_id, client_secret, redirect_uri) arrive.".to_string(),
+            required: false,
+        },
+        Parameter {
             name: "endpoint_type".to_string(),
             type_hint: "string".to_string(),
             description: "OIDC endpoint type: discovery, authorization, token, userinfo, jwks, or unknown".to_string(),
@@ -88,19 +132,34 @@ impl Protocol for OpenIdProtocol {
     fn keywords(&self) -> Vec<&'static str> {
         vec!["openid", "oidc", "openid connect", "sso", "authentication"]
     }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![OPENID_REQUEST_EVENT.clone()]
+    }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Hyper HTTP server with LLM-generated JWT tokens")
-            .llm_control("All endpoints, JWT token generation, discovery documents")
+            .implementation(
+                "Hyper HTTP/1.1 server that routes the five OIDC endpoints to the model. \
+                 Simulator: NetGet holds no signing key and performs no cryptography — an \
+                 id_token is whatever string the model returns, and the JWKS it serves is \
+                 whatever the model made up.",
+            )
+            .llm_control(
+                "Discovery document, authorization redirect, token/id_token strings, userinfo \
+                 claims, JWKS contents, and error responses.",
+            )
             .e2e_testing("reqwest HTTP client")
-            .notes("Supports discovery, authorization, token, userinfo, JWKS endpoints")
+            .notes(
+                "Discovery, authorization, token, userinfo and JWKS endpoints are served, but no \
+                 ID token is signed and no access token is verified. Use it to exercise OIDC \
+                 relying parties, not to authenticate anyone.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "OpenID Connect authentication provider"
+        "OpenID Connect provider simulator (LLM-authored tokens; nothing is signed or verified)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start an OpenID Connect server for SSO on port 8080"
@@ -179,6 +238,12 @@ impl Protocol for OpenIdProtocol {
                             name: "supported_response_types".to_string(),
                             type_hint: "array".to_string(),
                             description: "Supported response types (e.g., [\"code\", \"id_token\", \"token id_token\"])".to_string(),
+                            required: false,
+                        },
+                        Parameter {
+                            name: "id_token_signing_alg_values_supported".to_string(),
+                            type_hint: "array".to_string(),
+                            description: "Signing algorithms to advertise for ID tokens (default: [\"RS256\"]). This is only an advertisement — NetGet never signs anything, so whatever you claim here must match the id_token strings and JWKS you return yourself.".to_string(),
                             required: false,
                         },
                     ],
@@ -533,17 +598,32 @@ impl Server for OpenIdProtocol {
 
                 debug!("OpenID discovery document generated");
 
+                // Carry the optional fields only when the model actually supplied them.
+                // `action.get(k)` yields `Some(Value::Null)` for a key that is present but
+                // null and serializes an absent key as `null` too, so the downstream
+                // `.unwrap_or(default)` never fired: a discovery document that omitted
+                // `supported_response_types` went out with the REQUIRED
+                // `"response_types_supported": null`, which relying parties reject.
+                let mut data = serde_json::json!({
+                    "issuer": issuer,
+                    "authorization_endpoint": authorization_endpoint,
+                    "token_endpoint": token_endpoint,
+                    "userinfo_endpoint": userinfo_endpoint,
+                    "jwks_uri": jwks_uri,
+                });
+                for key in [
+                    "supported_scopes",
+                    "supported_response_types",
+                    "id_token_signing_alg_values_supported",
+                ] {
+                    if let Some(value) = action.get(key).filter(|v| !v.is_null()) {
+                        data[key] = value.clone();
+                    }
+                }
+
                 Ok(ActionResult::Custom {
                     name: "send_discovery_document".to_string(),
-                    data: serde_json::json!({
-                        "issuer": issuer,
-                        "authorization_endpoint": authorization_endpoint,
-                        "token_endpoint": token_endpoint,
-                        "userinfo_endpoint": userinfo_endpoint,
-                        "jwks_uri": jwks_uri,
-                        "supported_scopes": action.get("supported_scopes"),
-                        "supported_response_types": action.get("supported_response_types"),
-                    }),
+                    data,
                 })
             }
             "send_authorization_response" => {

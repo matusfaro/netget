@@ -20,7 +20,7 @@ use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -63,34 +63,66 @@ fn classify_endpoint(path: &str) -> &'static str {
     }
 }
 
-/// Parse query string into key-value pairs
-fn parse_query_string(query: Option<&str>) -> HashMap<String, String> {
+/// Parse `application/x-www-form-urlencoded` data (query string or POST body).
+///
+/// `+` means space in this encoding; the previous version left it literal, so a
+/// `scope=openid+profile` body reached the model as `openid+profile`. A pair whose key or
+/// value is not valid percent-encoding is skipped rather than turned into an empty-string
+/// key, which previously made several malformed pairs overwrite one another.
+fn parse_urlencoded(input: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();
-    if let Some(q) = query {
-        for pair in q.split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                params.insert(
-                    urlencoding::decode(key).unwrap_or_default().to_string(),
-                    urlencoding::decode(value).unwrap_or_default().to_string(),
-                );
-            }
-        }
+    for pair in input.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.replace('+', " "), value.replace('+', " "));
+        let (Ok(key), Ok(value)) = (urlencoding::decode(&key), urlencoding::decode(&value)) else {
+            debug!("OpenID: skipping malformed urlencoded parameter {pair:?}");
+            continue;
+        };
+        params.insert(key.into_owned(), value.into_owned());
     }
     params
 }
 
-/// Parse URL-encoded form data
-fn parse_form_data(body: &str) -> HashMap<String, String> {
-    let mut params = HashMap::new();
-    for pair in body.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            params.insert(
-                urlencoding::decode(key).unwrap_or_default().to_string(),
-                urlencoding::decode(value).unwrap_or_default().to_string(),
-            );
+/// Build a response from parts that came from the model, without ever panicking.
+///
+/// `handle_llm_response` used to end in `.body(..).unwrap()` while feeding the builder a
+/// `location` header assembled from the model's `redirect_uri`. hyper rejects a header
+/// value containing CR/LF, `.body()` then returns `Err`, and the `unwrap()` took down the
+/// connection task. Local copy of `http_common::handler::build_safe_response`, which the
+/// `openid` feature cannot reach because `http_common` is gated on `feature = "http"`.
+fn build_safe_response(
+    status: u16,
+    headers: impl IntoIterator<Item = (String, String)>,
+    body: String,
+) -> Response<Full<Bytes>> {
+    let status_code = hyper::StatusCode::from_u16(status).unwrap_or_else(|_| {
+        error!("OpenID: invalid HTTP status {status}, sending 500 instead");
+        hyper::StatusCode::INTERNAL_SERVER_ERROR
+    });
+
+    let mut builder = Response::builder().status(status_code);
+    for (name, value) in headers {
+        match (
+            hyper::header::HeaderName::from_bytes(name.as_bytes()),
+            hyper::header::HeaderValue::from_str(&value),
+        ) {
+            (Ok(n), Ok(v)) => builder = builder.header(n, v),
+            _ => warn!("OpenID: dropping invalid response header {name:?}"),
         }
     }
-    params
+
+    builder
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|e| {
+            error!("OpenID: failed to build response ({e}), sending bare 500");
+            let mut fallback = Response::new(Full::new(Bytes::from_static(
+                br#"{"error":"server_error"}"#.as_slice(),
+            )));
+            *fallback.status_mut() = hyper::StatusCode::INTERNAL_SERVER_ERROR;
+            fallback
+        })
 }
 
 /// Handle LLM response and process actions
@@ -126,12 +158,24 @@ async fn handle_llm_response(
                             "token_endpoint": data["token_endpoint"],
                             "userinfo_endpoint": data["userinfo_endpoint"],
                             "jwks_uri": data["jwks_uri"],
-                            "response_types_supported": data.get("supported_response_types").cloned().unwrap_or(json!(["code", "id_token", "token id_token"])),
+                            "response_types_supported": data
+                                .get("supported_response_types")
+                                .filter(|v| !v.is_null())
+                                .cloned()
+                                .unwrap_or(json!(["code", "id_token", "token id_token"])),
                             "subject_types_supported": ["public"],
-                            "id_token_signing_alg_values_supported": ["RS256"],
+                            // Advertisement only — NetGet signs nothing. The model chooses what
+                            // to claim here so it can stay consistent with the id_token strings
+                            // and JWKS it serves; RS256 stays the default for compatibility with
+                            // relying parties that reject "none".
+                            "id_token_signing_alg_values_supported": data
+                                .get("id_token_signing_alg_values_supported")
+                                .filter(|v| !v.is_null())
+                                .cloned()
+                                .unwrap_or(json!(["RS256"])),
                         });
 
-                        if let Some(scopes) = data.get("supported_scopes") {
+                        if let Some(scopes) = data.get("supported_scopes").filter(|v| !v.is_null()) {
                             discovery["scopes_supported"] = scopes.clone();
                         }
 
@@ -292,17 +336,11 @@ async fn handle_llm_response(
         }
     ));
 
-    // Build the HTTP response
-    let mut response = Response::builder().status(status_code);
-
-    // Add headers
-    for (name, value) in response_headers {
-        response = response.header(name, value);
-    }
-
-    Ok(response
-        .body(Full::new(Bytes::from(response_body)))
-        .unwrap())
+    Ok(build_safe_response(
+        status_code,
+        response_headers,
+        response_body,
+    ))
 }
 
 /// OpenID Connect server that uses LLM to handle all endpoints
@@ -498,7 +536,7 @@ async fn handle_openid_request(
     let body_text = String::from_utf8_lossy(&body_bytes).to_string();
 
     // Parse query parameters
-    let query_params = parse_query_string(query_str.as_deref());
+    let query_params = query_str.as_deref().map(parse_urlencoded).unwrap_or_default();
 
     // Parse form data if Content-Type is application/x-www-form-urlencoded
     let form_data = if headers
@@ -506,7 +544,7 @@ async fn handle_openid_request(
         .map(|v| v.contains("application/x-www-form-urlencoded"))
         .unwrap_or(false)
     {
-        parse_form_data(&body_text)
+        parse_urlencoded(&body_text)
     } else {
         HashMap::new()
     };
@@ -572,17 +610,15 @@ async fn handle_openid_request(
             error!("LLM error generating OpenID response: {}", e);
             let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, path, e));
 
-            Ok(Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": "server_error",
-                        "error_description": "Failed to generate response"
-                    })
-                    .to_string(),
-                )))
-                .unwrap())
+            Ok(build_safe_response(
+                500,
+                [("content-type".to_string(), "application/json".to_string())],
+                json!({
+                    "error": "server_error",
+                    "error_description": "Failed to generate response"
+                })
+                .to_string(),
+            ))
         }
     }
 }
