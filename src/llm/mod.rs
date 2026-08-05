@@ -6,6 +6,7 @@
 pub mod action_helper;
 pub mod actions; // Centralized helper for LLM calls
 pub mod agent_queue; // Agent-answered LLM request queue (MCP --llm-agent mode)
+pub mod circuit_breaker; // Fail-fast guard for an unreachable LLM backend
 pub mod conversation; // Conversation-based LLM interaction
 pub mod conversation_state; // Conversation history management
 pub mod default_instructions; // Default instructions registry
@@ -66,6 +67,12 @@ pub use ollama_client::Message;
 
 // Agent-answered LLM request queue
 pub use agent_queue::{LlmRequestQueue, PendingLlmRequest};
+
+// LLM backend circuit breaker
+pub use circuit_breaker::{
+    BreakerOpen, BreakerState, BreakerStatus, CircuitBreaker, DEFAULT_COOLDOWN,
+    DEFAULT_FAILURE_THRESHOLD,
+};
 
 // Event instructions
 pub use default_instructions::{resolve_instructions, DEFAULT_INSTRUCTIONS};

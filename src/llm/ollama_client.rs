@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::llm::actions::{
     execute_tool, summarize_actions, ActionResponse, ToolAction, ToolResult,
 };
+use crate::llm::circuit_breaker::{is_transport_failure, BreakerStatus, CircuitBreaker};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ollama_rs::generation::completion::request::GenerationRequest;
@@ -388,6 +389,9 @@ impl std::str::FromStr for CommandInterpretation {
     }
 }
 
+/// Default per-request wall-clock bound for a backend call.
+pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// LLM API client supporting Ollama and OpenAI-compatible backends
 #[derive(Clone)]
 pub struct OllamaClient {
@@ -395,6 +399,10 @@ pub struct OllamaClient {
     status_tx: Option<mpsc::UnboundedSender<String>>,
     mock_config_file: Option<std::path::PathBuf>,
     app_state: Option<crate::state::AppState>,
+    /// Shared across clones, so every caller sees the same backend health.
+    breaker: std::sync::Arc<CircuitBreaker>,
+    /// Wall-clock bound on a single backend call.
+    request_timeout: std::time::Duration,
 }
 
 impl OllamaClient {
@@ -430,6 +438,8 @@ impl OllamaClient {
             status_tx: None,
             mock_config_file: None,
             app_state: None,
+            breaker: std::sync::Arc::new(CircuitBreaker::default()),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 
@@ -442,6 +452,8 @@ impl OllamaClient {
             status_tx: None,
             mock_config_file: None,
             app_state: None,
+            breaker: std::sync::Arc::new(CircuitBreaker::default()),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 
@@ -466,6 +478,8 @@ impl OllamaClient {
             status_tx: None,
             mock_config_file: None,
             app_state: None,
+            breaker: std::sync::Arc::new(CircuitBreaker::default()),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 
@@ -480,6 +494,8 @@ impl OllamaClient {
             status_tx: None,
             mock_config_file: None,
             app_state: None,
+            breaker: std::sync::Arc::new(CircuitBreaker::default()),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 
@@ -524,6 +540,94 @@ impl OllamaClient {
         self
     }
 
+    /// Override the wall-clock bound on a single backend call
+    /// (default [`DEFAULT_REQUEST_TIMEOUT`]).
+    pub fn with_request_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
+    /// Replace the circuit breaker (thresholds are per-breaker; see
+    /// [`crate::llm::circuit_breaker`]).
+    ///
+    /// The breaker is shared by every clone of this client, so one backend outage is
+    /// observed once rather than rediscovered by each connection.
+    pub fn with_circuit_breaker(mut self, breaker: std::sync::Arc<CircuitBreaker>) -> Self {
+        self.breaker = breaker;
+        self
+    }
+
+    /// The shared circuit breaker guarding this client's backend.
+    pub fn circuit_breaker(&self) -> &std::sync::Arc<CircuitBreaker> {
+        &self.breaker
+    }
+
+    /// Snapshot of backend health — a server whose breaker has tripped should say so.
+    pub fn circuit_breaker_status(&self) -> BreakerStatus {
+        self.breaker.status()
+    }
+
+    /// Whether the breaker guards this backend.
+    ///
+    /// The agent-queue backend is excluded: its "timeouts" mean the calling MCP agent has
+    /// not answered yet, which is not a transport fault, and tripping on a slow human-driven
+    /// agent would break the `--llm-agent` flow outright.
+    fn breaker_applies(&self) -> bool {
+        matches!(
+            self.backend,
+            LlmBackend::Ollama(_) | LlmBackend::OpenAI { .. }
+        )
+    }
+
+    /// Fail fast if the backend is known to be down.
+    fn breaker_guard(&self) -> Result<()> {
+        if !self.breaker_applies() {
+            return Ok(());
+        }
+        match self.breaker.acquire() {
+            Ok(()) => Ok(()),
+            Err(open) => {
+                debug!("Short-circuiting LLM request: {}", open);
+                if let Some(ref tx) = self.status_tx {
+                    let _ = tx.send(format!("[WARN] {}", self.breaker.status().summary()));
+                }
+                Err(anyhow::Error::new(open))
+            }
+        }
+    }
+
+    /// Feed a request outcome back into the breaker and pass the result through unchanged.
+    fn record_backend_outcome<T>(&self, result: Result<T>) -> Result<T> {
+        if !self.breaker_applies() {
+            return result;
+        }
+
+        match &result {
+            Ok(_) => self.breaker.record_success(),
+            Err(e) if is_transport_failure(e) => {
+                let summary = format!("{:#}", e);
+                if self.breaker.record_failure(&summary) {
+                    let status = self.breaker.status();
+                    error!("{}", status.summary());
+                    if let Some(ref tx) = self.status_tx {
+                        let _ = tx.send(format!("[ERROR] {}", status.summary()));
+                    }
+                } else {
+                    warn!(
+                        "LLM transport failure {}/{} before the circuit breaker opens: {}",
+                        self.breaker.status().consecutive_failures,
+                        self.breaker.failure_threshold(),
+                        crate::utils::truncate_for_log(&summary, 200)
+                    );
+                }
+            }
+            // The backend answered, it just answered with an error. Transport is fine.
+            Err(_) => self.breaker.record_success(),
+        }
+
+        result
+    }
+
     /// Generate a completion from the model with optional JSON schema
     ///
     /// IMPORTANT: This method is crate-private. Use `action_helper::call_llm_with_actions()`
@@ -543,6 +647,19 @@ impl OllamaClient {
     /// for network event handling, or the specialized methods like generate_command_interpretation()
     /// for user command interpretation.
     pub(crate) async fn generate_with_format(
+        &self,
+        model: &str,
+        prompt: &str,
+        format: Option<serde_json::Value>,
+    ) -> Result<GenerateResponse> {
+        // Fail immediately if the backend is already known to be down, rather than paying
+        // another full request timeout to rediscover it. See `crate::llm::circuit_breaker`.
+        self.breaker_guard()?;
+        let result = self.generate_with_format_inner(model, prompt, format).await;
+        self.record_backend_outcome(result)
+    }
+
+    async fn generate_with_format_inner(
         &self,
         model: &str,
         prompt: &str,
@@ -604,11 +721,11 @@ impl OllamaClient {
                 }
 
                 let api_response = tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
+                    self.request_timeout,
                     ollama.generate(request),
                 )
                 .await
-                .context("Ollama API call timed out after 120 seconds.\n   Please check:\n   1. Ollama is running (https://ollama.ai)\n   2. Model is loaded and ready\n   3. Use `/model` to list and select a model")?
+                .with_context(|| format!("Ollama API call timed out after {:?}.\n   Please check:\n   1. Ollama is running (https://ollama.ai)\n   2. Model is loaded and ready\n   3. Use `/model` to list and select a model", self.request_timeout))?
                 .map_err(|e| {
                     let error_str = e.to_string().to_lowercase();
                     if error_str.contains("connection") || error_str.contains("refused") || error_str.contains("connect") {
@@ -646,7 +763,7 @@ impl OllamaClient {
                 let url = format!("{}/v1/chat/completions", base_url);
 
                 let http_response = tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
+                    self.request_timeout,
                     client
                         .post(&url)
                         .header("Authorization", format!("Bearer {}", api_key))
@@ -655,7 +772,9 @@ impl OllamaClient {
                         .send(),
                 )
                 .await
-                .context("OpenAI API call timed out after 120 seconds")?
+                .with_context(|| {
+                    format!("OpenAI API call timed out after {:?}", self.request_timeout)
+                })?
                 .context("OpenAI API request failed")?;
 
                 let status = http_response.status();
@@ -813,6 +932,13 @@ impl OllamaClient {
     /// # Returns
     /// * `Ok(ChatResponse)` - Response with optional content and tool calls
     pub(crate) async fn chat_with_tools(&self, request: &ChatRequest) -> Result<ChatResponse> {
+        // See `generate_with_format`: fail fast while the backend is known to be down.
+        self.breaker_guard()?;
+        let result = self.chat_with_tools_inner(request).await;
+        self.record_backend_outcome(result)
+    }
+
+    async fn chat_with_tools_inner(&self, request: &ChatRequest) -> Result<ChatResponse> {
         debug!(
             "Chat request: model={}, messages={}, tools={}",
             request.model,
@@ -1008,11 +1134,16 @@ impl OllamaClient {
 
         let http_client = reqwest::Client::new();
         let http_response = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
+            self.request_timeout,
             http_client.post(&url).json(&body).send(),
         )
         .await
-        .context("Ollama chat API call timed out after 120 seconds")?
+        .with_context(|| {
+            format!(
+                "Ollama chat API call timed out after {:?}",
+                self.request_timeout
+            )
+        })?
         .context("Ollama chat API request failed")?;
 
         let status = http_response.status();
@@ -1106,7 +1237,7 @@ impl OllamaClient {
         let url = format!("{}/v1/chat/completions", base_url);
 
         let http_response = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
+            self.request_timeout,
             client
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", api_key))
@@ -1478,6 +1609,10 @@ impl OllamaClient {
     }
 
     /// Check if the LLM backend is available
+    ///
+    /// This is a probe, not a guard: it costs a round trip and races with the next real
+    /// request. Callers wanting "do not attempt a doomed request" want the circuit breaker
+    /// ([`Self::circuit_breaker_status`]), which is fed by the requests themselves.
     pub async fn is_available(&self) -> bool {
         self.list_models().await.is_ok()
     }
@@ -1486,9 +1621,17 @@ impl OllamaClient {
     pub async fn list_models(&self) -> Result<Vec<String>> {
         match &self.backend {
             LlmBackend::Ollama(ollama) => {
-                let models = ollama
-                    .list_local_models()
+                // ollama-rs applies no timeout of its own, so an unreachable host that
+                // silently drops packets would hang this call — and `is_available()` with it
+                // — indefinitely.
+                let models = tokio::time::timeout(self.request_timeout, ollama.list_local_models())
                     .await
+                    .with_context(|| {
+                        format!(
+                            "Listing Ollama models timed out after {:?}",
+                            self.request_timeout
+                        )
+                    })?
                     .map_err(|e| anyhow::anyhow!("Failed to list models: {}", e))?;
                 Ok(models.into_iter().map(|m| m.name).collect())
             }
