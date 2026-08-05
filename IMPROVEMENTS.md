@@ -986,6 +986,63 @@ early data could be processed against a missing entry. Fixed there; the same sha
 - `src/server/openvpn/actions.rs:194` still shows `{"type": "no_action"}` in a startup example;
   `no_action` exists nowhere in NetGet.
 
+### 71. Running tally of remotely-reachable crashes **[verified]**
+
+Ten found and fixed this session, all in socket tasks where a panic is silent while the server
+still reports `Running`. Collected here because the *pattern* is the finding: every one is a
+length or size field taken from the wire, or a string taken from model output, used without a
+bound.
+
+| Protocol | Trigger |
+|---|---|
+| DHCP / BOOTP | one datagram declaring `hlen > 16`; `chaddr()` slices a `[u8; 16]` with it |
+| Kafka | four zero bytes shrink a read buffer the next iteration indexes |
+| MongoDB | `(message_length - 16) as usize` on a signed `i32`; `messageLength=0` → ~18 EB allocation |
+| ZooKeeper | a path length cast to `usize` before validation: `-1` → `usize::MAX`, `12 + usize::MAX` wraps to `11`, passes a `len >= 11` guard, then `&payload[12..11]` panics with start > end |
+| gRPC | one non-ASCII character in the model's error text; `grpc-message` → `HeaderValue`, which accepts visible ASCII only. Worse: cleanup runs *after* `serve_connection().await`, so the panic skipped it and leaked the connection as permanently `Active` |
+| Cassandra | frame length read as `u32` with no cap while `read_buf` grows a `BytesMut` — declare 4 GiB, dribble, OOM |
+| OAuth2 | `?redirect_uri=…%0D%0A` — percent-decoded CRLF into the `Location` header |
+| Tor relay | `relay_payload[11..11 + length]` with a `u16` length up to 65535 in a 509-byte buffer |
+| Bitcoin | `get_mut(..).unwrap()` after the lock was released — any peer disconnecting mid-flight |
+| Proxy / MySQL | `&request_str[..200]` on lossy-decoded text; `ErrorKind::from(u16)` panics on an unknown code fed from model output |
+
+Worth a standing check when touching any binary protocol: every length field validated against
+the remaining buffer *before* widening, every `as usize` on a signed value rejected if negative,
+and every model-supplied string that becomes a header validated for what that header accepts.
+
+### 72. Two more protocols no real client can talk to **[verified]**
+
+Same shape as Kafka and TURN, bringing that group to five.
+
+- **ZooKeeper** → `Incomplete`. A `ConnectRequest` carries neither xid nor opcode, but
+  `parse_request` reads bytes 0..4 as the xid and 4..8 as the opcode — so a connect is reported
+  as `operation: "unknown"` and the `ConnectResponse` the client blocks on is never produced.
+  Its E2E test hand-builds bytes over a raw `TcpStream` and never sends a ConnectRequest, which
+  is exactly why this survived.
+- **etcd** kept `Experimental` but was badly wired: `handle_put` looked for `etcd_put_response`
+  and `handle_delete_range` for `etcd_delete_range_response`, while `execute_action` accepted
+  only `etcd_range_response`/`etcd_error` and rejected both as unknown. Put could not set its
+  revision, DeleteRange always reported `deleted 0`, "key not found" became an empty success,
+  and `handle_txn` hardcoded `succeeded: false` — so **every distributed-lock acquisition
+  failed**.
+
+Also: Cassandra's `serialize_cell_value` took `_col_type` and ignored it, so an `int` column
+given `"5"` went on the wire as the ASCII byte `0x35`.
+
+### 73. Tests mocking another protocol's action names **[verified]**
+
+Third instance of this exact shape, so it is a pattern rather than a slip:
+
+- `tests/server/oauth2/e2e_test.rs:227` mocks `send_token_response` — an *openid* action name.
+  It passed only because the fail-open default masked the rejection (item 62).
+- `tests/server/mcp/e2e_test.rs` (7 sites) mocks `send_jsonrpc_response` — a *jsonrpc* action.
+  4 of 9 MCP tests fail on it, identically before and after this session's changes.
+- `tests/server/http/test.rs` answered a network event with `write_file`, which HTTP does not
+  offer (fixed in `2528629`).
+
+The action-name validation added in `0069d90c` catches this at `start_server` time for
+handlers. Extending the same check to mock rules would catch it in tests.
+
 ---
 
 ## Suggested order
