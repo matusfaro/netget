@@ -21,6 +21,7 @@ impl BluetoothBleBeacon {
     /// Spawn BLE beacon server
     #[cfg(feature = "bluetooth-ble-beacon")]
     pub async fn spawn_with_llm_actions(
+        device_name: String,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
@@ -29,16 +30,19 @@ impl BluetoothBleBeacon {
     ) -> Result<std::net::SocketAddr> {
         info!("Starting BLE Beacon server");
 
-        // Create the underlying BLE server with beacon configuration
+        // The base stack cannot set advertising payload bytes, so no iBeacon or Eddystone frame
+        // can actually be emitted (see the module docs and actions.rs). Say so in the
+        // instruction rather than letting the model believe it is broadcasting a beacon.
         let beacon_instruction = format!(
-            "Configure as a BLE beacon for advertising only. Do not accept connections. {} {}",
-            instruction,
-            "Use advertising packets to broadcast beacon data (iBeacon or Eddystone format)."
+            "{}. NOTE: this server can only advertise a device name and a list of service \
+             UUIDs. It cannot emit iBeacon or Eddystone manufacturer/service advertising data, \
+             so no beacon scanner will recognise it. Say so if asked to act as a beacon.",
+            instruction.trim_end_matches('.')
         );
 
         // Use the base bluetooth-ble server
         BluetoothBle::spawn_with_llm_actions(
-            "NetGet-Beacon".to_string(),
+            device_name,
             llm_client,
             app_state,
             status_tx,
@@ -52,6 +56,7 @@ impl BluetoothBleBeacon {
 #[cfg(not(feature = "bluetooth-ble-beacon"))]
 impl BluetoothBleBeacon {
     pub async fn spawn_with_llm_actions(
+        _device_name: String,
         _llm_client: OllamaClient,
         _app_state: Arc<AppState>,
         _status_tx: mpsc::UnboundedSender<String>,

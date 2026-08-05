@@ -1,333 +1,140 @@
-# BLE Beacon Implementation
+# BLE Beacon (iBeacon / Eddystone)
 
-## Overview
+**Maturity: Incomplete.** BLE beacon (iBeacon / Eddystone) - INCOMPLETE: the base stack cannot set the manufacturer/service advertising data a beacon requires
 
-Bluetooth Low Energy (BLE) beacon server that broadcasts proximity/location data. Supports both iBeacon (Apple) and
-Eddystone (Google) standards. Beacons are advertisement-only - they do not accept connections, just broadcast data.
+## Why this is Incomplete (hidden from the LLM)
 
-## Architecture
+A beacon is defined entirely by its advertising payload: iBeacon needs Apple manufacturer-specific data and Eddystone needs 0xFEAA service data. The base stack's start_advertising only accepts a device name and a list of service UUIDs, and ble-peripheral-rust 0.2 exposes no way to set advertising payload bytes at all. Nothing this protocol can emit is recognisable to a beacon scanner, so it is marked Incomplete and hidden from the LLM rather than advertised as working. The iBeacon and Eddystone frame builders in mod.rs are correct but have nothing to feed.
 
-### Layered Design
+`is_available_to_llm()` returns false for `Incomplete`, so the model is never offered this protocol and cannot select a server it would be unable to make behave like a beacon. It remains startable explicitly, and the instruction the wrapper builds tells the model plainly that it cannot emit beacon frames.
 
-```
-bluetooth-ble-beacon (High-level)
-    ↓
-bluetooth-ble (Low-level GATT)
-    ↓
-ble-peripheral-rust (Platform backends)
-```
+To finish it, the base stack needs a `start_advertising` that accepts manufacturer-specific and service advertising data, which in turn needs `ble-peripheral-rust` to expose it. The `ibeacon` and `eddystone` frame builders in `mod.rs` are correct and ready for that day; they are currently unreachable.
 
-### Advertisement-Only Protocol
+## What this protocol actually is
 
-Unlike keyboard/mouse, beacons:
+A thin wrapper over the `bluetooth-ble` base stack. `spawn` reads `device_name`, fetches the
+user's instruction from server state, appends a profile sentence to it, and hands the whole
+thing to `BluetoothBle::spawn_with_llm_actions`. There is no other profile-specific code.
 
-- **Do not accept connections** - purely broadcast
-- **No GATT services** - only advertising packets
-- **Low power** - designed for battery-powered devices
-- **Proximity-based** - RSSI (signal strength) indicates distance
+That matters more than it sounds, because the base **hardcodes `BluetoothBleProtocol`** when it
+calls `call_llm` (`src/server/bluetooth_ble/mod.rs`, the `protocol` local passed to
+`call_llm`/`call_llm_for_event`). Consequences:
 
-## Supported Beacon Types
+- The only events ever emitted for this server are the base's five.
+- The only actions the model is ever offered are the ones those event types carry via
+  `.with_actions(...)` — `call_llm` builds its tool list from `event.event_type.actions`, not
+  from `get_sync_actions()`.
+- The only actions that ever execute are the ones `BluetoothBle::execute_action` matches.
 
-### 1. iBeacon (Apple Standard)
+So this protocol declares **no actions and no events of its own**, and delegates
+`get_async_actions`, `get_sync_actions`, `get_event_types` and `execute_action` to
+`BluetoothBleProtocol` — the same shape `doh` and `dot` use to forward `DnsProtocol`'s set.
+Anything else would be a documented vocabulary that no code path can reach: the model would be
+told about `set_x`, return it, and have it rejected as an unknown action, while an
+`event_handlers` entry keyed on a profile-specific event id would validate at startup and then
+never fire.
 
-**Format**: Company ID (Apple) + 128-bit UUID + Major + Minor + TX Power
+**Do not add profile-specific actions or events here.** They belong in the base stack's
+executor, or nowhere.
 
-**Use Cases**:
+## Actions (delegated from `bluetooth-ble`)
 
-- Indoor positioning
-- Proximity marketing
-- Asset tracking
-- Attendance tracking
+| Action | Kind | Purpose |
+|---|---|---|
+| `add_service` | async | Add a GATT service and its characteristics |
+| `start_advertising` | async | Become discoverable |
+| `stop_advertising` | async | Stand down |
+| `send_notification` | async | Push a new characteristic value to subscribers |
+| `respond_to_read` | sync | Answer `bluetooth_read_request` |
+| `respond_to_write` | sync | Acknowledge `bluetooth_write_request` |
 
-**Advertising Data (30 bytes)**:
+## Events (delegated from `bluetooth-ble`)
 
-```
-[0-2]:   Flags (0x02, 0x01, 0x06)
-[3-4]:   Manufacturer specific data length (0x1A, 0xFF)
-[5-6]:   Apple company ID (0x4C, 0x00)
-[7]:     iBeacon type (0x02)
-[8]:     iBeacon length (0x15 = 21 bytes)
-[9-24]:  UUID (16 bytes)
-[25-26]: Major (2 bytes, big-endian)
-[27-28]: Minor (2 bytes, big-endian)
-[29]:    TX Power (1 byte, signed dBm)
-```
+| Event | Offered actions |
+|---|---|
+| `bluetooth_ble_started` | `add_service`, `start_advertising` |
+| `bluetooth_state_changed` | `start_advertising`, `stop_advertising` |
+| `bluetooth_read_request` | `respond_to_read` |
+| `bluetooth_write_request` | `respond_to_write`, `send_notification` |
+| `bluetooth_subscribe` | `send_notification` |
 
-### 2. Eddystone-UID (Google Standard)
+Script and static handlers registered against these ids are dispatched by
+`try_execute_event_handler` inside `call_llm`, so a handled event costs no model call.
 
-**Format**: Service UUID (Eddystone) + Namespace (10 bytes) + Instance (6 bytes)
+## GATT layout this profile suggests
 
-**Use Cases**:
+Nothing enforces this — the LLM (or a static handler) builds the services with `add_service`. It is what the startup examples in `actions.rs` construct and what the instruction preamble asks for.
 
-- Indoor navigation
-- Asset identification
-- Location-based services
+- **`12345678-1234-5678-1234-567812345678`**
+  - `00002a19-0000-1000-8000-00805f9b34fb` [read] — initial value `64`
 
-**Advertising Data (31 bytes)**:
+## UUIDs must be written in full 128-bit form
 
-```
-[0-1]:   Complete 16-bit UUID list (0x03, 0x03)
-[2-3]:   Eddystone UUID (0xAA, 0xFE)
-[4-5]:   Service data length (0x17, 0x16)
-[6-7]:   Eddystone UUID (0xAA, 0xFE)
-[8]:     Frame type UID (0x00)
-[9]:     TX Power (signed dBm)
-[10-19]: Namespace (10 bytes)
-[20-25]: Instance (6 bytes)
-[26-27]: RFU reserved (0x00, 0x00)
-```
+The base parses every service and characteristic UUID with `uuid::Uuid::parse_str`, which
+accepts the 36-character hyphenated form (and the 32-character simple form) and **rejects the
+16-bit Bluetooth SIG shorthand**. `"180D"` does not parse, and `add_service` fails with
+"Invalid service UUID". There is no expansion helper anywhere in the tree, despite
+`src/server/bluetooth_ble/CLAUDE.md` claiming `"180D"` is "expanded to"
+`0000180d-0000-1000-8000-00805f9b34fb`.
 
-### 3. Eddystone-URL
+Every UUID in this protocol's startup examples is therefore written out in full. Alias `XXXX`
+expands to `0000XXXX-0000-1000-8000-00805f9b34fb`.
 
-**Format**: Service UUID + URL scheme code + compressed URL
+## Data format: hex, and why that is not a rule violation
 
-**Use Cases**:
+The project rule is that actions must not carry raw bytes or base64, because models cannot
+reliably produce or parse them. GATT is the honest exception: a characteristic value *is* an
+opaque byte string defined by a Bluetooth SIG spec, and there is no structured field set that
+could replace it without inventing a per-characteristic schema for all of the assigned numbers.
 
-- Physical web (broadcast URLs)
-- Contactless information sharing
-- Marketing campaigns
+The base therefore uses lowercase hex strings for `initial_value`, `send_notification.value`,
+`respond_to_read.value` and the inbound `bluetooth_write_request.value`, and it really does
+decode them (`hex::decode`, with an optional `0x` prefix stripped) — the documented encoding and
+the executor agree, in both directions.
 
-**URL Scheme Codes**:
+Hex is a deliberate choice over base64: models handle short hex well, and it maps one-to-one
+onto the byte layouts printed in the SIG specifications.
 
-- `0x00`: http://www.
-- `0x01`: https://www.
-- `0x02`: http://
-- `0x03`: https://
+## No storage
 
-**Limitations**:
+This protocol stores nothing. The base keeps the last written/notified value per characteristic
+purely so a read with no `respond_to_read` in the LLM's reply can fall back to the current
+value; that is transport state, not a database. All profile data comes from the instruction,
+the LLM, or a script/static handler.
 
-- Max ~17 characters after scheme
-- No URL encoding for special characters
+## Privilege and platform
 
-### 4. Eddystone-TLM (Telemetry)
+BLE peripheral mode needs **Bluetooth adapter access, not a port**. `PrivilegeRequirement` has
+no variant for that (`None` / `PrivilegedPort` / `RawSockets` / `Root`), so the declaration is
+left at the default `None`: claiming `Root` would be false — Bluetooth needs no root on macOS or
+Windows — and would make `server_startup.rs` refuse to start for unprivileged users who can in
+fact use the adapter. See the out-of-scope note in the review notes: the metadata enum needs an
+`AdapterAccess`-style variant before this can be declared honestly.
 
-**Format**: Battery voltage + Temperature + Advertisement count + Uptime
+Platform requirements come from `ble-peripheral-rust` 0.2: BlueZ + `bluetoothd` + D-Bus on
+Linux (feature needs `libdbus-1-dev`), CoreBluetooth on macOS, WinRT on Windows 10+.
 
-**Use Cases**:
+## Startup failure behaviour
 
-- Beacon health monitoring
-- Battery status tracking
-- Environmental monitoring
+Failures propagate correctly — this protocol does **not** have the ARP/DataLink/ICMP defect of
+reporting `Running` while doing nothing. `spawn` is awaited by `server_startup.rs`, which turns
+an `Err` into `ServerStatus::Error`. Two failure paths exist, both in the base:
 
-**Advertising Data (25 bytes)**:
+1. `Peripheral::new()` fails → `Error("Failed to create BLE peripheral: …")`.
+2. The adapter never reports powered → the base polls `is_powered()` 20 times at 500 ms and
+   bails → `Error("Bluetooth adapter failed to power on after 10 seconds")`.
 
-```
-[0-7]:   Eddystone header
-[8]:     Frame type TLM (0x20)
-[9]:     TLM version (0x00)
-[10-11]: Battery voltage (mV, big-endian)
-[12-13]: Temperature (8.8 fixed point, big-endian)
-[14-17]: Advertisement count (big-endian)
-[18-21]: Uptime (0.1s resolution, big-endian)
-```
+Verified on macOS: `Peripheral::new()` succeeds and `is_powered()` returns `false` on the first
+poll and `true` on the second, so the retry loop is load-bearing rather than decorative. Path 2
+is what a user with Bluetooth switched off, no adapter, or a denied CoreBluetooth permission
+gets. The refusal is clear, but the message attributes all three causes to "not powered on".
 
-## LLM Actions
+## Startup parameters
 
-### advertise_ibeacon
+- `device_name` (string, optional) — advertised name, default `NetGet-Beacon`
 
-Start advertising as an iBeacon.
+Declared in `get_startup_parameters()`. That is not optional: `StartupParams` **panics** on an undeclared key, and the JSON comes from the LLM or an MCP client.
 
-```json
-{
-  "type": "advertise_ibeacon",
-  "uuid": "12345678-1234-5678-1234-567812345678",
-  "major": 1,
-  "minor": 100,
-  "tx_power": -59
-}
-```
+## Testing
 
-**Parameters**:
-
-- `uuid`: 128-bit UUID (identifies beacon family)
-- `major`: 16-bit identifier (e.g., store ID)
-- `minor`: 16-bit identifier (e.g., department ID)
-- `tx_power`: Calibrated TX power at 1m (default: -59 dBm)
-
-### advertise_eddystone_uid
-
-Start advertising as Eddystone-UID.
-
-```json
-{
-  "type": "advertise_eddystone_uid",
-  "namespace": "0123456789abcdef0123",
-  "instance": "0123456789ab",
-  "tx_power": -20
-}
-```
-
-**Parameters**:
-
-- `namespace`: 10-byte namespace ID (hex string)
-- `instance`: 6-byte instance ID (hex string)
-- `tx_power`: Calibrated TX power at 0m (default: -20 dBm)
-
-### advertise_eddystone_url
-
-Start advertising as Eddystone-URL.
-
-```json
-{
-  "type": "advertise_eddystone_url",
-  "url": "https://example.com",
-  "tx_power": -20
-}
-```
-
-**Parameters**:
-
-- `url`: URL to broadcast (max ~17 chars after scheme)
-- `tx_power`: Calibrated TX power at 0m (default: -20 dBm)
-
-**URL Requirements**:
-
-- Must start with `http://` or `https://`
-- Body limited to ~17 characters
-- No special character encoding
-
-### advertise_eddystone_tlm
-
-Start advertising as Eddystone-TLM.
-
-```json
-{
-  "type": "advertise_eddystone_tlm",
-  "battery_voltage": 3000,
-  "temperature": 22.5,
-  "adv_count": 0,
-  "uptime": 0
-}
-```
-
-**Parameters**:
-
-- `battery_voltage`: Voltage in mV (0-65535)
-- `temperature`: Temperature in Celsius
-- `adv_count`: Advertisement count since boot
-- `uptime`: Uptime in seconds
-
-### stop_beacon
-
-Stop beacon advertising.
-
-```json
-{
-  "type": "stop_beacon"
-}
-```
-
-## Events
-
-### beacon_started
-
-```json
-{
-  "event": "beacon_started",
-  "beacon_type": "ibeacon"
-}
-```
-
-### beacon_stopped
-
-```json
-{
-  "event": "beacon_stopped"
-}
-```
-
-## Example Usage
-
-### Indoor Positioning System
-
-```
-User: "Act as an iBeacon for store ID 5, department 12. Use UUID 12345678-1234-5678-1234-567812345678"
-
-LLM: advertise_ibeacon("12345678-1234-5678-1234-567812345678", 5, 12, -59)
-```
-
-### Physical Web URL Broadcast
-
-```
-User: "Broadcast the URL https://example.com as a beacon"
-
-LLM: advertise_eddystone_url("https://example.com", -20)
-```
-
-### Asset Tracking
-
-```
-User: "Act as an Eddystone beacon with namespace 0123456789abcdef0123 and instance 112233445566"
-
-LLM: advertise_eddystone_uid("0123456789abcdef0123", "112233445566", -20)
-```
-
-## Implementation Notes
-
-### No Connection Handling
-
-Beacons are advertisement-only, so:
-
-- No connection tracking needed
-- No client management
-- No bidirectional communication
-
-### TX Power Calibration
-
-TX power is the measured RSSI at a reference distance (1m for iBeacon, 0m for Eddystone). This allows receivers to
-estimate distance using the path loss formula:
-
-```
-distance ≈ 10 ^ ((TX_Power - RSSI) / (10 * n))
-```
-
-Where `n` is the path loss exponent (typically 2-4 depending on environment).
-
-### Advertising Interval
-
-Beacons typically advertise at:
-
-- **100ms**: High update rate, higher power consumption
-- **1000ms (1s)**: Standard rate, balanced
-- **10000ms (10s)**: Low power, infrequent updates
-
-### Platform Support
-
-Same as `bluetooth-ble`:
-
-- **Linux**: BlueZ daemon
-- **macOS**: Bluetooth enabled
-- **Windows**: Windows 10+ with Bluetooth
-
-## Limitations
-
-- **BLE only**: No Bluetooth Classic
-- **Advertisement data size**: Max 31 bytes
-- **No encryption**: Data broadcast in plaintext (except Eddystone-EID)
-- **No authentication**: Anyone can scan beacons
-- **Range**: Typically 10-100m depending on TX power and environment
-- **Eddystone-URL**: Limited to ~17 characters after scheme
-- **No bidirectional communication**: Broadcast only
-
-## Security Considerations
-
-### Privacy
-
-Beacons broadcast constantly, which can enable:
-
-- **Tracking**: Devices can be tracked by their beacon signature
-- **Fingerprinting**: Unique UUID/namespace combinations identify devices
-
-**Mitigation**: Use rotating IDs (Eddystone-EID) or randomize identifiers periodically
-
-### Spoofing
-
-Anyone can broadcast beacon data with any UUID/namespace. There is no authentication in standard beacon protocols.
-
-**Mitigation**: Use server-side validation and encrypted ephemeral IDs (Eddystone-EID)
-
-## References
-
-- iBeacon Specification: https://developer.apple.com/ibeacon/
-- Eddystone Specification: https://github.com/google/eddystone
-- BLE Advertising: https://www.bluetooth.com/specifications/specs/core-specification-5-3/
+There is no test directory for this protocol, and none is declared in `tests/server/mod.rs`. Meaningful coverage needs a real adapter and a BLE central (nRF Connect, `btleplug`), which CI runners do not have. A mocked E2E test would only exercise the base stack's LLM plumbing, which the base's own tests should cover.
