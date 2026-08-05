@@ -101,17 +101,48 @@ impl BgpProtocol {
         Ok(ActionResult::Output(msg))
     }
 
+    /// Encode a prefix such as "10.0.0.0/24" the way RFC 4271 4.3 wants it: a one-byte
+    /// length in bits followed by only the significant bytes of the prefix.
+    fn encode_prefix(prefix: &str) -> Result<Vec<u8>> {
+        let (addr, bits) = prefix
+            .split_once('/')
+            .context("BGP prefix must be in CIDR form, e.g. 10.0.0.0/24")?;
+        let bits: u8 = bits.parse().context("Invalid prefix length")?;
+        if bits > 32 {
+            return Err(anyhow::anyhow!("Prefix length {} exceeds 32", bits));
+        }
+        let octets: Vec<u8> = addr
+            .split('.')
+            .map(|o| o.parse::<u8>().context("Invalid IPv4 octet"))
+            .collect::<Result<_>>()?;
+        if octets.len() != 4 {
+            return Err(anyhow::anyhow!("Invalid IPv4 address: {}", addr));
+        }
+        let significant = bits.div_ceil(8) as usize;
+        let mut out = vec![bits];
+        out.extend_from_slice(&octets[..significant]);
+        Ok(out)
+    }
+
     fn execute_send_bgp_update(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let withdrawn_routes = action
+        let withdrawn_routes: Vec<String> = action
             .get("withdrawn_routes")
             .and_then(|v| v.as_array())
-            .cloned()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
 
-        let nlri = action
+        let nlri: Vec<String> = action
             .get("nlri")
             .and_then(|v| v.as_array())
-            .cloned()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
 
         debug!(
@@ -120,29 +151,87 @@ impl BgpProtocol {
             nlri.len()
         );
 
-        // Build UPDATE message (simplified - no path attributes for now)
+        // Withdrawn routes.
+        let mut withdrawn_bytes = Vec::new();
+        for prefix in &withdrawn_routes {
+            withdrawn_bytes.extend_from_slice(&Self::encode_prefix(prefix)?);
+        }
+
+        // NLRI.
+        let mut nlri_bytes = Vec::new();
+        for prefix in &nlri {
+            nlri_bytes.extend_from_slice(&Self::encode_prefix(prefix)?);
+        }
+
+        // Path attributes. RFC 4271 9.1 makes ORIGIN, AS_PATH and NEXT_HOP mandatory whenever
+        // NLRI is present, so a withdrawal-only UPDATE carries none and an announcement
+        // carries all three. Previously this whole section was hardcoded to zero length and
+        // the documented withdrawn_routes/nlri parameters were read, logged and then dropped -
+        // every UPDATE went out empty.
+        let mut attrs = Vec::new();
+        if !nlri_bytes.is_empty() {
+            let origin = match action.get("origin").and_then(|v| v.as_str()) {
+                Some("EGP") => 1u8,
+                Some("INCOMPLETE") => 2,
+                _ => 0, // IGP
+            };
+            // ORIGIN: well-known mandatory (flags 0x40), type 1, length 1
+            attrs.extend_from_slice(&[0x40, 1, 1, origin]);
+
+            // AS_PATH: well-known mandatory, type 2. One AS_SEQUENCE segment.
+            let as_path: Vec<u16> = action
+                .get("as_path")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_u64().map(|n| n as u16))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut as_path_value = Vec::new();
+            if !as_path.is_empty() {
+                as_path_value.push(2u8); // AS_SEQUENCE
+                as_path_value.push(as_path.len() as u8);
+                for asn in &as_path {
+                    as_path_value.extend_from_slice(&asn.to_be_bytes());
+                }
+            }
+            attrs.extend_from_slice(&[0x40, 2, as_path_value.len() as u8]);
+            attrs.extend_from_slice(&as_path_value);
+
+            // NEXT_HOP: well-known mandatory, type 3, length 4
+            let next_hop = action
+                .get("next_hop")
+                .and_then(|v| v.as_str())
+                .context("send_bgp_update with nlri requires next_hop")?;
+            let octets: Vec<u8> = next_hop
+                .split('.')
+                .map(|o| o.parse::<u8>().context("Invalid next_hop octet"))
+                .collect::<Result<_>>()?;
+            if octets.len() != 4 {
+                return Err(anyhow::anyhow!("Invalid next_hop address: {}", next_hop));
+            }
+            attrs.extend_from_slice(&[0x40, 3, 4]);
+            attrs.extend_from_slice(&octets);
+        }
+
         let mut msg = Vec::new();
+        msg.extend_from_slice(&[0xff; 16]); // Marker
+        msg.extend_from_slice(&[0, 0]); // Length placeholder
+        msg.push(2); // Type = UPDATE
+        msg.extend_from_slice(&(withdrawn_bytes.len() as u16).to_be_bytes());
+        msg.extend_from_slice(&withdrawn_bytes);
+        msg.extend_from_slice(&(attrs.len() as u16).to_be_bytes());
+        msg.extend_from_slice(&attrs);
+        msg.extend_from_slice(&nlri_bytes);
 
-        // Marker
-        msg.extend_from_slice(&[0xff; 16]);
-
-        // Length placeholder
-        msg.extend_from_slice(&[0, 0]);
-
-        // Type = UPDATE (2)
-        msg.push(2);
-
-        // Withdrawn Routes Length (0 for now - simplified)
-        msg.extend_from_slice(&0u16.to_be_bytes());
-
-        // Total Path Attribute Length (0 for now - simplified)
-        msg.extend_from_slice(&0u16.to_be_bytes());
-
-        // NLRI (Network Layer Reachability Information)
-        // For now, just placeholder - full implementation would parse prefix/length
-
-        // Update length field
-        let msg_len = msg.len() as u16;
+        let msg_len = u16::try_from(msg.len()).context("BGP UPDATE exceeds 65535 bytes")?;
+        if msg_len as usize > 4096 {
+            return Err(anyhow::anyhow!(
+                "BGP UPDATE is {} bytes, over the RFC 4271 4096-byte maximum",
+                msg_len
+            ));
+        }
         msg[16..18].copy_from_slice(&msg_len.to_be_bytes());
 
         Ok(ActionResult::Output(msg))
@@ -253,13 +342,235 @@ impl BgpProtocol {
     }
 }
 
-// Event types for BGP
+// ============================================================================
+// Action Definitions (shared between get_sync_actions() and the event types).
+// ============================================================================
+
+fn send_bgp_open_action() -> ActionDefinition {
+    ActionDefinition {
+            name: "send_bgp_open".to_string(),
+            description: "Send BGP OPEN message to establish session".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "my_as".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Local AS number".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "hold_time".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Hold time in seconds (default 180)".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "router_id".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "BGP router identifier (IPv4 address format)".to_string(),
+                    required: true,
+                },
+            ],
+            example: json!({
+                "type": "send_bgp_open",
+                "my_as": 65000,
+                "hold_time": 180,
+                "router_id": "192.168.1.100"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> BGP OPEN AS{my_as} hold={hold_time}s")
+                    .with_debug("BGP send_bgp_open: AS={my_as}, hold_time={hold_time}, router_id={router_id}"),
+            ),
+        }
+}
+
+fn send_bgp_keepalive_action() -> ActionDefinition {
+    ActionDefinition {
+            name: "send_bgp_keepalive".to_string(),
+            description: "Send BGP KEEPALIVE message".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "send_bgp_keepalive"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> BGP KEEPALIVE")
+                    .with_debug("BGP send_bgp_keepalive"),
+            ),
+        }
+}
+
+fn send_bgp_update_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_bgp_update".to_string(),
+        description: "Send a BGP UPDATE announcing and/or withdrawing routes".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "withdrawn_routes".to_string(),
+                type_hint: "array".to_string(),
+                description: "CIDR prefixes to withdraw, e.g. [\"10.0.0.0/24\"]".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "nlri".to_string(),
+                type_hint: "array".to_string(),
+                description: "CIDR prefixes to announce, e.g. [\"192.168.0.0/16\"]".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "next_hop".to_string(),
+                type_hint: "string".to_string(),
+                description: "Next-hop IPv4 address. Required whenever nlri is non-empty \
+                              (RFC 4271 makes NEXT_HOP mandatory for an announcement)."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "as_path".to_string(),
+                type_hint: "array".to_string(),
+                description: "AS numbers forming the AS_SEQUENCE, e.g. [65001]. Empty means an \
+                              empty AS_PATH, which is what an iBGP-originated route looks like."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "origin".to_string(),
+                type_hint: "string".to_string(),
+                description: "ORIGIN attribute: 'IGP' (default), 'EGP' or 'INCOMPLETE'"
+                    .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_bgp_update",
+            "nlri": ["10.0.0.0/24"],
+            "next_hop": "192.168.1.1",
+            "as_path": [65001],
+            "origin": "IGP"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BGP UPDATE")
+                .with_debug("BGP send_bgp_update: withdrawn={withdrawn_routes} nlri={nlri}"),
+        ),
+    }
+}
+
+fn send_bgp_notification_action() -> ActionDefinition {
+    ActionDefinition {
+            name: "send_bgp_notification".to_string(),
+            description: "Send BGP NOTIFICATION message (error) and close connection"
+                .to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "error_code".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "BGP error code (6 = Cease)".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "error_subcode".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "BGP error subcode".to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "data".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Hex-encoded error data".to_string(),
+                    required: false,
+                },
+            ],
+            example: json!({
+                "type": "send_bgp_notification",
+                "error_code": 6,
+                "error_subcode": 0
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> BGP NOTIFICATION code={error_code}")
+                    .with_debug("BGP send_bgp_notification: code={error_code}, subcode={error_subcode}"),
+            ),
+        }
+}
+
+fn transition_state_action() -> ActionDefinition {
+    ActionDefinition {
+            name: "transition_state".to_string(),
+            description: "Transition BGP FSM to a new state".to_string(),
+            parameters: vec![Parameter {
+                name: "new_state".to_string(),
+                type_hint: "string".to_string(),
+                description:
+                    "Target FSM state (Idle/Connect/Active/OpenSent/OpenConfirm/Established)"
+                        .to_string(),
+                required: true,
+            }],
+            example: json!({
+                "type": "transition_state",
+                "new_state": "Established"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> BGP FSM -> {new_state}")
+                    .with_debug("BGP transition_state: new_state={new_state}"),
+            ),
+        }
+}
+
+fn wait_for_more_action() -> ActionDefinition {
+    ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Wait for more BGP messages before responding".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> BGP wait for more")
+                    .with_debug("BGP wait_for_more: awaiting additional messages"),
+            ),
+        }
+}
+
+// ============================================================================
+// Event Types
+//
+// `call_llm` builds the model's tool list from `EventType::actions`, not from
+// get_sync_actions(), so every event has to carry its action list. All four
+// previously carried none, and all four used a `{"type": "placeholder"}`
+// response_example - which is rendered verbatim into the prompt.
+// ============================================================================
+
+/// Actions any BGP session event can respond with.
+fn bgp_response_actions() -> Vec<ActionDefinition> {
+    vec![
+        send_bgp_open_action(),
+        send_bgp_keepalive_action(),
+        send_bgp_update_action(),
+        send_bgp_notification_action(),
+        wait_for_more_action(),
+    ]
+}
+
 pub static BGP_OPEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_open",
-        "BGP OPEN message received from peer",
-        json!({"type": "placeholder", "event_id": "bgp_open"}),
+        "BGP OPEN message received from peer - decide whether to peer, and on what terms",
+        json!({
+            "type": "send_bgp_open",
+            "my_as": 65001,
+            "hold_time": 180,
+            "router_id": "192.168.1.1"
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "send_bgp_notification",
+        "error_code": 2,
+        "error_subcode": 2
+    }))
+    .with_actions(bgp_response_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("BGP OPEN from AS{peer_as} router_id={router_id}")
@@ -271,9 +582,11 @@ pub static BGP_OPEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static BGP_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_update",
-        "BGP UPDATE message received (route announcement or withdrawal)",
-        json!({"type": "placeholder", "event_id": "bgp_update"}),
+        "BGP UPDATE received. Carries parsed withdrawn_routes, nlri and path_attributes \
+         (ORIGIN, AS_PATH, NEXT_HOP, MED, LOCAL_PREF decoded).",
+        json!({ "type": "wait_for_more" }),
     )
+    .with_actions(bgp_response_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("BGP UPDATE from AS{peer_as}")
@@ -286,8 +599,9 @@ pub static BGP_KEEPALIVE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_keepalive",
         "BGP KEEPALIVE message received",
-        json!({"type": "placeholder", "event_id": "bgp_keepalive"}),
+        json!({ "type": "send_bgp_keepalive" }),
     )
+    .with_actions(bgp_response_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("BGP KEEPALIVE from AS{peer_as}")
@@ -299,14 +613,15 @@ pub static BGP_KEEPALIVE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_notification",
-        "BGP NOTIFICATION message received (error)",
-        json!({"type": "placeholder", "event_id": "bgp_notification"}),
+        "BGP NOTIFICATION received (error). The session closes regardless of the reply.",
+        json!({ "type": "wait_for_more" }),
     )
+    .with_actions(bgp_response_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("BGP NOTIFICATION code={error_code} subcode={error_subcode}")
             .with_debug(
-                "BGP NOTIFICATION: code={error_code} subcode={error_subcode} from AS{peer_as}",
+                "BGP NOTIFICATION: {error_name} / {error_subcode_name} from AS{peer_as}",
             )
             .with_trace("BGP NOTIFICATION: {json_pretty(.)}"),
     )
@@ -318,7 +633,9 @@ impl Protocol for BgpProtocol {
         vec![
             ActionDefinition {
                 name: "announce_route".to_string(),
-                description: "Announce a BGP route to peers".to_string(),
+                description: "NOT IMPLEMENTED - logs the prefix and returns NoAction. No UPDATE \
+                              is generated and there is no RIB to announce from."
+                    .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "prefix".to_string(),
@@ -346,7 +663,9 @@ impl Protocol for BgpProtocol {
             },
             ActionDefinition {
                 name: "withdraw_route".to_string(),
-                description: "Withdraw a previously announced BGP route".to_string(),
+                description: "NOT IMPLEMENTED - logs the prefix and returns NoAction. Nothing \
+                              was ever announced, so there is nothing to withdraw."
+                    .to_string(),
                 parameters: vec![Parameter {
                     name: "prefix".to_string(),
                     type_hint: "string".to_string(),
@@ -381,153 +700,15 @@ impl Protocol for BgpProtocol {
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
-            ActionDefinition {
-                name: "send_bgp_open".to_string(),
-                description: "Send BGP OPEN message to establish session".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "my_as".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Local AS number".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "hold_time".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Hold time in seconds (default 180)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "router_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "BGP router identifier (IPv4 address format)".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "send_bgp_open",
-                    "my_as": 65000,
-                    "hold_time": 180,
-                    "router_id": "192.168.1.100"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BGP OPEN AS{my_as} hold={hold_time}s")
-                        .with_debug("BGP send_bgp_open: AS={my_as}, hold_time={hold_time}, router_id={router_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_bgp_keepalive".to_string(),
-                description: "Send BGP KEEPALIVE message".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "send_bgp_keepalive"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BGP KEEPALIVE")
-                        .with_debug("BGP send_bgp_keepalive"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_bgp_update".to_string(),
-                description: "Send BGP UPDATE message (route announcement/withdrawal)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "withdrawn_routes".to_string(),
-                        type_hint: "array".to_string(),
-                        description: "List of prefixes to withdraw".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "nlri".to_string(),
-                        type_hint: "array".to_string(),
-                        description: "Network Layer Reachability Information (announced routes)"
-                            .to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_bgp_update",
-                    "nlri": ["10.0.0.0/24"]
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BGP UPDATE {nlri_len} routes")
-                        .with_debug("BGP send_bgp_update: nlri={nlri_len} routes, withdrawn={withdrawn_routes_len}"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_bgp_notification".to_string(),
-                description: "Send BGP NOTIFICATION message (error) and close connection"
-                    .to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "error_code".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "BGP error code (6 = Cease)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "error_subcode".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "BGP error subcode".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Hex-encoded error data".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_bgp_notification",
-                    "error_code": 6,
-                    "error_subcode": 0
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BGP NOTIFICATION code={error_code}")
-                        .with_debug("BGP send_bgp_notification: code={error_code}, subcode={error_subcode}"),
-                ),
-            },
-            ActionDefinition {
-                name: "transition_state".to_string(),
-                description: "Transition BGP FSM to a new state".to_string(),
-                parameters: vec![Parameter {
-                    name: "new_state".to_string(),
-                    type_hint: "string".to_string(),
-                    description:
-                        "Target FSM state (Idle/Connect/Active/OpenSent/OpenConfirm/Established)"
-                            .to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "transition_state",
-                    "new_state": "Established"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BGP FSM -> {new_state}")
-                        .with_debug("BGP transition_state: new_state={new_state}"),
-                ),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more BGP messages before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> BGP wait for more")
-                        .with_debug("BGP wait_for_more: awaiting additional messages"),
-                ),
-            },
+            send_bgp_open_action(),
+            send_bgp_keepalive_action(),
+            send_bgp_update_action(),
+            send_bgp_notification_action(),
+            transition_state_action(),
+            wait_for_more_action(),
         ]
     }
+
     fn protocol_name(&self) -> &'static str {
         "BGP"
     }
@@ -552,7 +733,8 @@ impl Protocol for BgpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Incomplete)
-            .privilege_requirement(PrivilegeRequirement::None)
+            // BGP's assigned port is TCP 179, below 1024.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(179))
             .implementation("Manual BGP-4 (RFC 4271), 6-state FSM")
             .llm_control("Peering decisions, route advertisements")
             .e2e_testing("Manual BGP client")

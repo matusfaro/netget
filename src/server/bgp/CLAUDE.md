@@ -5,9 +5,25 @@
 Border Gateway Protocol (BGP-4) server implementing RFC 4271 with a 6-state FSM. The LLM controls routing policy
 decisions, peer authentication, and route advertisements.
 
-**Status**: Alpha (fully implemented, needs extensive testing)
+**Status**: `Incomplete` - and correctly so. `DevelopmentState::Incomplete` means
+`is_available_to_llm()` returns false, so this protocol is hidden from the model entirely.
+This file used to claim "Alpha (fully implemented, needs extensive testing)", which its own
+Limitations section already contradicted.
+
 **Protocol Spec**: [RFC 4271 (BGP-4)](https://datatracker.ietf.org/doc/html/rfc4271)
-**Port**: TCP 179
+**Port**: TCP 179 (privileged - declared as `PrivilegeRequirement::PrivilegedPort(179)`;
+it was declared `None`, so the preflight check never ran and binding failed later with a
+bare EACCES)
+
+**What works**: session establishment. A peer's OPEN is parsed and validated, the hold timer
+is negotiated, KEEPALIVE drives the FSM to Established, UPDATE bodies are parsed to structured
+routes and attributes, and NOTIFICATION is decoded and closes the session.
+
+**What does not**: there is no RIB. Nothing is stored, so nothing can be re-advertised,
+compared, or selected between. `announce_route` and `withdraw_route` log their argument and
+return `NoAction`; `transition_state` does the same. Hold timers are negotiated and never
+enforced - a peer that goes silent is never dropped. AS numbers are truncated to 16 bits on
+send, so configuring `as_number` above 65535 silently emits the wrong ASN.
 
 ## Library Choices
 
@@ -228,14 +244,10 @@ Stored per-session in `BgpSession`.
 
 ### Protocol Connection Info
 
-```rust
-ProtocolConnectionInfo::Bgp {
-    session_state: BgpSessionState,
-    peer_as: Option<u32>,
-    router_id: String,
-    hold_time: u16,
-}
-```
+`ProtocolConnectionInfo` is a generic `serde_json::Value` wrapper, not an enum with a `Bgp`
+variant, and this server does not currently register its connections in `AppState` at all -
+`add_connection_to_server` is never called, so BGP peers do not appear in the TUI connection
+list. Session state lives only in the per-task `BgpSession`.
 
 ## Limitations
 
@@ -254,8 +266,15 @@ ProtocolConnectionInfo::Bgp {
 
 - ❌ Route processing (UPDATE messages parsed but not acted upon)
 - ❌ RIB (Routing Information Base) management
-- ❌ Route advertisements (can send UPDATE structure, but no route storage)
-- ❌ Path attributes parsing (UPDATE body is hex-encoded for LLM)
+- ⚠️ Route advertisement: `send_bgp_update` now encodes `withdrawn_routes` and `nlri` as
+  real RFC 4271 prefix lists and attaches the mandatory ORIGIN/AS_PATH/NEXT_HOP attributes.
+  It previously read those two documented parameters, logged their counts, and then emitted
+  an UPDATE with zero-length withdrawn-routes and attribute fields and no NLRI - every
+  announcement went out empty. There is still no route *storage* behind it.
+- ✅ Path attribute parsing (ORIGIN, AS_PATH, NEXT_HOP, MED, LOCAL_PREF decoded; the rest
+  summarised by type). The UPDATE body used to be handed to the model as
+  `hex::encode(body)`, which no model can read - see the action/event design rules in the
+  root CLAUDE.md.
 - ❌ Route filtering/policy
 - ❌ 32-bit AS numbers (RFC 6793)
 - ❌ Multiprotocol extensions (RFC 4760)
@@ -378,12 +397,17 @@ LLM receives UPDATE event:
   "data": {
     "connection_id": "conn_12345",
     "peer_as": 65000,
-    "update_data": "00000000..." // Hex-encoded UPDATE body
+    "withdrawn_routes": ["10.1.0.0/16"],
+    "nlri": ["10.0.0.0/24"],
+    "path_attributes": [
+      {"type": 1, "type_name": "ORIGIN", "origin": "IGP", ...},
+      {"type": 2, "type_name": "AS_PATH",
+       "as_path": [{"segment": "AS_SEQUENCE", "asns": [65000]}], ...},
+      {"type": 3, "type_name": "NEXT_HOP", "next_hop": "192.0.2.10", ...}
+    ]
   }
 }
 ```
-
-LLM can analyze hex data (requires protocol expertise).
 
 ### NOTIFICATION (Graceful Shutdown)
 

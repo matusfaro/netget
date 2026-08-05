@@ -441,16 +441,26 @@ impl BgpSession {
             .status_tx
             .send(format!("[TRACE] BGP UPDATE received: {} bytes", body.len()));
 
-        // Parse UPDATE message (simplified)
-        // Full parsing would require extensive path attribute handling
+        let update = parse_bgp_update(body)?;
 
-        // Ask LLM how to handle the UPDATE
+        info!(
+            "BGP UPDATE from AS{:?}: {} withdrawn, {} announced, {} path attributes",
+            self.peer_as,
+            update.withdrawn.len(),
+            update.nlri.len(),
+            update.path_attributes.len()
+        );
+
+        // Ask LLM how to handle the UPDATE. The body used to be handed over as
+        // hex::encode(body); models cannot read a hex blob, so it is parsed to fields.
         let event = Event {
             event_type: &BGP_UPDATE_EVENT,
             data: serde_json::json!({
                 "connection_id": self.connection_id.to_string(),
                 "peer_as": self.peer_as,
-                "update_data": hex::encode(body),
+                "withdrawn_routes": update.withdrawn,
+                "nlri": update.nlri,
+                "path_attributes": update.path_attributes,
             }),
         };
 
@@ -486,7 +496,7 @@ impl BgpSession {
 
         let error_code = body[0];
         let error_subcode = body[1];
-        let data = if body.len() > 2 { &body[2..] } else { &[] };
+        let data_len = body.len().saturating_sub(2);
 
         error!(
             "BGP NOTIFICATION received: code={}, subcode={}",
@@ -497,14 +507,18 @@ impl BgpSession {
             error_code, error_subcode
         ));
 
-        // Log to LLM
+        // Log to LLM. The trailing diagnostic bytes are opaque and were previously sent as
+        // hex; the model gets the decoded error names and a byte count instead.
         let event = Event {
             event_type: &BGP_NOTIFICATION_EVENT,
             data: serde_json::json!({
                 "connection_id": self.connection_id.to_string(),
+                "peer_as": self.peer_as,
                 "error_code": error_code,
+                "error_name": bgp_error_name(error_code),
                 "error_subcode": error_subcode,
-                "data": hex::encode(data),
+                "error_subcode_name": bgp_error_subcode_name(error_code, error_subcode),
+                "diagnostic_bytes": data_len,
             }),
         };
 
@@ -637,5 +651,232 @@ impl BgpSession {
         ));
 
         Ok(())
+    }
+}
+
+/// A parsed BGP UPDATE body (RFC 4271 section 4.3).
+#[cfg(feature = "bgp")]
+struct ParsedUpdate {
+    withdrawn: Vec<String>,
+    path_attributes: Vec<serde_json::Value>,
+    nlri: Vec<String>,
+}
+
+/// Decode the length-prefixed prefix list used for both withdrawn routes and NLRI.
+///
+/// Each entry is a one-byte prefix length in *bits* followed by ceil(bits/8) bytes of prefix.
+/// Every length is checked against what remains, so a malformed peer cannot read past the end.
+#[cfg(feature = "bgp")]
+fn parse_prefix_list(mut data: &[u8]) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    while !data.is_empty() {
+        let bits = data[0];
+        if bits > 32 {
+            return Err(anyhow!("BGP prefix length {} exceeds 32 bits", bits));
+        }
+        let bytes = bits.div_ceil(8) as usize;
+        if data.len() < 1 + bytes {
+            return Err(anyhow!("BGP prefix truncated: need {} more bytes", bytes));
+        }
+        let mut octets = [0u8; 4];
+        octets[..bytes].copy_from_slice(&data[1..1 + bytes]);
+        out.push(format!(
+            "{}.{}.{}.{}/{}",
+            octets[0], octets[1], octets[2], octets[3], bits
+        ));
+        data = &data[1 + bytes..];
+    }
+    Ok(out)
+}
+
+/// Parse a BGP UPDATE body into structured fields.
+#[cfg(feature = "bgp")]
+fn parse_bgp_update(body: &[u8]) -> Result<ParsedUpdate> {
+    if body.len() < 4 {
+        return Err(anyhow!("BGP UPDATE body too short: {} bytes", body.len()));
+    }
+
+    let withdrawn_len = u16::from_be_bytes([body[0], body[1]]) as usize;
+    if 2 + withdrawn_len > body.len() {
+        return Err(anyhow!(
+            "BGP UPDATE withdrawn-routes length {} exceeds body",
+            withdrawn_len
+        ));
+    }
+    let withdrawn = parse_prefix_list(&body[2..2 + withdrawn_len])?;
+
+    let attrs_offset = 2 + withdrawn_len;
+    if attrs_offset + 2 > body.len() {
+        return Err(anyhow!("BGP UPDATE missing path-attribute length"));
+    }
+    let attrs_len = u16::from_be_bytes([body[attrs_offset], body[attrs_offset + 1]]) as usize;
+    let attrs_start = attrs_offset + 2;
+    if attrs_start + attrs_len > body.len() {
+        return Err(anyhow!(
+            "BGP UPDATE path-attribute length {} exceeds body",
+            attrs_len
+        ));
+    }
+
+    let path_attributes = parse_path_attributes(&body[attrs_start..attrs_start + attrs_len])?;
+    let nlri = parse_prefix_list(&body[attrs_start + attrs_len..])?;
+
+    Ok(ParsedUpdate {
+        withdrawn,
+        path_attributes,
+        nlri,
+    })
+}
+
+/// Parse the path attribute list, decoding the well-known attributes a policy decision
+/// actually turns on (ORIGIN, AS_PATH, NEXT_HOP, MED, LOCAL_PREF) and summarising the rest.
+#[cfg(feature = "bgp")]
+fn parse_path_attributes(mut data: &[u8]) -> Result<Vec<serde_json::Value>> {
+    let mut out = Vec::new();
+    while !data.is_empty() {
+        if data.len() < 3 {
+            return Err(anyhow!("BGP path attribute header truncated"));
+        }
+        let flags = data[0];
+        let type_code = data[1];
+        let extended = flags & 0x10 != 0;
+        let (len, header) = if extended {
+            if data.len() < 4 {
+                return Err(anyhow!("BGP extended path attribute header truncated"));
+            }
+            (u16::from_be_bytes([data[2], data[3]]) as usize, 4)
+        } else {
+            (data[2] as usize, 3)
+        };
+        if data.len() < header + len {
+            return Err(anyhow!("BGP path attribute value truncated"));
+        }
+        let value = &data[header..header + len];
+
+        let mut attr = serde_json::json!({
+            "type": type_code,
+            "type_name": bgp_path_attribute_name(type_code),
+            "optional": flags & 0x80 != 0,
+            "transitive": flags & 0x40 != 0,
+            "length": len,
+        });
+
+        match type_code {
+            // ORIGIN
+            1 if len == 1 => {
+                attr["origin"] = serde_json::json!(match value[0] {
+                    0 => "IGP",
+                    1 => "EGP",
+                    _ => "INCOMPLETE",
+                });
+            }
+            // AS_PATH: a sequence of segments, each type(1) | count(1) | count * 2-byte ASN
+            2 => {
+                let mut as_path = Vec::new();
+                let mut rest = value;
+                while rest.len() >= 2 {
+                    let seg_type = rest[0];
+                    let count = rest[1] as usize;
+                    if rest.len() < 2 + count * 2 {
+                        break;
+                    }
+                    let asns: Vec<u16> = (0..count)
+                        .map(|i| u16::from_be_bytes([rest[2 + i * 2], rest[3 + i * 2]]))
+                        .collect();
+                    as_path.push(serde_json::json!({
+                        "segment": if seg_type == 1 { "AS_SET" } else { "AS_SEQUENCE" },
+                        "asns": asns,
+                    }));
+                    rest = &rest[2 + count * 2..];
+                }
+                attr["as_path"] = serde_json::json!(as_path);
+            }
+            // NEXT_HOP
+            3 if len == 4 => {
+                attr["next_hop"] =
+                    serde_json::json!(format!("{}.{}.{}.{}", value[0], value[1], value[2], value[3]));
+            }
+            // MULTI_EXIT_DISC
+            4 if len == 4 => {
+                attr["med"] = serde_json::json!(u32::from_be_bytes([
+                    value[0], value[1], value[2], value[3]
+                ]));
+            }
+            // LOCAL_PREF
+            5 if len == 4 => {
+                attr["local_pref"] = serde_json::json!(u32::from_be_bytes([
+                    value[0], value[1], value[2], value[3]
+                ]));
+            }
+            _ => {}
+        }
+
+        out.push(attr);
+        data = &data[header + len..];
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "bgp")]
+fn bgp_path_attribute_name(code: u8) -> &'static str {
+    match code {
+        1 => "ORIGIN",
+        2 => "AS_PATH",
+        3 => "NEXT_HOP",
+        4 => "MULTI_EXIT_DISC",
+        5 => "LOCAL_PREF",
+        6 => "ATOMIC_AGGREGATE",
+        7 => "AGGREGATOR",
+        8 => "COMMUNITIES",
+        14 => "MP_REACH_NLRI",
+        15 => "MP_UNREACH_NLRI",
+        16 => "EXTENDED_COMMUNITIES",
+        17 => "AS4_PATH",
+        18 => "AS4_AGGREGATOR",
+        _ => "UNKNOWN",
+    }
+}
+
+#[cfg(feature = "bgp")]
+fn bgp_error_name(code: u8) -> &'static str {
+    match code {
+        1 => "Message Header Error",
+        2 => "OPEN Message Error",
+        3 => "UPDATE Message Error",
+        4 => "Hold Timer Expired",
+        5 => "Finite State Machine Error",
+        6 => "Cease",
+        _ => "Unknown",
+    }
+}
+
+#[cfg(feature = "bgp")]
+fn bgp_error_subcode_name(code: u8, subcode: u8) -> &'static str {
+    match (code, subcode) {
+        (1, 1) => "Connection Not Synchronized",
+        (1, 2) => "Bad Message Length",
+        (1, 3) => "Bad Message Type",
+        (2, 1) => "Unsupported Version Number",
+        (2, 2) => "Bad Peer AS",
+        (2, 3) => "Bad BGP Identifier",
+        (2, 4) => "Unsupported Optional Parameter",
+        (2, 6) => "Unacceptable Hold Time",
+        (3, 1) => "Malformed Attribute List",
+        (3, 2) => "Unrecognized Well-known Attribute",
+        (3, 3) => "Missing Well-known Attribute",
+        (3, 4) => "Attribute Flags Error",
+        (3, 5) => "Attribute Length Error",
+        (3, 6) => "Invalid ORIGIN Attribute",
+        (3, 8) => "Invalid NEXT_HOP Attribute",
+        (3, 9) => "Optional Attribute Error",
+        (3, 10) => "Invalid Network Field",
+        (3, 11) => "Malformed AS_PATH",
+        (6, 1) => "Maximum Number of Prefixes Reached",
+        (6, 2) => "Administrative Shutdown",
+        (6, 3) => "Peer De-configured",
+        (6, 4) => "Administrative Reset",
+        (6, 5) => "Connection Rejected",
+        (6, 6) => "Other Configuration Change",
+        _ => "Unspecified",
     }
 }
