@@ -28,7 +28,12 @@ use tokio_stream::StreamExt;
 ///
 /// # Example
 ///
-/// ```no_run
+/// Illustrative only — `cli::banner` is a crate-internal module (`mod banner;` in
+/// `src/cli/mod.rs`), so this cannot be imported from outside the crate and is marked
+/// `ignore` rather than `no_run`. As `no_run` it still had to *compile*, and failed with
+/// `module banner is private`, which broke `cargo test --doc` for the whole repo.
+///
+/// ```ignore
 /// use tokio::sync::mpsc;
 /// use netget::cli::banner::generate_and_stream_ascii_banner;
 ///
