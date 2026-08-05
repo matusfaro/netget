@@ -1043,6 +1043,54 @@ Third instance of this exact shape, so it is a pattern rather than a slip:
 The action-name validation added in `0069d90c` catches this at `start_server` time for
 handlers. Extending the same check to mock rules would catch it in tests.
 
+### 74. Protocol review coverage: 114 of 114 **[complete]**
+
+Every server protocol directory has now had a full 9-point review. Final demotion tally — nine
+protocols were rated above what they could do:
+
+| Protocol | Was | Now | Why |
+|---|---|---|---|
+| openvpn | Stable | Incomplete | no TLS handshake; identical key for every peer |
+| tor_relay | Stable | Experimental | blocks forever on a real client's 11-byte VERSIONS cell |
+| amqp | Experimental | Incomplete | handshake frame declares 20 bytes and writes 31 |
+| kafka | Experimental | Incomplete | no LLM integration; `ApiVersions` advertises nothing |
+| zookeeper | Experimental | Incomplete | reads xid/opcode out of a ConnectRequest that has neither |
+| turn | Experimental | Incomplete | never binds a relay socket |
+| webrtc | Experimental | Incomplete | `spawn` binds nothing; `accept_offer` has no caller |
+| webdav | Experimental | Incomplete | serves a real in-process `MemFs`, never consults the model |
+| vnc | Experimental | Incomplete | no LLM integration at all |
+| bluetooth_ble_beacon | Experimental | Incomplete | the crate cannot set an advertising payload |
+
+`nfc`, `bgp` and `usb_smartcard` were already `Incomplete` and remain so, correctly.
+
+The single most common defect, across the whole sweep, was rubric item 3 — an `EventType`
+that never advertised the actions answering it, leaving the model with no vocabulary. NFS was
+the starkest: its event had a *comment* where its action list should be, so all ten
+`nfs_*_response` actions were invisible and every operation failed.
+
+### 75. `debug_assert!(false)` panics dev-build connection tasks **[verified]**
+
+`src/llm/action_helper.rs:465` guards the item-56 defect: when a protocol declares sync actions
+but the event advertises none, it logs at ERROR, falls back to the full sync set, and
+`debug_assert!`s. The intent is right — that class of bug must not ship quietly — but the assert
+fires **per connection at runtime**, inside a tokio task, where a panic is silent and leaves the
+server reporting `Running`. The NFS reviewer hit exactly that.
+
+The tradeoff is genuine, so this is recorded rather than unilaterally changed: the loud failure
+is valuable, but a connection-task panic is the quietest possible way to be loud. Better would
+be to assert once at server startup, where the failure is visible and attributable, and leave
+the per-event path to the ERROR log plus fallback.
+
+### 76. Test suites that assert only at the transport level **[verified]**
+
+`tests/server/{nfs,ipp,vnc,webdav}/test.rs` are declared and running, and assert only that a
+connection was accepted — none decodes a protocol payload. That is why NFS's empty action list
+and IPP's encoding bug both passed through green. Same shape as the NTP test in item 47 and the
+tracker/DHT tests: the suite proves the process started, not that the protocol works.
+
+Worth a rule alongside item 47: a protocol test must assert on decoded protocol output, not on
+transport success.
+
 ---
 
 ## Suggested order
