@@ -1,13 +1,33 @@
-//! WebDAV protocol actions implementation
+//! WebDAV protocol actions.
+//!
+//! **The protocol is marked `DevelopmentState::Incomplete` and is therefore hidden from
+//! the LLM.** Two independent reasons, both structural rather than cosmetic:
+//!
+//! 1. **No LLM integration at all.** `WebDavServer::spawn_with_llm_actions` takes the
+//!    `OllamaClient` as `_llm_client` and drops it. No `Event` is ever constructed, no
+//!    `EventType` is declared, `call_llm` is never called, and `get_event_types()` returns
+//!    the empty default. The server instruction a user writes is read by nobody.
+//! 2. **It serves a real in-process filesystem.** Every request is answered by
+//!    `dav_server::memfs::MemFs`, a live read/write filesystem living in the process. That
+//!    is exactly the storage a protocol is forbidden to implement: the model is supposed to
+//!    supply every file and directory listing, and here it supplies none of them.
+//!
+//! The six actions this file used to declare (`read_file`, `create_file`, `create_directory`,
+//! `delete_resource`, `list_directory`, `get_properties`) were removed. None of them was
+//! reachable — no event advertised them — and every executor arm returned
+//! `ActionResult::NoAction` after parsing and discarding its `path`, so even a hand-written
+//! static handler naming one would have changed nothing on the wire.
+//!
+//! Making this protocol real means implementing `dav_server::fs::DavFileSystem` against the
+//! LLM the way `src/server/nfs/` implements `NFSFileSystem`, and deleting `MemFs`. That is
+//! noted as future work, not attempted here.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
-    ActionDefinition, Parameter,
+    ActionDefinition,
 };
-use crate::protocol::log_template::LogTemplate;
 use crate::state::app_state::AppState;
-use anyhow::{Context, Result};
-use serde_json::json;
+use anyhow::Result;
 
 /// WebDAV protocol action handler
 pub struct WebDavProtocol;
@@ -18,22 +38,24 @@ impl WebDavProtocol {
     }
 }
 
+impl Default for WebDavProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Implement Protocol trait (common functionality)
 impl Protocol for WebDavProtocol {
+    /// No async actions: nothing the LLM could say would reach the MemFs that answers requests.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            create_file_action(),
-            create_directory_action(),
-            delete_resource_action(),
-        ]
+        Vec::new()
     }
+
+    /// No sync actions: the server raises no events, so no action could ever be offered.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            read_file_action(),
-            list_directory_action(),
-            get_properties_action(),
-        ]
+        Vec::new()
     }
+
     fn protocol_name(&self) -> &'static str {
         "WebDAV"
     }
@@ -47,15 +69,26 @@ impl Protocol for WebDavProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
-            .implementation("dav-server v0.5 library, MemFs virtual filesystem")
-            .llm_control("File operations (future - currently library-driven)")
-            .e2e_testing("cadaver / WebDAV clients")
-            .notes("In-memory only, no persistence, no authentication")
+            // Incomplete, deliberately: `is_available_to_llm()` returns false so the model is
+            // never offered a protocol whose instruction it cannot influence. See the module
+            // docs above for the two reasons.
+            .state(DevelopmentState::Incomplete)
+            .implementation("dav-server v0.8 DavHandler over an in-process MemFs")
+            .llm_control(
+                "NONE - the LLM client is dropped on startup, no event is raised and no \
+                 action reaches the wire",
+            )
+            .e2e_testing("curl -X PROPFIND / cadaver - exercises MemFs, never the model")
+            .notes(
+                "Serves a real in-memory read/write filesystem (MemFs) instead of asking the \
+                 LLM, which is the storage a protocol must not implement. Files persist for \
+                 the life of the server and are lost on restart. No authentication, no TLS, \
+                 locks accepted but never enforced (FakeLs).",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "WebDAV file server"
+        "WebDAV file server (Incomplete: serves an in-memory filesystem, not LLM-controlled)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start a WebDAV server on port 8080"
@@ -64,19 +97,22 @@ impl Protocol for WebDavProtocol {
         "Web & File"
     }
 
+    /// Structurally valid examples are mandatory (`tests/startup_examples_validation_test.rs`
+    /// requires a script handler and a static handler), but WebDAV declares no event types, so
+    /// no `event_pattern` written here can ever match and no handler below can ever fire. They
+    /// are kept only to satisfy the validator; the protocol is hidden from the LLM regardless.
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
         StartupExamples::new(
-            // LLM mode: LLM handles WebDAV with library-driven filesystem
             json!({
                 "type": "open_server",
                 "port": 8080,
                 "base_stack": "webdav",
-                "instruction": "WebDAV file server with virtual filesystem"
+                "instruction": "NOTE: webdav ignores this instruction entirely - requests are \
+                                answered by an in-process MemFs, never by the model"
             }),
-            // Script mode: Code-based deterministic responses
             json!({
                 "type": "open_server",
                 "port": 8080,
@@ -86,11 +122,10 @@ impl Protocol for WebDavProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<webdav_handler>"
+                        "code": "# never runs: webdav raises no events"
                     }
                 }]
             }),
-            // Static mode: Fixed response
             json!({
                 "type": "open_server",
                 "port": 8080,
@@ -100,9 +135,8 @@ impl Protocol for WebDavProtocol {
                     "handler": {
                         "type": "static",
                         "actions": [{
-                            "type": "send_webdav_response",
-                            "status": 200,
-                            "body": "WebDAV server ready"
+                            "type": "show_message",
+                            "message": "never runs: webdav raises no events"
                         }]
                     }
                 }]
@@ -131,227 +165,18 @@ impl Server for WebDavProtocol {
             .await
         })
     }
+
+    /// WebDAV has no actions. Anything routed here is a caller bug, so say so rather than
+    /// returning `NoAction` and letting the caller believe the request was served.
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
-            .context("Missing 'type' field in action")?;
-
-        match action_type {
-            "read_file" => self.execute_read_file(action),
-            "create_file" => self.execute_create_file(action),
-            "create_directory" => self.execute_create_directory(action),
-            "delete_resource" => self.execute_delete_resource(action),
-            "list_directory" => self.execute_list_directory(action),
-            "get_properties" => self.execute_get_properties(action),
-            _ => Err(anyhow::anyhow!("Unknown WebDAV action: {}", action_type)),
-        }
-    }
-}
-
-impl WebDavProtocol {
-    /// Read file contents
-    fn execute_read_file(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        // Return placeholder - actual file reading would be done by dav-server
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Create a new file
-    fn execute_create_file(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        let _content = action.get("content").and_then(|v| v.as_str()).unwrap_or("");
-
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Create a new directory
-    fn execute_create_directory(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Delete a resource (file or directory)
-    fn execute_delete_resource(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
-    }
-
-    /// List directory contents
-    fn execute_list_directory(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Get resource properties
-    fn execute_get_properties(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let _path = action
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("Missing 'path' parameter")?;
-
-        Ok(ActionResult::NoAction)
-    }
-}
-
-/// Action definitions
-fn read_file_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "read_file".to_string(),
-        description: "Read the contents of a file".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Path to the file to read".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "read_file",
-            "path": "/documents/readme.txt"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("WebDAV read: {path}")
-                .with_debug("WebDAV read_file: path={path}"),
-        ),
-    }
-}
-
-fn create_file_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "create_file".to_string(),
-        description: "Create a new file with specified content".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Path where the file should be created".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "content".to_string(),
-                type_hint: "string".to_string(),
-                description: "File content".to_string(),
-                required: false,
-            },
-        ],
-        example: json!({
-            "type": "create_file",
-            "path": "/documents/hello.txt",
-            "content": "Hello World!"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("WebDAV create file: {path}")
-                .with_debug("WebDAV create_file: path={path}"),
-        ),
-    }
-}
-
-fn create_directory_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "create_directory".to_string(),
-        description: "Create a new directory".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Path of the directory to create".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "create_directory",
-            "path": "/documents/new_folder"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("WebDAV mkdir: {path}")
-                .with_debug("WebDAV create_directory: path={path}"),
-        ),
-    }
-}
-
-fn delete_resource_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "delete_resource".to_string(),
-        description: "Delete a file or directory".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Path of the resource to delete".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "delete_resource",
-            "path": "/documents/old_file.txt"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("WebDAV delete: {path}")
-                .with_debug("WebDAV delete_resource: path={path}"),
-        ),
-    }
-}
-
-fn list_directory_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_directory".to_string(),
-        description: "List contents of a directory".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Path of the directory to list".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "list_directory",
-            "path": "/documents"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("WebDAV list: {path}")
-                .with_debug("WebDAV list_directory: path={path}"),
-        ),
-    }
-}
-
-fn get_properties_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "get_properties".to_string(),
-        description: "Get properties (metadata) of a file or directory".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Path of the resource".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "get_properties",
-            "path": "/documents/readme.txt"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("WebDAV props: {path}")
-                .with_debug("WebDAV get_properties: path={path}"),
-        ),
+            .unwrap_or("<missing type>");
+        Err(anyhow::anyhow!(
+            "WebDAV declares no actions (the protocol is Incomplete: requests are answered by \
+             an in-process MemFs, not by the LLM); refusing action '{}'",
+            action_type
+        ))
     }
 }
