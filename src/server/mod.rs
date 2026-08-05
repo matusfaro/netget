@@ -22,7 +22,10 @@ pub mod socket_helpers;
 #[cfg(any(feature = "http", feature = "http2"))]
 pub mod http_common;
 
-// TLS certificate management for DoT, DoH, HTTP, HTTP/2, HTTP/3, SMTP, and TLS protocols
+// TLS certificate management for DoT, DoH, HTTP, HTTP/2, HTTP/3, SMTP, POP3 and TLS protocols.
+// Keep this list in sync with the protocols that actually call into it: POP3's TLS session
+// path is fully implemented and its spawn already takes the config, but it was missing here,
+// so POP3S could not be built at all.
 #[cfg(any(
     feature = "dot",
     feature = "doh",
@@ -30,6 +33,7 @@ pub mod http_common;
     feature = "http2",
     feature = "http3",
     feature = "smtp",
+    feature = "pop3",
     feature = "tls"
 ))]
 pub mod tls_cert_manager;

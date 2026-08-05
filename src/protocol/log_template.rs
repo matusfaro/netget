@@ -206,11 +206,12 @@ fn render_placeholder(placeholder: &str, data: &Value) -> String {
 
         let value = get_nested_value(data, field);
         let s = value_to_string(&value);
-        return if s.len() > max_len {
-            format!("{}...", &s[..max_len])
-        } else {
-            s
-        };
+        // Must cut on a character boundary: `s` is network text or model output, and
+        // `s.len()` is a byte count, so `&s[..max_len]` panics whenever the cut lands
+        // inside a multi-byte character. This is shared infrastructure — `preview(...)`
+        // is used by irc, pop3, xmpp and others, so the panic defeated those protocols'
+        // own local fixes for the same class.
+        return crate::utils::truncate_for_log(&s, max_len);
     }
 
     if placeholder.ends_with("_len") {
