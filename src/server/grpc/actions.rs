@@ -56,57 +56,6 @@ impl GrpcProtocol {
             }),
         })
     }
-
-    fn execute_reload_schema(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let proto_schema = action
-            .get("proto_schema")
-            .and_then(|v| v.as_str())
-            .context("Missing 'proto_schema' parameter")?;
-
-        debug!(
-            "gRPC reload schema request (length: {} bytes)",
-            proto_schema.len()
-        );
-
-        // Return as Custom action result so server can reload schema
-        Ok(ActionResult::Custom {
-            name: "reload_schema".to_string(),
-            data: json!({ "proto_schema": proto_schema }),
-        })
-    }
-
-    fn execute_list_services(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("gRPC list services request");
-
-        // Return as Custom action result so server can list services from descriptor pool
-        Ok(ActionResult::Custom {
-            name: "list_services".to_string(),
-            data: json!({}),
-        })
-    }
-
-    fn execute_describe_method(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let service = action
-            .get("service")
-            .and_then(|v| v.as_str())
-            .context("Missing 'service' parameter")?;
-
-        let method = action
-            .get("method")
-            .and_then(|v| v.as_str())
-            .context("Missing 'method' parameter")?;
-
-        debug!("gRPC describe method: {}/{}", service, method);
-
-        // Return as Custom action result so server can describe method from descriptor pool
-        Ok(ActionResult::Custom {
-            name: "describe_method".to_string(),
-            data: json!({
-                "service": service,
-                "method": method
-            }),
-        })
-    }
 }
 
 // Implement Protocol trait (common functionality)
@@ -121,21 +70,15 @@ impl Protocol for GrpcProtocol {
                     required: true,
                     example: json!("syntax = \"proto3\"; package test; service UserService { rpc GetUser(UserId) returns (User); } message UserId { int32 id = 1; } message User { int32 id = 1; string name = 2; string email = 3; }"),
                 },
-                ParameterDefinition {
-                    name: "enable_reflection".to_string(),
-                    type_hint: "boolean".to_string(),
-                    description: "Enable gRPC server reflection (allows clients to discover schema dynamically)".to_string(),
-                    required: false,
-                    example: json!(true),
-                },
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            reload_schema_action(),
-            list_services_action(),
-            describe_method_action(),
-        ]
+        // None. `reload_schema`, `list_services` and `describe_method` used to be declared
+        // here. All three built an `ActionResult::Custom` that no consumer in mod.rs matched
+        // (its loop handles `grpc_unary_response` and `grpc_error` and ignores the rest), so
+        // they did nothing on any path. `reload_schema` could not have worked in any case:
+        // `descriptor_pool` is an immutable `Arc<DescriptorPool>` with no reload channel.
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![grpc_unary_response_action(), grpc_error_action()]
@@ -157,10 +100,22 @@ impl Protocol for GrpcProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("prost-reflect dynamic schema, tonic, hyper HTTP/2")
-            .llm_control("All RPC request/response handling, dynamic schema loading")
-            .e2e_testing("grpcurl / gRPC clients")
-            .notes("Unary RPCs only, no streaming, dynamic protobuf via prost-reflect")
+            .implementation(
+                "prost-reflect over a hand-routed hyper HTTP/2 server. The schema is compiled \
+                 once at startup by protoc, which must be on PATH unless a pre-built \
+                 FileDescriptorSet is supplied.",
+            )
+            .llm_control(
+                "The body of every unary RPC, as JSON keyed by protobuf field name, plus the \
+                 gRPC status code on failure. The schema is fixed at startup and cannot be \
+                 changed at runtime.",
+            )
+            .e2e_testing("hand-framed HTTP/2 requests via reqwest in tests/server/grpc")
+            .notes(
+                "Unary RPCs only - no client, server or bidirectional streaming. Server \
+                 reflection is NOT served, so grpcurl needs -proto or -protoset. Request \
+                 compression is rejected. bytes fields cross the action boundary as base64.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -256,9 +211,6 @@ impl Server for GrpcProtocol {
         match action_type {
             "grpc_unary_response" => self.execute_grpc_unary_response(action),
             "grpc_error" => self.execute_grpc_error(action),
-            "reload_schema" => self.execute_reload_schema(action),
-            "list_services" => self.execute_list_services(action),
-            "describe_method" => self.execute_describe_method(action),
             _ => Err(anyhow::anyhow!("Unknown gRPC action: {}", action_type)),
         }
     }
@@ -327,75 +279,6 @@ fn grpc_error_action() -> ActionDefinition {
     }
 }
 
-fn reload_schema_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "reload_schema".to_string(),
-        description: "Reload protobuf schema with new definition".to_string(),
-        parameters: vec![Parameter {
-            name: "proto_schema".to_string(),
-            type_hint: "string".to_string(),
-            description: "New protobuf schema definition".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "reload_schema",
-            "proto_schema": "service UserService { rpc GetUser(UserId) returns (User); }"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("gRPC reload schema")
-                .with_debug("gRPC reload_schema"),
-        ),
-    }
-}
-
-fn list_services_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_services".to_string(),
-        description: "List all available gRPC services and methods".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_services"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("gRPC list services")
-                .with_debug("gRPC list_services"),
-        ),
-    }
-}
-
-fn describe_method_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "describe_method".to_string(),
-        description: "Describe a specific gRPC method's request/response schema".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "service".to_string(),
-                type_hint: "string".to_string(),
-                description: "Service name (e.g., 'UserService')".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "Method name (e.g., 'GetUser')".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "describe_method",
-            "service": "UserService",
-            "method": "GetUser"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("gRPC describe {service}/{method}")
-                .with_debug("gRPC describe_method: service={service}, method={method}"),
-        ),
-    }
-}
-
 // ============================================================================
 // gRPC Action Constants
 // ============================================================================
@@ -403,12 +286,6 @@ fn describe_method_action() -> ActionDefinition {
 pub static GRPC_UNARY_RESPONSE_ACTION: LazyLock<ActionDefinition> =
     LazyLock::new(|| grpc_unary_response_action());
 pub static GRPC_ERROR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| grpc_error_action());
-pub static RELOAD_SCHEMA_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| reload_schema_action());
-pub static LIST_SERVICES_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| list_services_action());
-pub static DESCRIBE_METHOD_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| describe_method_action());
 
 // ============================================================================
 // gRPC Event Type Constants

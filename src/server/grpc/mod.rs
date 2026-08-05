@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 #[cfg(feature = "grpc")]
 use crate::llm::action_helper::call_llm;
@@ -29,9 +29,9 @@ use crate::{console_error, console_info};
 #[cfg(feature = "grpc")]
 use bytes::Bytes;
 #[cfg(feature = "grpc")]
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 #[cfg(feature = "grpc")]
-use hyper::{body::Incoming, Request, Response, StatusCode};
+use hyper::{body::Incoming, header::HeaderValue, Request, Response, StatusCode};
 #[cfg(feature = "grpc")]
 use prost::Message;
 #[cfg(feature = "grpc")]
@@ -40,6 +40,135 @@ use prost_reflect::{DescriptorPool, DynamicMessage, ReflectMessage};
 use prost_types::FileDescriptorSet;
 #[cfg(feature = "grpc")]
 use serde_json::json;
+
+/// Largest request body buffered, before gRPC framing. Matches gRPC's own default
+/// `maxReceiveMessageLength` of 4 MiB.
+#[cfg(feature = "grpc")]
+const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+
+/// gRPC status codes (`google.rpc.Code`) this server produces.
+///
+/// `grpc_error`'s documented `code` string maps onto these. It previously did not map onto
+/// anything: the code was parsed, logged, and then folded into a `bail!` message, so every
+/// error reached the client as `13 INTERNAL` with the real code smuggled into the text of
+/// `grpc-message`.
+#[cfg(feature = "grpc")]
+#[derive(Clone, Copy, Debug)]
+#[repr(i32)]
+pub enum GrpcStatus {
+    Ok = 0,
+    Cancelled = 1,
+    Unknown = 2,
+    InvalidArgument = 3,
+    DeadlineExceeded = 4,
+    NotFound = 5,
+    AlreadyExists = 6,
+    PermissionDenied = 7,
+    ResourceExhausted = 8,
+    FailedPrecondition = 9,
+    Aborted = 10,
+    OutOfRange = 11,
+    Unimplemented = 12,
+    Internal = 13,
+    Unavailable = 14,
+    DataLoss = 15,
+    Unauthenticated = 16,
+}
+
+#[cfg(feature = "grpc")]
+impl GrpcStatus {
+    /// Parse the `code` field of a `grpc_error` action. Accepts the canonical spec spellings
+    /// (`NOT_FOUND`), lowercase, and the bare integer. Anything unrecognized is `UNKNOWN`
+    /// rather than a silent `INTERNAL`, so a typo is visible as a typo.
+    fn parse(code: &str) -> Self {
+        if let Ok(n) = code.trim().parse::<i32>() {
+            return Self::from_i32(n);
+        }
+        match code.trim().to_ascii_uppercase().replace('-', "_").as_str() {
+            "OK" => Self::Ok,
+            "CANCELLED" | "CANCELED" => Self::Cancelled,
+            "UNKNOWN" => Self::Unknown,
+            "INVALID_ARGUMENT" => Self::InvalidArgument,
+            "DEADLINE_EXCEEDED" => Self::DeadlineExceeded,
+            "NOT_FOUND" => Self::NotFound,
+            "ALREADY_EXISTS" => Self::AlreadyExists,
+            "PERMISSION_DENIED" => Self::PermissionDenied,
+            "RESOURCE_EXHAUSTED" => Self::ResourceExhausted,
+            "FAILED_PRECONDITION" => Self::FailedPrecondition,
+            "ABORTED" => Self::Aborted,
+            "OUT_OF_RANGE" => Self::OutOfRange,
+            "UNIMPLEMENTED" | "NOT_IMPLEMENTED" => Self::Unimplemented,
+            "INTERNAL" => Self::Internal,
+            "UNAVAILABLE" => Self::Unavailable,
+            "DATA_LOSS" => Self::DataLoss,
+            "UNAUTHENTICATED" => Self::Unauthenticated,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn from_i32(n: i32) -> Self {
+        match n {
+            0 => Self::Ok,
+            1 => Self::Cancelled,
+            2 => Self::Unknown,
+            3 => Self::InvalidArgument,
+            4 => Self::DeadlineExceeded,
+            5 => Self::NotFound,
+            6 => Self::AlreadyExists,
+            7 => Self::PermissionDenied,
+            8 => Self::ResourceExhausted,
+            9 => Self::FailedPrecondition,
+            10 => Self::Aborted,
+            11 => Self::OutOfRange,
+            12 => Self::Unimplemented,
+            14 => Self::Unavailable,
+            15 => Self::DataLoss,
+            16 => Self::Unauthenticated,
+            _ => Self::Internal,
+        }
+    }
+}
+
+/// A handler failure carrying the gRPC status it should be reported as.
+#[cfg(feature = "grpc")]
+struct GrpcFailure {
+    status: GrpcStatus,
+    message: String,
+}
+
+#[cfg(feature = "grpc")]
+impl GrpcFailure {
+    fn new(status: GrpcStatus, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
+}
+
+#[cfg(feature = "grpc")]
+impl From<anyhow::Error> for GrpcFailure {
+    fn from(e: anyhow::Error) -> Self {
+        Self::new(GrpcStatus::Internal, e.to_string())
+    }
+}
+
+#[cfg(feature = "grpc")]
+impl From<serde_json::Error> for GrpcFailure {
+    fn from(e: serde_json::Error) -> Self {
+        Self::new(GrpcStatus::Internal, e.to_string())
+    }
+}
+
+#[cfg(feature = "grpc")]
+impl From<prost::EncodeError> for GrpcFailure {
+    fn from(e: prost::EncodeError) -> Self {
+        Self::new(
+            GrpcStatus::Internal,
+            format!("could not encode response: {}", e),
+        )
+    }
+}
 
 /// gRPC server with dynamic schema support
 pub struct GrpcServer;
@@ -67,17 +196,9 @@ impl GrpcServer {
                 "Missing 'proto_schema' in startup_params. LLM must provide protobuf definition.",
             )?;
 
-        // Enable reflection by default (can be disabled in startup_params)
-        let enable_reflection = startup_params
-            .as_ref()
-            .map(|p| p.get_optional_bool("enable_reflection"))
-            .transpose()?
-            .flatten()
-            .unwrap_or(true);
-
         debug!("Compiling protobuf schema for gRPC server");
         trace!("Proto schema:\n{}", proto_schema);
-        let _ = status_tx.send(format!("[DEBUG] Compiling protobuf schema"));
+        let _ = status_tx.send("[DEBUG] Compiling protobuf schema".to_string());
 
         // Compile proto schema to FileDescriptorSet
         let file_descriptor_set = Self::compile_proto_schema(&proto_schema)
@@ -113,24 +234,26 @@ impl GrpcServer {
         let protocol = Arc::new(GrpcProtocol::new());
         let descriptor_pool_arc = Arc::new(descriptor_pool.clone());
 
-        // Build reflection service if enabled
-        let _reflection_service = if enable_reflection {
-            info!("gRPC reflection enabled");
-            let _ = status_tx.send("[INFO] gRPC reflection enabled".to_string());
-
-            let mut fd_bytes_refl = Vec::new();
-            file_descriptor_set.encode(&mut fd_bytes_refl)?;
-
-            Some(
-                tonic_reflection::server::Builder::configure()
-                    .register_encoded_file_descriptor_set(fd_bytes_refl.as_slice())
-                    .build_v1()
-                    .context("Failed to build gRPC reflection service")?,
-            )
-        } else {
-            info!("gRPC reflection disabled");
-            None
-        };
+        // Server reflection is NOT served.
+        //
+        // This used to build a `tonic_reflection` service into a variable named
+        // `_reflection_service`, drop it at the end of scope, and log "gRPC reflection
+        // enabled". The router below has no route for
+        // `/grpc.reflection.v1.ServerReflection/ServerReflectionInfo`, so reflection requests
+        // fell through to "unknown service". `grpcurl` with no -proto/-protoset starts with
+        // exactly that call, which is why it could never introspect this server. Reflection is
+        // also server-streaming, which this unary-only server cannot do at all.
+        //
+        // The `enable_reflection` startup parameter has been removed with it; it only ever
+        // changed a log line.
+        warn!(
+            "gRPC server reflection is not implemented; clients must be given the schema \
+             out of band (grpcurl -proto / -protoset)"
+        );
+        let _ = status_tx.send(
+            "[WARN] gRPC reflection is not served; pass the schema to clients out of band"
+                .to_string(),
+        );
 
         // Create dynamic gRPC service
         let dynamic_service = DynamicGrpcService {
@@ -307,7 +430,12 @@ impl GrpcServer {
     fn compile_proto_file(path: &std::path::Path) -> Result<FileDescriptorSet> {
         use std::process::Command;
 
-        let output_path = std::env::temp_dir().join("netget_grpc_descriptor.pb");
+        // Unique per invocation. A fixed name meant two gRPC servers starting concurrently
+        // wrote and read back the same descriptor file and could load each other's schema.
+        let output_path = std::env::temp_dir().join(format!(
+            "netget_grpc_descriptor_{}.pb",
+            uuid::Uuid::new_v4()
+        ));
 
         // Get the directory containing the proto file for proto_path
         let proto_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -330,6 +458,7 @@ impl GrpcServer {
 
         // Load the generated descriptor set
         let bytes = std::fs::read(&output_path)?;
+        let _ = std::fs::remove_file(&output_path);
         let fds = FileDescriptorSet::decode(bytes.as_slice())
             .context("Failed to decode protoc output")?;
 
@@ -391,8 +520,8 @@ impl DynamicGrpcService {
             Err(e) => {
                 debug!("Invalid gRPC path: {} - {}", path, e);
                 return Ok(Self::grpc_error_response(
-                    StatusCode::NOT_FOUND,
-                    "Invalid path",
+                    GrpcStatus::Unimplemented,
+                    "path must be /package.Service/Method",
                 ));
             }
         };
@@ -411,20 +540,24 @@ impl DynamicGrpcService {
                 .starts_with("application/grpc")
             {
                 return Ok(Self::grpc_error_response(
-                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                    "Expected application/grpc",
+                    GrpcStatus::Internal,
+                    "expected content-type application/grpc",
                 ));
             }
         }
 
-        // Read request body
-        let body_bytes = match req.collect().await {
+        // Read request body, capped. HTTP/2 flow control bounds the window, not the total, so
+        // an unbounded collect() lets one client grow the process without limit.
+        let body_bytes = match Limited::new(req.into_body(), MAX_REQUEST_BYTES)
+            .collect()
+            .await
+        {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
                 debug!("Failed to read gRPC request body: {}", e);
                 return Ok(Self::grpc_error_response(
-                    StatusCode::BAD_REQUEST,
-                    "Failed to read body",
+                    GrpcStatus::ResourceExhausted,
+                    &format!("request body rejected (limit {} bytes)", MAX_REQUEST_BYTES),
                 ));
             }
         };
@@ -434,10 +567,14 @@ impl DynamicGrpcService {
             Ok(payload) => payload,
             Err(e) => {
                 debug!("Failed to decode gRPC frame: {}", e);
-                return Ok(Self::grpc_error_response(
-                    StatusCode::BAD_REQUEST,
-                    "Invalid gRPC frame",
-                ));
+                // A set compression flag is UNIMPLEMENTED per the spec, not a generic error:
+                // it tells the client to retry without compression.
+                let status = if body_bytes.first() == Some(&1) {
+                    GrpcStatus::Unimplemented
+                } else {
+                    GrpcStatus::Internal
+                };
+                return Ok(Self::grpc_error_response(status, &e.to_string()));
             }
         };
 
@@ -449,28 +586,25 @@ impl DynamicGrpcService {
             .await
         {
             Ok(payload) => payload,
-            Err(e) => {
-                debug!("gRPC handler error: {}", e);
+            Err(failure) => {
+                debug!("gRPC handler error: {}", failure.message);
                 let _ = self
                     .status_tx
-                    .send(format!("[ERROR] gRPC handler error: {}", e));
-                return Ok(Self::grpc_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &e.to_string(),
-                ));
+                    .send(format!("[ERROR] gRPC handler error: {}", failure.message));
+                return Ok(Self::grpc_error_response(failure.status, &failure.message));
             }
         };
 
         // Encode response with gRPC framing
         let response_frame = Self::encode_grpc_frame(&response_payload);
 
-        // Build HTTP/2 response with gRPC trailers
-        let response = Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/grpc")
-            .header("grpc-status", "0") // OK
-            .body(Full::new(Bytes::from(response_frame)))
-            .unwrap();
+        // Build the HTTP/2 response. Header values are compile-time constants here, so unlike
+        // the error path there is nothing that can fail to parse.
+        let mut response = Response::new(Full::new(Bytes::from(response_frame)));
+        *response.status_mut() = StatusCode::OK;
+        let headers = response.headers_mut();
+        headers.insert("content-type", HeaderValue::from_static("application/grpc"));
+        headers.insert("grpc-status", HeaderValue::from_static("0"));
 
         debug!("gRPC response: {} bytes", response_payload.len());
         let _ = self.status_tx.send(format!(
@@ -510,11 +644,15 @@ impl DynamicGrpcService {
 
         let length = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
 
-        if frame.len() < 5 + length {
+        // Compare against the bytes remaining rather than computing `5 + length`. On a 32-bit
+        // target that addition wraps: a length of 0xFFFFFFFF gives `5 + length == 4`, the
+        // guard passes, and `frame[5..4]` panics with start > end.
+        let available = frame.len() - 5;
+        if length > available {
             bail!(
-                "Frame length mismatch (expected {} bytes, got {})",
-                5 + length,
-                frame.len()
+                "frame declares {} bytes but only {} follow the header",
+                length,
+                available
             );
         }
 
@@ -538,15 +676,35 @@ impl DynamicGrpcService {
         frame
     }
 
-    /// Create gRPC error response
-    fn grpc_error_response(status: StatusCode, message: &str) -> Response<Full<Bytes>> {
-        Response::builder()
-            .status(status)
-            .header("content-type", "application/grpc")
-            .header("grpc-status", "13") // INTERNAL
-            .header("grpc-message", message)
-            .body(Full::new(Bytes::new()))
-            .unwrap()
+    /// Create a gRPC error reply.
+    ///
+    /// Two things this must get right, both of which it used to get wrong:
+    ///
+    /// * **HTTP 200.** gRPC carries application failures in `grpc-status`, not in the HTTP
+    ///   status line. A non-200 makes a conformant client discard `grpc-message` and
+    ///   synthesize `UNAVAILABLE`/`UNKNOWN`, so the code and text chosen here never reach the
+    ///   caller. The old signature took a `StatusCode` and returned 500/404/400/415.
+    /// * **No `unwrap()` on the message.** `message` comes from LLM output and `anyhow`
+    ///   chains. `HeaderValue` accepts only visible ASCII, so a single non-ASCII character or
+    ///   newline in a model's error text made `Builder::body` return `Err` and panicked the
+    ///   connection task — skipping the connection cleanup that runs after `serve_connection`
+    ///   and leaving the entry permanently `Active`.
+    fn grpc_error_response(status: GrpcStatus, message: &str) -> Response<Full<Bytes>> {
+        let mut res = Response::new(Full::new(Bytes::new()));
+        *res.status_mut() = StatusCode::OK;
+        let headers = res.headers_mut();
+        headers.insert("content-type", HeaderValue::from_static("application/grpc"));
+        headers.insert(
+            "grpc-status",
+            HeaderValue::from_str(&(status as i32).to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("13")),
+        );
+        headers.insert(
+            "grpc-message",
+            HeaderValue::from_str(message)
+                .unwrap_or_else(|_| HeaderValue::from_static("internal error")),
+        );
+        res
     }
 
     /// Handle a gRPC unary request
@@ -556,18 +714,30 @@ impl DynamicGrpcService {
         method_name: &str,
         request_bytes: Vec<u8>,
         connection_id: crate::server::connection::ConnectionId,
-    ) -> Result<Vec<u8>> {
-        // Find service and method descriptors
+    ) -> std::result::Result<Vec<u8>, GrpcFailure> {
+        // Find service and method descriptors. An unknown service or method is UNIMPLEMENTED,
+        // which is what a client expects and what `grpcurl` prints usefully; it used to be
+        // reported as INTERNAL over HTTP 500.
         let service_desc = self
             .descriptor_pool
             .services()
             .find(|s| s.full_name() == service_name)
-            .context("Service not found in schema")?;
+            .ok_or_else(|| {
+                GrpcFailure::new(
+                    GrpcStatus::Unimplemented,
+                    format!("unknown service {}", service_name),
+                )
+            })?;
 
         let method_desc = service_desc
             .methods()
             .find(|m| m.name() == method_name)
-            .context("Method not found in service")?;
+            .ok_or_else(|| {
+                GrpcFailure::new(
+                    GrpcStatus::Unimplemented,
+                    format!("unknown method {}/{}", service_name, method_name),
+                )
+            })?;
 
         let input_desc = method_desc.input();
         let output_desc = method_desc.output();
@@ -578,9 +748,15 @@ impl DynamicGrpcService {
             service_name, method_name
         ));
 
-        // Decode request using dynamic message
+        // Decode request using dynamic message. A body this server cannot decode is the
+        // client's malformed input, not a server fault.
         let request_msg = DynamicMessage::decode(input_desc.clone(), request_bytes.as_slice())
-            .context("Failed to decode gRPC request")?;
+            .map_err(|e| {
+                GrpcFailure::new(
+                    GrpcStatus::InvalidArgument,
+                    format!("could not decode request message: {}", e),
+                )
+            })?;
 
         // Convert DynamicMessage to JSON using prost-reflect's JSON serialization
         let request_json = Self::dynamic_message_to_json(&request_msg)?;
@@ -630,11 +806,19 @@ impl DynamicGrpcService {
                         .context("Missing 'message' in grpc_unary_response")?;
 
                     // Convert JSON to DynamicMessage
-                    let response_msg = Self::json_to_dynamic_message(response_json, &output_desc)?;
+                    let response_msg = Self::json_to_dynamic_message(response_json, &output_desc)
+                        .map_err(|e| {
+                        GrpcFailure::new(
+                            GrpcStatus::Internal,
+                            format!("handler's response does not fit the schema: {}", e),
+                        )
+                    })?;
 
                     // Encode to protobuf bytes
                     let mut response_bytes = Vec::new();
-                    response_msg.encode(&mut response_bytes)?;
+                    response_msg
+                        .encode(&mut response_bytes)
+                        .map_err(anyhow::Error::from)?;
 
                     debug!("gRPC response: {} bytes", response_bytes.len());
                     let _ = self
@@ -644,6 +828,10 @@ impl DynamicGrpcService {
                     return Ok(response_bytes);
                 }
                 ActionResult::Custom { name, data } if name == "grpc_error" => {
+                    // The documented `code` now reaches the wire. It used to be parsed,
+                    // logged and then folded into a bail! message, so every error was sent
+                    // as 13 INTERNAL over HTTP 500 with the real code as text inside
+                    // grpc-message.
                     let code = data
                         .get("code")
                         .and_then(|c| c.as_str())
@@ -651,10 +839,12 @@ impl DynamicGrpcService {
                     let message = data
                         .get("message")
                         .and_then(|m| m.as_str())
-                        .unwrap_or("Internal error");
+                        .unwrap_or("Internal error")
+                        .to_string();
 
-                    debug!("gRPC error: {} - {}", code, message);
-                    bail!("gRPC error: {} - {}", code, message);
+                    let status = GrpcStatus::parse(code);
+                    debug!("gRPC error: {} ({:?}) - {}", code, status, message);
+                    return Err(GrpcFailure::new(status, message));
                 }
                 _ => {
                     // Ignore other action results
@@ -752,9 +942,21 @@ impl DynamicGrpcService {
         // Populate fields from JSON
         if let Some(obj) = json.as_object() {
             for (field_name, value) in obj {
-                if let Some(field) = message_desc.get_field_by_name(field_name) {
-                    let proto_value = Self::json_to_proto_value(value, &field)?;
-                    msg.set_field(&field, proto_value);
+                match message_desc.get_field_by_name(field_name) {
+                    Some(field) => {
+                        let proto_value = Self::json_to_field_value(value, &field)?;
+                        msg.set_field(&field, proto_value);
+                    }
+                    // Silently dropping an unknown key made a hallucinated field name look
+                    // like success: the response encoded without it and the client saw a
+                    // default value with no indication anything was wrong.
+                    None => {
+                        warn!(
+                            "handler returned field '{}' which is not in message {}; ignoring",
+                            field_name,
+                            message_desc.full_name()
+                        );
+                    }
                 }
             }
         }
@@ -762,7 +964,83 @@ impl DynamicGrpcService {
         Ok(msg)
     }
 
-    /// Convert JSON value to protobuf Value
+    /// Convert a JSON value to the protobuf value for a field, honoring its cardinality.
+    ///
+    /// `json_to_proto_value` looks only at `field.kind()`, which is the type of a single
+    /// element. For a `repeated string` that is `Kind::String`, so a handler returning
+    /// `{"tags": ["a", "b"]}` used to fail with `Expected string` and the whole RPC came back
+    /// as an error — repeated and map fields could not be produced by a handler at all,
+    /// despite `build_message_schema` telling it the cardinality was `repeated`.
+    fn json_to_field_value(
+        json: &serde_json::Value,
+        field: &prost_reflect::FieldDescriptor,
+    ) -> Result<prost_reflect::Value> {
+        use prost_reflect::{MapKey, Value};
+
+        // Maps are checked first: a protobuf map field is also "repeated" (of its synthetic
+        // entry message), so testing is_list() first would take the wrong branch.
+        if field.is_map() {
+            let entry = match field.kind() {
+                prost_reflect::Kind::Message(m) => m,
+                _ => bail!("map field {} has no entry message", field.name()),
+            };
+            let key_field = entry.get_field(1).context("map entry has no key field")?;
+            let value_field = entry.get_field(2).context("map entry has no value field")?;
+
+            let obj = json.as_object().with_context(|| {
+                format!("field {} is a map; expected a JSON object", field.name())
+            })?;
+
+            let mut map = std::collections::HashMap::new();
+            for (k, v) in obj {
+                let key = match key_field.kind() {
+                    prost_reflect::Kind::String => MapKey::String(k.clone()),
+                    prost_reflect::Kind::Bool => MapKey::Bool(
+                        k.parse()
+                            .with_context(|| format!("map key '{}' is not a boolean", k))?,
+                    ),
+                    prost_reflect::Kind::Int32
+                    | prost_reflect::Kind::Sint32
+                    | prost_reflect::Kind::Sfixed32 => MapKey::I32(
+                        k.parse()
+                            .with_context(|| format!("map key '{}' is not an int32", k))?,
+                    ),
+                    prost_reflect::Kind::Int64
+                    | prost_reflect::Kind::Sint64
+                    | prost_reflect::Kind::Sfixed64 => MapKey::I64(
+                        k.parse()
+                            .with_context(|| format!("map key '{}' is not an int64", k))?,
+                    ),
+                    prost_reflect::Kind::Uint32 | prost_reflect::Kind::Fixed32 => MapKey::U32(
+                        k.parse()
+                            .with_context(|| format!("map key '{}' is not a uint32", k))?,
+                    ),
+                    prost_reflect::Kind::Uint64 | prost_reflect::Kind::Fixed64 => MapKey::U64(
+                        k.parse()
+                            .with_context(|| format!("map key '{}' is not a uint64", k))?,
+                    ),
+                    other => bail!("unsupported protobuf map key type: {:?}", other),
+                };
+                map.insert(key, Self::json_to_proto_value(v, &value_field)?);
+            }
+            return Ok(Value::Map(map));
+        }
+
+        if field.is_list() {
+            let arr = json.as_array().with_context(|| {
+                format!("field {} is repeated; expected a JSON array", field.name())
+            })?;
+            let mut list = Vec::with_capacity(arr.len());
+            for item in arr {
+                list.push(Self::json_to_proto_value(item, field)?);
+            }
+            return Ok(Value::List(list));
+        }
+
+        Self::json_to_proto_value(json, field)
+    }
+
+    /// Convert a single JSON value to a protobuf Value of the field's element type.
     fn json_to_proto_value(
         json: &serde_json::Value,
         field: &prost_reflect::FieldDescriptor,
@@ -771,14 +1049,23 @@ impl DynamicGrpcService {
 
         Ok(match field.kind() {
             Kind::Bool => Value::Bool(json.as_bool().context("Expected boolean")?),
+            // Range is checked rather than truncated with `as`: silently wrapping an
+            // out-of-range value puts a different number on the wire than the handler asked
+            // for, and the client has no way to tell.
             Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
-                Value::I32(json.as_i64().context("Expected integer")? as i32)
+                let n = json.as_i64().context("Expected integer")?;
+                Value::I32(
+                    i32::try_from(n).with_context(|| format!("{} does not fit in an int32", n))?,
+                )
             }
             Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
                 Value::I64(json.as_i64().context("Expected integer")?)
             }
             Kind::Uint32 | Kind::Fixed32 => {
-                Value::U32(json.as_u64().context("Expected unsigned integer")? as u32)
+                let n = json.as_u64().context("Expected unsigned integer")?;
+                Value::U32(
+                    u32::try_from(n).with_context(|| format!("{} does not fit in a uint32", n))?,
+                )
             }
             Kind::Uint64 | Kind::Fixed64 => {
                 Value::U64(json.as_u64().context("Expected unsigned integer")?)
@@ -799,7 +1086,15 @@ impl DynamicGrpcService {
             }
             Kind::Enum(enum_desc) => {
                 if let Some(n) = json.as_i64() {
-                    Value::EnumNumber(n as i32)
+                    // Validate the number against the enum, matching what the string branch
+                    // already did. `n as i32` accepted any integer and wrapped out-of-range
+                    // ones into a valid-looking but wrong variant.
+                    let n = i32::try_from(n)
+                        .with_context(|| format!("{} is not a valid enum number", n))?;
+                    if enum_desc.get_value(n).is_none() {
+                        bail!("{} is not a value of enum {}", n, enum_desc.full_name());
+                    }
+                    Value::EnumNumber(n)
                 } else if let Some(s) = json.as_str() {
                     // Try to find enum value by name
                     if let Some(val) = enum_desc.get_value_by_name(s) {

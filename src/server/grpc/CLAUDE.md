@@ -1,195 +1,193 @@
 # gRPC Server Implementation
 
-## Overview
+A gRPC server whose service implementation *is* the handler. The protobuf schema is supplied at
+startup; every unary RPC is decoded to JSON keyed by field name, handed to the handler, and the
+handler's JSON is encoded back to protobuf.
 
-gRPC server with dynamic protobuf schema support, where the LLM provides the schema definition and controls all RPC
-request/response handling through JSON. Implements a meta-protocol where the LLM becomes the RPC service implementation.
+**State**: `Experimental` · **Stack**: `ETH>IP>TCP>HTTP2>GRPC`
 
-## Protocol Version
+## Libraries
 
-- **gRPC**: HTTP/2 with Protocol Buffers
-- **Protobuf**: proto3 syntax
-- **Transport**: HTTP/2 with binary protobuf encoding
+- **prost-reflect** 0.14 — `DescriptorPool` / `DynamicMessage`, so no code generation.
+- **prost** 0.13, **prost-types** — `FileDescriptorSet` decode, message encode.
+- **hyper** 1.x — `server::conn::http2` with a hand-written router. **tonic is not used** by
+  this server despite being a dependency of the `grpc` feature; the routing, framing and
+  status handling here are all local.
+- **protoc** — required on `PATH` unless a pre-built `FileDescriptorSet` is supplied.
 
-## Library Choices
+## Schema input
 
-### Core Dependencies
+`startup_params.proto_schema`, tried in this order:
 
-- **prost-reflect** v0.14 - Dynamic protobuf message handling
-    - Chosen for: Runtime schema loading, no code generation needed
-    - Used for: Parsing/encoding protobuf without compilation
-- **prost** v0.13 - Protocol Buffer implementation
-    - Chosen for: FileDescriptorSet decoding, message encoding
-    - Used for: Protobuf binary format handling
-- **prost-types** - Standard protobuf types
-    - Chosen for: FileDescriptorSet type definition
-- **tonic-reflection** v0.12 - gRPC server reflection
-    - Chosen for: gRPC reflection protocol support
-    - Used for: Allow clients to discover service schema at runtime
-- **hyper** v1 - HTTP/2 server
-    - Chosen for: HTTP/2 support required for gRPC
-    - Used for: Connection handling and HTTP/2 framing
-- **base64** - Base64 encoding/decoding
-    - Chosen for: Schema transmission in prompts
-    - Used for: FileDescriptorSet encoding
+1. **base64 `FileDescriptorSet`** — no protoc needed. Note that a schema which happens to be
+   valid base64 but is not a valid descriptor set is a hard error rather than falling through.
+2. **path to a `.proto` or `.pb` file** — read from anywhere on disk, with the file's directory
+   added as `--proto_path`, so `import` can pull in siblings.
+3. **inline `.proto` text** — compiled with protoc.
 
-### Why Dynamic Schema Loading?
+**Do not tell a model to use base64.** An earlier version of this document called base64
+"recommended"; models truncate long base64 strings inside JSON responses, and the startup
+parameter description and the E2E test both say the opposite. Inline proto3 text is the form to
+use. Reaching a schema by file path is also driven by model output and reads an arbitrary local
+file, which is worth knowing before exposing `open_server` to an untrusted instruction.
 
-**Flexibility over Performance**:
+`enable_reflection` used to be a startup parameter. It only ever changed a log line — see below.
 
-- Allows LLM to define arbitrary services without code generation
-- Enables runtime schema changes and prototyping
-- Simplifies testing (no protoc compilation step for users)
-- Trade-off: Slower than compiled code, but sufficient for LLM-controlled services
+## Reflection is not served
 
-## Architecture Decisions
+`grpcurl` with no `-proto`/`-protoset` begins with
+`grpc.reflection.v1.ServerReflection/ServerReflectionInfo`. **There is no route for it**, so
+that request is answered `12 UNIMPLEMENTED` and `grpcurl` cannot introspect this server.
 
-### Schema Input Formats
+This used to be worse than absent: a `tonic_reflection` service was built into a variable named
+`_reflection_service`, dropped at the end of scope, and the server logged "gRPC reflection
+enabled" while `metadata()` and this file both advertised it as a design principle. The dead
+construction is gone and the server now logs a WARN saying reflection is unavailable.
+Implementing it properly needs server streaming, which this unary-only server does not have.
 
-**Three Methods Supported**:
+Give clients the schema out of band: `grpcurl -proto service.proto ...`.
 
-1. **Base64-encoded FileDescriptorSet** (recommended)
-    - No protoc dependency
-    - LLM provides pre-compiled descriptor
-    - Fastest startup
-2. **.proto file path**
-    - Requires protoc in PATH
-    - Useful for development with existing schemas
-3. **Inline .proto text**
-    - Requires protoc in PATH
-    - LLM provides raw proto definition
-    - Most flexible for LLM generation
+## No storage
 
-### LLM Control Points
+The only server state is the `Arc<DescriptorPool>` compiled from `proto_schema` at startup. It
+is immutable, never written from network bytes or handler output, and no per-client data is
+retained. `GrpcProtocol` is a unit struct. This protocol has never been near the storage rule.
 
-**Complete RPC Control** - LLM handles all service logic:
-
-1. **Startup**: LLM provides protobuf schema via `startup_params.proto_schema`
-2. **Request**: Parse protobuf → convert to JSON → send to LLM
-3. **Response**: LLM returns JSON → convert to protobuf → encode response
-
-**Action-Based Responses**:
-
-```json
-{
-  "actions": [
-    {
-      "type": "grpc_unary_response",
-      "message": {"id": 123, "name": "Alice", "email": "alice@example.com"}
-    }
-  ]
-}
-```
-
-### Dynamic Message Handling
-
-**Runtime Type System**:
-
-- Use `DescriptorPool` to store parsed schema
-- Find service/method descriptors by name
-- Create `DynamicMessage` instances for request/response
-- Convert protobuf ↔ JSON using custom serialization
-
-**JSON Conversion**:
-
-- Protobuf Value → JSON: `proto_value_to_json()`
-- JSON → Protobuf Value: `json_to_proto_value()`
-- Handles all protobuf types: int32/64, string, bool, bytes (base64), enum, message, repeated, map
-
-### Connection Management
-
-- Each gRPC connection spawned as tokio task
-- HTTP/2 handled by hyper's `http2::Builder`
-- Connection tracked in `ProtocolConnectionInfo::Grpc` with service/method metadata
-- gRPC framing: 5-byte header (1 byte compression + 4 bytes length) + payload
-
-### Error Handling
-
-**gRPC Status Codes**:
-
-- HTTP 200 + `grpc-status: 0` for success
-- HTTP 200 + `grpc-status: 13` for internal errors
-- LLM can return `grpc_error` action with custom status codes
-
-## State Management
-
-### Per-Connection State
-
-```rust
-ProtocolConnectionInfo::Grpc {
-    service_name: String,       // e.g., "test.UserService"
-    method_name: String,        // e.g., "GetUser"
-    metadata: HashMap<String, String>,  // gRPC metadata (headers)
-}
-```
-
-### Server State
-
-- **Descriptor Pool**: Cached schema for message parsing
-- **Router**: Not needed (dynamic dispatch by service/method name)
-
-## Limitations
-
-### Not Implemented
-
-- **Streaming RPCs** - Only unary (request/response) supported
-    - No client streaming, server streaming, or bidirectional streaming
-- **Compression** - gRPC compression flag ignored
-- **Deadlines/Timeouts** - gRPC deadline metadata not enforced
-- **Retry policies** - No automatic retry handling
-- **Load balancing** - Single server instance only
-- **Authentication** - No mTLS or token-based auth
-
-### Schema Limitations
-
-- **No reflection of LLM behavior** - Schema defines structure but not LLM logic
-- **Protoc dependency** - .proto text/file formats require protoc in PATH
-- **No schema validation** - LLM must provide valid protobuf schema
-- **No proto3 optionals** - May not handle all proto3 features correctly
-
-### Performance Considerations
-
-- **Dynamic dispatch overhead** - Slower than compiled gRPC services
-- **JSON serialization** - Extra conversion step vs. native protobuf
-- **No connection pooling** - Each request creates new connection to LLM
-
-## Example Prompts and Responses
-
-### Startup (Inline Proto Text)
+## Request handling
 
 ```
-Start a gRPC server on port 50051. Here is the protobuf schema:
+/package.Service/Method  ->  find descriptors  ->  decode protobuf  ->  JSON
+                                                                         |
+        protobuf  <-  encode  <-  grpc_unary_response.message  <-  handler
+```
+
+Event `grpc_unary_request` carries `service`, `method`, `request` (JSON), and
+`expected_response_schema` — a field-name → `{type, cardinality}` map built from the response
+descriptor, so the handler is told what shape to return. It declares its actions via
+`.with_actions([grpc_unary_response, grpc_error])`.
+
+### Protobuf ↔ JSON
+
+Messages are presented to the handler as **JSON keyed by protobuf field name** — never as wire
+bytes and never as hex. `{"a": 5, "b": 3}`, not a blob. Round-trip rules:
+
+| Protobuf | JSON |
+|---|---|
+| numeric, bool, string, enum | native JSON; enums accept the name or the number |
+| `bytes` | **base64**, in both directions |
+| message | nested object |
+| `repeated` | array |
+| `map` | object; keys are stringified and parsed back to the declared key type |
+
+`bytes` is the one place base64 crosses the action boundary, against the project's general
+rule. It is symmetric — `Kind::Bytes` decodes what `proto_value_to_json` encoded — and the
+schema hint says `"bytes (base64)"`, so there is no encode/decode asymmetry of the kind the
+root CLAUDE.md warns about for `send_tcp_data`. It remains a poor fit for small models; a
+schema that avoids `bytes` will work better.
+
+Repeated and map fields **could not be produced at all** until recently: `json_to_proto_value`
+switched on `field.kind()`, which for `repeated string` is `Kind::String`, so a handler
+returning `{"tags": ["a","b"]}` failed with "Expected string" and the RPC came back as an
+error — while `expected_response_schema` cheerfully told it the cardinality was `repeated`.
+`json_to_field_value` now checks `is_map()` then `is_list()` before falling through to the
+scalar path.
+
+Numeric conversions are range-checked (`i32::try_from`) rather than truncated with `as`, and an
+enum given a number is validated against the enum's declared values, matching what the
+string branch already did. A field name that is not in the message is logged rather than
+silently dropped.
+
+## Error handling
+
+`grpc_error` takes `code` and `message`, and **the code now reaches the wire.** It used to be
+parsed, logged, and then folded into a `bail!` string, so every error left as
+`13 INTERNAL` over HTTP 500 with the real code embedded as text inside `grpc-message`. `code`
+accepts the spec spellings (`NOT_FOUND`, `INVALID_ARGUMENT`, …), lowercase, or a bare integer;
+anything unrecognized becomes `2 UNKNOWN` so a typo is visible as a typo rather than
+disappearing into `INTERNAL`.
+
+**Every reply is HTTP 200.** gRPC carries application failures in `grpc-status`, not the HTTP
+status line; a non-200 makes a conformant client discard `grpc-message` and synthesize
+`UNAVAILABLE`. Bad path, wrong content-type, oversized body, bad frame and handler errors used
+to return 404/415/400/500 respectively and now all return 200 with the right `grpc-status`:
+
+| Condition | Status |
+|---|---|
+| path not `/Service/Method`, unknown service, unknown method | `12 UNIMPLEMENTED` |
+| request compression flag set | `12 UNIMPLEMENTED` |
+| body over 4 MiB | `8 RESOURCE_EXHAUSTED` |
+| request message fails protobuf decode | `3 INVALID_ARGUMENT` |
+| everything else | `13 INTERNAL` |
+
+## Correlation
+
+Each HTTP/2 stream is one `service_fn` future; hyper binds the returned `Response` to the
+originating stream id. `handle_unary` shares no mutable state, so concurrent streams cannot
+cross-talk. Nothing correlation-related needs to reach the handler.
+
+Caveat: `connection_id` is minted per TCP connection, not per stream, and gRPC multiplexes — so
+concurrent RPCs on one connection share a `connection_id` in the access log and in
+`ConversationSource::Network`. Inbound gRPC metadata (`authorization`, `grpc-timeout`, trace
+headers) is not parsed and does not reach the handler at all.
+
+## Robustness
+
+- **`grpc_error_response` no longer `unwrap()`s.** `grpc-message` is built from LLM output and
+  `anyhow` chains; `HeaderValue` accepts only visible ASCII, so one non-ASCII character or
+  newline made `Builder::body` return `Err` and **panicked the connection task**. Because the
+  connection-cleanup code runs after `serve_connection().await` in the same task, the panic
+  skipped it and left the connection permanently `Active` in `AppState`. It now falls back to
+  a static message.
+- **Request body capped** at 4 MiB (gRPC's own default `maxReceiveMessageLength`) via
+  `http_body_util::Limited`; `req.collect()` was unbounded.
+- **Frame length compared against bytes remaining**, not `5 + length`. That addition wraps on a
+  32-bit target: a declared length of `0xFFFFFFFF` yields `4`, the guard passes, and
+  `frame[5..4]` panics with start > end.
+- **protoc output path is per-invocation.** It was the fixed
+  `$TMPDIR/netget_grpc_descriptor.pb`, so two gRPC servers starting concurrently could load
+  each other's schema. The file is now UUID-named and removed after reading.
+- Bind uses `create_reusable_tcp_listener(...)?`; the accept-loop `JoinHandle` is registered via
+  `register_server_task()`. The accept loop breaks on error rather than spinning. Per-connection
+  tasks are untracked (project-wide gap).
+
+## Known limitations
+
+- **Unary only.** No client, server or bidirectional streaming. Extra length-prefixed frames in
+  a request body are ignored without error.
+- **No trailers.** `grpc-status` is sent in the initial HEADERS alongside the DATA body rather
+  than in an HTTP/2 trailers frame. tonic-based clients accept this (the sibling etcd protocol
+  is verified against the real `etcd_client` crate this way); **grpc-go and grpcurl may not.**
+  This has not been changed because there is no Go client available here to test against, and
+  moving the status into trailers changes how tonic classifies the response — it could break
+  the path that currently works. Verify with a Go client before touching it.
+- **No reflection** (above).
+- **Request compression rejected**, not decompressed.
+- **No deadline enforcement** — `grpc-timeout` is ignored.
+- **No auth** — no mTLS, no token checking, no metadata inspection.
+- **Schema is fixed at startup.** `descriptor_pool` is an immutable `Arc` with no reload path.
+- **No HTTP method check** — a `GET` with the right content-type is accepted and fails later at
+  frame decode.
+- The three async actions `reload_schema`, `list_services` and `describe_method` have been
+  **removed**. All three built an `ActionResult::Custom` that no consumer matched, so they did
+  nothing on any path, and `reload_schema` was unimplementable against an immutable pool.
+
+## Examples
+
+### Startup (inline proto3 text)
+
+```
+Start a gRPC server on port 50051 with this schema:
 
 syntax = "proto3";
 package calculator;
+service Calculator { rpc Add(AddRequest) returns (AddResponse); }
+message AddRequest { int32 a = 1; int32 b = 2; }
+message AddResponse { int32 result = 1; }
 
-service Calculator {
-  rpc Add(AddRequest) returns (AddResponse);
-}
-
-message AddRequest {
-  int32 a = 1;
-  int32 b = 2;
-}
-
-message AddResponse {
-  int32 result = 1;
-}
-
-When you receive Add requests, return the sum of a and b.
+Return the sum of a and b.
 ```
 
-### Startup (Base64 FileDescriptorSet)
-
-```
-Start a gRPC server on port 50051. The protobuf schema is provided as base64-encoded FileDescriptorSet: CpUCCg9jYWxjdWxhdG9yLnByb3RvEgpjYWxjdWxhdG9yIikKCkFkZFJlcXVlc3QSCwoDYQgBIAEoBVIBYRILCgNiCAIgASgFUgFiIiIKC0FkZFJlc3BvbnNlEhMKBnJlc3VsdBgBIAEoBVIGcmVzdWx0MkIKCkNhbGN1bGF0b3ISNAoDQWRkEhYuY2FsY3VsYXRvci5BZGRSZXF1ZXN0Gh0uY2FsY3VsYXRvci5BZGRSZXNwb25zZSIAYgZwcm90bzM=
-
-When you receive Add requests, return the sum of a and b.
-```
-
-### Network Event (Unary RPC)
-
-**Received**:
+### Event
 
 ```json
 {
@@ -197,59 +195,32 @@ When you receive Add requests, return the sum of a and b.
   "service": "calculator.Calculator",
   "method": "Add",
   "request": {"a": 5, "b": 3},
-  "expected_response_schema": {
-    "type": "object",
-    "fields": {
-      "result": {"type": "int32", "cardinality": "optional"}
-    }
-  }
+  "expected_response_schema": {"result": {"type": "int32", "cardinality": "optional"}}
 }
 ```
 
-**LLM Response**:
+### Handler response
 
 ```json
-{
-  "actions": [
-    {
-      "type": "show_message",
-      "message": "Calculating 5 + 3 = 8"
-    },
-    {
-      "type": "grpc_unary_response",
-      "message": {"result": 8}
-    }
-  ]
-}
+{"actions": [{"type": "grpc_unary_response", "message": {"result": 8}}]}
 ```
 
-### Error Response
-
-**LLM Response**:
+### Error
 
 ```json
-{
-  "actions": [
-    {
-      "type": "grpc_error",
-      "code": "INVALID_ARGUMENT",
-      "message": "Both a and b must be positive integers"
-    }
-  ]
-}
+{"actions": [{"type": "grpc_error", "code": "INVALID_ARGUMENT", "message": "a and b must be positive"}]}
 ```
+
+## Verified
+
+`tests/server/grpc/e2e_test.rs` — 5 tests covering basic unary, inline proto text, `.proto`
+file loading, error responses and concurrent requests. All pass. They drive the server with
+hand-framed HTTP/2 via `reqwest` (`http2_prior_knowledge`), **not** a real gRPC client, which is
+why the missing-trailers question above is open: `reqwest` does not care about trailers, so no
+test here can detect it either way.
 
 ## References
 
-- [gRPC Protocol Specification](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
-- [Protocol Buffers Language Guide](https://protobuf.dev/programming-guides/proto3/)
-- [prost-reflect Documentation](https://docs.rs/prost-reflect/)
-- [tonic gRPC Library](https://github.com/hyperium/tonic)
-
-## Key Design Principles
-
-1. **Dynamic Schema** - LLM provides schema, no code generation
-2. **JSON Bridge** - LLM sees JSON, not binary protobuf
-3. **Full Service Control** - LLM implements entire RPC service
-4. **Reflection Support** - Clients can discover schema at runtime
-5. **Action-Based** - Uses standard NetGet action system for responses
+- [gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
+- [proto3 language guide](https://protobuf.dev/programming-guides/proto3/)
+- [prost-reflect](https://docs.rs/prost-reflect/)
