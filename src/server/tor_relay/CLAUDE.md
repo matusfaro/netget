@@ -2,12 +2,25 @@
 
 ## Overview
 
-Tor Relay implements a full **exit relay server** using the OR (Onion Router) protocol specification. This is a
-Beta-status implementation with complete cryptographic correctness, flow control, and bidirectional data forwarding.
+A partial implementation of the Tor OR protocol: TLS 1.3, an ntor server handshake, per-circuit
+AES-128-CTR, stream multiplexing out to TCP targets, and SENDME windows.
 
-**Protocol Compliance**: Tor Protocol Specification (tor-spec.txt)
-**Version**: OR Protocol v4 (TLS + circuit cells)
-**Status**: Beta - Production-ready exit relay
+**Status**: Experimental. **Not interoperable with real Tor and not a usable relay.**
+
+This file previously described the module as "Beta - Production-ready exit relay",
+"cryptographically correct" and "production-quality", and its metadata rated it `Stable` with
+`e2e_testing: Official Tor client (tor binary)`. None of that was true. What an audit found:
+
+| Claim | Reality |
+|---|---|
+| Tested with the official Tor client | No Tor client appears anywhere. The one E2E test is `#[ignore]`d, sends a single zero-filled cell, and prints `✓` for *every* outcome including timeout. |
+| Speaks OR protocol v4 | There is no link handshake. VERSIONS / CERTS / AUTH_CHALLENGE / NETINFO are never sent or parsed, and the reader consumes fixed 514-byte cells only, so the first variable-length cell a real client sends desynchronises it permanently. |
+| Correct cell handling | The command table was shifted by one from command 7 up, so a client's CREATE2 (10) was read as CREATED2 and dropped as "unhandled", and replies went out with the wrong command byte. Fixed. |
+| Cryptographically correct | The ntor KDF took 72 bytes as `Kf\|Kb\|Df\|Db`; tor-spec 5.2.2 specifies 92 bytes as `Df\|Db\|Kf\|Kb\|KH`, so the AES keys were read out of the digest-seed region. The two direction ciphers were also swapped. Both fixed. The relay cell digest is still never computed or verified - see Known non-conformances. |
+| LLM-controlled policies | The only event carrying actions was `tor_relay_cell_detected`, which was never emitted; the two events that *were* emitted declared no actions, so the model was offered no tools. All seven async actions returned "implementation in server logic" for logic that did not exist. Fixed by wiring the real events and deleting the dead actions. |
+
+**Protocol Compliance**: partial, against tor-spec.txt
+**Version**: targets OR protocol v4 cell framing (link handshake absent)
 
 ## Library Choices
 
@@ -109,7 +122,11 @@ allows exact spec compliance and LLM integration points.
 
 ### 4. BEGIN_DIR Support (Directory Serving Over Circuits)
 
-**NEW in this commit**: Tor Relay now implements BEGIN_DIR protocol for serving directory documents over Tor circuits. This makes the `tor_directory` protocol obsolete.
+BEGIN_DIR streams are accepted and answered with a **hardcoded, unsigned, fake consensus**
+listing four 127.0.0.x relays (`generate_test_consensus`). The `directory-signature` is a run of
+zeroes. Arti rejects it, as the status list below already admits. This is also the one place the
+module stores protocol data in Rust rather than letting the LLM supply it, which the project's
+"protocols must not implement storage" rule says it should not do.
 
 **Why BEGIN_DIR**:
 
@@ -174,6 +191,7 @@ directory-signature ...
 ```
 
 **Status**:
+- ⚠️ Consensus content is hardcoded in Rust, not LLM-supplied
 - ✅ BEGIN_DIR cell handling works
 - ✅ Circuit creation successful
 - ✅ HTTP request parsing works
@@ -260,19 +278,32 @@ TCP Destination ← RELAY/DATA ← Encrypt ← Channel
 
 ## LLM Integration
 
-**Control Points**:
+The LLM is a bystander on the data path. Everything that matters - the handshake, BEGIN, DATA,
+END, SENDME, which TCP address a stream connects to - is decided in Rust. The model sees two
+events after the fact and can log, tear down a circuit, or hang up.
 
-1. **Circuit creation** - LLM receives `TOR_RELAY_CIRCUIT_CREATED_EVENT` with circuit_id and client_ip
-2. **Unknown relay commands** - LLM decides how to handle EXTEND, TRUNCATE, RESOLVE, etc.
-3. **Policy decisions** - LLM can implement exit policies (not yet in action system)
+**Events** (both carry the action list; `call_llm` advertises `EventType::actions`, *not*
+`get_sync_actions()`, so an event without them offers the model nothing):
 
-**Action System** (actions.rs - 445 lines):
+1. `tor_relay_circuit_created` - a CREATE2 completed the ntor handshake
+2. `tor_relay_relay_cell` - a RELAY command the relay does not implement (EXTEND, TRUNCATE,
+   RESOLVE, DROP, unknown). BEGIN, BEGIN_DIR, DATA, END and SENDME never reach the model.
 
-- **Async Actions**: `list_active_circuits`, `disconnect_circuit`, `list_active_streams`, `close_stream`,
-  `get_relay_statistics`
-- **Sync Actions**: `detect_create_cell`, `detect_relay_cell`, `send_destroy`, `close_connection`
+**Actions**: `detect_relay_cell` (log only), `send_destroy` (needs `circuit_id`; emits a real
+514-byte DESTROY cell), `close_connection`.
 
-**Scripting**: Not applicable - relay logic is deterministic cryptographic protocol
+**No async actions.** Seven were declared - `set_relay_type`, `configure_exit_policy`,
+`list_active_circuits`, `disconnect_circuit`, `list_active_streams`, `close_stream`,
+`get_relay_statistics` - and all seven returned a Custom result reading "implementation in server
+logic" for server logic that never existed. Relay state lives in the per-server `CircuitManager`,
+which the synchronous `execute_action` cannot reach and could not await if it could. They were
+removed rather than left advertised to the model.
+
+**Exit policy is not enforced.** `configure_exit_policy` was one of the dead actions, and
+`handle_begin_cell` connects to whatever address the BEGIN cell names. Any peer that establishes
+a circuit can open a TCP stream to anything this host can reach.
+
+**Scripting**: not applicable - the relay path is deterministic.
 
 ## Connection Management
 
@@ -298,22 +329,28 @@ TCP Destination ← RELAY/DATA ← Encrypt ← Channel
 
 ## Limitations
 
-### Not Implemented (Future Work)
+### Known non-conformances (why real Tor cannot talk to this)
 
-1. **EXTEND/EXTENDED** - Middle relay functionality (circuit extension to next hop)
-2. **TRUNCATE/TRUNCATED** - Partial circuit teardown
-3. **RESOLVE/RESOLVED** - DNS resolution cells
-4. **BEGIN_DIR** - Directory requests over circuits
-5. **Relay flags** - Guard/Exit/BadExit policy enforcement
-6. **Circuit padding** - Traffic analysis resistance
-7. **Onion service support** - Hidden service rendezvous
-8. **NETINFO cells** - Clock skew detection
-
-These are advanced features not required for basic exit relay operation.
+1. **No link handshake.** tor-spec 4: a connection opens with VERSIONS, then CERTS,
+   AUTH_CHALLENGE and NETINFO. None are sent or parsed. This alone is fatal - a real client
+   never gets as far as CREATE2.
+2. **Variable-length cells desynchronise the reader.** `handle()` does `read_exact` into a
+   fixed 514-byte buffer. VERSIONS (7) and commands 128+ are variable-length.
+3. **Relay cell digest is never computed or verified.** Outbound cells ship a zero digest
+   field and inbound digests are ignored, so the tor-spec 6.1 `recognized` check does not
+   happen. Conforming needs a running SHA-1; no SHA-1 dependency is available to this crate,
+   so this cannot be fixed here without a `Cargo.toml` change.
+4. **No EXTEND/EXTENDED**, so a circuit can only ever be single-hop. There is no middle-relay
+   or multi-hop behaviour, which is most of what a Tor relay is for.
+5. No TRUNCATE/TRUNCATED, no RESOLVE/RESOLVED, no onion services, no circuit padding.
+6. No relay flags, no exit policy enforcement, no bandwidth limiting, no circuit timeouts.
+7. Circuits are keyed globally rather than per-connection, so two TLS connections that pick
+   the same circuit ID collide.
 
 ### Current Capabilities
 
-- Full exit relay: accepts CREATE2, BEGIN, DATA, END, SENDME
+- Accepts CREATE2, BEGIN, BEGIN_DIR, DATA, END, SENDME from a peer that speaks this module's
+  dialect (i.e. one that skips the link handshake and ignores cell digests)
 - Bidirectional data forwarding to arbitrary TCP destinations
 - Specification-compliant cryptography and flow control
 - Real-time statistics and monitoring
@@ -361,15 +398,13 @@ Show me relay statistics including total bytes transferred
 - [Arti Project](https://gitlab.torproject.org/tpo/core/arti) (Rust Tor client reference)
 - TOR_RELAY_PHASE3_COMPLETE.md - Phase 3 completion report with full implementation details
 
-## Implementation Statistics
+## Testing
 
-| Module       | Lines of Code | Purpose                                      |
-|--------------|---------------|----------------------------------------------|
-| `mod.rs`     | 754           | Session handling, TLS, cell processing       |
-| `circuit.rs` | 663           | Circuit crypto, ntor handshake, flow control |
-| `stream.rs`  | 320           | Stream lifecycle, TCP connections, SENDME    |
-| `actions.rs` | 445           | LLM integration, protocol actions            |
-| **Total**    | **2,182**     | Complete exit relay implementation           |
+There is no meaningful test. `tests/server/tor_relay/e2e_test.rs` is `#[ignore]`d, starts the
+server, opens TLS, writes one zero-filled 514-byte cell, and accepts a response, an empty read,
+an error or a timeout as success. Its closing note says cell encryption is "verified in unit
+tests of the relay implementation" - there are none, and project policy forbids tests under
+`src/`.
 
-This is a production-quality implementation demonstrating deep understanding of the Tor protocol and advanced Rust async
-programming patterns.
+To make the `Stable` rating meaningful, the order is: link handshake, then cell digests, then a
+real `tor` or Arti client in the E2E suite, then EXTEND.

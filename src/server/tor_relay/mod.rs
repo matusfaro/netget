@@ -1,6 +1,9 @@
-//! Tor Relay (OR protocol) server implementation
+//! Tor Relay (OR protocol) server - **partial, not interoperable with real Tor**.
 //!
-//! Implements a full Tor OR protocol exit relay server with:
+//! There is no link handshake (VERSIONS/CERTS/AUTH_CHALLENGE/NETINFO), the reader consumes
+//! fixed 514-byte cells so any variable-length cell desynchronises it, relay cell digests are
+//! neither computed nor verified, and there is no EXTEND. See `CLAUDE.md` in this directory for
+//! the full list of non-conformances. What is implemented:
 //! - **ntor handshake** for circuit creation (CREATE2/CREATED2) with Curve25519 DH
 //! - **Relay cell encryption** using AES-128-CTR with forward/backward keys
 //! - **Circuit management** with crypto state and stream multiplexing
@@ -9,7 +12,9 @@
 //! - **SENDME flow control** at circuit and stream levels (tor-spec compliant)
 //! - **Bandwidth tracking** per circuit and aggregate statistics
 //! - **Channel-based architecture** for concurrent stream handling
-//! - **LLM-controlled policies** for relay decisions
+//! - **LLM notification** on circuit creation and on unimplemented RELAY commands. The data
+//!   path itself (BEGIN/DATA/END/SENDME, exit target selection) is decided in Rust, and no
+//!   exit policy is enforced.
 //!
 //! ## Architecture
 //!
@@ -47,7 +52,7 @@
 //! - Automatic SENDME generation on receive thresholds
 //! - Package window prevents overwhelming next hop
 //!
-//! **Status**: Beta - Production-ready exit relay with full crypto and flow control
+//! **Status**: Experimental. Not a usable relay; see `CLAUDE.md`.
 
 pub mod actions;
 pub mod circuit;
@@ -462,8 +467,9 @@ impl TorRelaySession {
             }),
         );
 
-        // Call LLM (non-blocking, for logging/monitoring)
-        let _ = call_llm(
+        // Act on what the LLM decides. Discarding this result was why the circuit-created
+        // event had no effect at all.
+        match call_llm(
             &self.llm_client,
             &self.app_state,
             self.server_id,
@@ -471,13 +477,37 @@ impl TorRelaySession {
             &event,
             self.protocol.as_ref(),
         )
-        .await;
+        .await
+        {
+            Ok(execution_result) => {
+                for message in execution_result.messages {
+                    let _ = self.status_tx.send(message);
+                }
+                for protocol_result in execution_result.protocol_results {
+                    match protocol_result {
+                        // A DESTROY chosen here replaces the CREATED2 we were about to send.
+                        ActionResult::Output(data) => return Ok(Some(data)),
+                        ActionResult::CloseConnection => {
+                            debug!("LLM requested close after circuit creation");
+                            return Err(anyhow::anyhow!("LLM requested close"));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("LLM call failed for circuit creation: {}", e);
+                let _ = self
+                    .status_tx
+                    .send(format!("✗ Tor relay LLM error: {}", e));
+            }
+        }
 
         // Build CREATED2 response
         // CircID (4) | Command (1) | HLEN (2) | HDATA (HLEN)
         let mut response = Vec::with_capacity(71);
         response.extend_from_slice(&circuit_id.to_bytes());
-        response.push(10); // CREATED2 command
+        response.push(11); // CREATED2 command (tor-spec 3; 10 is CREATE2)
         response.extend_from_slice(&64u16.to_be_bytes()); // HLEN = 64 (Y:32 + AUTH:32)
         response.extend_from_slice(&y);
         response.extend_from_slice(&auth);
@@ -541,8 +571,22 @@ impl TorRelaySession {
         let recognized = u16::from_be_bytes([relay_payload[1], relay_payload[2]]);
         let stream_id_u16 = u16::from_be_bytes([relay_payload[3], relay_payload[4]]);
         let stream_id = StreamId::new(stream_id_u16);
-        let length = u16::from_be_bytes([relay_payload[9], relay_payload[10]]);
-        let data = &relay_payload[11..11 + length as usize];
+        let length = u16::from_be_bytes([relay_payload[9], relay_payload[10]]) as usize;
+
+        // `length` comes from the decrypted payload, so it is whatever the peer's ciphertext
+        // decrypts to - up to 65535 - while the payload is only 509 bytes. Slicing on it
+        // unchecked panicked the connection task on essentially any malformed or
+        // wrongly-keyed cell.
+        if 11 + length > relay_payload.len() {
+            warn!(
+                "RELAY cell on circuit {} declares {} bytes of data but only {} remain; dropping",
+                circuit_id.as_u32(),
+                length,
+                relay_payload.len().saturating_sub(11)
+            );
+            return Ok(None);
+        }
+        let data = &relay_payload[11..11 + length];
 
         // Check if this cell is for us (recognized should be 0)
         if recognized != 0 {
@@ -1254,7 +1298,10 @@ struct TorCellInfo {
 /// - Command: 1 byte
 /// - Payload: 509 bytes (variable-length cells have length field)
 ///
-/// Command types (from tor-spec.txt):
+/// Command types (tor-spec.txt section 3). Note these are the *real* numbers: an earlier
+/// version of this table was shifted by one from command 7 onwards, so a client's CREATE2
+/// (10) was read as CREATED2 and dropped as "unhandled", and this relay's own CREATED2
+/// replies went out with the CREATE2 command byte.
 /// - 0: PADDING
 /// - 1: CREATE (obsolete)
 /// - 2: CREATED (obsolete)
@@ -1262,11 +1309,16 @@ struct TorCellInfo {
 /// - 4: DESTROY
 /// - 5: CREATE_FAST (obsolete)
 /// - 6: CREATED_FAST (obsolete)
-/// - 7: NETINFO
-/// - 8: RELAY_EARLY
-/// - 9: CREATE2
-/// - 10: CREATED2
-/// - 11: PADDING_NEGOTIATE
+/// - 7: VERSIONS (variable length - NOT handled, see below)
+/// - 8: NETINFO
+/// - 9: RELAY_EARLY
+/// - 10: CREATE2
+/// - 11: CREATED2
+/// - 12: PADDING_NEGOTIATE
+///
+/// Commands 128+ (VPADDING, CERTS, AUTH_CHALLENGE, AUTHENTICATE, AUTHORIZE) and VERSIONS are
+/// variable-length cells. This reader consumes fixed 514-byte cells only, so any of them
+/// desynchronises it permanently. That is why a real Tor client cannot get past its first cell.
 fn parse_tor_cell(data: &[u8]) -> Option<TorCellInfo> {
     if data.len() < 5 {
         return None;
@@ -1288,11 +1340,12 @@ fn parse_tor_cell(data: &[u8]) -> Option<TorCellInfo> {
         4 => "DESTROY",
         5 => "CREATE_FAST",
         6 => "CREATED_FAST",
-        7 => "NETINFO",
-        8 => "RELAY_EARLY",
-        9 => "CREATE2",
-        10 => "CREATED2",
-        11 => "PADDING_NEGOTIATE",
+        7 => "VERSIONS",
+        8 => "NETINFO",
+        9 => "RELAY_EARLY",
+        10 => "CREATE2",
+        11 => "CREATED2",
+        12 => "PADDING_NEGOTIATE",
         _ => "UNKNOWN",
     };
 

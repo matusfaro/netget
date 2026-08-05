@@ -190,11 +190,16 @@ impl Circuit {
     }
 }
 
-/// Circuit crypto state (AES-CTR for encryption/decryption)
+/// Circuit crypto state (AES-128-CTR, one keystream per direction).
+///
+/// tor-spec names the directions from the *client's* point of view: "forward" is
+/// client -> relay and uses Kf, "backward" is relay -> client and uses Kb. This relay
+/// therefore decrypts with the forward cipher and encrypts with the backward one. The two
+/// were previously swapped.
 pub struct CircuitCrypto {
-    /// Forward cipher (relay -> client)
+    /// Forward cipher, Kf: client -> relay, i.e. what we decrypt with
     forward_cipher: Aes128Ctr,
-    /// Backward cipher (client -> relay)
+    /// Backward cipher, Kb: relay -> client, i.e. what we encrypt with
     backward_cipher: Aes128Ctr,
     /// Forward digest for integrity
     forward_digest: Sha256,
@@ -214,7 +219,13 @@ impl std::fmt::Debug for CircuitCrypto {
 }
 
 impl CircuitCrypto {
-    /// Create new circuit crypto from key material
+    /// Create new circuit crypto from key material.
+    ///
+    /// KNOWN NON-CONFORMANCE: the running digests are SHA-256 and are never consumed. Every
+    /// outbound RELAY cell leaves the 4-byte digest field zero (`build_relay_cell` says
+    /// "filled by encryption"; nothing fills it) and no inbound digest is verified, so the
+    /// `recognized`/digest integrity check of tor-spec 6.1 does not happen. Conforming would
+    /// need a running SHA-1, and no SHA-1 dependency is available to this crate.
     pub fn new(keys: KeyMaterial) -> Self {
         // Initialize AES-CTR ciphers
         let forward_cipher = Aes128Ctr::new(&keys.kf.into(), &[0u8; 16].into());
@@ -234,25 +245,17 @@ impl CircuitCrypto {
         }
     }
 
-    /// Decrypt payload (client -> relay direction)
+    /// Decrypt an inbound payload (client -> relay), which uses Kf.
     pub fn decrypt(&mut self, payload: &mut [u8]) -> Result<()> {
-        // Decrypt using backward cipher
-        self.backward_cipher.apply_keystream(payload);
-
-        // Update digest (after decryption)
-        self.backward_digest.update(&*payload);
-
+        self.forward_cipher.apply_keystream(payload);
+        self.forward_digest.update(&*payload);
         Ok(())
     }
 
-    /// Encrypt payload (relay -> client direction)
+    /// Encrypt an outbound payload (relay -> client), which uses Kb.
     pub fn encrypt(&mut self, payload: &mut [u8]) -> Result<()> {
-        // Update digest first (before encryption)
-        self.forward_digest.update(&*payload);
-
-        // Encrypt using forward cipher
-        self.forward_cipher.apply_keystream(payload);
-
+        self.backward_digest.update(&*payload);
+        self.backward_cipher.apply_keystream(payload);
         Ok(())
     }
 }
@@ -388,19 +391,24 @@ impl NtorServer {
         mac.update(&auth_input);
         let auth = mac.finalize().into_bytes();
 
-        // Derive key material using HKDF-SHA256
-        // Use KEY_SEED as input key material
+        // Derive key material using HKDF-SHA256 (salt = t_key, IKM = KEY_SEED, info = m_expand).
+        //
+        // tor-spec 5.2.2 fixes the layout of the output as
+        //     Df(20) | Db(20) | Kf(16) | Kb(16) | KH(20)
+        // for 92 bytes total. This used to take 72 bytes in the order Kf|Kb|Df|Db, which put
+        // the cipher keys where the spec puts digest seeds - so even a client that agreed on
+        // KEY_SEED derived entirely different AES keys and every cell after CREATED2 decrypted
+        // to noise.
         let hkdf = Hkdf::<Sha256>::new(Some(T_KEY), &key_seed);
-        let mut okm = [0u8; 72]; // Kf(16) + Kb(16) + Df(20) + Db(20) = 72 bytes
+        let mut okm = [0u8; 92];
         hkdf.expand(M_EXPAND, &mut okm)
             .map_err(|_| anyhow::anyhow!("Failed to expand key material"))?;
 
-        // Split key material
         let key_material = KeyMaterial {
-            kf: okm[0..16].try_into().unwrap(),
-            kb: okm[16..32].try_into().unwrap(),
-            df: okm[32..52].try_into().unwrap(),
-            db: okm[52..72].try_into().unwrap(),
+            df: okm[0..20].try_into().unwrap(),
+            db: okm[20..40].try_into().unwrap(),
+            kf: okm[40..56].try_into().unwrap(),
+            kb: okm[56..72].try_into().unwrap(),
         };
 
         debug!(

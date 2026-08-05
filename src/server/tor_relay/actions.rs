@@ -20,32 +20,6 @@ impl TorRelayProtocol {
         Self
     }
 
-    fn execute_detect_create_cell(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let response_type = action
-            .get("response_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("reject");
-
-        debug!(
-            "Tor Relay detected CREATE cell, response: {}",
-            response_type
-        );
-
-        match response_type {
-            "accept" => {
-                // Send fake CREATED cell (honeypot mode)
-                let created_cell = vec![0u8; 64]; // Simplified CREATED cell
-                Ok(ActionResult::Output(created_cell))
-            }
-            "reject" => {
-                // Send DESTROY cell
-                let destroy_cell = vec![4u8; 5]; // Simplified DESTROY cell
-                Ok(ActionResult::Output(destroy_cell))
-            }
-            _ => Ok(ActionResult::CloseConnection),
-        }
-    }
-
     fn execute_detect_relay_cell(&self, action: serde_json::Value) -> Result<ActionResult> {
         let message = action
             .get("message")
@@ -63,35 +37,55 @@ impl TorRelayProtocol {
         })
     }
 
-    fn execute_send_destroy(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("Tor Relay sending DESTROY cell");
+    /// Build a DESTROY cell (tor-spec 5.4).
+    ///
+    /// Layout is CircID(4) | Command(4) | Reason(1), padded to the 514-byte v4 cell size.
+    /// The result is written straight to the TLS stream, so it has to be a whole cell -
+    /// a short write desynchronises the peer's cell framing for the rest of the connection.
+    fn execute_send_destroy(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let circuit_id = action
+            .get("circuit_id")
+            .and_then(|v| v.as_str())
+            .context("Missing 'circuit_id' parameter")?;
 
-        // Simplified DESTROY cell (command 4)
-        let destroy_cell = vec![4u8; 5];
-        Ok(ActionResult::Output(destroy_cell))
+        let circuit_id = u32::from_str_radix(circuit_id.trim_start_matches("0x"), 16)
+            .with_context(|| format!("circuit_id '{}' is not a hex circuit ID", circuit_id))?;
+
+        let reason = action
+            .get("reason")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1 /* PROTOCOL */) as u8;
+
+        debug!(
+            "Tor Relay sending DESTROY for circuit 0x{:08x} (reason {})",
+            circuit_id, reason
+        );
+
+        let mut cell = Vec::with_capacity(CELL_LEN);
+        cell.extend_from_slice(&circuit_id.to_be_bytes());
+        cell.push(CELL_COMMAND_DESTROY);
+        cell.push(reason);
+        cell.resize(CELL_LEN, 0);
+
+        Ok(ActionResult::Output(cell))
     }
 }
 
 // Implement Protocol trait (common functionality)
 impl Protocol for TorRelayProtocol {
+    /// No async actions.
+    ///
+    /// Seven used to be declared here - set_relay_type, configure_exit_policy,
+    /// list_active_circuits, disconnect_circuit, list_active_streams, close_stream and
+    /// get_relay_statistics. None of them did anything: execute_action returned a Custom
+    /// result reading "implementation in server logic" and no such server logic existed.
+    /// Relay state lives in the per-server CircuitManager, which execute_action (sync) cannot
+    /// reach and could not await if it could. They were removed rather than left advertised.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            set_relay_type_action(),
-            configure_exit_policy_action(),
-            list_active_circuits_action(),
-            disconnect_circuit_action(),
-            list_active_streams_action(),
-            close_stream_action(),
-            get_relay_statistics_action(),
-        ]
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            detect_create_cell_action(),
-            detect_relay_cell_action(),
-            send_destroy_action(),
-            close_connection_action(),
-        ]
+        tor_relay_response_actions()
     }
     fn protocol_name(&self) -> &'static str {
         "Tor Relay"
@@ -103,7 +97,7 @@ impl Protocol for TorRelayProtocol {
         "ETH>IP>TCP>TLS>TorRelay"
     }
     fn description(&self) -> &'static str {
-        "Tor relay server for anonymous communication"
+        "Partial Tor OR-protocol relay (not interoperable with real Tor clients)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start a Tor exit relay on port 9001 allowing connections to localhost"
@@ -123,11 +117,11 @@ impl Protocol for TorRelayProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Stable)
-            .implementation("Custom Tor OR protocol with ntor handshake - 2,182 LOC")
-            .llm_control("Circuit creation logging + unknown relay command responses")
-            .e2e_testing("Official Tor client (tor binary)")
-            .notes("Full exit relay, cryptographically correct, production-ready")
+            .state(DevelopmentState::Experimental)
+            .implementation("Custom partial Tor OR protocol: TLS 1.3, ntor server handshake (Curve25519/HMAC-SHA256/HKDF), per-circuit AES-128-CTR, stream multiplexing to TCP targets, SENDME windows. No link handshake at all - VERSIONS/CERTS/AUTH_CHALLENGE/NETINFO are neither sent nor parsed, and variable-length cells desynchronise the fixed 514-byte reader.")
+            .llm_control("Two events: circuit created, and RELAY commands the relay does not implement. Actions: log, DESTROY a circuit, close the connection. Everything on the data path - BEGIN, DATA, END, SENDME, exit policy - is decided in Rust with no LLM involvement.")
+            .e2e_testing("None. The E2E test is #[ignore]d, sends one zero-filled cell, and treats every outcome including timeout as success. No Tor client has ever been run against this.")
+            .notes("NOT interoperable with real Tor and not a usable relay. Missing link handshake; the relay cell digest field is never computed or verified (tor-spec wants a running SHA-1, and no SHA-1 dependency is available here); no EXTEND, so it can only ever be a single-hop endpoint; no exit policy enforcement, so an established circuit can open a TCP stream to any address the host can reach. Was rated Stable and 'production-ready' - it is neither.")
             .build()
     }
     fn group_name(&self) -> &'static str {
@@ -152,7 +146,7 @@ impl Protocol for TorRelayProtocol {
                 "port": 9001,
                 "base_stack": "tor-relay",
                 "event_handlers": [{
-                    "event_pattern": "tor_relay_cell_detected",
+                    "event_pattern": "tor_relay_relay_cell",
                     "handler": {
                         "type": "script",
                         "language": "python",
@@ -166,7 +160,7 @@ impl Protocol for TorRelayProtocol {
                 "port": 9001,
                 "base_stack": "tor-relay",
                 "event_handlers": [{
-                    "event_pattern": "tor_relay_cell_detected",
+                    "event_pattern": "tor_relay_relay_cell",
                     "handler": {
                         "type": "static",
                         "actions": [{
@@ -207,65 +201,37 @@ impl Server for TorRelayProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "detect_create_cell" => self.execute_detect_create_cell(action),
             "detect_relay_cell" => self.execute_detect_relay_cell(action),
             "send_destroy" => self.execute_send_destroy(action),
             "close_connection" => Ok(ActionResult::CloseConnection),
-            // Async actions return custom results
-            "set_relay_type"
-            | "configure_exit_policy"
-            | "list_active_circuits"
-            | "disconnect_circuit"
-            | "list_active_streams"
-            | "close_stream"
-            | "get_relay_statistics" => Ok(ActionResult::Custom {
-                name: "tor_relay_async".to_string(),
-                data: json!({
-                    "action": action_type,
-                    "note": "Async action - implementation in server logic"
-                }),
-            }),
             _ => Err(anyhow::anyhow!("Unknown Tor Relay action: {}", action_type)),
         }
     }
 }
 
 // ============================================================================
-// Action Definitions - Sync Actions (Network Event Triggered)
+// Cell constants (tor-spec 3, "Cell Packet format")
 // ============================================================================
 
-fn detect_create_cell_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "detect_create_cell".to_string(),
-        description: "Detected Tor CREATE cell (circuit creation request)".to_string(),
-        parameters: vec![Parameter {
-            name: "response_type".to_string(),
-            type_hint: "string".to_string(),
-            description:
-                "How to respond: 'accept' (honeypot), 'reject' (DESTROY), 'silent' (close)"
-                    .to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "detect_create_cell",
-            "response_type": "reject"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor CREATE cell {response_type}")
-                .with_debug("Tor detect_create_cell: response_type={response_type}"),
-        ),
-    }
-}
+/// Fixed-length cell size for link protocol v4 (CircID 4 + Command 1 + payload 509).
+pub const CELL_LEN: usize = 514;
+/// DESTROY command byte.
+pub const CELL_COMMAND_DESTROY: u8 = 4;
+
+// ============================================================================
+// Action Definitions
+// ============================================================================
 
 fn detect_relay_cell_action() -> ActionDefinition {
     ActionDefinition {
         name: "detect_relay_cell".to_string(),
-        description: "Detected Tor RELAY cell".to_string(),
+        description: "Record an observation about this cell. Logs only - sends nothing on the \
+                      wire."
+            .to_string(),
         parameters: vec![Parameter {
             name: "message".to_string(),
             type_hint: "string".to_string(),
-            description: "Log message describing the RELAY cell".to_string(),
+            description: "Log message describing the cell".to_string(),
             required: true,
         }],
         example: json!({
@@ -283,15 +249,34 @@ fn detect_relay_cell_action() -> ActionDefinition {
 fn send_destroy_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_destroy".to_string(),
-        description: "Send DESTROY cell to tear down circuit".to_string(),
-        parameters: vec![],
+        description: "Tear down a circuit by sending it a DESTROY cell".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "circuit_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Circuit ID to destroy, hex (e.g. '0x00000005'). Use the \
+                              circuit_id from the event."
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "reason".to_string(),
+                type_hint: "number".to_string(),
+                description: "tor-spec destroy reason: 1 PROTOCOL, 2 INTERNAL, 3 REQUESTED, \
+                              5 HIBERNATING, 8 FINISHED, 9 TIMEOUT (default 1)"
+                    .to_string(),
+                required: false,
+            },
+        ],
         example: json!({
-            "type": "send_destroy"
+            "type": "send_destroy",
+            "circuit_id": "0x00000005",
+            "reason": 3
         }),
         log_template: Some(
             LogTemplate::new()
-                .with_info("-> Tor DESTROY")
-                .with_debug("Tor send_destroy: tearing down circuit"),
+                .with_info("-> Tor DESTROY {circuit_id}")
+                .with_debug("Tor send_destroy: circuit={circuit_id} reason={reason}"),
         ),
     }
 }
@@ -299,7 +284,8 @@ fn send_destroy_action() -> ActionDefinition {
 fn close_connection_action() -> ActionDefinition {
     ActionDefinition {
         name: "close_connection".to_string(),
-        description: "Close the connection immediately".to_string(),
+        description: "Close the whole TLS connection immediately, dropping every circuit on it"
+            .to_string(),
         parameters: vec![],
         example: json!({
             "type": "close_connection"
@@ -312,215 +298,27 @@ fn close_connection_action() -> ActionDefinition {
     }
 }
 
-// ============================================================================
-// Action Definitions - Async Actions (User Triggered)
-// ============================================================================
-
-fn set_relay_type_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "set_relay_type".to_string(),
-        description: "Set relay type (Guard/Middle/Exit) for future implementation".to_string(),
-        parameters: vec![Parameter {
-            name: "relay_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "Relay type: 'guard', 'middle', or 'exit'".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "set_relay_type",
-            "relay_type": "guard"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor set relay type={relay_type}")
-                .with_debug("Tor set_relay_type: type={relay_type}"),
-        ),
-    }
+/// The actions every Tor relay event accepts.
+///
+/// `call_llm` advertises `EventType::actions`, not `get_sync_actions()`, so each event below
+/// must carry this list or the model is offered nothing.
+fn tor_relay_response_actions() -> Vec<ActionDefinition> {
+    vec![
+        detect_relay_cell_action(),
+        send_destroy_action(),
+        close_connection_action(),
+    ]
 }
-
-fn configure_exit_policy_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "configure_exit_policy".to_string(),
-        description: "Configure exit policy (allowed destinations/ports)".to_string(),
-        parameters: vec![Parameter {
-            name: "allowed_ports".to_string(),
-            type_hint: "array".to_string(),
-            description: "List of allowed ports (e.g., [80, 443])".to_string(),
-            required: false,
-        }],
-        example: json!({
-            "type": "configure_exit_policy",
-            "allowed_ports": [80, 443, 22]
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor exit policy configured")
-                .with_debug("Tor configure_exit_policy: allowed_ports={allowed_ports_len}"),
-        ),
-    }
-}
-
-fn list_active_circuits_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_active_circuits".to_string(),
-        description: "List all active circuits".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_active_circuits"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor list circuits")
-                .with_debug("Tor list_active_circuits"),
-        ),
-    }
-}
-
-fn disconnect_circuit_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "disconnect_circuit".to_string(),
-        description: "Disconnect a specific circuit by ID".to_string(),
-        parameters: vec![Parameter {
-            name: "circuit_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Circuit ID to disconnect".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "disconnect_circuit",
-            "circuit_id": "0x12345678"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor disconnect circuit {circuit_id}")
-                .with_debug("Tor disconnect_circuit: circuit_id={circuit_id}"),
-        ),
-    }
-}
-
-fn list_active_streams_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "list_active_streams".to_string(),
-        description: "List all active streams across all circuits".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "list_active_streams"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor list streams")
-                .with_debug("Tor list_active_streams"),
-        ),
-    }
-}
-
-fn close_stream_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "close_stream".to_string(),
-        description: "Close a specific stream by circuit ID and stream ID".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "circuit_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Circuit ID (hex format)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "stream_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "Stream ID within the circuit".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "close_stream",
-            "circuit_id": "0x12345678",
-            "stream_id": 42
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor close stream {stream_id}")
-                .with_debug("Tor close_stream: circuit={circuit_id}, stream={stream_id}"),
-        ),
-    }
-}
-
-fn get_relay_statistics_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "get_relay_statistics".to_string(),
-        description: "Get relay statistics (circuits, streams, bandwidth)".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "get_relay_statistics"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> Tor relay stats")
-                .with_debug("Tor get_relay_statistics"),
-        ),
-    }
-}
-
-// ============================================================================
-// Action Constants
-// ============================================================================
-
-pub static DETECT_CREATE_CELL_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| detect_create_cell_action());
-pub static DETECT_RELAY_CELL_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| detect_relay_cell_action());
-pub static SEND_DESTROY_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| send_destroy_action());
-pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| close_connection_action());
 
 // ============================================================================
 // Event Type Constants
 // ============================================================================
 
-/// Tor Relay cell detection event - triggered when cells are detected
-pub static TOR_RELAY_CELL_DETECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "tor_relay_cell_detected",
-        "Tor OR protocol cell detected from client",
-        json!({
-            "type": "detect_relay_cell",
-            "message": "RELAY cell detected from circuit 0x12345"
-        }),
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "cell_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "The type of cell detected (CREATE, RELAY, DESTROY, etc.)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "circuit_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Circuit ID from the cell (hex format)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "client_ip".to_string(),
-            type_hint: "string".to_string(),
-            description: "Client IP address".to_string(),
-            required: true,
-        },
-    ])
-    .with_actions(vec![
-        DETECT_CREATE_CELL_ACTION.clone(),
-        DETECT_RELAY_CELL_ACTION.clone(),
-        SEND_DESTROY_ACTION.clone(),
-        CLOSE_CONNECTION_ACTION.clone(),
-    ])
-});
-
-/// Tor Relay circuit created event - triggered when CREATE2 succeeds
+/// Circuit created event - emitted after a CREATE2 cell completes the ntor handshake.
 pub static TOR_RELAY_CIRCUIT_CREATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tor_relay_circuit_created",
-        "Tor circuit successfully created via ntor handshake",
+        "Tor circuit created via ntor handshake",
         json!({
             "type": "detect_relay_cell",
             "message": "Circuit created successfully"
@@ -540,16 +338,19 @@ pub static TOR_RELAY_CIRCUIT_CREATED_EVENT: LazyLock<EventType> = LazyLock::new(
             required: true,
         },
     ])
+    .with_actions(tor_relay_response_actions())
 });
 
-/// Tor Relay RELAY cell event - triggered when RELAY cells are processed
+/// RELAY cell event - emitted for relay commands the relay does not handle itself
+/// (EXTEND, TRUNCATE, RESOLVE, DROP and anything unrecognised). BEGIN, BEGIN_DIR, DATA,
+/// END and SENDME are handled natively and do not raise this event.
 pub static TOR_RELAY_RELAY_CELL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tor_relay_relay_cell",
-        "Tor RELAY cell received and decrypted",
+        "Tor RELAY cell received carrying a command the relay does not implement",
         json!({
             "type": "detect_relay_cell",
-            "message": "RELAY_BEGIN cell for stream 1"
+            "message": "EXTEND cell on circuit 0x00000005 - not supported, ignoring"
         }),
     )
     .with_parameters(vec![
@@ -562,7 +363,8 @@ pub static TOR_RELAY_RELAY_CELL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "relay_command".to_string(),
             type_hint: "string".to_string(),
-            description: "RELAY command type (BEGIN, DATA, END, etc.)".to_string(),
+            description: "RELAY command name (EXTEND, TRUNCATE, RESOLVE, DROP, UNKNOWN, ...)"
+                .to_string(),
             required: true,
         },
         Parameter {
@@ -584,11 +386,11 @@ pub static TOR_RELAY_RELAY_CELL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_actions(tor_relay_response_actions())
 });
 
 pub fn get_tor_relay_event_types() -> Vec<EventType> {
     vec![
-        TOR_RELAY_CELL_DETECTED_EVENT.clone(),
         TOR_RELAY_CIRCUIT_CREATED_EVENT.clone(),
         TOR_RELAY_RELAY_CELL_EVENT.clone(),
     ]
