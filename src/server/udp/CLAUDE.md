@@ -48,11 +48,10 @@ Each datagram is processed independently:
 
 ### 4. Peer Tracking
 
-For UI purposes, recent peers are tracked:
-
-- `ProtocolConnectionInfo::Udp` contains `recent_peers: Vec<(SocketAddr, Instant)>`
-- Each datagram updates the peer's last activity time
-- Old peers can be pruned (though not currently implemented)
+Each datagram is registered as its own pseudo-connection in `AppState` with the peer as
+`remote_addr`. `ProtocolConnectionInfo` is a generic `serde_json::Value` wrapper - there is no
+`Udp` variant and no `recent_peers` list; this server passes `ProtocolConnectionInfo::empty()`.
+Nothing prunes these entries, so a busy port accumulates one connection record per datagram.
 
 ### 5. Maximum Datagram Size
 
@@ -79,7 +78,7 @@ The LLM responds to UDP events with actions:
 **Events**:
 
 - `udp_datagram_received` - Datagram received from peer
-    - Parameters: `peer_address`, `data_length`, `data_preview`
+    - Parameters: `peer_address`, `data_length`, `data_encoding`, `data_preview`
 
 **Available Actions**:
 
@@ -94,7 +93,8 @@ The LLM responds to UDP events with actions:
   "actions": [
     {
       "type": "send_udp_response",
-      "data": "PONG"
+      "data": "PONG",
+      "encoding": "text"
     },
     {
       "type": "show_message",
@@ -106,9 +106,23 @@ The LLM responds to UDP events with actions:
 
 ### Data Format
 
-- **Text data**: Sent as-is in the `data` field
-- **Binary data**: Sent as hex string (e.g., `"48656c6c6f"` for "Hello")
-- **Received data**: Full datagram passed to LLM as `data_preview` (truncated to 200 bytes in event)
+`data` is paired with an `encoding` parameter:
+
+- `"text"` - the string's UTF-8 bytes, verbatim
+- `"hex"` - hex-decoded; an error if the string is not valid hex
+- omitted, or `"auto"` - hex if the string happens to parse as hex, otherwise text
+
+**`auto` is ambiguous and is only the default for backwards compatibility.** Any even-length
+run of hex digits is taken as hex, so `{"data": "1234"}` puts the two bytes `0x12 0x34` on the
+wire rather than the four characters `1234`. The same applies to `"abcd"`, `"DEADBEEF"` and
+`"0000"`. An echo server written against the old documented behaviour ("text data sent as-is")
+silently corrupted any payload that looked like hex. Always pass `encoding` explicitly.
+
+**Received data** arrives as `data_preview` plus `data_encoding`, which is `"text"` when the
+datagram is printable ASCII and `"hex"` otherwise; reply using the same encoding. The preview
+covers the first 200 bytes and is suffixed with `...` when truncated. This field previously
+held `format!("{:?}", data)` on a `Vec<u8>`, i.e. the model was shown `[72, 101, 108, 108, 111]`
+for `"Hello"` and had to reconstruct the payload from decimal byte codes.
 
 ## Connection Management
 
@@ -166,14 +180,21 @@ Server processes every received datagram:
 - No throttling of LLM calls
 - Can be overwhelmed by high packet rates
 
-### 5. No Multi-packet Responses
+### 5. `send_to_address` Cannot Actually Target Another Address
+
+Despite its name, description and `address` parameter, the address is parsed for validation
+and then discarded. `execute_send_to_address` returns a plain `ActionResult::Output`, and the
+handler in `mod.rs` sends every Output back to the peer that sent the current datagram. The
+action is effectively a second `send_udp_response`.
+
+### 6. No Multi-packet Responses
 
 LLM can send only one response datagram per received datagram. No built-in support for protocols that require multiple
 responses (though the LLM could use `send_to_address` async action for additional sends).
 
-### 6. Peer Tracking Never Pruned
+### 7. Peer Tracking Never Pruned
 
-Recent peers accumulate forever in `ProtocolConnectionInfo::Udp`. No automatic cleanup of old peers.
+One connection record is created per datagram and nothing removes them, so a busy port grows the AppState connection list without bound.
 
 ## Example Prompts
 

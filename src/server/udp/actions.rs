@@ -157,6 +157,37 @@ impl Server for UdpProtocol {
 }
 
 impl UdpProtocol {
+    /// Turn an action's `data` field into the bytes to put on the wire.
+    ///
+    /// `encoding` selects the interpretation:
+    /// - `"text"`  - the string's UTF-8 bytes, verbatim
+    /// - `"hex"`   - hex-decoded, and an error if it is not valid hex
+    /// - absent or `"auto"` - hex if the string happens to parse as hex, otherwise text
+    ///
+    /// `auto` is the historical behaviour and stays the default so existing prompts and
+    /// handlers keep working, but it is genuinely ambiguous and worth avoiding: any
+    /// even-length string of hex digits is taken as hex. `{"data": "1234"}` puts two bytes
+    /// (0x12 0x34) on the wire, not the four characters "1234"; so do "abcd", "DEADBEEF" and
+    /// "0000". Pass `"encoding": "text"` whenever the payload is text.
+    fn decode_payload(action: &serde_json::Value) -> Result<Vec<u8>> {
+        let data = action
+            .get("data")
+            .and_then(|v| v.as_str())
+            .context("Missing 'data' parameter")?;
+
+        match action.get("encoding").and_then(|v| v.as_str()) {
+            Some("text") => Ok(data.as_bytes().to_vec()),
+            Some("hex") => hex::decode(data)
+                .context("encoding is 'hex' but 'data' is not valid hex")
+                .map_err(Into::into),
+            Some(other) if other != "auto" => Err(anyhow::anyhow!(
+                "Unknown encoding '{}': expected 'text', 'hex' or 'auto'",
+                other
+            )),
+            _ => Ok(hex::decode(data).unwrap_or_else(|_| data.as_bytes().to_vec())),
+        }
+    }
+
     /// Execute send_to_address async action
     fn execute_send_to_address(&self, action: serde_json::Value) -> Result<ActionResult> {
         let address = action
@@ -164,32 +195,31 @@ impl UdpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'address' parameter")?;
 
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_str())
-            .context("Missing 'data' parameter")?;
-
         let _addr: SocketAddr = address.parse().context("Invalid socket address format")?;
 
-        // For async actions, we need to return the data and let the caller handle sending
-        // This is because we need the socket reference from the network handler
-        // We'll encode the target address in the result
-        // Try to decode as hex first, fall back to raw string
-        let bytes = hex::decode(data).unwrap_or_else(|_| data.as_bytes().to_vec());
-        Ok(ActionResult::Output(bytes))
+        // NOTE: the parsed address is discarded. The caller in mod.rs sends every Output back
+        // to the peer that sent the current datagram, so this action cannot actually target a
+        // different address despite its name and documentation.
+        Ok(ActionResult::Output(Self::decode_payload(&action)?))
     }
 
     /// Execute send_udp_response sync action
     fn execute_send_udp_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_str())
-            .context("Missing 'data' parameter")?;
+        Ok(ActionResult::Output(Self::decode_payload(&action)?))
+    }
+}
 
-        // Try to decode as hex first, fall back to raw string
-        let bytes = hex::decode(data).unwrap_or_else(|_| data.as_bytes().to_vec());
-
-        Ok(ActionResult::Output(bytes))
+/// The `encoding` parameter shared by the two sending actions.
+fn encoding_parameter() -> Parameter {
+    Parameter {
+        name: "encoding".to_string(),
+        type_hint: "string".to_string(),
+        description: "How to read 'data': 'text' for literal UTF-8, 'hex' for hex-decoded \
+                      binary, 'auto' (default) to guess. Prefer being explicit - under 'auto' \
+                      any even-length run of hex digits is taken as hex, so \"1234\" sends two \
+                      bytes rather than four characters."
+            .to_string(),
+        required: false,
     }
 }
 
@@ -209,14 +239,16 @@ fn send_to_address_action() -> ActionDefinition {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "string".to_string(),
-                description: "Data to send".to_string(),
+                description: "Data to send (see 'encoding')".to_string(),
                 required: true,
             },
+            encoding_parameter(),
         ],
         example: json!({
             "type": "send_to_address",
             "address": "127.0.0.1:8080",
-            "data": "Hello from UDP"
+            "data": "Hello from UDP",
+            "encoding": "text"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -232,15 +264,19 @@ fn send_udp_response_action() -> ActionDefinition {
         name: "send_udp_response".to_string(),
         description: "Send UDP response back to the peer that sent the current datagram"
             .to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Response data to send".to_string(),
-            required: true,
-        }],
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response payload (see 'encoding')".to_string(),
+                required: true,
+            },
+            encoding_parameter(),
+        ],
         example: json!({
             "type": "send_udp_response",
-            "data": "Response data"
+            "data": "Response data",
+            "encoding": "text"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -271,9 +307,18 @@ fn ignore_datagram_action() -> ActionDefinition {
 pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "udp_datagram_received",
-        "UDP datagram received from a peer",
-        json!({"type": "placeholder", "event_id": "udp_datagram_received"}),
+        "UDP datagram received from a peer. Reply in the same encoding the event reports.",
+        json!({
+            "type": "send_udp_response",
+            "data": "PONG",
+            "encoding": "text"
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "send_udp_response",
+        "data": "48656c6c6f",
+        "encoding": "hex"
+    }))
     .with_parameters(vec![
         Parameter {
             name: "peer_address".to_string(),
@@ -288,9 +333,19 @@ pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
         Parameter {
+            name: "data_encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How data_preview is rendered: 'text' if the payload is printable \
+                          ASCII, otherwise 'hex'. Use the same value when replying."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
             name: "data_preview".to_string(),
             type_hint: "string".to_string(),
-            description: "Preview of the received data".to_string(),
+            description: "The received payload, as text or hex per data_encoding, truncated \
+                          to the first 200 bytes with a trailing '...'"
+                .to_string(),
             required: false,
         },
     ])

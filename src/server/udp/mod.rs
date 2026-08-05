@@ -113,18 +113,35 @@ impl UdpServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
-                            // Build event data with data preview
-                            let data_preview = if data.len() > 200 {
-                                format!("{:?}...", &data[..200])
+                            // Render the payload the way the model will have to reply in.
+                            //
+                            // This used to be `format!("{:?}", data)` on a Vec<u8>, i.e. the
+                            // model was shown `[72, 101, 108, 108, 111]` for "Hello" and had
+                            // to reconstruct the text from decimal byte codes. Printable
+                            // payloads are now shown as text and binary ones as hex, and
+                            // data_encoding tells the model which it is looking at - and so
+                            // which `encoding` to use in send_udp_response.
+                            const PREVIEW_BYTES: usize = 200;
+                            let shown = &data[..data.len().min(PREVIEW_BYTES)];
+                            let printable = !shown.is_empty()
+                                && shown
+                                    .iter()
+                                    .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace());
+                            let (data_encoding, mut data_preview) = if printable {
+                                ("text", String::from_utf8_lossy(shown).into_owned())
                             } else {
-                                format!("{:?}", data)
+                                ("hex", hex::encode(shown))
                             };
+                            if data.len() > PREVIEW_BYTES {
+                                data_preview.push_str("...");
+                            }
 
                             let event = Event::new(
                                 &UDP_DATAGRAM_RECEIVED_EVENT,
                                 serde_json::json!({
                                     "peer_address": peer_addr.to_string(),
                                     "data_length": data.len(),
+                                    "data_encoding": data_encoding,
                                     "data_preview": data_preview
                                 }),
                             );
