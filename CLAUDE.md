@@ -364,12 +364,21 @@ server scope.
 
 Assume other agents work in this repo concurrently.
 
-- **Never `git add -A`, `git add .`, or `git commit -a`.** Stage explicit paths only. This is
-  not style: a broad `git add` sweeps up whatever other agents have half-written, and a
-  half-written change committed without its other half breaks `master` for everyone. It has
-  happened twice — once landing a caller without its callee (`CertificateCache::new` gaining a
-  third argument in `proxy/mod.rs` while `proxy/cert_cache.rs` stayed uncommitted, so HEAD
-  stopped compiling), and once landing 24 import swaps without the module they imported.
+- **Never `git add -A`, `git add .`, `git add -u`, or `git commit -a`.** Stage explicit paths
+  only — `git add <path> && git commit -m …`, listing every file. This is not style: a broad
+  `git add` sweeps up whatever other agents have half-written, and a half-written change
+  committed without its other half breaks `master` for everyone.
+
+  It has happened three times. Twice it broke the build: once landing a caller without its
+  callee (`CertificateCache::new` gaining a third argument in `proxy/mod.rs` while
+  `proxy/cert_cache.rs` stayed uncommitted), once landing 24 import swaps without the module
+  they imported. The third time, a `git add -u` intended for a documentation cleanup swept
+  fourteen source files from five different agents into a commit titled "docs: remove 46
+  one-off session and status reports" — it happened to compile, but the history now
+  misattributes that work.
+
+  **`git add -u` counts.** It stages every tracked modification in the tree, which during
+  parallel work is everyone's. The `-u` flag reads as narrower than `-A` and is not.
 - **Shared files** (`Cargo.toml`, both registries, `server/mod.rs`, `client/mod.rs`, both test
   `mod.rs` files, `state/server.rs`): use `Edit`, add incrementally, never overwrite wholesale.
 - **Pause and report** if you hit an error in code you did not modify. It is almost always
