@@ -64,7 +64,7 @@ OllamaClient (3 backends)
 |------|-------------|---------|
 | `list_protocols` | List available server/client protocols (both halves carry maturity + description) | `ServerRegistry`, `ClientRegistry` |
 | `start_server` | Start protocol server | `server_startup::start_server_from_action()` |
-| `stop_server` | Stop server by ID | `AppState::remove_server()` |
+| `stop_server` | Stop server by ID (aborts its tasks + cancels its scheduled tasks) | `AppState::remove_server()` |
 | `list_servers` | List running servers | `AppState::get_all_servers()` |
 | `server_status` | Detailed server status | `AppState::get_server()` |
 | `start_client` | Connect a protocol client to a remote server | `client_startup::start_client_from_action()` |
@@ -125,6 +125,33 @@ Related: clients also carry a per-session LLM call budget
 (`AppState::try_consume_client_llm_call`, default 100, override with
 `NETGET_CLIENT_LLM_CALL_LIMIT`, `0` = unlimited) so a non-converging client cannot
 loop forever.
+
+## Server teardown and state reaping
+
+`stop_server` / `stop_all` go through `AppState::remove_server()`, which owns the
+whole teardown rather than leaving half of it to the caller:
+
+- every background task registered with `AppState::register_server_task()` is
+  **aborted** (dropping a Tokio `JoinHandle` only detaches the task, so the abort is
+  what releases the listening socket);
+- the scheduled tasks scoped to that server — **and** to its connections — are
+  cancelled.
+
+The cleanup used to live only in the TUI's stop paths, so the MCP tools left
+orphaned recurring tasks firing on their interval, each tick producing a failed LLM
+prompt for a server that no longer existed. Doing it inside `remove_server` is what
+stops that recurring.
+
+`register_server_task()` stores a `Vec` of handles per server, like the client side:
+a protocol with two long-lived loops (a UDP listener plus a TUN reader) gets both
+aborted instead of only the last-registered one.
+
+MCP mode also runs its own **reaper** (`spawn_state_reaper`, started from
+`create_shared_state`), ticking every 5s over `cleanup_old_servers`,
+`cleanup_closed_connections`, `cleanup_old_connections` and
+`cleanup_old_conversations`. The TUI drives these from its event loop; MCP mode has
+no such loop, so without the reaper an LLM-initiated `close_server` — which marks a
+server `Stopped` rather than removing it — left the entry in `AppState` forever.
 
 ## Access Logs
 
