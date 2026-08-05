@@ -22,8 +22,21 @@ use netget::protocol::server_registry::registry;
 ///
 /// All of these are `--all-features`-only protocols, so the CI feature set never sees them.
 /// Each needs `.with_actions(...)` on the event type, or `.with_no_actions()` if the event
-/// genuinely wants none (the two `*_detached`/`disconnected` events probably do).
+/// genuinely wants none — `ssh_agent_connection_opened`'s own description says "returning no
+/// action is normal", which is precisely what `.with_no_actions()` declares, and the
+/// `*_detached`/`*_disconnected` events are the same shape. `src/server/ssh_agent/actions.rs`
+/// calls neither method on any of its eight event types, so every SSH-agent operation is
+/// currently answered with no protocol vocabulary at all.
 const KNOWN_MISDECLARED: &[(&str, &str)] = &[
+    ("SSH Agent", "ssh_agent_connection_opened"),
+    ("SSH Agent", "ssh_agent_request_identities"),
+    ("SSH Agent", "ssh_agent_sign_request"),
+    ("SSH Agent", "ssh_agent_add_identity"),
+    ("SSH Agent", "ssh_agent_remove_identity"),
+    ("SSH Agent", "ssh_agent_remove_all_identities"),
+    ("SSH Agent", "ssh_agent_lock"),
+    ("SSH Agent", "ssh_agent_unlock"),
+    ("HTTP3", "http3_connection_opened"),
     ("USB-Serial", "usb_serial_attached"),
     ("USB-Serial", "usb_serial_detached"),
     ("USB-Serial", "usb_serial_data_received"),
