@@ -101,27 +101,48 @@ impl TcpServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        // Handle connection (send data first if needed)
-                        let llm_client_clone = llm_client.clone();
-                        let app_state_clone = app_state.clone();
-                        let status_tx_clone = status_tx.clone();
-                        let connections_clone = connections.clone();
-                        let write_half_for_conn = write_half_arc.clone();
-                        let protocol_clone = protocol.clone();
-                        tokio::spawn(async move {
-                            Self::handle_connection_with_actions(
-                                connection_id,
-                                server_id,
-                                llm_client_clone,
-                                app_state_clone,
-                                status_tx_clone,
-                                send_first,
-                                connections_clone,
-                                write_half_for_conn,
-                                protocol_clone,
-                            )
-                            .await;
-                        });
+                        // Register the connection HERE, before either task is spawned.
+                        //
+                        // This used to be the first thing the banner task did, racing the
+                        // reader task spawned immediately after it:
+                        // handle_data_with_actions returns silently when the connection is
+                        // not in the map, so a client that wrote before the server accepted
+                        // (the normal case - connect() returns as soon as the kernel
+                        // completes the handshake) lost that payload with no response, no
+                        // error and no log line. Inserting synchronously in the accept loop
+                        // closes the window: the reader task does not exist yet.
+                        connections.lock().await.insert(
+                            connection_id,
+                            ConnectionData {
+                                state: ConnectionState::Idle,
+                                queued_data: Vec::new(),
+                                memory: String::new(),
+                                write_half: write_half_arc.clone(),
+                            },
+                        );
+
+                        // Send the greeting banner, if this server was asked for one.
+                        if send_first {
+                            let llm_client_clone = llm_client.clone();
+                            let app_state_clone = app_state.clone();
+                            let status_tx_clone = status_tx.clone();
+                            let connections_clone = connections.clone();
+                            let write_half_for_conn = write_half_arc.clone();
+                            let protocol_clone = protocol.clone();
+                            tokio::spawn(async move {
+                                Self::send_banner(
+                                    connection_id,
+                                    server_id,
+                                    llm_client_clone,
+                                    app_state_clone,
+                                    status_tx_clone,
+                                    connections_clone,
+                                    write_half_for_conn,
+                                    protocol_clone,
+                                )
+                                .await;
+                            });
+                        }
 
                         // Spawn reader task
                         let llm_client_clone = llm_client.clone();
@@ -237,32 +258,21 @@ impl TcpServer {
         Ok(local_addr)
     }
 
-    /// Handle new connection with LLM actions
+    /// Send the greeting banner for a new connection (`send_first` servers only).
+    ///
+    /// The connection is already registered by the accept loop by the time this runs.
     #[allow(clippy::too_many_arguments)]
-    async fn handle_connection_with_actions(
+    async fn send_banner(
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        send_first: bool,
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         write_half: Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
         protocol: Arc<TcpProtocol>,
     ) {
-        // Add connection to tracking
-        connections.lock().await.insert(
-            connection_id,
-            ConnectionData {
-                state: ConnectionState::Idle,
-                queued_data: Vec::new(),
-                memory: String::new(),
-                write_half: write_half.clone(),
-            },
-        );
-
-        // Send data first if requested
-        if send_first {
+        {
             // Create connection opened event
             let event = Event::new(&TCP_CONNECTION_OPENED_EVENT, serde_json::json!({}));
 
@@ -393,10 +403,18 @@ impl TcpServer {
             return;
         }
 
-        // Merge any queued data with new data
+        // Merge any queued data with new data.
+        //
+        // The lock was released after the state check above, so the reader task may have
+        // removed this connection in the meantime - a client that writes and immediately
+        // closes does exactly that. Unwrapping here panicked the task on that race (15 of 64
+        // such clients in a burst), and a panicked socket task is silent while the server
+        // still reports Running.
         let all_data = {
             let mut conns = connections.lock().await;
-            let conn_data = conns.get_mut(&connection_id).unwrap();
+            let Some(conn_data) = conns.get_mut(&connection_id) else {
+                return; // Connection closed while we were waiting for the lock
+            };
             conn_data.state = ConnectionState::Processing;
             let mut merged = conn_data.queued_data.clone();
             merged.extend_from_slice(&data);

@@ -148,6 +148,20 @@ Echoing is therefore symmetric: pass the event's `data` **and** its `encoding` s
 5. **Handle**: Separate tasks for reading and LLM processing
 6. **Close**: Connection removed from maps when client disconnects or LLM closes
 
+**Step 4 happens synchronously in the accept loop, before any task is spawned.** It used to be
+the first thing the banner task did, which raced the reader task spawned immediately after it:
+`handle_data_with_actions` returns silently when the connection is not in the map, so a client
+that wrote before the server accepted — the normal case, since `connect()` returns as soon as
+the kernel completes the handshake — had its first payload dropped with no response, no error
+and no log line. 8 of 64 clients in a burst lost their request that way. The banner task is now
+spawned only when `send_first` is set, and `tests/connection_map_race_test.rs` pins the
+behaviour. The same shape was fixed in `socket_file` (`1f3945ee`), `tls` and `ssh_agent`.
+
+`handle_data_with_actions` releases the connection lock between its state check and the merge
+step, so a connection can disappear underneath it (write-then-close clients do exactly that).
+Both lookups return early instead of unwrapping; the merge step used to `unwrap()` and panicked
+the task, which is silent — the server keeps reporting `Running`.
+
 ### Connection Data Structure
 
 ```rust
