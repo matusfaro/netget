@@ -96,7 +96,7 @@ impl Pop3Server {
                                             "[DEBUG] TLS handshake completed for connection {}",
                                             connection_id
                                         ));
-                                        if let Err(e) = Pop3Session::handle_tls_session(
+                                        if let Err(e) = Pop3Session::handle_session(
                                             tls_stream,
                                             connection_id,
                                             server_id,
@@ -142,7 +142,15 @@ impl Pop3Server {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept POP3 connection: {}", e);
+                        // Do not continue: an accept() error here is persistent (the listener
+                        // is gone, or the process is out of descriptors), and looping on it
+                        // spins a core at 100% while the server still reports Running.
+                        error!("Failed to accept POP3 connection, stopping listener: {}", e);
+                        let _ = status_tx.send(format!(
+                            "[ERROR] POP3 listener stopped, failed to accept connection: {}",
+                            e
+                        ));
+                        break;
                     }
                 }
             }
@@ -161,15 +169,23 @@ struct Pop3Session;
 
 #[cfg(feature = "pop3")]
 impl Pop3Session {
-    async fn handle_tls_session(
-        stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+    /// Drive one POP3 session to completion.
+    ///
+    /// Generic over the transport so the plain TCP and POP3S (implicit TLS) paths share a
+    /// single implementation - they were previously duplicated verbatim, which is how the
+    /// two drifted.
+    async fn handle_session<S>(
+        stream: S,
         connection_id: crate::server::connection::ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<Pop3Protocol>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+    {
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let (read_half, write_half) = tokio::io::split(stream);
@@ -185,7 +201,7 @@ impl Pop3Session {
             }),
         );
 
-        if let Err(e) = Self::process_command(
+        match Self::process_command(
             &greeting_event,
             &llm_client,
             &app_state,
@@ -197,101 +213,15 @@ impl Pop3Session {
         )
         .await
         {
-            error!("Failed to send POP3 greeting: {}", e);
-            return Err(e);
-        }
-
-        // Main command loop
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => {
-                    debug!("POP3 connection {} closed by client", connection_id);
-                    break;
-                }
-                Ok(_) => {
-                    let command = line.trim().to_string();
-                    if command.is_empty() {
-                        continue;
-                    }
-
-                    debug!("POP3 connection {} received: {}", connection_id, command);
-
-                    let event = Event::new(
-                        &POP3_COMMAND_EVENT,
-                        serde_json::json!({
-                            "command": command,
-                            "connection_id": connection_id.to_string(),
-                        }),
-                    );
-
-                    if let Err(e) = Self::process_command(
-                        &event,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        &protocol,
-                        server_id,
-                        connection_id,
-                        &write_half,
-                    )
-                    .await
-                    {
-                        error!("Failed to process POP3 command: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    error!("POP3 connection {} read error: {}", connection_id, e);
-                    break;
-                }
+            Ok(SessionControl::Close) => return Ok(()),
+            Ok(SessionControl::Continue) => {}
+            Err(e) => {
+                error!("Failed to send POP3 greeting: {}", e);
+                let _ = status_tx.send(format!("[ERROR] POP3 greeting failed: {}", e));
+                return Err(e);
             }
         }
 
-        Ok(())
-    }
-
-    async fn handle_session(
-        stream: tokio::net::TcpStream,
-        connection_id: crate::server::connection::ConnectionId,
-        server_id: crate::state::ServerId,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        protocol: Arc<Pop3Protocol>,
-    ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-
-        let (read_half, write_half) = tokio::io::split(stream);
-        let mut reader = BufReader::new(read_half);
-        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
-
-        // Send initial greeting
-        let greeting_event = Event::new(
-            &POP3_COMMAND_EVENT,
-            serde_json::json!({
-                "command": "CONNECTION_ESTABLISHED",
-                "connection_id": connection_id.to_string(),
-            }),
-        );
-
-        if let Err(e) = Self::process_command(
-            &greeting_event,
-            &llm_client,
-            &app_state,
-            &status_tx,
-            &protocol,
-            server_id,
-            connection_id,
-            &write_half,
-        )
-        .await
-        {
-            error!("Failed to send POP3 greeting: {}", e);
-            return Err(e);
-        }
-
         // Main command loop
         let mut line = String::new();
         loop {
@@ -307,7 +237,12 @@ impl Pop3Session {
                         continue;
                     }
 
-                    debug!("POP3 connection {} received: {}", connection_id, command);
+                    console_debug!(
+                        status_tx,
+                        "POP3 connection {} received: {}",
+                        connection_id,
+                        command
+                    );
 
                     let event = Event::new(
                         &POP3_COMMAND_EVENT,
@@ -317,7 +252,7 @@ impl Pop3Session {
                         }),
                     );
 
-                    if let Err(e) = Self::process_command(
+                    match Self::process_command(
                         &event,
                         &llm_client,
                         &app_state,
@@ -329,8 +264,16 @@ impl Pop3Session {
                     )
                     .await
                     {
-                        error!("Failed to process POP3 command: {}", e);
-                        break;
+                        Ok(SessionControl::Continue) => {}
+                        Ok(SessionControl::Close) => {
+                            debug!("POP3 connection {} closed by server", connection_id);
+                            break;
+                        }
+                        Err(e) => {
+                            error!("Failed to process POP3 command: {}", e);
+                            let _ = status_tx.send(format!("[ERROR] POP3 command failed: {}", e));
+                            break;
+                        }
                     }
                 }
                 Err(e) => {
@@ -347,12 +290,12 @@ impl Pop3Session {
         event: &Event,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        _status_tx: &mpsc::UnboundedSender<String>,
+        status_tx: &mpsc::UnboundedSender<String>,
         protocol: &Arc<Pop3Protocol>,
         server_id: crate::state::ServerId,
         connection_id: crate::server::connection::ConnectionId,
         write_half: &Arc<tokio::sync::Mutex<W>>,
-    ) -> Result<()>
+    ) -> Result<SessionControl>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
@@ -369,32 +312,50 @@ impl Pop3Session {
         )
         .await?;
 
-        // Execute actions
+        // Execute actions. `close_connection` must still flush everything queued before it -
+        // the QUIT reply is normally `send_pop3_ok` followed by `close_connection` in the same
+        // batch - so record the intent and act on it once the batch is drained.
+        let mut control = SessionControl::Continue;
+
         for action in llm_result.protocol_results {
             match action {
                 ActionResult::Output(data) => {
                     let mut writer = write_half.lock().await;
                     writer.write_all(&data).await?;
                     writer.flush().await?;
-                    debug!(
+                    drop(writer);
+
+                    console_debug!(
+                        status_tx,
                         "POP3 connection {} sent {} bytes",
                         connection_id,
                         data.len()
                     );
                 }
                 ActionResult::CloseConnection => {
-                    debug!("POP3 connection {} closing", connection_id);
-                    return Ok(());
+                    control = SessionControl::Close;
                 }
                 ActionResult::WaitForMore => {
                     // Do nothing, wait for next command
                 }
                 _ => {
-                    // Unknown action, ignore
+                    // Not an action that produces POP3 output (memory updates, logging, ...)
                 }
             }
         }
 
-        Ok(())
+        Ok(control)
     }
+}
+
+/// Whether the command loop should keep reading or shut the connection down.
+///
+/// `process_command` used to signal a close by returning `Ok(())` early, which is
+/// indistinguishable from "command handled" - so `close_connection` never actually closed
+/// anything and a client that sent QUIT was left holding an open socket.
+#[cfg(feature = "pop3")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionControl {
+    Continue,
+    Close,
 }

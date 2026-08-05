@@ -11,17 +11,27 @@ use std::sync::LazyLock;
 use tracing::debug;
 
 /// Event: POP3 command received from client
+///
+/// This is the only event the POP3 server emits, so its action list must carry the protocol's
+/// full response vocabulary: `call_llm` builds the model's tool list from
+/// `event.event_type.actions`, never from [`Protocol::get_sync_actions`]. The list is taken
+/// straight from `get_sync_actions()` so the two can never drift apart.
 pub static POP3_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pop3_command",
-        "POP3 command received from client (USER, PASS, STAT, LIST, RETR, DELE, QUIT, etc.)",
+        "POP3 command received from client (USER, PASS, STAT, LIST, RETR, DELE, QUIT, etc.). \
+         The literal command 'CONNECTION_ESTABLISHED' is sent once when a client connects and \
+         must be answered with send_pop3_greeting.",
         json!({"type": "send_pop3_ok", "message": "command processed"}),
     )
     .with_parameters(vec![
         Parameter {
             name: "command".to_string(),
             type_hint: "string".to_string(),
-            description: "The POP3 command (e.g., 'USER alice', 'STAT')".to_string(),
+            description:
+                "The POP3 command line (e.g., 'USER alice', 'STAT', 'RETR 1'), or the synthetic \
+                 'CONNECTION_ESTABLISHED' on a new connection"
+                    .to_string(),
             required: true,
         },
         Parameter {
@@ -31,6 +41,7 @@ pub static POP3_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_actions(Pop3Protocol::new().get_sync_actions())
     .with_log_template(
         LogTemplate::new()
             .with_info("POP3 command: {command}")
@@ -38,6 +49,41 @@ pub static POP3_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             .with_trace("POP3: {json_pretty(.)}"),
     )
 });
+
+/// Prepare LLM-supplied message text for a POP3 multi-line response body.
+///
+/// Two things the model cannot be expected to get right, and which break real clients when
+/// they are wrong (RFC 1939 §3, "Responses to certain commands are multi-line"):
+///
+/// 1. **Byte-stuffing.** A body line beginning with `.` would otherwise be read as the
+///    response terminator, truncating the message. Such lines get a second leading `.`,
+///    which the client strips.
+/// 2. **Line endings.** Bare `\n` is normalised to `\r\n`, and the body is terminated with
+///    `\r\n` so the following `.\r\n` starts on its own line.
+///
+/// The result always ends with `\r\n` (or is empty), so callers can append `.\r\n` directly.
+fn format_pop3_multiline_body(content: &str) -> String {
+    if content.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::with_capacity(content.len() + 16);
+    for line in content.replace("\r\n", "\n").split('\n') {
+        if line.starts_with('.') {
+            out.push('.');
+        }
+        out.push_str(line);
+        out.push_str("\r\n");
+    }
+
+    // `split` yields a trailing empty field when the content already ended in a newline;
+    // that produced one spurious blank line, so drop it.
+    if content.ends_with('\n') {
+        out.truncate(out.len() - 2);
+    }
+
+    out
+}
 
 pub struct Pop3Protocol;
 
@@ -140,25 +186,25 @@ impl Pop3Protocol {
     }
 
     fn execute_send_pop3_retr(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let size = action
-            .get("size")
-            .and_then(|v| v.as_u64())
-            .context("Missing 'size' parameter")?;
-
         let content = action
             .get("content")
             .and_then(|v| v.as_str())
             .context("Missing 'content' parameter")?;
 
-        let mut response = format!("+OK {} octets\r\n", size);
-        response.push_str(content);
-        if !content.ends_with("\r\n") {
-            response.push_str("\r\n");
-        }
-        response.push_str(".\r\n");
+        let body = format_pop3_multiline_body(content);
 
-        debug!("POP3 sending RETR with {} bytes", size);
-        Ok(ActionResult::Output(response.as_bytes().to_vec()))
+        // RFC 1939 treats the octet count as informational (the terminating "." is what ends
+        // the response), so an LLM-supplied `size` is honoured, but omitting it yields the
+        // byte count actually written - which is what a client comparing the two expects.
+        let size = action
+            .get("size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| body.len() as u64);
+
+        let response = format!("+OK {} octets\r\n{}.\r\n", size, body);
+
+        debug!("POP3 sending RETR with {} octets", size);
+        Ok(ActionResult::Output(response.into_bytes()))
     }
 
     fn execute_send_pop3_top(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -167,15 +213,10 @@ impl Pop3Protocol {
             .and_then(|v| v.as_str())
             .context("Missing 'content' parameter")?;
 
-        let mut response = "+OK\r\n".to_string();
-        response.push_str(content);
-        if !content.ends_with("\r\n") {
-            response.push_str("\r\n");
-        }
-        response.push_str(".\r\n");
+        let response = format!("+OK\r\n{}.\r\n", format_pop3_multiline_body(content));
 
         debug!("POP3 sending TOP");
-        Ok(ActionResult::Output(response.as_bytes().to_vec()))
+        Ok(ActionResult::Output(response.into_bytes()))
     }
 
     fn execute_send_pop3_message(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -201,76 +242,20 @@ impl Pop3Protocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for Pop3Protocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "enable_tls".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Enable POP3S (implicit TLS) mode (default: false)".to_string(),
-                required: false,
-                example: json!(true),
-            },
-            ParameterDefinition {
-                name: "tls_common_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "TLS certificate Common Name (CN) (default: 'netget-pop3-server')"
-                    .to_string(),
-                required: false,
-                example: json!("mail.example.com"),
-            },
-            ParameterDefinition {
-                name: "tls_san_dns_names".to_string(),
-                type_hint: "array".to_string(),
-                description:
-                    "TLS certificate Subject Alternative Names (DNS names) (default: ['localhost', '*.local'])"
-                        .to_string(),
-                required: false,
-                example: json!(["mail.example.com", "localhost", "*.example.com"]),
-            },
-            ParameterDefinition {
-                name: "tls_validity_days".to_string(),
-                type_hint: "integer".to_string(),
-                description: "TLS certificate validity period in days (default: 365)".to_string(),
-                required: false,
-                example: json!(365),
-            },
-            ParameterDefinition {
-                name: "tls_organization".to_string(),
-                type_hint: "string".to_string(),
-                description: "TLS certificate Organization (O) (default: 'NetGet')".to_string(),
-                required: false,
-                example: json!("Example Corp"),
-            },
-            ParameterDefinition {
-                name: "tls_organizational_unit".to_string(),
-                type_hint: "string".to_string(),
-                description:
-                    "TLS certificate Organizational Unit (OU) (default: 'POP3 Server')".to_string(),
-                required: false,
-                example: json!("IT Department"),
-            },
-        ]
+        // None. Six TLS parameters (`enable_tls`, `tls_common_name`, `tls_san_dns_names`,
+        // `tls_validity_days`, `tls_organization`, `tls_organizational_unit`) used to be
+        // declared here while `spawn` hardcoded `tls_config = None`, so a caller asking for
+        // POP3S got a plain-text listener and no warning. Declaring nothing makes
+        // `enable_tls: true` fail loudly instead. See the note in `spawn`.
+        Vec::new()
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![ActionDefinition {
-            name: "close_pop3_connection".to_string(),
-            description: "Close a POP3 connection".to_string(),
-            parameters: vec![Parameter {
-                name: "connection_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Connection ID to close".to_string(),
-                required: true,
-            }],
-            example: json!({
-                "type": "close_pop3_connection",
-                "connection_id": "conn-123"
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("POP3 close connection {connection_id}")
-                    .with_debug("POP3 close_pop3_connection: connection_id={connection_id}"),
-            ),
-        }]
+        // No user-triggered actions. A `close_pop3_connection` action used to be advertised
+        // here, but `execute_action` had no arm for it, so every attempt to use it failed with
+        // "Unknown POP3 action". Connections are closed from the command loop via the sync
+        // `close_connection` action instead.
+        Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -404,25 +389,31 @@ impl Protocol for Pop3Protocol {
             },
             ActionDefinition {
                 name: "send_pop3_retr".to_string(),
-                description: "Send POP3 RETR response with email message content".to_string(),
+                description: "Send POP3 RETR response with a full email message. NetGet adds the \
+                              terminating '.' line, converts newlines to CRLF and byte-stuffs any \
+                              line starting with '.', so supply the message as plain text."
+                    .to_string(),
                 parameters: vec![
-                    Parameter {
-                        name: "size".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Size of message in octets".to_string(),
-                        required: true,
-                    },
                     Parameter {
                         name: "content".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Email message content (headers + body)".to_string(),
+                        description:
+                            "Email message content: RFC 5322 headers, a blank line, then the body"
+                                .to_string(),
                         required: true,
+                    },
+                    Parameter {
+                        name: "size".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Octet count to advertise. Omit it and NetGet reports the \
+                                      real byte length of what it sends."
+                            .to_string(),
+                        required: false,
                     },
                 ],
                 example: json!({
                     "type": "send_pop3_retr",
-                    "size": 512,
-                    "content": "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nHello"
+                    "content": "From: sender@example.com\nTo: recipient@example.com\nSubject: Test\n\nHello"
                 }),
                 log_template: Some(
                     LogTemplate::new()
@@ -432,17 +423,20 @@ impl Protocol for Pop3Protocol {
             },
             ActionDefinition {
                 name: "send_pop3_top".to_string(),
-                description: "Send POP3 TOP response with email headers and limited body lines"
+                description: "Send POP3 TOP response: full headers plus the first N body lines \
+                              the client asked for. NetGet adds the terminating '.' line and \
+                              handles CRLF and byte-stuffing."
                     .to_string(),
                 parameters: vec![Parameter {
                     name: "content".to_string(),
                     type_hint: "string".to_string(),
-                    description: "Email headers and requested body lines".to_string(),
+                    description: "Email headers, a blank line, then the requested body lines"
+                        .to_string(),
                     required: true,
                 }],
                 example: json!({
                     "type": "send_pop3_top",
-                    "content": "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nFirst line"
+                    "content": "From: sender@example.com\nTo: recipient@example.com\nSubject: Test\n\nFirst line"
                 }),
                 log_template: Some(
                     LogTemplate::new()
@@ -504,11 +498,10 @@ impl Protocol for Pop3Protocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new(
-            "pop3_command",
-            "Triggered when POP3 command is received from client",
-            json!({"type": "placeholder", "event_id": "pop3_command"}),
-        )]
+        // Must be the same EventType the server actually emits. Building a second, ad-hoc one
+        // here previously meant the documentation served to the model advertised no parameters,
+        // no actions and a "placeholder" response example.
+        vec![POP3_COMMAND_EVENT.clone()]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -520,15 +513,22 @@ impl Protocol for Pop3Protocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation(
-                "Manual TCP/TLS implementation with full LLM control over protocol responses",
+                "Manual line-based TCP implementation with full LLM control over protocol responses",
             )
             .llm_control("Full control over POP3 responses (+OK, -ERR, STAT, LIST, RETR, etc.)")
             .e2e_testing("Manual TCP client with line-based protocol testing")
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(110))
+            .notes(
+                "No mailbox storage: the model answers STAT/LIST/RETR itself. Plain TCP only - \
+                 neither POP3S nor STLS is available.",
+            )
             .build()
     }
 
@@ -598,8 +598,12 @@ impl Server for Pop3Protocol {
         Box::pin(async move {
             use crate::server::pop3::Pop3Server;
 
-            // TLS configuration - TODO: Implement when rustls API is stable
-            // For now, only plain POP3 is supported
+            // POP3S (implicit TLS) is not reachable yet. `Pop3Server` already implements the
+            // whole TLS path and takes the config, but building one needs
+            // `crate::server::tls_cert_manager`, which `src/server/mod.rs` gates on
+            // `dot`/`doh`/`http`/`smtp`/`tls` and not on `pop3`. Adding `feature = "pop3"` to
+            // that cfg list is all this needs; until then POP3 declares no TLS startup
+            // parameters rather than accepting ones it silently drops.
             let tls_config = None;
 
             Pop3Server::spawn_with_llm_actions(
