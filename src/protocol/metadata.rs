@@ -2,6 +2,22 @@
 //!
 //! Defines metadata about protocol implementations including state and notes.
 
+pub use crate::privilege::DeviceClass;
+
+/// How severe a [`PrivilegeRequirement`] is, for display purposes.
+///
+/// Exists so renderers do not have to match the requirement enum exhaustively —
+/// adding a variant should not break every place that colours it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivilegeSeverity {
+    /// Anyone can start this
+    None,
+    /// Needs something the user may already have, or can be granted without root
+    Elevated,
+    /// Needs full root/administrator
+    Root,
+}
+
 /// Privilege requirements for a protocol
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrivilegeRequirement {
@@ -9,8 +25,22 @@ pub enum PrivilegeRequirement {
     None,
     /// Requires ability to bind to privileged ports (< 1024)
     PrivilegedPort(u16),
-    /// Requires raw socket access (e.g., for pcap/promiscuous mode)
+    /// Requires **raw IP sockets** (`SOCK_RAW`) — ICMP, IGMP, OSPF.
+    ///
+    /// Not the same as [`Self::PacketCapture`]: on Linux both come from
+    /// `CAP_NET_RAW`, but on macOS a user in the ChmodBPF group has capture without
+    /// raw sockets. Declaring the wrong one either refuses a user who can run the
+    /// protocol or admits one who cannot.
     RawSockets,
+    /// Requires **layer-2 capture/injection** via BPF or `AF_PACKET` — ARP,
+    /// DataLink, IS-IS.
+    PacketCapture,
+    /// Requires access to a local hardware device class — a Bluetooth adapter, a
+    /// USB device, an NFC reader.
+    ///
+    /// None of these is a port or a socket, and `Root` would be both false and
+    /// needlessly exclusive: a desktop user typically has adapter access already.
+    DeviceAccess(DeviceClass),
     /// Requires full root/administrator access
     Root,
 }
@@ -23,8 +53,27 @@ impl PrivilegeRequirement {
             Self::PrivilegedPort(port) => {
                 format!("Privileged port {} (requires root or capabilities)", port)
             }
-            Self::RawSockets => "Raw socket access (requires root or CAP_NET_RAW)".to_string(),
+            Self::RawSockets => "Raw IP socket access (requires root or CAP_NET_RAW)".to_string(),
+            Self::PacketCapture => {
+                "Layer-2 packet capture (requires root, CAP_NET_RAW, or BPF device access)"
+                    .to_string()
+            }
+            Self::DeviceAccess(class) => {
+                format!("Access to a {} on this host", class.as_str())
+            }
             Self::Root => "Root/Administrator access required".to_string(),
+        }
+    }
+
+    /// Rough severity, for display. See [`PrivilegeSeverity`].
+    pub fn severity(&self) -> PrivilegeSeverity {
+        match self {
+            Self::None => PrivilegeSeverity::None,
+            Self::PrivilegedPort(_)
+            | Self::RawSockets
+            | Self::PacketCapture
+            | Self::DeviceAccess(_) => PrivilegeSeverity::Elevated,
+            Self::Root => PrivilegeSeverity::Root,
         }
     }
 
@@ -34,6 +83,8 @@ impl PrivilegeRequirement {
             Self::None => true,
             Self::PrivilegedPort(_) => caps.can_bind_privileged_ports,
             Self::RawSockets => caps.has_raw_socket_access,
+            Self::PacketCapture => caps.has_packet_capture_access,
+            Self::DeviceAccess(class) => caps.has_device_access(*class),
             Self::Root => caps.is_root,
         }
     }

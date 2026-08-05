@@ -295,23 +295,18 @@ pub fn show_protocol_docs(protocol_name: &str) -> Result<String, String> {
         ));
     }
 
-    // Show privilege requirement
-    use crate::protocol::metadata::PrivilegeRequirement;
-    let (priv_color, priv_text) = match &metadata.privilege_requirement {
-        PrivilegeRequirement::None => (colors::GREEN, "None".to_string()),
-        PrivilegeRequirement::PrivilegedPort(port) => (
-            colors::YELLOW,
-            format!("Privileged port {} (requires root or capabilities)", port),
-        ),
-        PrivilegeRequirement::RawSockets => (
-            colors::YELLOW,
-            "Raw socket access (requires root or CAP_NET_RAW)".to_string(),
-        ),
-        PrivilegeRequirement::Root => (
-            colors::RED,
-            "Root/Administrator access required".to_string(),
-        ),
+    // Show privilege requirement.
+    //
+    // Colour comes from `severity()` and text from `description()` rather than a
+    // match here: this duplicated both, so adding a requirement variant meant
+    // editing this renderer in lockstep or failing to compile.
+    use crate::protocol::metadata::PrivilegeSeverity;
+    let priv_color = match metadata.privilege_requirement.severity() {
+        PrivilegeSeverity::None => colors::GREEN,
+        PrivilegeSeverity::Elevated => colors::YELLOW,
+        PrivilegeSeverity::Root => colors::RED,
     };
+    let priv_text = metadata.privilege_requirement.description();
     output.push_str(&format!(
         "{}▸ Privilege Required:{} {}{}{}\n",
         colors::BRIGHT_CYAN,
