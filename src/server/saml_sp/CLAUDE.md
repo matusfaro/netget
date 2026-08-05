@@ -1,284 +1,127 @@
-# SAML Service Provider (SP) Implementation
+# saml_sp — SAML 2.0 Service Provider simulator
 
-## Overview
+Serves the SP side of the SAML 2.0 Web Browser SSO profile over hyper HTTP/1.1 and asks the
+model what to do with each request. `DevelopmentState::Experimental`, group `Authentication`,
+keywords `saml sp` / `saml service provider` / `service provider` / `sp` / `saml-sp`. Feature
+`saml-sp = ["urlencoding"]`.
 
-SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions and manages application sessions. This is
-an Experimental-status implementation where the LLM controls authorization decisions, attribute extraction, and session
-management.
+**Read this first: NetGet verifies nothing.** The `SAMLResponse` body is handed to the model as
+text and the model decides who the user is. No XML signature is checked — there is no key here
+to check one against — and neither are the issuer, the audience restriction, `NotBefore` /
+`NotOnOrAfter`, or assertion-ID replay. A forged or expired assertion is accepted exactly as
+readily as a genuine one. The session cookie is the bare user id, with no server-side session
+store.
 
-**Protocol Compliance**: SAML 2.0 Web Browser SSO Profile
-**Transport**: HTTP/1.1 over TCP
-**Status**: Experimental - LLM-controlled authorization and session management
+The `description()` used to read "validates SAML assertions" and `llm_control` listed
+"assertion validation". Both now say what actually happens; do not let the claim back in. If
+you want validation behaviour, it has to be spelled out in the instruction — "reject anything
+whose `<saml:Issuer>` is not `https://myidp.example.com`" — and even then the model is reading
+XML, not verifying cryptography.
 
-## Library Choices
+## Files
 
-### HTTP Implementation
+| File | Contents |
+|---|---|
+| `mod.rs` | `SamlSpServer::spawn_with_llm_actions`, `handle_saml_sp_request`, `build_safe_response` |
+| `actions.rs` | `SamlSpProtocol` (`Protocol` + `Server`), four sync actions, `build_authn_post_form`, `build_authn_redirect`, `escape_html`, `cookie_value`, `SAML_SP_REQUEST_EVENT` |
 
-- **hyper v1.5** - HTTP/1.1 server with async/await support
-- **http-body-util** - Request body collection
-- **tokio** - Async runtime
+No `startup_params`: `get_startup_parameters()` is the empty default, so `StartupParams` rejects
+any key a caller passes.
 
-**Rationale**: SAML uses HTTP as transport layer. Hyper provides robust HTTP server capabilities. No external SAML
-library needed since LLM validates assertions.
+## One event, four actions
 
-### No SAML Library
+`saml_sp_request` fires for every request, carrying `method`, `path`, `query`, `headers`,
+`body` and `client_ip`. There is no routing — `/login`, `/acs`, `/AssertionConsumerService`,
+`/metadata` and anything else all arrive the same way and the model decides from `path`.
 
-- **Manual assertion parsing** - LLM extracts user data from assertions
-- **Manual metadata generation** - LLM generates EntityDescriptor XML
-- **No XML signature verification** - Validation can be performed by LLM if needed
+| Action | Produces |
+|---|---|
+| `send_authn_request` | `200 text/html` — redirect page or auto-submitting form carrying the AuthnRequest to the IDP |
+| `process_assertion` | `200 text/html` welcome page + `Set-Cookie: session_id=…` |
+| `send_metadata` | `200 application/samlmetadata+xml` |
+| `send_error_response` | model-chosen status (default 403), an HTML error page |
 
-**Rationale**: The `samael` crate (0.0.19) is work-in-progress and may constrain LLM flexibility. Manual XML parsing
-allows full LLM control over validation logic, attribute extraction, and session creation.
+The event's `.with_actions(...)` holds all four real definitions. That list — not
+`get_sync_actions()` — is what `call_llm` advertises to the model.
 
-## Architecture Decisions
+`send_authn_request` takes `binding`: `HTTP-POST` builds an auto-submitting form,
+anything else (default `HTTP-Redirect`) builds a meta-refresh page whose URL carries
+`SAMLRequest` and `RelayState` as percent-encoded query parameters.
 
-### 1. LLM-Controlled Authorization
+## Base64 is ours, not the model's
 
-**Design Philosophy**: All authorization decisions and session management are determined by the LLM based on user
-instructions.
+The model supplies **plain AuthnRequest XML**; `build_authn_post_form` /
+`build_authn_redirect` base64-encode it. Inbound, the raw `SAMLResponse=…` body is passed
+through as text and the model decodes it. Do not add an action parameter that asks the model
+for base64.
 
-**Control Points**:
+## HTML escaping and the session cookie
 
-- Assertion validation (signature, expiration, issuer)
-- Attribute extraction (email, roles, groups)
-- Authorization logic (role-based access)
-- Session creation and management
-- Error responses
+`escape_html` covers `& < > " '` and is applied to `user_id`, the rendered `attributes`, the
+`error_message`, `idp_sso_url`, `relay_state` and the assembled redirect URL. Every one of
+those is model output derived from an untrusted request — most directly `user_id`, which the
+model lifts out of an assertion an attacker supplied. Unescaped, a `"` broke out of the
+surrounding attribute and injected markup into pages the browser renders (and, for the POST
+binding, auto-submits).
 
-**Benefits**:
+`cookie_value` percent-encodes the user id before it goes into `Set-Cookie`. Raw, a `;` let a
+crafted user id append cookie attributes and CR/LF let it split the response header.
 
-- Flexible authorization rules
-- Dynamic attribute processing
-- Testing/demonstration scenarios
-- Custom session management
-- Integration with existing systems
+## Nothing here may panic
 
-### 2. HTTP-Based Request Handling
+`build_safe_response` is the only place a `Response` is built: an out-of-range status becomes
+500 and a header hyper rejects is dropped with a warning.
 
-**Request Flow**:
+`send_error_response` documents `status_code` as a model-supplied parameter and
+`process_assertion` puts a model-supplied user id into `Set-Cookie`; the old code did
+`Response::builder().status(status as u16)…body(..).unwrap()`, so `status_code: 1000` — or a
+header value containing CR/LF — panicked inside the connection task instead of answering.
+Local copy of `http_common::handler::build_safe_response`, which the `saml-sp` feature cannot
+reach because `http_common` is gated on `feature = "http"`.
 
-1. Accept HTTP connection
-2. Parse HTTP request (method, path, query, body)
-3. Create `SAML_SP_REQUEST_EVENT` with request details
-4. Call LLM with event
-5. Execute action result (send response)
+## Storage
 
-**Supported Paths**:
+None, per the project rule. There is no session table: `process_assertion` sets a cookie and
+nothing on the server remembers it, so a later request carrying that cookie is just another
+request the model must judge. If a scenario needs session continuity, the model keeps it in
+server memory or the instruction states a rule.
 
-- `/login` - Initiate SP-initiated SSO (redirect to IDP)
-- `/acs` or `/AssertionConsumerService` - ACS endpoint (receives SAMLResponse)
-- `/metadata` - SP metadata endpoint
-- Custom paths (LLM-defined)
+## Not implemented
 
-**HTTP Bindings**:
+XML signature verification, certificate/trust management, SingleLogout, artifact binding,
+encrypted assertions, replay protection, persistent sessions, and TLS.
 
-- **HTTP-Redirect**: Redirect user to IDP with AuthnRequest
-- **HTTP-POST**: Receive SAMLResponse in form body (POST)
+## Examples
 
-### 3. Action-Based Response System
-
-**Sync Actions** (requires network context):
-
-- `send_authn_request` - Initiate authentication with IDP
-- `process_assertion` - Validate assertion and create session
-- `send_metadata` - Send SP metadata XML
-- `send_error_response` - Return authorization error
-
-**Async Actions** (user-triggered):
-
-- None currently (SP is request-response)
-
-**Action Execution**:
-
-- LLM returns action with request_xml, user_id, or metadata_xml
-- Action handler builds HTTP response
-- For AuthnRequest: HTTP-Redirect or HTTP-POST form
-- For successful auth: Set session cookie
-- Response sent to client
-
-### 4. SP-Initiated SSO Flow
-
-**LLM Responsibility**: Generate AuthnRequest XML when user accesses `/login`:
-
-```xml
-<samlp:AuthnRequest ID="_xyz789" IssueInstant="2025-01-01T00:00:00Z">
-  <saml:Issuer>https://sp.example.com</saml:Issuer>
-  <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"/>
-</samlp:AuthnRequest>
-```
-
-**HTTP-Redirect Flow**:
-
-1. LLM generates AuthnRequest XML
-2. Server base64-encodes request
-3. Server builds redirect URL: `https://idp.example.com/sso?SAMLRequest=...`
-4. Browser redirects to IDP
-5. User authenticates at IDP
-6. IDP redirects back to SP ACS endpoint
-
-### 5. IDP-Initiated SSO Flow
-
-**LLM Responsibility**: Receive and validate SAMLResponse at `/acs`:
-
-1. Extract SAMLResponse from POST body
-2. Base64-decode assertion XML
-3. Validate assertion (signature, expiration, issuer)
-4. Extract user attributes (NameID, email, roles)
-5. Create application session (set cookie)
-6. Redirect user to application
-
-**Session Management**: LLM controls session creation, typically via HTTP cookies.
-
-### 6. Assertion Validation
-
-**LLM Responsibility**: Validate incoming assertions for:
-
-- **Signature Verification** - Check XML signature (if LLM implements)
-- **Expiration** - Verify NotBefore/NotOnOrAfter conditions
-- **Issuer Validation** - Ensure assertion from trusted IDP
-- **Audience Restriction** - Verify assertion intended for this SP
-- **Replay Protection** - Check assertion ID uniqueness (if LLM implements)
-
-**Flexible Validation**: LLM can implement strict or relaxed validation based on requirements.
-
-### 7. Connection Management
-
-**HTTP Keep-Alive**: Each request uses a new HTTP connection (hyper default).
-
-**Connection Tracking**:
-
-- Connections tracked in AppState with connection_id
-- Bytes sent/received tracked per request
-- Recent requests stored in ProtocolConnectionInfo::SamlSp
-
-**Dual Logging**:
-
-- All logs to tracing macros (debug!, info!, etc.)
-- Status updates sent via status_tx channel
-- Request summaries at DEBUG level
-- Full payloads at TRACE level
-
-## LLM Integration
-
-**Event Type**: `SAML_SP_REQUEST_EVENT`
-
-**Event Data** (ACS endpoint receiving assertion):
-
-```json
-{
-  "method": "POST",
-  "path": "/acs",
-  "query": null,
-  "headers": [["Content-Type", "application/x-www-form-urlencoded"]],
-  "body": "SAMLResponse=...&RelayState=...",
-  "client_ip": "127.0.0.1"
-}
-```
-
-**LLM Prompt Context**:
-
-- Available actions: send_authn_request, process_assertion, send_metadata, send_error_response
-- Path information (login, ACS, metadata)
-- Client IP (for logging)
-- Request parameters (SAMLResponse, RelayState)
-
-**Response Actions** (successful authentication):
-
-```json
-{
-  "actions": [
-    {
-      "type": "process_assertion",
-      "user_id": "testuser",
-      "attributes": {
-        "email": "test@example.com",
-        "role": "admin"
-      }
-    }
-  ]
-}
-```
-
-**Scripting**: Possible - cache validation logic for known assertions.
-
-## Limitations
-
-### Not Implemented
-
-1. **XML Signature Verification** - Assertion signatures not cryptographically verified
-2. **Certificate Management** - No cert storage or trust management
-3. **Metadata Refresh** - No automatic metadata generation
-4. **Persistent Sessions** - No session database
-5. **Logout Support** - No SingleLogoutService endpoint
-6. **Artifact Binding** - Only HTTP-Redirect and HTTP-POST supported
-7. **Encryption Support** - Encrypted assertions not supported
-8. **Replay Protection** - No assertion ID tracking
-
-### Current Capabilities
-
-- Initiate SP-initiated SSO
-- Receive and process assertions via LLM
-- Serve SP metadata via LLM
-- Flexible attribute extraction
-- Custom authorization logic
-- Session creation (cookies)
-- Error responses
-
-### Known Issues
-
-- No cryptographic signature verification
-- No persistent session storage
-- No replay attack prevention
-- LLM must correctly parse XML
-
-## Example Prompts
-
-### Start a simple SP
-
-```
+```text
 Start a SAML Service Provider on port 8081.
-When users access /login, redirect them to IDP at https://idp.example.com/sso.
-When receiving assertions at /acs, accept all assertions and create a session.
-When users request /metadata, return a basic EntityDescriptor with ACS endpoint at http://localhost:8081/acs.
+On /login send an AuthnRequest to the IDP at http://localhost:8080/sso via HTTP-Redirect.
+On /acs read the SAMLResponse, and only if its issuer is http://localhost:8080 and the
+assertion has not expired, start a session for the NameID; otherwise reject with 403.
+On /metadata return an EntityDescriptor with ACS at http://localhost:8081/acs.
 ```
 
-### SP with role-based access
+Deterministic equivalent — no LLM call per request:
 
-```
-Start a SAML SP on port 8081.
-When receiving assertions at /acs:
-- Extract email and role attributes
-- Grant access to users with role='admin'
-- Deny access to users with role='guest'
-- Set session cookie with username
+```json
+"event_handlers": [{"event_pattern": "saml_sp_request", "handler": {"type": "static",
+  "actions": [{"type": "process_assertion", "user_id": "testuser",
+    "attributes": {"email": "test@example.com", "role": "user"}}]}}]
 ```
 
-### SP with attribute extraction
+Note what that static handler means: it accepts every assertion unconditionally. That is fine
+for testing an IDP and is exactly what a honeypot wants; it is not authentication.
 
-```
-Start a SAML SP on port 8081.
-When receiving assertions:
-- Extract attributes: email, displayName, memberOf
-- Validate assertion is from issuer 'https://myidp.example.com'
-- Check assertion is not expired
-- Create session with extracted attributes
-```
+## Tests
+
+**There is no `tests/server/saml_sp/` directory.** This protocol has no test coverage of any
+kind. Adding one means creating the directory, the `e2e_test.rs`, its `CLAUDE.md`, and a
+`pub mod saml_sp;` line in `tests/server/mod.rs` (a test directory not declared there is
+silently never compiled).
+
+Pairs naturally with `saml_idp` on another port: point the IDP's `acs_url` at this server's
+`/acs`.
 
 ## References
 
-- [SAML 2.0 Specification](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html)
-- [SAML 2.0 Web Browser SSO Profile](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)
-- [SAML 2.0 Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf)
-- [Okta SAML Guide](https://developer.okta.com/docs/concepts/saml/)
-
-## Implementation Statistics
-
-| Module       | Lines of Code | Purpose                                 |
-|--------------|---------------|-----------------------------------------|
-| `mod.rs`     | ~270          | HTTP session handling, request parsing  |
-| `actions.rs` | ~380          | Action definitions, response generation |
-| **Total**    | **~650**      | Basic SP implementation                 |
-
-This is an Experimental implementation focused on LLM-controlled authorization and session management for testing,
-demonstration, and integration scenarios. Production use requires cryptographic signature verification and persistent
-session storage.
+SAML 2.0 Core, SAML 2.0 Web Browser SSO Profile, SAML 2.0 Bindings (OASIS).

@@ -56,13 +56,26 @@ impl Protocol for SamlSpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("SAML 2.0 Service Provider with LLM-controlled authorization")
-            .llm_control("Authorization decisions, assertion validation, session management")
+            .implementation(
+                "SAML 2.0 SP endpoints (/login, /acs, /metadata) over hyper HTTP/1.1. Simulator: \
+                 the raw SAMLResponse body is handed to the model as text and the model decides \
+                 who the user is. NetGet performs no XML signature verification.",
+            )
+            .llm_control(
+                "Whether to accept an assertion at all, which user_id and attributes to read out \
+                 of it, the AuthnRequest XML sent to the IDP, and error pages.",
+            )
             .e2e_testing("SAML IDP test server")
+            .notes(
+                "Accepts unsigned and forged assertions: nothing checks <ds:Signature>, issuer, \
+                 audience, NotOnOrAfter or assertion-ID replay unless the model's instruction \
+                 tells it to look, and it has no key to check a signature against. The session \
+                 cookie is the bare user id with no server-side session store.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
-        "SAML 2.0 Service Provider that validates SAML assertions and manages application sessions"
+        "SAML 2.0 Service Provider simulator (LLM reads the assertion; no signature is verified)"
     }
     fn example_prompt(&self) -> &'static str {
         "Start a SAML Service Provider on port 8081. Accept assertions from IDP and grant access to authenticated users"
@@ -224,14 +237,18 @@ impl SamlSpProtocol {
     <p>Attributes: {}</p>
 </body>
 </html>"#,
-            user_id, attributes
+            escape_html(user_id),
+            escape_html(&attributes)
         );
 
+        // `user_id` is whatever the model read out of an attacker-supplied assertion, so it
+        // is neither HTML- nor cookie-safe as it stands. Unescaped it was reflected XSS in
+        // the page, and raw in `Set-Cookie` it could inject cookie attributes or CR/LF.
         let response_data = json!({
             "status": 200,
             "headers": {
                 "Content-Type": "text/html; charset=utf-8",
-                "Set-Cookie": format!("session_id={}; HttpOnly; SameSite=Lax", user_id)
+                "Set-Cookie": format!("session_id={}; HttpOnly; SameSite=Lax", cookie_value(user_id))
             },
             "body": success_html
         });
@@ -275,7 +292,7 @@ impl SamlSpProtocol {
 
         let error_html = format!(
             "<html><body><h1>Authorization Error</h1><p>{}</p></body></html>",
-            error_message
+            escape_html(error_message)
         );
 
         let response_data = json!({
@@ -292,6 +309,35 @@ impl SamlSpProtocol {
     }
 }
 
+/// Escape text for interpolation into an HTML attribute or text node.
+///
+/// Every value placed into these pages is model output derived from an untrusted request —
+/// the user id and attributes lifted out of a SAML assertion, a RelayState echoed back, an
+/// IDP URL. Unescaped, a `"` or `<` broke out of the surrounding attribute and injected
+/// markup into a page the browser renders (and, for the POST binding, auto-submits).
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Percent-encode a value so it is safe as a cookie value.
+///
+/// Strips the `;`, `,`, whitespace and CR/LF that would otherwise let a crafted user id
+/// append cookie attributes or split the response header.
+fn cookie_value(value: &str) -> String {
+    urlencoding::encode(value).into_owned()
+}
+
 /// Build SAML HTTP-POST form for AuthnRequest
 fn build_authn_post_form(
     request_xml: &str,
@@ -304,7 +350,7 @@ fn build_authn_post_form(
         .map(|rs| {
             format!(
                 r#"<input type="hidden" name="RelayState" value="{}" />"#,
-                rs
+                escape_html(rs)
             )
         })
         .unwrap_or_default();
@@ -328,7 +374,9 @@ fn build_authn_post_form(
     </form>
 </body>
 </html>"#,
-        idp_sso_url, encoded_request, relay_state_field
+        escape_html(idp_sso_url),
+        encoded_request,
+        relay_state_field
     )
 }
 
@@ -358,7 +406,8 @@ fn build_authn_redirect(request_xml: &str, idp_sso_url: &str, relay_state: Optio
     <p>If you are not redirected automatically, <a href="{}">click here</a>.</p>
 </body>
 </html>"#,
-        redirect_url, redirect_url
+        escape_html(&redirect_url),
+        escape_html(&redirect_url)
     )
 }
 
@@ -411,12 +460,17 @@ fn send_authn_request_action() -> ActionDefinition {
 fn process_assertion_action() -> ActionDefinition {
     ActionDefinition {
         name: "process_assertion".to_string(),
-        description: "Process validated SAML assertion and create user session".to_string(),
+        description: "Accept a SAML assertion and start a session for the named user. NetGet does \
+                      not verify the assertion's signature, issuer, audience or expiry — if any \
+                      of that matters, check it yourself in the assertion XML before calling this, \
+                      and use send_error_response to reject."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "user_id".to_string(),
                 type_hint: "string".to_string(),
-                description: "User identifier from assertion".to_string(),
+                description: "User identifier from assertion (becomes the session cookie value)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -514,6 +568,17 @@ pub static SAML_SP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             }
         }),
     )
+    .with_alternative_example(json!({
+        "type": "send_authn_request",
+        "request_xml": "<samlp:AuthnRequest>...</samlp:AuthnRequest>",
+        "idp_sso_url": "http://localhost:8080/sso",
+        "binding": "HTTP-Redirect"
+    }))
+    .with_alternative_example(json!({
+        "type": "send_error_response",
+        "error_message": "Assertion is from an untrusted issuer",
+        "status_code": 403
+    }))
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} SAML SP {method} {path} ({duration_ms}ms)")
