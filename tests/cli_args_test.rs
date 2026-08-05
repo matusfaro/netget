@@ -6,6 +6,22 @@
 use clap::Parser;
 use netget::cli::Args;
 
+/// `--log-level` defaults to `debug` in development builds, `info` in release.
+///
+/// Dev builds used to default to `trace`, the level at which NetGet writes
+/// whole network payloads and whole LLM prompts into `netget.log` - 481 MB in
+/// a day, and credentials off the wire along with it. The test binary is a dev
+/// build, so `debug` is the value under test here.
+#[test]
+fn default_log_level_is_not_trace() {
+    let args = Args::try_parse_from(["netget"]).expect("default args parse");
+    if cfg!(debug_assertions) {
+        assert_eq!(args.log_level, "debug");
+    } else {
+        assert_eq!(args.log_level, "info");
+    }
+}
+
 /// `--load <FILE>` must actually produce the file's actions.
 ///
 /// Deliberately a `#[tokio::test]`: `get_actions_json()` runs inside the
