@@ -927,7 +927,9 @@ Understand what the user wants and respond with the appropriate actions to make 
         all_actions: Vec<ActionDefinition>,
     ) -> String {
         Self::build_network_event_action_prompt_for_server_with_actions(
-            state, server_id, all_actions,
+            state,
+            server_id,
+            all_actions,
         )
         .await
         .0
