@@ -12,6 +12,19 @@ use crate::llm::OllamaClient;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 
+/// Did `spawn()` actually bind a listening socket?
+///
+/// `ProtocolServer::spawn` returns a `SocketAddr` for every protocol, but not
+/// every protocol listens: WebRTC is peer-to-peer and returns a placeholder
+/// `0.0.0.0:0`, and a couple of others fall back to the same placeholder when
+/// they have no address to report. Port 0 is never a real bound port (the OS
+/// resolves it to a concrete one at bind time), so it is an exact test for the
+/// placeholder - and printing "listening on 0.0.0.0:0" for those servers told
+/// the user, the TUI and every log reader something untrue.
+fn is_bound_addr(addr: &SocketAddr) -> bool {
+    addr.port() != 0
+}
+
 /// Check if an error is due to address already in use
 fn is_addr_in_use_error(err: &anyhow::Error) -> bool {
     if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
@@ -163,22 +176,36 @@ pub async fn start_server_by_id(
     // Spawn the server using the protocol's spawn method
     match protocol.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
+            let bound = is_bound_addr(&actual_addr);
+
             // Send startup message with actual port
-            let msg = format!(
-                "[SERVER] Starting server #{} ({}) on {}",
-                server_id.as_u32(),
-                protocol_name,
-                actual_addr
-            );
+            let msg = if bound {
+                format!(
+                    "[SERVER] Starting server #{} ({}) on {}",
+                    server_id.as_u32(),
+                    protocol_name,
+                    actual_addr
+                )
+            } else {
+                format!(
+                    "[SERVER] Starting server #{} ({}) (no listening socket)",
+                    server_id.as_u32(),
+                    protocol_name
+                )
+            };
             let _ = status_tx.send(msg);
 
-            // Update server with actual listen address
-            state.update_server_local_addr(server_id, actual_addr).await;
+            // Update server with actual listen address (only if one was bound;
+            // recording the 0.0.0.0:0 placeholder would surface it in the TUI
+            // and in server_status as though it were an endpoint)
+            if bound {
+                state.update_server_local_addr(server_id, actual_addr).await;
+            }
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
             // Send update message with actual bound address (for tests that use port 0)
-            if server.port == 0 || server.port != actual_addr.port() {
+            if bound && (server.port == 0 || server.port != actual_addr.port()) {
                 let update_msg = format!(
                     "[SERVER] Server #{} ({}) listening on {}",
                     server_id.as_u32(),
@@ -596,23 +623,38 @@ pub async fn start_server_from_action(
     // Spawn the server
     match protocol_impl.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
+            let bound = is_bound_addr(&actual_addr);
+
             // Send startup message with actual address
-            let msg = format!(
-                "[SERVER] Starting server #{} ({}) on {}",
-                server_id.as_u32(),
-                protocol,
-                actual_addr
-            );
+            let msg = if bound {
+                format!(
+                    "[SERVER] Starting server #{} ({}) on {}",
+                    server_id.as_u32(),
+                    protocol,
+                    actual_addr
+                )
+            } else {
+                format!(
+                    "[SERVER] Starting server #{} ({}) (no listening socket)",
+                    server_id.as_u32(),
+                    protocol
+                )
+            };
             let _ = status_tx.send(msg);
 
-            // Update server with actual listen address
-            state.update_server_local_addr(server_id, actual_addr).await;
+            // Update server with actual listen address (only if one was bound;
+            // see is_bound_addr)
+            if bound {
+                state.update_server_local_addr(server_id, actual_addr).await;
+            }
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
 
             // Send update message with actual bound address (for tests that use port 0)
-            if final_port.unwrap_or(0) == 0 || final_port.unwrap_or(0) != actual_addr.port() {
+            if bound
+                && (final_port.unwrap_or(0) == 0 || final_port.unwrap_or(0) != actual_addr.port())
+            {
                 let update_msg = format!(
                     "[SERVER] Server #{} ({}) listening on {}",
                     server_id.as_u32(),

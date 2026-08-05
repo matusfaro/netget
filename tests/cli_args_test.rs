@@ -6,6 +6,80 @@
 use clap::Parser;
 use netget::cli::Args;
 
+/// `--load <FILE>` must actually produce the file's actions.
+///
+/// Deliberately a `#[tokio::test]`: `get_actions_json()` runs inside the
+/// process-wide runtime in production (`#[tokio::main]` -> `cli::run()`), and
+/// the previous implementation built a second runtime and `block_on`-ed there,
+/// which panics on a thread already driving one. Running this from a plain
+/// `#[test]` would not have caught it.
+#[tokio::test]
+async fn load_flag_reads_actions_from_file() {
+    let dir = std::env::temp_dir().join(format!("netget-load-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("config.netget");
+    std::fs::write(
+        &path,
+        r#"{"actions": [{"type": "open_server", "protocol": "tcp", "port": 0, "instruction": "echo"}]}"#,
+    )
+    .expect("write actions file");
+
+    let args = Args::try_parse_from(["netget", "--load", path.to_str().unwrap()])
+        .expect("args with --load parse");
+
+    let actions = args
+        .get_actions_json()
+        .expect("--load must be readable")
+        .expect("--load must yield actions");
+
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0]["type"], "open_server");
+
+    // A prompt is not expected alongside --load
+    assert!(args.get_prompt().expect("get_prompt").is_none());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The `.netget` extension is optional on the command line.
+#[tokio::test]
+async fn load_flag_appends_netget_extension_when_needed() {
+    let dir = std::env::temp_dir().join(format!("netget-load-ext-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("saved.netget");
+    std::fs::write(
+        &path,
+        r#"{"actions": [{"type": "show_message", "message": "hi"}]}"#,
+    )
+    .expect("write actions file");
+
+    let without_ext = dir.join("saved");
+    let args = Args::try_parse_from(["netget", "--load", without_ext.to_str().unwrap()])
+        .expect("args parse");
+
+    let actions = args
+        .get_actions_json()
+        .expect("--load must resolve saved -> saved.netget")
+        .expect("actions");
+    assert_eq!(actions[0]["type"], "show_message");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A missing `--load` file is an error, not a panic and not a silent skip.
+#[tokio::test]
+async fn load_flag_reports_missing_file() {
+    let args = Args::try_parse_from(["netget", "--load", "/nonexistent/netget-does-not-exist"])
+        .expect("args parse");
+    let err = args
+        .get_actions_json()
+        .expect_err("missing --load file must error");
+    assert!(
+        err.to_string().contains("Failed to read"),
+        "unexpected error: {err}"
+    );
+}
+
 /// `--client` gives clients the deterministic entry point servers already had.
 #[test]
 fn client_flags_parse() {

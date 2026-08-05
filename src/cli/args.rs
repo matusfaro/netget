@@ -24,6 +24,59 @@ fn default_log_level() -> String {
     }
 }
 
+/// Read the `{"actions": [...]}` file named by `--load`.
+///
+/// Deliberately synchronous. `get_actions_json()` is called from inside the
+/// `#[tokio::main]` runtime, and the previous implementation built a *second*
+/// runtime there and `block_on`-ed `save_load::load_actions()` — which panics
+/// ("Cannot start a runtime from within a runtime") on a thread that is already
+/// driving one. `--load` therefore never worked; reading the file with
+/// `std::fs` in the one place that needs it does.
+///
+/// The path is used as given, with `.netget` appended only as a fallback when
+/// the literal path does not exist, so `--load configs/http` and
+/// `--load configs/http.netget` both work and a path with a different
+/// extension is still honoured.
+fn load_actions_file(path: &str) -> Result<Vec<serde_json::Value>> {
+    use anyhow::Context;
+
+    let trimmed = path.trim();
+    let candidate = std::path::Path::new(trimmed);
+    let resolved: std::path::PathBuf = if candidate.exists() {
+        candidate.to_path_buf()
+    } else {
+        let with_ext = std::path::PathBuf::from(format!(
+            "{}{}",
+            trimmed,
+            crate::utils::save_load::NETGET_EXTENSION
+        ));
+        if with_ext.exists() {
+            with_ext
+        } else {
+            candidate.to_path_buf() // report the error against what the user typed
+        }
+    };
+
+    let content = std::fs::read_to_string(&resolved)
+        .with_context(|| format!("Failed to read --load file: {}", resolved.display()))?;
+
+    let parsed: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse JSON from {}", resolved.display()))?;
+
+    let actions = parsed
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} must contain {{\"actions\": [...]}} (as written by the /save command)",
+                resolved.display()
+            )
+        })?
+        .clone();
+
+    Ok(actions)
+}
+
 /// NetGet - LLM-Controlled Network Application
 #[derive(Parser, Debug)]
 #[clap(
@@ -428,9 +481,7 @@ impl Args {
         // First priority: --load flag
         if let Some(ref filename) = self.load_file {
             // This will fail if file doesn't exist, which is appropriate
-            return Ok(Some(
-                tokio::runtime::Runtime::new()?.block_on(save_load::load_actions(filename))?,
-            ));
+            return Ok(Some(load_actions_file(filename)?));
         }
 
         // Second priority: trailing arguments after command
