@@ -16,7 +16,15 @@ routing logic.
 
 **Status**: Experimental (protocol simulator)
 **Spec**: [RFC 2328 (OSPFv2)](https://datatracker.ietf.org/doc/html/rfc2328)
-**Requires**: Root/CAP_NET_RAW privileges
+**Requires**: `CAP_NET_RAW` (declared as `PrivilegeRequirement::RawSockets`)
+
+> **Scope warning.** This is a Hello-level simulator, not a router. It parses every OSPF packet
+> type and hands the parsed fields to the LLM, but it can only *construct* a complete Hello.
+> Outgoing DD carries no LSA headers, and outgoing LSR/LSU/LSAck carry a valid header with an
+> empty body - they are well-formed packets that advertise nothing. Adjacency therefore cannot
+> progress past 2-Way, and no test has ever run this code against a real router: the E2E suite
+> starts a **plain UDP server** (`"base_stack": "UDP"`) and hand-rolls OSPF bytes in the test
+> file, so it never touches the raw-socket path or any function in this module.
 
 ## Use Cases
 
@@ -88,18 +96,19 @@ Real Router → OSPF packet (IP proto 89) → NetGet
 **Outgoing**:
 
 ```
-LLM → JSON action → execute_action() → ActionResult::Output(packet_bytes)
+LLM → JSON action → execute_action() → ActionResult::Custom{ name: "ospf_action", data }
                                            ↓
-                               mod.rs processes protocol_results
+                               dispatch_event() in mod.rs matches on data["type"]
+                                           ↓
+                               OspfProtocol::build_*_packet(data)  ← structured JSON, no bytes
                                            ↓
                                send_ospf_packet(socket_fd, dest_ip, bytes)
-                                           ↓
-                               Raw sendto() to 224.0.0.5 (multicast)
 ```
 
-**Architecture**: LLM actions return `ActionResult::Output` with raw OSPF packet bytes. The mod.rs event handler
-processes these results and calls `send_ospf_packet()` with the raw socket FD from `OspfState`. Currently sends to
-multicast (224.0.0.5) by default; unicast destination support is TODO.
+**Architecture**: actions return `ActionResult::Custom` carrying the structured action JSON - never
+packet bytes, which the LLM could not produce reliably. `dispatch_event()` selects the builder,
+resolves `destination` (`"multicast"` → 224.0.0.5, `"dr_multicast"` → 224.0.0.6, or a unicast IP)
+and writes to the raw socket FD held in `OspfState`.
 
 ### No Real Routing
 
@@ -241,7 +250,7 @@ Built from LLM JSON action:
 - Packet Length: calculated
 - Router ID: from LLM
 - Area ID: from LLM
-- Checksum: Fletcher checksum
+- Checksum: standard IP one's-complement checksum (see below)
 - Auth Type: 0 (none)
 - Authentication: zeros
 
@@ -256,9 +265,24 @@ Built from LLM JSON action:
 - Neighbors: list from LLM
 ```
 
-### LSA Packets (TODO)
+### Checksum (RFC 2328 A.3.1)
 
-Router LSA, Network LSA, Summary LSA - all generated from LLM JSON.
+The OSPF **packet** checksum is the standard IP one's-complement checksum over the whole packet
+with the checksum field zeroed and the 64-bit authentication field (header bytes 16..24)
+excluded. It is **not** the Fletcher checksum of Section D.4 - Fletcher applies to LSA headers.
+
+This module used Fletcher until it was corrected. The consequence was total: every packet NetGet
+emitted failed the receiver's validity check, so FRR/BIRD dropped all of them silently. The
+defining property, and the check a receiver performs, is that recomputing the sum over the packet
+with the checksum left in place yields 0. `OspfProtocol::calculate_checksum` satisfies it.
+
+### LSA Packets (NOT IMPLEMENTED)
+
+Router LSA, Network LSA and Summary LSA construction does not exist. `send_link_state_update`
+accepts `router_id`, `area_id` and `destination` and emits a header with an LSA count of zero;
+there is no parameter through which the LLM could supply LSA contents. `send_link_state_request`
+and `send_link_state_ack` are the same shape. Treat all three as "emits a syntactically valid
+packet that says nothing".
 
 ## Sending Packets
 
@@ -304,9 +328,14 @@ unsafe {
 - Multicast group join (224.0.0.5)
 - IP header parsing
 - OSPF header parsing
-- Hello packet parsing
+- Hello packet parsing (full)
+- DD / LSR / LSU / LSAck parsing to their headers, each raising its own LLM event with parsed
+  fields (DD flags + sequence + LSA headers; LSR request triples; LSU LSA headers walked by each
+  LSA's own length field; LSAck LSA headers)
 - Neighbor state tracking (Down/Init/2-Way)
-- Structured JSON events to LLM
+- Structured JSON events to LLM - all five event types declare their actions, so the model is
+  actually offered tools (`EventType::actions` is what `call_llm` advertises, not
+  `get_sync_actions()`)
 - Hello packet construction
 - Packet transmission function
 - Connect LLM actions to packet sending
@@ -317,14 +346,16 @@ unsafe {
     - LLM can specify "multicast" (224.0.0.5), "dr_multicast" (224.0.0.6), or unicast IP (e.g., "192.168.1.2")
     - Useful for targeted Database Description/LSU exchanges with specific neighbors
 
-### 📋 TODO
+### 📋 NOT IMPLEMENTED
 
-- LSA packet construction (Router, Network, Summary)
-- Database Description handling
-- LSR/LSU/LSAck handling
-- Periodic Hello timer
-- Dead neighbor detection (40s timeout)
-- DR/BDR claim logic
+- **LSA packet construction** (Router, Network, Summary) - the single biggest gap; without it
+  DD/LSR/LSU/LSAck can only be sent empty and adjacency cannot leave 2-Way
+- DD exchange *state* (master/slave negotiation, sequence tracking) - packets are parsed and
+  surfaced, but nothing tracks the exchange
+- Periodic Hello timer - the server only ever replies, it never initiates
+- Dead neighbor detection (`last_hello` is recorded and never checked)
+- DR/BDR election (the LLM claims a role by setting priority; no algorithm runs)
+- LSDB, SPF, routing table, route installation - out of scope by design
 
 ## Testing
 
@@ -361,14 +392,18 @@ netget> Listen on interface 192.168.1.100 as OSPF router 192.168.1.100 in area 0
 
 ```bash
 sudo vtysh -c "show ip ospf neighbor"
-# Should see NetGet router if LLM responds correctly
+# Should see NetGet in Init/2-Way if the LLM responds correctly.
+# It will never reach Full: that needs DD exchange with real LSA headers.
 ```
+
+**This has not been done.** Until the checksum was corrected, FRR would have discarded every
+packet before parsing it. Nobody has since re-run the experiment, and raw sockets need root.
 
 ### Current Limitations
 
 **Cannot test yet**:
 
-- Full adjacency formation (need DD/LSR/LSU)
+- Full adjacency formation (need LSA construction, not just DD/LSR/LSU parsing)
 - Route advertisement (need LSA generation)
 - Route redistribution
 - SPF calculation (we don't do this)
@@ -434,7 +469,7 @@ LLM responds with:
 }
 ```
 
-### Fake Route Advertisement (TODO)
+### Fake Route Advertisement (NOT IMPLEMENTED - no action accepts LSA contents)
 
 ```
 netget> OSPF router, advertise fake routes to 192.168.99.0/24

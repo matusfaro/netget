@@ -35,7 +35,10 @@ use crate::state::app_state::AppState;
 #[cfg(feature = "ospf")]
 use crate::state::server::OspfNeighborState;
 #[cfg(feature = "ospf")]
-use actions::{OspfProtocol, OSPF_HELLO_EVENT};
+use actions::{
+    OspfProtocol, OSPF_DATABASE_DESCRIPTION_EVENT, OSPF_HELLO_EVENT,
+    OSPF_LINK_STATE_ACK_EVENT, OSPF_LINK_STATE_REQUEST_EVENT, OSPF_LINK_STATE_UPDATE_EVENT,
+};
 
 // OSPF Constants
 const OSPF_VERSION: u8 = 2;
@@ -316,19 +319,68 @@ impl OspfServer {
                 .await?;
             }
             OSPF_TYPE_DATABASE_DESCRIPTION => {
-                info!("OSPF DD from {}", sender_router_id);
-                // TODO: LLM handles DD
+                Self::handle_database_description_packet(
+                    data,
+                    src_ip,
+                    sender_router_id,
+                    sender_area_id,
+                    connection_id,
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    protocol,
+                    ospf_state,
+                    server_id,
+                )
+                .await?;
             }
             OSPF_TYPE_LINK_STATE_REQUEST => {
-                info!("OSPF LSR from {}", sender_router_id);
-                // TODO: LLM generates fake LSAs
+                Self::handle_link_state_request_packet(
+                    data,
+                    src_ip,
+                    sender_router_id,
+                    sender_area_id,
+                    connection_id,
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    protocol,
+                    ospf_state,
+                    server_id,
+                )
+                .await?;
             }
             OSPF_TYPE_LINK_STATE_UPDATE => {
-                info!("OSPF LSU from {}", sender_router_id);
-                // TODO: LLM logs LSAs
+                Self::handle_link_state_update_packet(
+                    data,
+                    src_ip,
+                    sender_router_id,
+                    sender_area_id,
+                    connection_id,
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    protocol,
+                    ospf_state,
+                    server_id,
+                )
+                .await?;
             }
             OSPF_TYPE_LINK_STATE_ACK => {
-                trace!("OSPF LSAck from {}", sender_router_id);
+                Self::handle_link_state_ack_packet(
+                    data,
+                    src_ip,
+                    sender_router_id,
+                    sender_area_id,
+                    connection_id,
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    protocol,
+                    ospf_state,
+                    server_id,
+                )
+                .await?;
             }
             _ => {
                 warn!("OSPF unknown type: {}", packet_type);
@@ -347,7 +399,7 @@ impl OspfServer {
         connection_id: ConnectionId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
-        _status_tx: mpsc::UnboundedSender<String>,
+        status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<OspfProtocol>,
         ospf_state: Arc<OspfState>,
         server_id: crate::state::ServerId,
@@ -426,13 +478,335 @@ impl OspfServer {
             }),
         };
 
+        Self::dispatch_event(
+            event,
+            connection_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+            ospf_state,
+            server_id,
+        )
+        .await
+    }
+
+    /// Parse the fixed 20-byte LSA headers that DD and LSAck packets carry, and that LSU
+    /// packets carry ahead of each LSA body. Returns structured fields, never raw bytes -
+    /// models cannot read a hex blob (see CLAUDE.md, action & event design rules).
+    #[cfg(feature = "ospf")]
+    fn parse_lsa_headers(body: &[u8], max: usize) -> Vec<serde_json::Value> {
+        const LSA_HEADER_LEN: usize = 20;
+        let mut out = Vec::new();
+        let mut offset = 0;
+        while offset + LSA_HEADER_LEN <= body.len() && out.len() < max {
+            let h = &body[offset..offset + LSA_HEADER_LEN];
+            let lsa_type = h[3];
+            out.push(serde_json::json!({
+                "age": u16::from_be_bytes([h[0], h[1]]),
+                "options": h[2],
+                "lsa_type": lsa_type,
+                "lsa_type_name": match lsa_type {
+                    1 => "router",
+                    2 => "network",
+                    3 => "summary_network",
+                    4 => "summary_asbr",
+                    5 => "as_external",
+                    7 => "nssa_external",
+                    _ => "unknown",
+                },
+                "link_state_id": format!("{}.{}.{}.{}", h[4], h[5], h[6], h[7]),
+                "advertising_router": format!("{}.{}.{}.{}", h[8], h[9], h[10], h[11]),
+                "sequence": u32::from_be_bytes([h[12], h[13], h[14], h[15]]),
+                "length": u16::from_be_bytes([h[18], h[19]]),
+            }));
+            offset += LSA_HEADER_LEN;
+        }
+        out
+    }
+
+    /// Handle a Database Description packet (RFC 2328 A.3.3).
+    ///
+    /// Body layout after the 24-byte OSPF header:
+    /// InterfaceMTU(2) | Options(1) | Flags(1) | DDSequenceNumber(4) | LSA headers (20 each)
+    #[cfg(feature = "ospf")]
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_database_description_packet(
+        data: &[u8],
+        src_ip: Ipv4Addr,
+        sender_router_id: String,
+        sender_area_id: String,
+        connection_id: ConnectionId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<OspfProtocol>,
+        ospf_state: Arc<OspfState>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        if data.len() < OSPF_HEADER_LEN + 8 {
+            return Err(anyhow!("OSPF DD packet too short: {} bytes", data.len()));
+        }
+
+        let interface_mtu = u16::from_be_bytes([data[24], data[25]]);
+        let options = data[26];
+        let flags = data[27];
+        let dd_sequence = u32::from_be_bytes([data[28], data[29], data[30], data[31]]);
+        let lsa_headers = Self::parse_lsa_headers(&data[32..], 32);
+
+        info!(
+            "OSPF DD from {} (seq={}, init={}, more={}, master={}, {} LSA headers)",
+            sender_router_id,
+            dd_sequence,
+            flags & 0x04 != 0,
+            flags & 0x02 != 0,
+            flags & 0x01 != 0,
+            lsa_headers.len()
+        );
+
+        let event = Event {
+            event_type: &OSPF_DATABASE_DESCRIPTION_EVENT,
+            data: serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "neighbor_id": sender_router_id,
+                "neighbor_ip": src_ip.to_string(),
+                "area_id": sender_area_id,
+                "interface_mtu": interface_mtu,
+                "options": options,
+                "init": flags & 0x04 != 0,
+                "more": flags & 0x02 != 0,
+                "master": flags & 0x01 != 0,
+                "dd_sequence": dd_sequence,
+                "lsa_count": lsa_headers.len(),
+                "lsa_headers": lsa_headers,
+            }),
+        };
+
+        Self::dispatch_event(
+            event,
+            connection_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+            ospf_state,
+            server_id,
+        )
+        .await
+    }
+
+    /// Handle a Link State Request packet (RFC 2328 A.3.4).
+    ///
+    /// Body is a repeating triple: LSType(4) | LinkStateID(4) | AdvertisingRouter(4)
+    #[cfg(feature = "ospf")]
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_link_state_request_packet(
+        data: &[u8],
+        src_ip: Ipv4Addr,
+        sender_router_id: String,
+        sender_area_id: String,
+        connection_id: ConnectionId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<OspfProtocol>,
+        ospf_state: Arc<OspfState>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        let body = data.get(OSPF_HEADER_LEN..).unwrap_or(&[]);
+        let mut requests = Vec::new();
+        let mut offset = 0;
+        while offset + 12 <= body.len() && requests.len() < 64 {
+            let r = &body[offset..offset + 12];
+            requests.push(serde_json::json!({
+                "lsa_type": u32::from_be_bytes([r[0], r[1], r[2], r[3]]),
+                "link_state_id": format!("{}.{}.{}.{}", r[4], r[5], r[6], r[7]),
+                "advertising_router": format!("{}.{}.{}.{}", r[8], r[9], r[10], r[11]),
+            }));
+            offset += 12;
+        }
+
+        info!(
+            "OSPF LSR from {} ({} LSAs requested)",
+            sender_router_id,
+            requests.len()
+        );
+
+        let event = Event {
+            event_type: &OSPF_LINK_STATE_REQUEST_EVENT,
+            data: serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "neighbor_id": sender_router_id,
+                "neighbor_ip": src_ip.to_string(),
+                "area_id": sender_area_id,
+                "request_count": requests.len(),
+                "requests": requests,
+            }),
+        };
+
+        Self::dispatch_event(
+            event,
+            connection_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+            ospf_state,
+            server_id,
+        )
+        .await
+    }
+
+    /// Handle a Link State Update packet (RFC 2328 A.3.5).
+    ///
+    /// Body layout: NumberOfLSAs(4) followed by that many LSAs, each starting with a
+    /// 20-byte header whose `length` field covers header plus body.
+    #[cfg(feature = "ospf")]
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_link_state_update_packet(
+        data: &[u8],
+        src_ip: Ipv4Addr,
+        sender_router_id: String,
+        sender_area_id: String,
+        connection_id: ConnectionId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<OspfProtocol>,
+        ospf_state: Arc<OspfState>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        if data.len() < OSPF_HEADER_LEN + 4 {
+            return Err(anyhow!("OSPF LSU packet too short: {} bytes", data.len()));
+        }
+
+        let advertised_count = u32::from_be_bytes([data[24], data[25], data[26], data[27]]);
+        let body = &data[28..];
+
+        // Walk the LSAs using each header's own length field rather than trusting the
+        // advertised count, so a peer cannot make us read past the packet.
+        let mut lsas = Vec::new();
+        let mut offset = 0usize;
+        while offset + 20 <= body.len() && lsas.len() < 64 {
+            let header = Self::parse_lsa_headers(&body[offset..offset + 20], 1);
+            let Some(header) = header.into_iter().next() else {
+                break;
+            };
+            let declared = header["length"].as_u64().unwrap_or(0) as usize;
+            lsas.push(header);
+            // A length below the header size would not advance us; stop rather than spin.
+            if declared < 20 {
+                break;
+            }
+            offset += declared;
+        }
+
+        info!(
+            "OSPF LSU from {} ({} LSAs advertised, {} parsed)",
+            sender_router_id,
+            advertised_count,
+            lsas.len()
+        );
+
+        let event = Event {
+            event_type: &OSPF_LINK_STATE_UPDATE_EVENT,
+            data: serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "neighbor_id": sender_router_id,
+                "neighbor_ip": src_ip.to_string(),
+                "area_id": sender_area_id,
+                "advertised_lsa_count": advertised_count,
+                "lsa_count": lsas.len(),
+                "lsas": lsas,
+            }),
+        };
+
+        Self::dispatch_event(
+            event,
+            connection_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+            ospf_state,
+            server_id,
+        )
+        .await
+    }
+
+    /// Handle a Link State Acknowledgment packet (RFC 2328 A.3.6) - a list of LSA headers.
+    #[cfg(feature = "ospf")]
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_link_state_ack_packet(
+        data: &[u8],
+        src_ip: Ipv4Addr,
+        sender_router_id: String,
+        sender_area_id: String,
+        connection_id: ConnectionId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<OspfProtocol>,
+        ospf_state: Arc<OspfState>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        let body = data.get(OSPF_HEADER_LEN..).unwrap_or(&[]);
+        let lsa_headers = Self::parse_lsa_headers(body, 64);
+
+        trace!(
+            "OSPF LSAck from {} ({} LSA headers)",
+            sender_router_id,
+            lsa_headers.len()
+        );
+
+        let event = Event {
+            event_type: &OSPF_LINK_STATE_ACK_EVENT,
+            data: serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "neighbor_id": sender_router_id,
+                "neighbor_ip": src_ip.to_string(),
+                "area_id": sender_area_id,
+                "lsa_count": lsa_headers.len(),
+                "lsa_headers": lsa_headers,
+            }),
+        };
+
+        Self::dispatch_event(
+            event,
+            connection_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+            ospf_state,
+            server_id,
+        )
+        .await
+    }
+
+    /// Ask the LLM how to answer an OSPF event and put whatever packets it chooses on the wire.
+    ///
+    /// Shared by every packet-type handler so they all get identical action handling, logging
+    /// and destination resolution.
+    #[cfg(feature = "ospf")]
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_event(
+        event: Event,
+        connection_id: ConnectionId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<OspfProtocol>,
+        ospf_state: Arc<OspfState>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
         match call_llm(
             &llm_client,
             &app_state,
             server_id,
             Some(connection_id),
             &event,
-            &*protocol,
+            protocol.as_ref(),
         )
         .await
         {
@@ -440,14 +814,14 @@ impl OspfServer {
                 // Log LLM messages
                 for message in &execution_result.messages {
                     info!("{}", message);
-                    let _ = _status_tx.send(format!("[INFO] {}", message));
+                    let _ = status_tx.send(format!("[INFO] {}", message));
                 }
 
                 debug!(
                     "OSPF got {} protocol results",
                     execution_result.protocol_results.len()
                 );
-                let _ = _status_tx.send(format!(
+                let _ = status_tx.send(format!(
                     "[DEBUG] OSPF got {} protocol results",
                     execution_result.protocol_results.len()
                 ));
@@ -520,7 +894,7 @@ impl OspfServer {
                                                 packet.len(),
                                                 dest_ip
                                             );
-                                            let _ = _status_tx.send(format!(
+                                            let _ = status_tx.send(format!(
                                                 "[DEBUG] OSPF sent {} bytes to {}",
                                                 packet.len(),
                                                 dest_ip
@@ -528,21 +902,21 @@ impl OspfServer {
 
                                             // TRACE: Log packet hex
                                             trace!("OSPF sent (hex): {}", hex::encode(&packet));
-                                            let _ = _status_tx.send(format!(
+                                            let _ = status_tx.send(format!(
                                                 "[TRACE] OSPF sent (hex): {}",
                                                 hex::encode(&packet)
                                             ));
                                         }
                                         Err(e) => {
                                             error!("Failed to send OSPF packet: {}", e);
-                                            let _ = _status_tx
+                                            let _ = status_tx
                                                 .send(format!("✗ OSPF send error: {}", e));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     error!("Failed to build OSPF packet: {}", e);
-                                    let _ = _status_tx
+                                    let _ = status_tx
                                         .send(format!("✗ OSPF packet build error: {}", e));
                                 }
                             }
@@ -563,14 +937,14 @@ impl OspfServer {
                                     "OSPF sent {} bytes to multicast (legacy)",
                                     output_data.len()
                                 );
-                                let _ = _status_tx.send(format!(
+                                let _ = status_tx.send(format!(
                                     "[DEBUG] OSPF sent {} bytes to multicast (224.0.0.5)",
                                     output_data.len()
                                 ));
                             }
                             Err(e) => {
                                 error!("Failed to send OSPF packet: {}", e);
-                                let _ = _status_tx.send(format!("✗ OSPF send error: {}", e));
+                                let _ = status_tx.send(format!("✗ OSPF send error: {}", e));
                             }
                         }
                     }
@@ -578,7 +952,7 @@ impl OspfServer {
             }
             Err(e) => {
                 error!("LLM call failed: {}", e);
-                let _ = _status_tx.send(format!("✗ OSPF LLM error: {}", e));
+                let _ = status_tx.send(format!("✗ OSPF LLM error: {}", e));
             }
         }
 
