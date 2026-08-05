@@ -348,56 +348,58 @@ impl BgpProtocol {
 
 fn send_bgp_open_action() -> ActionDefinition {
     ActionDefinition {
-            name: "send_bgp_open".to_string(),
-            description: "Send BGP OPEN message to establish session".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "my_as".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "Local AS number".to_string(),
-                    required: true,
-                },
-                Parameter {
-                    name: "hold_time".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "Hold time in seconds (default 180)".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "router_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "BGP router identifier (IPv4 address format)".to_string(),
-                    required: true,
-                },
-            ],
-            example: json!({
-                "type": "send_bgp_open",
-                "my_as": 65000,
-                "hold_time": 180,
-                "router_id": "192.168.1.100"
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> BGP OPEN AS{my_as} hold={hold_time}s")
-                    .with_debug("BGP send_bgp_open: AS={my_as}, hold_time={hold_time}, router_id={router_id}"),
-            ),
-        }
+        name: "send_bgp_open".to_string(),
+        description: "Send BGP OPEN message to establish session".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "my_as".to_string(),
+                type_hint: "number".to_string(),
+                description: "Local AS number".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "hold_time".to_string(),
+                type_hint: "number".to_string(),
+                description: "Hold time in seconds (default 180)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "BGP router identifier (IPv4 address format)".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "send_bgp_open",
+            "my_as": 65000,
+            "hold_time": 180,
+            "router_id": "192.168.1.100"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BGP OPEN AS{my_as} hold={hold_time}s")
+                .with_debug(
+                    "BGP send_bgp_open: AS={my_as}, hold_time={hold_time}, router_id={router_id}",
+                ),
+        ),
+    }
 }
 
 fn send_bgp_keepalive_action() -> ActionDefinition {
     ActionDefinition {
-            name: "send_bgp_keepalive".to_string(),
-            description: "Send BGP KEEPALIVE message".to_string(),
-            parameters: vec![],
-            example: json!({
-                "type": "send_bgp_keepalive"
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> BGP KEEPALIVE")
-                    .with_debug("BGP send_bgp_keepalive"),
-            ),
-        }
+        name: "send_bgp_keepalive".to_string(),
+        description: "Send BGP KEEPALIVE message".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "send_bgp_keepalive"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BGP KEEPALIVE")
+                .with_debug("BGP send_bgp_keepalive"),
+        ),
+    }
 }
 
 fn send_bgp_update_action() -> ActionDefinition {
@@ -436,8 +438,7 @@ fn send_bgp_update_action() -> ActionDefinition {
             Parameter {
                 name: "origin".to_string(),
                 type_hint: "string".to_string(),
-                description: "ORIGIN attribute: 'IGP' (default), 'EGP' or 'INCOMPLETE'"
-                    .to_string(),
+                description: "ORIGIN attribute: 'IGP' (default), 'EGP' or 'INCOMPLETE'".to_string(),
                 required: false,
             },
         ],
@@ -458,80 +459,80 @@ fn send_bgp_update_action() -> ActionDefinition {
 
 fn send_bgp_notification_action() -> ActionDefinition {
     ActionDefinition {
-            name: "send_bgp_notification".to_string(),
-            description: "Send BGP NOTIFICATION message (error) and close connection"
-                .to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "error_code".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "BGP error code (6 = Cease)".to_string(),
-                    required: true,
-                },
-                Parameter {
-                    name: "error_subcode".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "BGP error subcode".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "data".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Hex-encoded error data".to_string(),
-                    required: false,
-                },
-            ],
-            example: json!({
-                "type": "send_bgp_notification",
-                "error_code": 6,
-                "error_subcode": 0
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> BGP NOTIFICATION code={error_code}")
-                    .with_debug("BGP send_bgp_notification: code={error_code}, subcode={error_subcode}"),
-            ),
-        }
+        name: "send_bgp_notification".to_string(),
+        description: "Send BGP NOTIFICATION message (error) and close connection".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "error_code".to_string(),
+                type_hint: "number".to_string(),
+                description: "BGP error code (6 = Cease)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error_subcode".to_string(),
+                type_hint: "number".to_string(),
+                description: "BGP error subcode".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Hex-encoded error data".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_bgp_notification",
+            "error_code": 6,
+            "error_subcode": 0
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BGP NOTIFICATION code={error_code}")
+                .with_debug(
+                    "BGP send_bgp_notification: code={error_code}, subcode={error_subcode}",
+                ),
+        ),
+    }
 }
 
 fn transition_state_action() -> ActionDefinition {
     ActionDefinition {
-            name: "transition_state".to_string(),
-            description: "Transition BGP FSM to a new state".to_string(),
-            parameters: vec![Parameter {
-                name: "new_state".to_string(),
-                type_hint: "string".to_string(),
-                description:
-                    "Target FSM state (Idle/Connect/Active/OpenSent/OpenConfirm/Established)"
-                        .to_string(),
-                required: true,
-            }],
-            example: json!({
-                "type": "transition_state",
-                "new_state": "Established"
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> BGP FSM -> {new_state}")
-                    .with_debug("BGP transition_state: new_state={new_state}"),
-            ),
-        }
+        name: "transition_state".to_string(),
+        description: "Transition BGP FSM to a new state".to_string(),
+        parameters: vec![Parameter {
+            name: "new_state".to_string(),
+            type_hint: "string".to_string(),
+            description: "Target FSM state (Idle/Connect/Active/OpenSent/OpenConfirm/Established)"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "transition_state",
+            "new_state": "Established"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BGP FSM -> {new_state}")
+                .with_debug("BGP transition_state: new_state={new_state}"),
+        ),
+    }
 }
 
 fn wait_for_more_action() -> ActionDefinition {
     ActionDefinition {
-            name: "wait_for_more".to_string(),
-            description: "Wait for more BGP messages before responding".to_string(),
-            parameters: vec![],
-            example: json!({
-                "type": "wait_for_more"
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> BGP wait for more")
-                    .with_debug("BGP wait_for_more: awaiting additional messages"),
-            ),
-        }
+        name: "wait_for_more".to_string(),
+        description: "Wait for more BGP messages before responding".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "wait_for_more"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> BGP wait for more")
+                .with_debug("BGP wait_for_more: awaiting additional messages"),
+        ),
+    }
 }
 
 // ============================================================================
@@ -620,9 +621,7 @@ pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_log_template(
         LogTemplate::new()
             .with_info("BGP NOTIFICATION code={error_code} subcode={error_subcode}")
-            .with_debug(
-                "BGP NOTIFICATION: {error_name} / {error_subcode_name} from AS{peer_as}",
-            )
+            .with_debug("BGP NOTIFICATION: {error_name} / {error_subcode_name} from AS{peer_as}")
             .with_trace("BGP NOTIFICATION: {json_pretty(.)}"),
     )
 });

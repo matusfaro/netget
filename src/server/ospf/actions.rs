@@ -580,197 +580,203 @@ fn send_hello_action() -> ActionDefinition {
 
 fn send_database_description_action() -> ActionDefinition {
     ActionDefinition {
-                name: "send_database_description".to_string(),
-                description: "Send OSPF Database Description packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "router_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF router ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "area_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF area ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "sequence".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "DD sequence number".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "init".to_string(),
-                        type_hint: "boolean".to_string(),
-                        description: "Init flag (true for first DD packet)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "more".to_string(),
-                        type_hint: "boolean".to_string(),
-                        description: "More flag (true if more DD packets follow)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "master".to_string(),
-                        type_hint: "boolean".to_string(),
-                        description: "Master flag (true if this router is master)".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "destination".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_database_description",
-                    "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0",
-                    "sequence": 1,
-                    "init": true,
-                    "master": true,
-                    "destination": "192.168.1.2"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OSPF DD seq={sequence}")
-                        .with_debug("OSPF send_database_description: router_id={router_id} seq={sequence} init={init}"),
-                ),
-            }
+        name: "send_database_description".to_string(),
+        description: "Send OSPF Database Description packet".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF router ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "area_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF area ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "sequence".to_string(),
+                type_hint: "number".to_string(),
+                description: "DD sequence number".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "init".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Init flag (true for first DD packet)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "more".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "More flag (true if more DD packets follow)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "master".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Master flag (true if this router is master)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "destination".to_string(),
+                type_hint: "string".to_string(),
+                description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_database_description",
+            "router_id": "1.1.1.1",
+            "area_id": "0.0.0.0",
+            "sequence": 1,
+            "init": true,
+            "master": true,
+            "destination": "192.168.1.2"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OSPF DD seq={sequence}")
+                .with_debug(
+                "OSPF send_database_description: router_id={router_id} seq={sequence} init={init}",
+            ),
+        ),
+    }
 }
 
 fn send_link_state_request_action() -> ActionDefinition {
     ActionDefinition {
-                name: "send_link_state_request".to_string(),
-                description: "Send OSPF Link State Request packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "router_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF router ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "area_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF area ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "destination".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_link_state_request",
-                    "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0",
-                    "destination": "192.168.1.2"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OSPF LSR to {destination}")
-                        .with_debug("OSPF send_link_state_request: router_id={router_id} dest={destination}"),
+        name: "send_link_state_request".to_string(),
+        description: "Send OSPF Link State Request packet".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF router ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "area_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF area ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "destination".to_string(),
+                type_hint: "string".to_string(),
+                description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_link_state_request",
+            "router_id": "1.1.1.1",
+            "area_id": "0.0.0.0",
+            "destination": "192.168.1.2"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OSPF LSR to {destination}")
+                .with_debug(
+                    "OSPF send_link_state_request: router_id={router_id} dest={destination}",
                 ),
-            }
+        ),
+    }
 }
 
 fn send_link_state_update_action() -> ActionDefinition {
     ActionDefinition {
-                name: "send_link_state_update".to_string(),
-                description: "Send OSPF Link State Update packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "router_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF router ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "area_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF area ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "destination".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_link_state_update",
-                    "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0",
-                    "destination": "multicast"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OSPF LSU to {destination}")
-                        .with_debug("OSPF send_link_state_update: router_id={router_id} dest={destination}"),
+        name: "send_link_state_update".to_string(),
+        description: "Send OSPF Link State Update packet".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF router ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "area_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF area ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "destination".to_string(),
+                type_hint: "string".to_string(),
+                description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_link_state_update",
+            "router_id": "1.1.1.1",
+            "area_id": "0.0.0.0",
+            "destination": "multicast"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OSPF LSU to {destination}")
+                .with_debug(
+                    "OSPF send_link_state_update: router_id={router_id} dest={destination}",
                 ),
-            }
+        ),
+    }
 }
 
 fn send_link_state_ack_action() -> ActionDefinition {
     ActionDefinition {
-                name: "send_link_state_ack".to_string(),
-                description: "Send OSPF Link State Acknowledgment packet".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "router_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF router ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "area_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "OSPF area ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "destination".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_link_state_ack",
-                    "router_id": "1.1.1.1",
-                    "area_id": "0.0.0.0",
-                    "destination": "192.168.1.2"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OSPF LSAck to {destination}")
-                        .with_debug("OSPF send_link_state_ack: router_id={router_id} dest={destination}"),
-                ),
-            }
+        name: "send_link_state_ack".to_string(),
+        description: "Send OSPF Link State Acknowledgment packet".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF router ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "area_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF area ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "destination".to_string(),
+                type_hint: "string".to_string(),
+                description: "Destination IP: 'multicast' (default) or unicast IP".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_link_state_ack",
+            "router_id": "1.1.1.1",
+            "area_id": "0.0.0.0",
+            "destination": "192.168.1.2"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OSPF LSAck to {destination}")
+                .with_debug("OSPF send_link_state_ack: router_id={router_id} dest={destination}"),
+        ),
+    }
 }
 
 fn wait_for_more_action() -> ActionDefinition {
     ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more OSPF packets before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> OSPF wait for more")
-                        .with_debug("OSPF wait_for_more"),
-                ),
-            }
+        name: "wait_for_more".to_string(),
+        description: "Wait for more OSPF packets before responding".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "wait_for_more"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> OSPF wait for more")
+                .with_debug("OSPF wait_for_more"),
+        ),
+    }
 }
 
 // ============================================================================

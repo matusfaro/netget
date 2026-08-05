@@ -36,8 +36,8 @@ use crate::state::app_state::AppState;
 use crate::state::server::OspfNeighborState;
 #[cfg(feature = "ospf")]
 use actions::{
-    OspfProtocol, OSPF_DATABASE_DESCRIPTION_EVENT, OSPF_HELLO_EVENT,
-    OSPF_LINK_STATE_ACK_EVENT, OSPF_LINK_STATE_REQUEST_EVENT, OSPF_LINK_STATE_UPDATE_EVENT,
+    OspfProtocol, OSPF_DATABASE_DESCRIPTION_EVENT, OSPF_HELLO_EVENT, OSPF_LINK_STATE_ACK_EVENT,
+    OSPF_LINK_STATE_REQUEST_EVENT, OSPF_LINK_STATE_UPDATE_EVENT,
 };
 
 // OSPF Constants
@@ -909,15 +909,15 @@ impl OspfServer {
                                         }
                                         Err(e) => {
                                             error!("Failed to send OSPF packet: {}", e);
-                                            let _ = status_tx
-                                                .send(format!("✗ OSPF send error: {}", e));
+                                            let _ =
+                                                status_tx.send(format!("✗ OSPF send error: {}", e));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     error!("Failed to build OSPF packet: {}", e);
-                                    let _ = status_tx
-                                        .send(format!("✗ OSPF packet build error: {}", e));
+                                    let _ =
+                                        status_tx.send(format!("✗ OSPF packet build error: {}", e));
                                 }
                             }
                             continue;

@@ -793,20 +793,20 @@ fn parse_path_attributes(mut data: &[u8]) -> Result<Vec<serde_json::Value>> {
             }
             // NEXT_HOP
             3 if len == 4 => {
-                attr["next_hop"] =
-                    serde_json::json!(format!("{}.{}.{}.{}", value[0], value[1], value[2], value[3]));
+                attr["next_hop"] = serde_json::json!(format!(
+                    "{}.{}.{}.{}",
+                    value[0], value[1], value[2], value[3]
+                ));
             }
             // MULTI_EXIT_DISC
             4 if len == 4 => {
-                attr["med"] = serde_json::json!(u32::from_be_bytes([
-                    value[0], value[1], value[2], value[3]
-                ]));
+                attr["med"] =
+                    serde_json::json!(u32::from_be_bytes([value[0], value[1], value[2], value[3]]));
             }
             // LOCAL_PREF
             5 if len == 4 => {
-                attr["local_pref"] = serde_json::json!(u32::from_be_bytes([
-                    value[0], value[1], value[2], value[3]
-                ]));
+                attr["local_pref"] =
+                    serde_json::json!(u32::from_be_bytes([value[0], value[1], value[2], value[3]]));
             }
             _ => {}
         }

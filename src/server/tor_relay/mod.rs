@@ -497,9 +497,7 @@ impl TorRelaySession {
             }
             Err(e) => {
                 warn!("LLM call failed for circuit creation: {}", e);
-                let _ = self
-                    .status_tx
-                    .send(format!("✗ Tor relay LLM error: {}", e));
+                let _ = self.status_tx.send(format!("✗ Tor relay LLM error: {}", e));
             }
         }
 

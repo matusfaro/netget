@@ -510,7 +510,6 @@ pub use jsonrpc::actions::JsonRpcProtocol;
 #[cfg(feature = "jsonrpc")]
 pub use jsonrpc::JsonRpcServer;
 
-
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
 #[cfg(feature = "wireguard")]
