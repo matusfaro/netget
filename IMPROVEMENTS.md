@@ -918,6 +918,74 @@ render-time suppression so a placeholder is omitted rather than shown.
 (`src/server/http_common/handler.rs:135`) and have four local copies of it. Widening the gate
 would collapse them.
 
+### 67. Every protocol rated `Stable` failed inspection **[verified]**
+
+There were exactly three. All three were checked this session, and none survived as rated:
+
+- **OpenVPN** → `Incomplete`. Its `rustls::ServerConfig` is built, stored and never used; every
+  peer derives an identical AEAD key by HKDF over three string literals in public git history.
+- **WireGuard** → kept `Stable` (the tunnel is genuinely real) but its advertised LLM control
+  did not exist: the events it declared were never emitted and its authorization action's
+  result was consumed by nothing.
+- **Tor relay** → `Experimental`. Verified against a real `tor` binary: the first thing a client
+  sends after the TLS handshake is an **11-byte VERSIONS cell**, and the session loop
+  `read_exact`s into a **514-byte** buffer, so it blocks forever and Tor logs
+  `died in state handshaking`. It never reaches CREATE2, so the ntor handshake, circuits and
+  streams — everything the rating rested on — are unreachable. Its `e2e_testing` field claimed
+  "Official Tor client (tor binary)"; no Tor client appears anywhere in the repo, and the single
+  E2E test is `#[ignore]`d and prints `✓` for every outcome including timeout.
+
+The common cause is not carelessness about code — all three are substantial implementations.
+It is that **no rating was ever checked against a real client**, and the mocked suite cannot
+check it. `Stable` and `Beta` both assert real-client behavior, so both need a test that fails
+when a real client would reject the output. That is now the rule in item 47; this is the
+evidence for it.
+
+### 68. Protocols that could never have worked with a real client **[verified]**
+
+Beyond the ratings, several protocols had a defect that made their core function impossible,
+each found only by pointing a real client at them:
+
+- **Git** — `git_send_pack` asked the *model* for base64 packfile bytes, and `git_advertise_refs`
+  had it invent SHAs unrelated to that pack. The two halves of a clone could never agree, so
+  `git clone` could not succeed. Replaced with a declarative `git_repository` action; the server
+  now builds a real v2 pack and computes every object ID (`src/server/git/pack.rs`). Verified
+  with `git clone` + `git fsck`.
+- **OSPF** — the packet checksum used Fletcher (RFC 2328 D.4, which is for LSA headers) instead
+  of the one's-complement IP checksum (A.3.1). A receiver's self-check yields `0x906c` instead
+  of `0`, so **FRR and BIRD dropped every packet NetGet ever sent**. The claimed "integration
+  with real OSPF routers" had never happened.
+- **Maven** — `send_maven_artifact` documented base64 for binaries, and the executor sent
+  `body.as_bytes()`; the `body_base64` branch required a shape the executor never produced, so
+  it was unreachable. A handler following the docs served base64 *text* as the JAR. Now verified
+  with real `mvn`: the served JAR is a valid ZIP whose SHA-1 matches the advertised `.sha1`.
+- **Torrent tracker** — BEP 23 compact peers were unimplemented, so a real client's `compact=1`
+  announce received a peer list it will not use.
+- **WebRTC** → `Incomplete`: `spawn` binds nothing and `accept_offer` has no caller anywhere, so
+  no peer connection or data channel ever exists. **WebRTC signaling** relayed nothing —
+  `register_peer` took ownership of the write half, so the read loop exited immediately and
+  unregistered the peer it had just registered.
+
+### 69. A connection-map race repeated across four protocols **[verified in one, static in three]**
+
+`socket_file` spawned its per-connection task before inserting the connection into the map, so
+early data could be processed against a missing entry. Fixed there; the same shape exists at
+`src/server/tcp/mod.rs:111` vs `:254`, and by inspection in `src/server/tls/mod.rs:159/297` and
+`src/server/ssh_agent/mod.rs:191/317`.
+
+### 70. Assorted, worth fixing when nearby **[verified]**
+
+- `src/cli/banner.rs:31` — a doctest that fails to compile (`module banner is private`), which
+  breaks `cargo test --doc` repo-wide.
+- `--load <FILE>` is documented at `src/cli/args.rs:226` and nothing in `src/bin/netget.rs`
+  reads it.
+- `src/cli/server_startup.rs` prints `[SERVER] Server #N (WebRTC) listening on 0.0.0.0:0` for a
+  protocol that binds nothing — any `spawn` returning a dummy address is reported as listening.
+- `src/server/bgp/mod.rs` never calls `add_connection_to_server`, so BGP peers never appear in
+  the TUI connection list.
+- `src/server/openvpn/actions.rs:194` still shows `{"type": "no_action"}` in a startup example;
+  `no_action` exists nowhere in NetGet.
+
 ---
 
 ## Suggested order

@@ -130,24 +130,32 @@ owner closes while global ones persist.
 
 `ProtocolMetadataV2::privilege_requirement` declares `None` / `PrivilegedPort(u16)` /
 `RawSockets` / `Root`, checked against `SystemCapabilities` (`src/privilege.rs`) in
-`server_startup.rs` before spawn. Two known defects to avoid propagating:
+`server_startup.rs` before spawn, which now gates on `PrivilegeRequirement::is_met_by()` alone
+and detects capabilities by actually probing (a `SOCK_RAW` socket, `/dev/bpf*`, `geteuid()`)
+rather than inferring. Both were broken until this pass — the probe used `pcap::Device::list()`,
+which any unprivileged user can call, so the check never fired for anything.
 
-- The gate is `requires_privileges && !system_caps.can_bind_privileged_ports`
-  (`src/cli/server_startup.rs:348`) — it ANDs in the *port-binding* capability even for
-  `RawSockets`/`Root` requirements, so a process holding `CAP_NET_BIND_SERVICE` but not
-  `CAP_NET_RAW` skips the raw-socket check and fails later with an opaque `EPERM`.
-- Only ~23 of 116 protocols declare a requirement at all. Protocols defaulting to privileged
-  ports (`smtp` 25, `ldap` 389, `imap` 143, `pop3` 110, `ipp` 631, `syslog` 514) and `igmp`
-  declare nothing and get no preflight check.
+Declare `privilege_requirement` on any new protocol that needs raw sockets, a TUN device, or a
+port below 1024. Two failure modes to avoid:
 
-Declare `privilege_requirement` on any new protocol that needs raw sockets, a TUN device, or
-a port below 1024. Raw-socket/pcap protocols (`arp`, `datalink`, `icmp`, `isis`) start via
-fire-and-forget `spawn_blocking` and report `Running` even when the capture handle fails to
-open — if you touch them, propagate that failure into `ServerStatus::Error`.
+- **A `PrivilegedPort` above 1023 can never fire.** `svn` declared `PrivilegedPort(3690)`, which
+  read as protection and was dead code. Declare `None` if the default port is unprivileged.
+- **Don't claim more than you need.** `ospf` declared `Root` when it wants `CAP_NET_RAW`, which
+  would refuse to start on a capability-only process that could in fact run it.
 
-`get_dependencies()` / `ProtocolDependency` (`src/protocol/dependencies.rs`) is fully built
-but **no protocol implements it and nothing calls it**. Either adopt it or delete it; don't
-assume it's providing preflight checks.
+There is no variant for *device* access — Bluetooth adapters, USB, NFC readers. Those seventeen
+protocols sit at `None` because every other option would be a lie; see IMPROVEMENTS item 60.
+
+Startup must report failure. `spawn()` has to await readiness and return `Err` so
+`server_startup` sets `ServerStatus::Error`. ARP, DataLink and ICMP used fire-and-forget
+`spawn_blocking` and sat in `Running` having captured nothing — a server that lies about being
+up is worse than one that refuses to start.
+
+`get_dependencies()` / `ProtocolDependency` (`src/protocol/dependencies.rs`) is plumbed —
+`get_excluded_protocols()` is called from the event handler and the TUI — but **no protocol
+overrides `get_dependencies()`**, so the exclusion map is always empty and the mechanism does
+nothing. Adopting it is cheap: declare dependencies and the existing plumbing starts excluding
+unusable protocols with install hints.
 
 ## Adding a server protocol
 
