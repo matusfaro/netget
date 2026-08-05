@@ -29,7 +29,7 @@ pub fn create_llm_client(args: &Args, lock_enabled: bool) -> Result<OllamaClient
     if let Some(ref openai_url) = args.openai_url {
         let api_key = args.resolve_api_key().ok_or_else(|| {
             anyhow::anyhow!(
-                "API key required for OpenAI-compatible endpoint.\n   Use --api-key, NETGET_API_KEY, or OPENAI_API_KEY env var."
+                "API key required for OpenAI-compatible endpoint.\n   Set NETGET_API_KEY (or OPENAI_API_KEY); --api-key also works but exposes the key in the process table."
             )
         })?;
         if args.model.is_none() {

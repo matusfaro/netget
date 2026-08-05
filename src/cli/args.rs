@@ -184,16 +184,16 @@ pub struct Args {
     #[clap(
         long = "openai-url",
         value_name = "URL",
-        help = "Base URL for an OpenAI-compatible API endpoint (e.g., https://api.openai.com, http://localhost:1234 for vLLM/LM Studio). Requires --model and --api-key (or NETGET_API_KEY/OPENAI_API_KEY env var).",
+        help = "Base URL for an OpenAI-compatible API endpoint (e.g., https://api.openai.com, http://localhost:1234 for vLLM/LM Studio). Requires --model and an API key in NETGET_API_KEY or OPENAI_API_KEY (or, less safely, --api-key).",
         conflicts_with = "ollama_url"
     )]
     pub openai_url: Option<String>,
 
-    /// API key for OpenAI-compatible endpoint
+    /// API key for OpenAI-compatible endpoint (prefer the environment variable)
     #[clap(
         long = "api-key",
         value_name = "KEY",
-        help = "API key for the OpenAI-compatible endpoint. Also reads NETGET_API_KEY or OPENAI_API_KEY environment variables."
+        help = "API key for the OpenAI-compatible endpoint. PREFER the NETGET_API_KEY (or OPENAI_API_KEY) environment variable: an argument is visible to every local user in the process table (`ps`), an environment variable is not. Passing this flag prints a warning."
     )]
     pub api_key: Option<String>,
 
@@ -386,12 +386,39 @@ pub struct Args {
     pub prompt: Vec<String>,
 }
 
+/// Warn - once per process - that an API key was passed as a command-line
+/// argument.
+///
+/// A process's argv is world-readable on every platform NetGet runs on: any
+/// local user can read the key out of `ps` / `/proc/<pid>/cmdline` for as long
+/// as the process lives, and it lands in shell history and process accounting
+/// on the way in. The environment-variable path has none of those properties,
+/// so it is the documented way in; the flag keeps working for callers that
+/// already use it, but it says so.
+fn warn_api_key_on_command_line() {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        const MSG: &str = "--api-key puts the key in this process's command line, where any local user can read it (ps / /proc). Prefer the NETGET_API_KEY or OPENAI_API_KEY environment variable.";
+        tracing::warn!("{}", MSG);
+        // stderr, not stdout: MCP stdio mode carries JSON-RPC on stdout.
+        eprintln!("⚠  {}", MSG);
+    });
+}
+
 impl Args {
-    /// Resolve the API key from --api-key flag, NETGET_API_KEY, or OPENAI_API_KEY env vars
+    /// Resolve the API key from NETGET_API_KEY / OPENAI_API_KEY, or the
+    /// `--api-key` flag.
+    ///
+    /// The flag still wins when both are set - changing that would break
+    /// callers - but using it warns, because it exposes the secret in the
+    /// process table.
     pub fn resolve_api_key(&self) -> Option<String> {
-        self.api_key
-            .clone()
-            .or_else(|| std::env::var("NETGET_API_KEY").ok())
+        if let Some(key) = &self.api_key {
+            warn_api_key_on_command_line();
+            return Some(key.clone());
+        }
+        std::env::var("NETGET_API_KEY")
+            .ok()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
     }
 

@@ -80,6 +80,23 @@ async fn load_flag_reports_missing_file() {
     );
 }
 
+/// `--api-key` keeps working (it just warns), and still wins over the
+/// environment so existing callers are not silently switched to another key.
+#[test]
+fn api_key_flag_still_resolves() {
+    let args = Args::try_parse_from([
+        "netget",
+        "--openai-url",
+        "https://api.example.com",
+        "--model",
+        "gpt-4o",
+        "--api-key",
+        "sk-from-the-flag",
+    ])
+    .expect("args parse");
+    assert_eq!(args.resolve_api_key().as_deref(), Some("sk-from-the-flag"));
+}
+
 /// `--client` gives clients the deterministic entry point servers already had.
 #[test]
 fn client_flags_parse() {
