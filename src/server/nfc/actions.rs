@@ -12,6 +12,15 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+/// Set the virtual tag's Answer to Reset
+pub static SET_ATR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(set_atr_action);
+/// Set the virtual tag's NDEF message
+pub static SET_NDEF_MESSAGE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(set_ndef_message_action);
+/// Answer an APDU command sent to the virtual tag
+pub static RESPOND_TO_APDU_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(respond_to_apdu_action);
+
 /// NFC server started event
 pub static NFC_SERVER_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
@@ -22,6 +31,10 @@ pub static NFC_SERVER_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "records": [{"type": "text", "language": "en", "text": "Hello NFC!"}]
         }),
     )
+    .with_actions(vec![
+        SET_ATR_ACTION.clone(),
+        SET_NDEF_MESSAGE_ACTION.clone(),
+    ])
 });
 
 /// NFC tag selected event - triggered when virtual tag's application is selected
@@ -42,6 +55,7 @@ pub static NFC_TAG_SELECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Application ID (AID) that was selected (hex)".to_string(),
         required: true,
     }])
+    .with_actions(vec![RESPOND_TO_APDU_ACTION.clone()])
 });
 
 /// NFC APDU command received event - triggered when virtual tag receives APDU
@@ -94,7 +108,112 @@ pub static NFC_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
+    .with_actions(vec![RESPOND_TO_APDU_ACTION.clone()])
 });
+
+/// Action definition for set_atr (async)
+fn set_atr_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "set_atr".to_string(),
+        description: "Set Answer to Reset (ATR) for virtual tag".to_string(),
+        parameters: vec![Parameter {
+            name: "atr_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "ATR bytes as hex string".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "set_atr",
+            "atr_hex": "3B8F8001804F0CA0000003060300030000000068"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFC set ATR ({atr_hex_len} bytes)")
+                .with_debug("NFC set_atr: atr={atr_hex}"),
+        ),
+    }
+}
+
+/// Action definition for set_ndef_message (async)
+fn set_ndef_message_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "set_ndef_message".to_string(),
+        description: "Set NDEF message content for virtual tag".to_string(),
+        parameters: vec![Parameter {
+            name: "records".to_string(),
+            type_hint: "array".to_string(),
+            description:
+                "Array of NDEF records, each an object such as {\"type\": \"text\", \"language\": \"en\", \"text\": \"...\"} or {\"type\": \"uri\", \"uri\": \"...\"}"
+                    .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "set_ndef_message",
+            "records": [
+                {
+                    "type": "text",
+                    "language": "en",
+                    "text": "Hello NFC!"
+                },
+                {
+                    "type": "uri",
+                    "uri": "https://example.com"
+                }
+            ]
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFC set NDEF ({records_len} records)")
+                .with_debug("NFC set_ndef_message: records={records_len}"),
+        ),
+    }
+}
+
+/// Action definition for respond_to_apdu (sync)
+fn respond_to_apdu_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "respond_to_apdu".to_string(),
+        description: "Respond to received APDU command with data and status bytes".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "data_hex".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response data (hex, optional)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "sw1".to_string(),
+                type_hint: "string".to_string(),
+                description: "Status byte 1 (hex, default: '90' for success)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "sw2".to_string(),
+                type_hint: "string".to_string(),
+                description: "Status byte 2 (hex, default: '00' for success)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "respond_to_apdu",
+            "data_hex": "D2760000850101",
+            "sw1": "90",
+            "sw2": "00"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> NFC APDU response SW={sw1}{sw2}")
+                .with_debug("NFC respond_to_apdu: data={data_hex} sw1={sw1} sw2={sw2}"),
+        ),
+    }
+}
+
+/// Parse a hex string, rejecting anything that is not an even run of hex digits
+/// so a malformed value fails where it is produced instead of being logged as if
+/// it had been accepted.
+fn parse_hex(field: &str, value: &str) -> Result<Vec<u8>> {
+    hex::decode(value).map_err(|e| anyhow!("Invalid hex in '{field}' ({value}): {e}"))
+}
 
 /// NFC server protocol implementation
 pub struct NfcServerProtocol;
@@ -119,7 +238,7 @@ impl Protocol for NfcServerProtocol {
             .implementation("Virtual NFC tag/card simulation via PC/SC metadata")
             .llm_control("ATR configuration, NDEF message content, APDU response simulation")
             .e2e_testing("Virtual only - cannot test with real readers (hardware cannot emulate)")
-            .notes("Simulation only. Most PC/SC readers cannot emulate cards. Use Android HCE or smart card simulator hardware for real card emulation.")
+            .notes("Simulation only, and no socket is bound. Only nfc_server_started fires: nothing feeds the virtual tag APDUs, so nfc_apdu_received / nfc_tag_selected never fire and respond_to_apdu never runs. Most PC/SC readers cannot emulate cards; use Android HCE or smart card simulator hardware for real card emulation.")
             .build()
     }
 
@@ -136,94 +255,11 @@ impl Protocol for NfcServerProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "set_atr".to_string(),
-                description: "Set Answer to Reset (ATR) for virtual tag".to_string(),
-                parameters: vec![Parameter {
-                    name: "atr_hex".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "ATR bytes as hex string".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "set_atr",
-                    "atr_hex": "3B8F8001804F0CA0000003060300030000000068"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> NFC set ATR ({atr_hex_len} bytes)")
-                        .with_debug("NFC set_atr: atr={atr_hex}"),
-                ),
-            },
-            ActionDefinition {
-                name: "set_ndef_message".to_string(),
-                description: "Set NDEF message content for virtual tag".to_string(),
-                parameters: vec![Parameter {
-                    name: "records".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Array of NDEF records".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "set_ndef_message",
-                    "records": [
-                        {
-                            "type": "text",
-                            "language": "en",
-                            "text": "Hello NFC!"
-                        },
-                        {
-                            "type": "uri",
-                            "uri": "https://example.com"
-                        }
-                    ]
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> NFC set NDEF ({records_len} records)")
-                        .with_debug("NFC set_ndef_message: records={records_len}"),
-                ),
-            },
-        ]
+        vec![SET_ATR_ACTION.clone(), SET_NDEF_MESSAGE_ACTION.clone()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![ActionDefinition {
-            name: "respond_to_apdu".to_string(),
-            description: "Respond to received APDU command with data and status bytes".to_string(),
-            parameters: vec![
-                Parameter {
-                    name: "data_hex".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Response data (hex, optional)".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "sw1".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Status byte 1 (hex, default: '90' for success)".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "sw2".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Status byte 2 (hex, default: '00' for success)".to_string(),
-                    required: false,
-                },
-            ],
-            example: json!({
-                "type": "respond_to_apdu",
-                "data_hex": "D2760000850101",
-                "sw1": "90",
-                "sw2": "00"
-            }),
-            log_template: Some(
-                LogTemplate::new()
-                    .with_info("-> NFC APDU response SW={sw1}{sw2}")
-                    .with_debug("NFC respond_to_apdu: data={data_hex} sw1={sw1} sw2={sw2}"),
-            ),
-        }]
+        vec![RESPOND_TO_APDU_ACTION.clone()]
     }
 
     fn keywords(&self) -> Vec<&'static str> {
@@ -372,27 +408,43 @@ impl Server for NfcServerProtocol {
 
         match action_type {
             "set_atr" => {
-                let _atr_hex = action
+                let atr_hex = action
                     .get("atr_hex")
                     .and_then(|v| v.as_str())
                     .context("Missing 'atr_hex' parameter")?;
-                // Virtual tag doesn't actually process this yet
-                Ok(ActionResult::NoAction)
+                parse_hex("atr_hex", atr_hex)?;
+                Ok(ActionResult::Custom {
+                    name: "set_atr".to_string(),
+                    data: json!({ "atr_hex": atr_hex }),
+                })
             }
             "set_ndef_message" => {
-                let _records = action
+                let records = action
                     .get("records")
                     .and_then(|v| v.as_array())
                     .context("Missing 'records' parameter")?;
-                // Virtual tag doesn't actually process this yet
-                Ok(ActionResult::NoAction)
+                Ok(ActionResult::Custom {
+                    name: "set_ndef_message".to_string(),
+                    data: json!({ "records": records }),
+                })
             }
             "respond_to_apdu" => {
-                let _data_hex = action.get("data_hex").and_then(|v| v.as_str());
-                let _sw1 = action.get("sw1").and_then(|v| v.as_str()).unwrap_or("90");
-                let _sw2 = action.get("sw2").and_then(|v| v.as_str()).unwrap_or("00");
-                // Virtual tag doesn't actually process this yet
-                Ok(ActionResult::NoAction)
+                let data_hex = action.get("data_hex").and_then(|v| v.as_str());
+                if let Some(data_hex) = data_hex {
+                    parse_hex("data_hex", data_hex)?;
+                }
+                let sw1 = action.get("sw1").and_then(|v| v.as_str()).unwrap_or("90");
+                let sw2 = action.get("sw2").and_then(|v| v.as_str()).unwrap_or("00");
+                parse_hex("sw1", sw1)?;
+                parse_hex("sw2", sw2)?;
+                Ok(ActionResult::Custom {
+                    name: "respond_to_apdu".to_string(),
+                    data: json!({
+                        "data_hex": data_hex.unwrap_or(""),
+                        "sw1": sw1,
+                        "sw2": sw2,
+                    }),
+                })
             }
             _ => Err(anyhow!("Unknown action type: {}", action_type)),
         }

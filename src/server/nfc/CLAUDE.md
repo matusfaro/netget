@@ -2,9 +2,28 @@
 
 ## Important Note
 
-**This is a VIRTUAL/SIMULATION server only.**
+**This is a VIRTUAL/SIMULATION server only.** Its `DevelopmentState` is
+`Incomplete`, so it is hidden from LLM prompts.
 
 Most PC/SC readers are **read-only** and cannot emulate NFC tags or cards. This server simulates what an NFC tag would do for testing purposes without requiring special hardware.
+
+### What actually runs today
+
+- **No socket is opened.** `NfcServer::start` returns the requested address
+  without binding, so the address shown for the server is not listening and
+  there is no accept loop and no server task to register.
+- **One event fires: `nfc_server_started`.** It is emitted once at startup and
+  its actions (`set_atr`, `set_ndef_message`) are applied to the in-memory tag.
+- **`nfc_tag_selected` and `nfc_apdu_received` never fire.** Nothing feeds this
+  server APDUs - there is no reader transport, no USB/IP, no HCE bridge - so
+  `respond_to_apdu` is declared vocabulary with no trigger. A handler that emits
+  it gets a warning in the log and on the status panel.
+- **`PrivilegeRequirement::None` is correct**: no reader, device node or
+  privileged port is touched.
+
+Making the APDU path real means adding a transport (vsmartcard relay, USB/IP
+CCID, or an Android HCE bridge) and driving the tag state from it. Until then
+this protocol is a documentation and prompting exercise.
 
 ## Why Virtual?
 
@@ -54,11 +73,16 @@ The LLM controls virtual tag behavior:
     - Action: `set_atr` - Set Answer to Reset bytes
     - Action: `set_ndef_message` - Set NDEF content
     - LLM designs tag characteristics
+    - Both are attached to `nfc_server_started` and applied to the tag state
 
-3. **APDU Response** (Sync Action - Simulated):
-    - Event: `nfc_apdu_received` - Virtual reader sent command
+3. **APDU Response** (Sync Action - not reachable):
+    - Event: `nfc_apdu_received` - would carry a reader's command
     - Action: `respond_to_apdu` - LLM provides response data + status
-    - Simulates tag responding to SELECT, READ, WRITE commands
+    - No transport emits this event today, so the action never runs
+
+Every hex field (`atr_hex`, `data_hex`, `sw1`, `sw2`) is decoded when the action
+is executed; a malformed value is an error rather than something logged as if it
+had been accepted.
 
 ### Startup Parameters
 
@@ -223,7 +247,9 @@ Example:
 
 - This is a simulation only - no actual RF communication
 - Cannot be detected by real NFC readers
-- APDU events are generated manually, not from readers
+- No APDU source exists at all: `nfc_apdu_received` and `nfc_tag_selected` are
+  never emitted, so `respond_to_apdu` is unreachable
+- The server does not bind a socket; the address it reports is not listening
 - Primarily for educational/testing purposes
 
 ## References

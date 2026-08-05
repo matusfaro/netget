@@ -15,6 +15,7 @@
 
 pub mod actions;
 
+use crate::console_error;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
@@ -34,16 +35,16 @@ pub use actions::NfcServerProtocol;
 
 /// Virtual NFC tag state
 struct VirtualNfcTag {
-    #[allow(dead_code)]
     atr: String, // Answer to Reset
     #[allow(dead_code)]
     uid: String, // Tag UID
     #[allow(dead_code)]
     tag_type: String, // Tag type
-    #[allow(dead_code)]
     ndef_records: Vec<Value>, // NDEF message records
+    /// Currently selected application ID. Always None: nothing feeds this
+    /// server APDUs, so `nfc_tag_selected` never fires. See CLAUDE.md.
     #[allow(dead_code)]
-    selected_application: Option<String>, // Currently selected application ID
+    selected_application: Option<String>,
 }
 
 impl VirtualNfcTag {
@@ -97,7 +98,7 @@ impl NfcServer {
         ));
 
         // Create virtual tag state
-        let _tag_state = Arc::new(tokio::sync::Mutex::new(VirtualNfcTag::new(
+        let tag_state = Arc::new(tokio::sync::Mutex::new(VirtualNfcTag::new(
             uid.clone(),
             tag_type.clone(),
         )));
@@ -106,7 +107,7 @@ impl NfcServer {
         let event = Event::new(&NFC_SERVER_STARTED_EVENT, json!({}));
         let protocol = NfcServerProtocol;
 
-        let _result = call_llm(
+        let result = call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -116,8 +117,28 @@ impl NfcServer {
         )
         .await?;
 
-        // Note: No need to handle results for server startup event
-        // Virtual tag doesn't process startup actions
+        for message in result.messages {
+            let _ = status_tx.send(message);
+        }
+
+        // Apply whatever the handler configured. Without this the one call the
+        // server makes is discarded and set_atr / set_ndef_message do nothing.
+        for action_result in result.protocol_results {
+            if let Err(e) =
+                Self::handle_async_action(tag_state.clone(), action_result, &status_tx).await
+            {
+                console_error!(status_tx, "NFC startup action failed: {}", e);
+            }
+        }
+
+        {
+            let tag = tag_state.lock().await;
+            debug!(
+                "Virtual NFC tag configured: atr={}, ndef_records={}",
+                tag.atr,
+                tag.ndef_records.len()
+            );
+        }
 
         // NOTE: Since this is a virtual server, we don't actually listen on network
         // In a real implementation, you would:
@@ -132,37 +153,47 @@ impl NfcServer {
         Ok(bind_addr)
     }
 
-    /// Handle async action
-    #[allow(dead_code)]
+    /// Apply an action result to the virtual tag
     async fn handle_async_action(
-        _tag_state: Arc<tokio::sync::Mutex<VirtualNfcTag>>,
+        tag_state: Arc<tokio::sync::Mutex<VirtualNfcTag>>,
         result: ActionResult,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match result {
-            ActionResult::Custom { name, data } => {
-                if name == "set_atr" {
+            ActionResult::Custom { name, data } => match name.as_str() {
+                "set_atr" => {
                     let atr_hex = data["atr_hex"]
                         .as_str()
                         .ok_or_else(|| anyhow!("Missing atr_hex"))?;
 
+                    tag_state.lock().await.atr = atr_hex.to_string();
+
                     debug!("Setting virtual tag ATR: {}", atr_hex);
                     let _ = status_tx.send(format!("Set ATR: {}", atr_hex));
-
-                    // In a real implementation, this would configure hardware
-                    // For virtual server, just log it
-                } else if name == "set_ndef_message" {
+                }
+                "set_ndef_message" => {
                     let records = data["records"]
                         .as_array()
                         .ok_or_else(|| anyhow!("Missing records"))?;
 
+                    tag_state.lock().await.ndef_records = records.clone();
+
                     debug!("Setting NDEF message with {} records", records.len());
                     let _ = status_tx.send(format!("Set NDEF message: {} records", records.len()));
-
-                    // In a real implementation, this would store NDEF data
-                    // For virtual server, just log it
                 }
-            }
+                "respond_to_apdu" => {
+                    // Reachable only once something feeds this server APDUs;
+                    // nothing does today. See CLAUDE.md.
+                    warn!("respond_to_apdu has no reader to answer: {}", data);
+                    let _ = status_tx.send(
+                        "[WARN] respond_to_apdu ignored: no reader is connected to the virtual tag"
+                            .to_string(),
+                    );
+                }
+                _ => {
+                    warn!("Unhandled NFC action: {}", name);
+                }
+            },
             ActionResult::NoAction => {
                 // No operation needed
             }
