@@ -49,11 +49,15 @@ impl Protocol for CassandraProtocol {
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![list_cassandra_connections_action()]
+        // No user-triggered actions. `list_cassandra_connections` used to be declared here and
+        // only ever returned ActionResult::NoAction over a connection map that was never
+        // populated, so it did nothing on any path.
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             cassandra_ready_action(),
+            cassandra_authenticate_action(),
             cassandra_supported_action(),
             cassandra_result_rows_action(),
             cassandra_prepared_action(),
@@ -79,10 +83,21 @@ impl Protocol for CassandraProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("cassandra-protocol v3.0 (Protocol v4)")
-            .llm_control("CQL queries, prepared statements, auth")
-            .e2e_testing("scylla client")
-            .notes("Limited types (int, varchar, boolean)")
+            .implementation(
+                "cassandra-protocol v3.0 for frame parsing; response bodies built by hand. \
+                 Protocol v4 only.",
+            )
+            .llm_control(
+                "STARTUP/OPTIONS/QUERY/PREPARE/EXECUTE and, when the handler answers STARTUP \
+                 with cassandra_authenticate, SASL PLAIN auth.",
+            )
+            .e2e_testing("scylla client (real driver) in tests/server/cassandra")
+            .notes(
+                "Column types limited to int, varchar and boolean - no collections, UDTs, \
+                 blobs, timestamps or numeric types beyond 32-bit int. No paging, batching, \
+                 compression or server events. No storage: the handler answers every query; \
+                 only prepared-statement metadata is held, per connection and capped.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -179,13 +194,13 @@ impl Server for CassandraProtocol {
 
         match action_type {
             "cassandra_ready" => self.execute_cassandra_ready(),
+            "cassandra_authenticate" => self.execute_cassandra_authenticate(action),
             "cassandra_supported" => self.execute_cassandra_supported(action),
             "cassandra_result_rows" => self.execute_cassandra_result_rows(action),
             "cassandra_prepared" => self.execute_cassandra_prepared(action),
             "cassandra_auth_success" => self.execute_cassandra_auth_success(),
             "cassandra_error" => self.execute_cassandra_error(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            "list_cassandra_connections" => self.execute_list_cassandra_connections(action),
             _ => Err(anyhow::anyhow!("Unknown Cassandra action: {}", action_type)),
         }
     }
@@ -202,22 +217,55 @@ impl CassandraProtocol {
         })
     }
 
+    fn execute_cassandra_authenticate(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let authenticator = action
+            .get("authenticator")
+            .and_then(|v| v.as_str())
+            .unwrap_or("org.apache.cassandra.auth.PasswordAuthenticator");
+
+        debug!("Cassandra AUTHENTICATE challenge: {}", authenticator);
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] Cassandra → AUTHENTICATE ({})",
+            authenticator
+        ));
+
+        Ok(ActionResult::Custom {
+            name: "cassandra_authenticate".to_string(),
+            data: json!({ "authenticator": authenticator }),
+        })
+    }
+
     fn execute_cassandra_supported(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // A driver reads CQL_VERSION out of SUPPORTED to pick what to send in STARTUP. An
+        // empty multimap tells it the server supports nothing, so answer with the documented
+        // defaults when the handler gives none rather than shipping an empty frame.
         let options = action
             .get("options")
             .and_then(|v| v.as_object())
-            .map(|o| o.clone());
+            .cloned()
+            .filter(|o| !o.is_empty())
+            .unwrap_or_else(|| {
+                json!({
+                    "CQL_VERSION": ["3.0.0"],
+                    "COMPRESSION": [],
+                    "PROTOCOL_VERSIONS": ["4/v4"],
+                })
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+            });
 
-        debug!("Cassandra SUPPORTED response with options");
+        debug!(
+            "Cassandra SUPPORTED response with {} option(s)",
+            options.len()
+        );
         let _ = self
             .status_tx
-            .send(format!("[DEBUG] Cassandra → SUPPORTED"));
+            .send("[DEBUG] Cassandra → SUPPORTED".to_string());
 
         Ok(ActionResult::Custom {
             name: "cassandra_supported".to_string(),
-            data: json!({
-                "options": options.unwrap_or_default()
-            }),
+            data: json!({ "options": options }),
         })
     }
 
@@ -324,32 +372,34 @@ impl CassandraProtocol {
             }),
         })
     }
-
-    fn execute_list_cassandra_connections(
-        &self,
-        _action: serde_json::Value,
-    ) -> Result<ActionResult> {
-        debug!("Listing Cassandra connections");
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] List Cassandra connections"));
-
-        Ok(ActionResult::NoAction)
-    }
 }
 
 // Action definitions
 
-fn list_cassandra_connections_action() -> ActionDefinition {
+fn cassandra_authenticate_action() -> ActionDefinition {
     ActionDefinition {
-        name: "list_cassandra_connections".to_string(),
-        description: "List all active Cassandra connections".to_string(),
-        parameters: vec![],
-        example: json!({"type": "list_cassandra_connections"}),
+        name: "cassandra_authenticate".to_string(),
+        description: "Demand authentication instead of sending READY. The client answers with \
+                      an AUTH_RESPONSE, which raises cassandra_auth. Without this action the \
+                      client never authenticates and cassandra_auth never fires."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "authenticator".to_string(),
+            type_hint: "string".to_string(),
+            description: "Java class name of the authenticator to advertise. Drivers only \
+                          understand org.apache.cassandra.auth.PasswordAuthenticator (SASL \
+                          PLAIN), which is the default."
+                .to_string(),
+            required: false,
+        }],
+        example: json!({
+            "type": "cassandra_authenticate",
+            "authenticator": "org.apache.cassandra.auth.PasswordAuthenticator"
+        }),
         log_template: Some(
             LogTemplate::new()
-                .with_info("Cassandra listing connections")
-                .with_debug("Cassandra list_cassandra_connections"),
+                .with_info("-> Cassandra AUTHENTICATE")
+                .with_debug("Cassandra cassandra_authenticate: {authenticator}"),
         ),
     }
 }
@@ -551,7 +601,11 @@ pub static CASSANDRA_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
-    .with_actions(vec![cassandra_ready_action(), cassandra_error_action()])
+    .with_actions(vec![
+        cassandra_ready_action(),
+        cassandra_authenticate_action(),
+        cassandra_error_action(),
+    ])
 });
 
 pub static CASSANDRA_OPTIONS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -573,7 +627,17 @@ pub static CASSANDRA_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_query",
         "Client sends CQL query to execute",
-        json!({"type": "placeholder", "event_id": "cassandra_query"}),
+        // This is rendered verbatim into the prompt as "how to answer this event". It used to
+        // be {"type": "placeholder", "event_id": "cassandra_query"}, which is not an action
+        // and is rejected by execute_action.
+        json!({
+            "type": "cassandra_result_rows",
+            "columns": [
+                {"name": "id", "type": "int"},
+                {"name": "name", "type": "varchar"}
+            ],
+            "rows": [[1, "Alice"], [2, "Bob"]]
+        }),
     )
     .with_parameters(vec![
         Parameter {

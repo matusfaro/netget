@@ -1,291 +1,149 @@
-# Cassandra/CQL Protocol Implementation
+# Cassandra/CQL Server Implementation
 
-## Overview
+Cassandra native binary protocol (CQL v4). The handler answers every query; the server holds no
+tables and no rows.
 
-Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) using the `cassandra-protocol` crate for
-frame parsing and manual response construction. Supports STARTUP, OPTIONS, QUERY, PREPARE, EXECUTE, and AUTH_RESPONSE
-operations with full LLM control over query responses.
+**State**: `Experimental` · **Port**: 9042 · **Stack**: `ETH>IP>TCP>Cassandra`
 
-**Port**: 9042 (default Cassandra port)
-**Protocol Version**: Protocol v4 (Cassandra 3.x+)
-**Stack Representation**: `ETH>IP>TCP>CASSANDRA`
+## Libraries
 
-## Library Choices
+- **cassandra-protocol** 3.0 — `Envelope::from_buffer` / `encode_with` for frame headers only.
+- Response **bodies are built by hand**: the crate does not offer server-side body builders for
+  RESULT/SUPPORTED/PREPARED, so `mod.rs` writes the CQL wire encoding directly.
 
-**cassandra-protocol** (v3.0):
+## No storage
 
-- Chosen for comprehensive CQL binary protocol support
-- Provides `Envelope` for frame parsing and serialization
-- Handles frame headers, compression, opcodes
-- Supports Protocol v4 features (prepared statements, paging, etc.)
-- Manual response body construction required
+There are no tables, no rows, and no keyspace. `send_result_rows` writes exactly what the
+handler returned. The only per-connection state is:
 
-**Manual Response Construction**:
-
-- LLM controls all query/prepare/execute responses
-- Response bodies manually built following CQL wire format
-- Complex binary encoding for: metadata, column specs, row data
-- Type mapping from JSON to CQL types (int, varchar, boolean, etc.)
-
-## Architecture Decisions
-
-### Frame-Based Protocol
-
-- Each CQL frame has: version, direction, flags, stream_id, opcode, length, body
-- Parse incoming frames with `Envelope::from_buffer()`
-- Handle opcodes: STARTUP, OPTIONS, QUERY, PREPARE, EXECUTE, AUTH_RESPONSE
-- Build response frames with appropriate opcode and body
-- Encode frames with `Envelope::encode_with(Compression::None)`
-- Write encoded bytes to TcpStream
-
-### Connection State Machine
-
-- Each connection maintains `CassandraConnectionState`:
-    - `ready`: Connection ready after STARTUP
-    - `protocol_version`: Negotiated protocol version (v4)
-    - `prepared_statements`: HashMap of statement_id → (query, param_count)
-    - `authenticated`: Auth status (Phase 3)
-    - `username`: Authenticated user (Phase 3)
-
-### Query Execution Flow
-
-1. Client sends QUERY frame with CQL string
-2. Parse query from frame body (long string format)
-3. Create `CASSANDRA_QUERY_EVENT` with query string
-4. Call LLM via `call_llm()` with event and protocol
-5. Process action results:
-    - `cassandra_result_rows`: Build RESULT frame with rows
-    - `cassandra_error`: Send ERROR frame
-    - `close_connection`: Close connection
-6. If no action, send empty result set
-
-### Prepared Statement Flow (Phase 2)
-
-1. Client sends PREPARE frame with CQL query
-2. Generate statement ID from query hash
-3. Count parameters (count `?` occurrences)
-4. Store in `prepared_statements` HashMap
-5. Create `CASSANDRA_PREPARE_EVENT`
-6. LLM returns metadata (columns, param types)
-7. Send RESULT (Prepared) with statement ID and metadata
-8. Client sends EXECUTE with statement ID and parameters
-9. Look up query from statement ID
-10. Create `CASSANDRA_EXECUTE_EVENT` with query and parameters
-11. LLM generates result rows
-12. Send RESULT (Rows)
-
-### Authentication Flow (Phase 3)
-
-1. During STARTUP, LLM can request authentication (AUTHENTICATE response)
-2. Client sends AUTH_RESPONSE with SASL PLAIN credentials
-3. Parse username/password from SASL format
-4. Create `CASSANDRA_AUTH_EVENT`
-5. LLM decides to accept/reject
-6. Send AUTH_SUCCESS or ERROR
-7. Mark connection as authenticated
-
-### Response Body Formats
-
-**READY** (after STARTUP):
-
-- Empty body
-- Signals connection ready for queries
-
-**SUPPORTED** (after OPTIONS):
-
-- String multimap: {option: [values]}
-- Example: `{"CQL_VERSION": ["3.0.0"], "COMPRESSION": []}`
-
-**RESULT (Rows)**:
-
-- Kind: 0x0002
-- Metadata: flags, column count, global keyspace/table
-- Column specs: name, type code
-- Row count: 4 bytes
-- Row data: each cell as [bytes] or NULL (-1)
-
-**RESULT (Prepared)**:
-
-- Kind: 0x0004
-- Statement ID: short bytes
-- Result metadata: columns the query will return
-- Parameters metadata: columns for bind variables
-
-**ERROR**:
-
-- Error code: 4 bytes (0x0000, 0x2200, etc.)
-- Error message: string
-
-## LLM Integration
-
-### Action-Based Responses
-
-**Sync Actions** (network event context required):
-
-- `cassandra_ready`: Send READY after STARTUP
-- `cassandra_supported`: Send SUPPORTED after OPTIONS
-- `cassandra_result_rows`: Return result set with columns/rows
-- `cassandra_prepared`: Return prepared statement metadata
-- `cassandra_error`: Return error with code/message
-- `cassandra_auth_success`: Authenticate user (Phase 3)
-
-**Event Types**:
-
-- `CASSANDRA_STARTUP_EVENT`: Connection startup
-- `CASSANDRA_OPTIONS_EVENT`: Client requests supported options
-- `CASSANDRA_QUERY_EVENT`: CQL query execution
-- `CASSANDRA_PREPARE_EVENT`: Prepare statement
-- `CASSANDRA_EXECUTE_EVENT`: Execute prepared statement
-- `CASSANDRA_AUTH_EVENT`: Authentication (Phase 3)
-
-### Example LLM Prompts
-
-**STARTUP/OPTIONS**:
-
-```
-For STARTUP, send cassandra_ready
-For OPTIONS, send cassandra_supported with options={CQL_VERSION:['3.0.0']}
-```
-
-**SELECT query**:
-
-```
-For SELECT * FROM users query, use cassandra_result_rows with:
-columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}]
-rows=[[1,'Alice'],[2,'Bob']]
-```
-
-**Prepared statement**:
-
-```
-For PREPARE 'SELECT * FROM users WHERE id = ?', use cassandra_prepared with:
-columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}]
-For EXECUTE with parameter '1', use cassandra_result_rows with rows=[[1,'Alice']]
-```
-
-**Error responses**:
-
-```
-For invalid query, use cassandra_error with error_code=0x2200 message='Table does not exist'
-```
-
-## Connection Management
-
-### Connection Lifecycle
-
-1. Server accepts TCP connection on port 9042
-2. Create `CassandraConnectionState` (not ready, v4)
-3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Cassandra`
-4. Spawn task running `handle_connection()` loop
-5. Read frames, dispatch to handlers
-6. Handler processes frames and sends responses
-7. Connection marked closed when stream ends
-
-### State Tracking
-
-- Connection state stored in `ServerInstance.connections` HashMap
-- Tracks: remote_addr, local_addr, bytes_sent/received, packets_sent/received
-- Protocol-specific: `ready`, `protocol_version`
-- Status: Active or Closed
-- Last activity timestamp
-
-### Concurrency
-
-- Multiple connections handled concurrently
-- Each connection has independent state and prepared statements
-- No shared state between connections
-- LLM calls queued per connection
-
-## Limitations
-
-### Protocol Features (Phase 1 Implementation)
-
-- **No authentication by default** - STARTUP → READY without auth (Phase 3 adds auth)
-- **No compression** - NONE compression only
-- **No paging** - full result sets only
-- **No batching** - BATCH not implemented
-- **No events** - server-side push events not supported
-- **Limited types** - int, varchar, boolean only (more in Phase 2+)
-- **No collections** - lists, sets, maps not implemented
-- **No UDTs** - user-defined types not supported
-- **No tracing** - query tracing not implemented
-
-### Performance
-
-- Each query/execute triggers LLM call
-- No query caching or planning
-- Full result sets in memory (no streaming)
-- Binary encoding overhead
-
-### Error Handling
-
-- If LLM returns no action, empty result set sent
-- Some error codes not fully implemented
-- Protocol violations may cause connection close
-
-## Known Issues
-
-1. **Type system limited**: Only int, varchar, boolean supported in Phase 1
-2. **No streaming**: Large result sets consume memory
-3. **Prepared statement IDs**: Hash-based, may have collisions (rare)
-4. **Parameter validation**: Basic validation only (count check)
-5. **Keyspace/table names**: Hardcoded to "system"/"local" or "netget"/"data"
-
-## Example Responses
-
-### Query Response
-
-```json
-{
-  "actions": [
-    {
-      "type": "cassandra_result_rows",
-      "columns": [
-        {"name": "id", "type": "int"},
-        {"name": "name", "type": "varchar"}
-      ],
-      "rows": [
-        [1, "Alice"],
-        [2, "Bob"]
-      ]
-    }
-  ]
+```rust
+struct CassandraConnectionState {
+    ready: bool,
+    protocol_version: u8,
+    prepared_statements: HashMap<Vec<u8>, (String, usize)>,
+    authenticated: bool,
+    username: Option<String>,
 }
 ```
 
-### Prepared Statement
+`prepared_statements` is protocol session state, not a data store: PREPARE is a request that
+the server remember a query string so a later EXECUTE can name it by id, and there is nowhere
+else to put it. It holds query text the client itself sent, never any answer. It is capped at
+`MAX_PREPARED_STATEMENTS` (1024) per connection — a client could previously PREPARE unlimited
+distinct queries and every one was retained for the life of the connection.
 
-```json
-{
-  "actions": [
-    {
-      "type": "cassandra_prepared",
-      "columns": [
-        {"name": "id", "type": "int"},
-        {"name": "name", "type": "varchar"}
-      ]
-    }
-  ]
-}
+## Frame flow
+
+```
+[version][flags][stream_id:2][opcode][length:4][body]
 ```
 
-### Error Response
+`stream_id` is echoed on every reply — `send_ready`, `send_supported`, `send_result_rows`,
+`send_prepared`, `send_error`, `send_auth_success` and `send_authenticate` all take it from
+`frame.stream_id`. **This is the correlation guarantee**: CQL v4 allows up to 32k in-flight
+requests per connection and a driver matches replies purely by stream id. Because the server
+echoes it structurally, the handler never sees it and cannot get it wrong — nothing
+correlation-related needs to be in the event data or in a static handler.
+
+| Opcode | Event | Handler answers with |
+|---|---|---|
+| STARTUP | `cassandra_startup` | `cassandra_ready` or `cassandra_authenticate` |
+| OPTIONS | `cassandra_options` | `cassandra_supported` |
+| QUERY | `cassandra_query` | `cassandra_result_rows` |
+| PREPARE | `cassandra_prepare` | `cassandra_prepared` |
+| EXECUTE | `cassandra_execute` | `cassandra_result_rows` |
+| AUTH_RESPONSE | `cassandra_auth` | `cassandra_auth_success` |
+| REGISTER | — | acknowledged with READY; server events are not supported |
+
+`cassandra_error` and `close_this_connection` are accepted on most events. Every event type
+calls `.with_actions(...)`, so the model is offered a narrowed, correct list rather than the
+protocol's whole sync set.
+
+## Authentication
+
+A driver only sends credentials if the server answers STARTUP with AUTHENTICATE. Nothing used
+to send it — `_send_authenticate` was dead code — so `cassandra_auth` never fired and
+`cassandra_auth_success` was unreachable. The handler now reaches it by answering
+`cassandra_startup` with:
 
 ```json
-{
-  "actions": [
-    {
-      "type": "cassandra_error",
-      "error_code": 8704,
-      "message": "Table does not exist"
-    }
-  ]
-}
+{"type": "cassandra_authenticate", "authenticator": "org.apache.cassandra.auth.PasswordAuthenticator"}
 ```
+
+The client then sends SASL PLAIN credentials, `cassandra_auth` fires with `username` and
+`password`, and the handler returns `cassandra_auth_success` or `cassandra_error`. If the
+handler returns nothing, authentication is denied and the connection closes.
+
+`PasswordAuthenticator` is the only authenticator drivers understand; advertising anything else
+makes them give up.
+
+## Column types
+
+Only three types are encoded, and the **declared column type drives the encoding**:
+
+| `type` | CQL type code | Wire encoding |
+|---|---|---|
+| `int` | `0x0009` | 4-byte big-endian; out-of-range or unparseable → NULL |
+| `boolean` | `0x0004` | one byte; accepts `true`/`1`/`"yes"` etc. |
+| anything else | `0x000D` (varchar) | UTF-8 |
+
+`serialize_cell_value` used to ignore the column type and switch on the JSON type alone, so a
+column declared `int` whose value arrived as `"5"` went out as the ASCII byte `0x35` — a
+1-byte int the driver rejected — and a varchar column given a number went out as 4 binary
+bytes. Types are now honored in both directions.
+
+Rows are padded with NULL and truncated to the declared column count. A driver reads exactly
+`columns.len()` cells and treats whatever follows as the next row, so a wrong-arity row from
+the handler used to desynchronize the whole result set rather than just corrupt one row.
+
+Not supported: collections (list/set/map), UDTs, blob, timestamp, uuid, bigint, float, double,
+decimal. A handler that declares one of these gets varchar on the wire.
+
+## Robustness
+
+- **Frame length is capped** at 256 MiB (`MAX_FRAME_BODY_BYTES`, the protocol's own maximum).
+  Without the cap the read loop simply waited for the declared bytes while `read_buf` grew the
+  `BytesMut`, so a client declaring a 4 GiB frame and dribbling data grew the process without
+  limit.
+- **`close_this_connection` now closes.** It used to break only out of the inner frame loop;
+  the outer loop then re-entered `read_buf` and the connection stayed open, making the action a
+  no-op on every path. Frame-handling errors had the same shape.
+- **The accept loop breaks** on error rather than retrying immediately and spinning on a
+  persistent EMFILE.
+- **SUPPORTED is never empty.** If the handler supplies no options, the server answers with
+  `CQL_VERSION: ["3.0.0"]`, `COMPRESSION: []`, `PROTOCOL_VERSIONS: ["4/v4"]`. An empty multimap
+  tells the driver the server supports nothing.
+- `parse_query`, `parse_execute` and `parse_sasl_plain` all bounds-check before slicing;
+  `parse_execute` rejects negative and over-long parameter lengths. No `unwrap()` on
+  network-derived data remains.
+- Bind uses `?`; the accept-loop `JoinHandle` is registered via `register_server_task()`.
+  Connections are added to and closed on the server instance. Per-connection tasks are
+  untracked (project-wide gap).
+
+## Known limitations
+
+- **Protocol v4 only.** The version byte a client sends is not negotiated; replies are always
+  v4.
+- **No paging** — the whole result set goes in one frame; no paging state is set.
+- **No BATCH, no compression, no server-side events** (REGISTER is acknowledged and ignored).
+- **No tracing.**
+- **Prepared statement ids are `DefaultHasher` over the query text.** Distinct queries can
+  collide, and ids are not stable across processes.
+- **Keyspace/table in result metadata are hardcoded** to `system`/`local` for rows and
+  `netget`/`data` for prepared statements. Drivers that route by token or by keyspace will not
+  behave sensibly.
+- **`authenticated` is recorded but not enforced** — nothing rejects a query on an
+  unauthenticated connection. The handler decides what to answer.
+
+## Verified
+
+`tests/server/cassandra/e2e_test.rs` drives the real **scylla** driver: connect, SELECT,
+error response, multiple queries, prepared statements, parameter mismatch, and concurrent
+connections. All 8 pass. The authentication path is exercised by no test — it is reachable
+now, but has not been driven end to end by a real driver.
 
 ## References
 
-- [Cassandra Native Protocol Spec](https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec)
-- [cassandra-protocol crate](https://docs.rs/cassandra-protocol/)
-- [scylla client](https://docs.rs/scylla/) - used in tests
-- [CQL3 Reference](https://cassandra.apache.org/doc/latest/cassandra/cql/)
+- [Cassandra native protocol v4](https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec)
+- [cassandra-protocol](https://docs.rs/cassandra-protocol/)
+- [scylla driver](https://docs.rs/scylla/)

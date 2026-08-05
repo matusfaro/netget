@@ -33,6 +33,17 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
+/// Largest frame body accepted, matching the native protocol's own 256 MiB maximum.
+const MAX_FRAME_BODY_BYTES: usize = 256 * 1024 * 1024;
+
+/// Cap on prepared statements retained per connection.
+///
+/// This is protocol session state, not storage: it holds the query text a client asked the
+/// server to remember so a later EXECUTE can be resolved back to it. It still needs a bound,
+/// because a client can PREPARE unlimited distinct queries on one connection and every one of
+/// them was retained for the life of that connection.
+const MAX_PREPARED_STATEMENTS: usize = 1024;
+
 /// Cassandra server implementation
 pub struct CassandraServer {
     llm_client: OllamaClient,
@@ -114,8 +125,13 @@ impl CassandraServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Cassandra connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Accept failed: {}", e));
+                        // A persistent accept error (EMFILE, listener torn down) recurs
+                        // immediately, so continuing spins a hot loop that floods the
+                        // unbounded status channel. Stop the listener instead.
+                        error!("Cassandra accept failed, listener stopped: {}", e);
+                        let _ = status_tx
+                            .send(format!("[ERROR] Cassandra accept failed, stopping: {}", e));
+                        break;
                     }
                 }
             }
@@ -169,6 +185,10 @@ impl CassandraServer {
         };
 
         let mut buffer = BytesMut::with_capacity(4096);
+        // Set once a handler asks to close, so the outer read loop stops too. Breaking only
+        // out of the inner frame loop left the connection open and re-entered read_buf, which
+        // made `close_this_connection` a no-op on every path.
+        let mut closing = false;
 
         loop {
             // Read data from stream
@@ -202,6 +222,23 @@ impl CassandraServer {
                     frame_start[8],
                 ]) as usize;
 
+                // The length is attacker-chosen and up to 4 GiB. Without this check the loop
+                // simply waits for the declared bytes while read_buf keeps growing BytesMut,
+                // so a client that declares a huge frame and then dribbles data grows the
+                // process without limit. 256 MiB is the protocol's own maximum frame size.
+                if length > MAX_FRAME_BODY_BYTES {
+                    error!(
+                        "Cassandra frame from {} declares {} bytes, over the {} byte limit",
+                        addr, length, MAX_FRAME_BODY_BYTES
+                    );
+                    let _ = status_tx.send(format!(
+                        "[ERROR] Cassandra frame too large ({} bytes), closing {}",
+                        length, addr
+                    ));
+                    closing = true;
+                    break;
+                }
+
                 // Check if we have the complete frame
                 if buffer.remaining() < 9 + length {
                     trace!(
@@ -228,6 +265,7 @@ impl CassandraServer {
                     Ok(should_continue) => {
                         if !should_continue {
                             debug!("Closing Cassandra connection to {}", addr);
+                            closing = true;
                             break;
                         }
                     }
@@ -235,9 +273,14 @@ impl CassandraServer {
                         error!("Frame handling error: {}", e);
                         let _ = status_tx.send(format!("[ERROR] Frame error: {}", e));
                         // Send error frame and close connection
+                        closing = true;
                         break;
                     }
                 }
+            }
+
+            if closing {
+                break;
             }
         }
 
@@ -373,6 +416,19 @@ impl CassandraServer {
                     "cassandra_ready" => {
                         conn_state.ready = true;
                         self.send_ready(frame.stream_id, stream, status_tx).await?;
+                        return Ok(true);
+                    }
+                    // Answering STARTUP with AUTHENTICATE is the only way a driver is ever
+                    // prompted for credentials. Without it the client goes straight to
+                    // queries, so cassandra_auth never fired and cassandra_auth_success was
+                    // unreachable - the whole "Phase 3" auth path was dead.
+                    "cassandra_authenticate" => {
+                        let authenticator = data
+                            .get("authenticator")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("org.apache.cassandra.auth.PasswordAuthenticator");
+                        self.send_authenticate(frame.stream_id, authenticator, stream, status_tx)
+                            .await?;
                         return Ok(true);
                     }
                     "cassandra_error" => {
@@ -736,25 +792,35 @@ impl CassandraServer {
         // Rows count (4 bytes)
         body.extend_from_slice(&(rows.len() as u32).to_be_bytes());
 
-        // Row data
+        // Row data.
+        //
+        // A driver reads exactly columns.len() cells per row and takes whatever follows as
+        // the next row. A handler that returns a row with the wrong number of cells therefore
+        // does not just mangle that row - it desynchronizes the rest of the result set. Rows
+        // are padded with NULL and truncated to the declared column count so a wrong-arity
+        // answer stays parseable.
         for row in &rows {
-            if let Some(row_arr) = row.as_array() {
-                for (i, cell) in row_arr.iter().enumerate() {
-                    // Cell value (bytes)
-                    let col_type = if i < columns.len() {
-                        columns[i].get("type").and_then(|v| v.as_str())
-                    } else {
-                        None
-                    };
-                    let cell_bytes = self.serialize_cell_value(cell, col_type);
+            let empty = Vec::new();
+            let row_arr = row.as_array().unwrap_or(&empty);
+            if row_arr.len() != columns.len() {
+                warn!(
+                    "Cassandra row has {} cell(s) but {} column(s) were declared; padding/truncating",
+                    row_arr.len(),
+                    columns.len()
+                );
+            }
+            for i in 0..columns.len() {
+                let col_type = columns[i].get("type").and_then(|v| v.as_str());
+                let cell_bytes = row_arr
+                    .get(i)
+                    .and_then(|cell| self.serialize_cell_value(cell, col_type));
 
-                    if let Some(bytes) = cell_bytes {
-                        body.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
-                        body.extend_from_slice(&bytes);
-                    } else {
-                        // NULL value (-1)
-                        body.extend_from_slice(&(-1i32).to_be_bytes());
-                    }
+                if let Some(bytes) = cell_bytes {
+                    body.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+                    body.extend_from_slice(&bytes);
+                } else {
+                    // NULL value (-1)
+                    body.extend_from_slice(&(-1i32).to_be_bytes());
                 }
             }
         }
@@ -779,24 +845,72 @@ impl CassandraServer {
         Ok(())
     }
 
-    /// Serialize a cell value based on its type
+    /// Serialize a cell for the column type that was declared for it.
+    ///
+    /// The column type must drive the encoding, not the JSON type. The column spec on the wire
+    /// tells the driver how to read the bytes, so a column declared `int` whose value arrives
+    /// as the JSON string `"5"` has to go out as a 4-byte big-endian 5 - emitting the ASCII
+    /// "5" made the driver read a 1-byte int and fail. This function previously ignored the
+    /// column type entirely (the parameter was `_col_type`) and switched on the JSON type
+    /// alone, so any handler that quoted a number, or answered a varchar column with a number,
+    /// produced a result set the driver rejected.
+    ///
+    /// Returns `None` for a NULL cell.
     fn serialize_cell_value(
         &self,
         value: &serde_json::Value,
-        _col_type: Option<&str>,
+        col_type: Option<&str>,
     ) -> Option<Vec<u8>> {
-        match value {
-            serde_json::Value::Null => None,
-            serde_json::Value::String(s) => Some(s.as_bytes().to_vec()),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Some((i as i32).to_be_bytes().to_vec())
-                } else {
-                    Some(n.to_string().as_bytes().to_vec())
+        if value.is_null() {
+            return None;
+        }
+
+        match col_type.unwrap_or("varchar") {
+            "int" => {
+                let n = match value {
+                    serde_json::Value::Number(n) => n.as_i64(),
+                    serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
+                    serde_json::Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+                    _ => None,
+                };
+                match n {
+                    // Out-of-range values are NULL rather than silently wrapped: a truncated
+                    // integer is a wrong answer the client cannot detect.
+                    Some(n) if n >= i32::MIN as i64 && n <= i32::MAX as i64 => {
+                        Some((n as i32).to_be_bytes().to_vec())
+                    }
+                    _ => {
+                        warn!("Cassandra int column got {:?}, sending NULL", value);
+                        None
+                    }
                 }
             }
-            serde_json::Value::Bool(b) => Some(vec![if *b { 1 } else { 0 }]),
-            _ => Some(value.to_string().as_bytes().to_vec()),
+            "boolean" => {
+                let b = match value {
+                    serde_json::Value::Bool(b) => Some(*b),
+                    serde_json::Value::Number(n) => n.as_i64().map(|n| n != 0),
+                    serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+                        "true" | "1" | "yes" => Some(true),
+                        "false" | "0" | "no" => Some(false),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match b {
+                    Some(b) => Some(vec![u8::from(b)]),
+                    None => {
+                        warn!("Cassandra boolean column got {:?}, sending NULL", value);
+                        None
+                    }
+                }
+            }
+            // varchar/text and every unrecognized type are sent as UTF-8, matching the
+            // 0x000D type code send_result_rows writes for them. Strings go out verbatim;
+            // anything else is rendered rather than dropped.
+            _ => match value {
+                serde_json::Value::String(s) => Some(s.as_bytes().to_vec()),
+                other => Some(other.to_string().into_bytes()),
+            },
         }
     }
 
@@ -827,6 +941,23 @@ impl CassandraServer {
         let param_count = query.matches('?').count();
 
         // Store prepared statement
+        if conn_state.prepared_statements.len() >= MAX_PREPARED_STATEMENTS
+            && !conn_state.prepared_statements.contains_key(&statement_id)
+        {
+            warn!(
+                "Cassandra connection {} reached {} prepared statements; rejecting PREPARE",
+                connection_id, MAX_PREPARED_STATEMENTS
+            );
+            self.send_error(
+                frame.stream_id,
+                0x2200,
+                "Too many prepared statements on this connection",
+                stream,
+                status_tx,
+            )
+            .await?;
+            return Ok(true);
+        }
         conn_state
             .prepared_statements
             .insert(statement_id.clone(), (query.clone(), param_count));
@@ -1430,7 +1561,7 @@ impl CassandraServer {
     }
 
     /// Send AUTHENTICATE response (request authentication)
-    async fn _send_authenticate(
+    async fn send_authenticate(
         &self,
         stream_id: i16,
         authenticator: &str,
