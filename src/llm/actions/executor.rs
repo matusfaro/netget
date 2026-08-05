@@ -20,6 +20,63 @@ use tracing::{debug, error, warn};
 /// `FAILED: send_tcp_data`.
 pub const FAILED_ACTION_TYPE_PREFIX: &str = "FAILED: ";
 
+/// Cap on a server's `memory` string.
+///
+/// Memory is injected verbatim into the "Current State" section of *every* prompt for that
+/// server, so it is paid for on every LLM call for the life of the server. `append_memory`
+/// had no bound at all: a protocol that appends a line per request grows the prompt without
+/// limit until the model's context is exhausted and every call starts failing.
+///
+/// 8000 characters is roughly 2k tokens — the same order as the conversation-history window,
+/// large enough for the running notes memory is meant to hold, and small enough that it
+/// cannot dominate the prompt.
+pub const MAX_SERVER_MEMORY_CHARS: usize = 8000;
+
+/// Notice prefixed to memory that had to be trimmed, so the model is not left believing it
+/// still remembers something that was dropped.
+const MEMORY_TRIMMED_NOTICE: &str = "[older memory dropped: over the size limit]";
+
+/// Bound a server's memory to [`MAX_SERVER_MEMORY_CHARS`], keeping the **newest** content.
+///
+/// Memory accumulates chronologically (`append_memory` joins with a newline), so the tail is
+/// the recent state and the head is the stalest. Whole lines are dropped from the front, and
+/// the result is marked so the model can tell that history was lost. A single line longer
+/// than the cap is truncated char-safely rather than dropped entirely.
+pub fn bound_server_memory(memory: String) -> String {
+    if memory.len() <= MAX_SERVER_MEMORY_CHARS {
+        return memory;
+    }
+
+    // Budget for the notice plus its newline.
+    let budget = MAX_SERVER_MEMORY_CHARS.saturating_sub(MEMORY_TRIMMED_NOTICE.len() + 1);
+
+    let mut kept: Vec<&str> = Vec::new();
+    let mut size = 0usize;
+    for line in memory.lines().rev() {
+        // +1 for the newline that will rejoin this line.
+        let cost = line.len() + 1;
+        if size + cost > budget {
+            break;
+        }
+        size += cost;
+        kept.push(line);
+    }
+    kept.reverse();
+
+    if kept.is_empty() {
+        // One oversized line: keep its tail, which is the newest text.
+        let start = memory.len().saturating_sub(budget);
+        let start = memory
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|i| *i >= start)
+            .unwrap_or(memory.len());
+        return format!("{}\n{}", MEMORY_TRIMMED_NOTICE, &memory[start..]);
+    }
+
+    format!("{}\n{}", MEMORY_TRIMMED_NOTICE, kept.join("\n"))
+}
+
 /// One action from a batch that could not be executed.
 ///
 /// Recorded rather than discarded so the failure reaches the access log and the caller
@@ -307,8 +364,15 @@ async fn execute_common_action(
         CommonAction::SetMemory { value } => {
             let sid = server_id.or_else(|| state.get_first_server_id_sync());
             if let Some(server_id) = sid {
-                state.set_memory(server_id, value).await;
-                debug!("Server #{} memory set", server_id.as_u32());
+                // Memory is injected into every prompt for this server, so it is bounded
+                // here rather than trusted to stay small.
+                let bounded = bound_server_memory(value);
+                debug!(
+                    "Server #{} memory set ({} chars)",
+                    server_id.as_u32(),
+                    bounded.len()
+                );
+                state.set_memory(server_id, bounded).await;
             }
         }
 
@@ -321,8 +385,13 @@ async fn execute_common_action(
                 } else {
                     format!("{}\n{}", current, value)
                 };
-                state.set_memory(server_id, new_memory).await;
-                debug!("Server #{} memory appended", server_id.as_u32());
+                let bounded = bound_server_memory(new_memory);
+                debug!(
+                    "Server #{} memory appended ({} chars)",
+                    server_id.as_u32(),
+                    bounded.len()
+                );
+                state.set_memory(server_id, bounded).await;
             }
         }
 

@@ -70,6 +70,22 @@ pub enum MessageType {
 }
 
 impl ConversationState {
+    /// Cap on a single stored message, as a fraction of `max_token_size`.
+    ///
+    /// `add_message` evicts from the front until the new message fits, so a single message
+    /// larger than the whole window emptied the history and was then stored in full anyway —
+    /// the window bounded the count of old messages but not the size of a new one. Capping
+    /// each message at half the window guarantees at least two messages of history survive
+    /// and that `current_size` can never exceed `max_token_size`.
+    const MESSAGE_FRACTION: usize = 2;
+
+    /// Truncate a message payload to the per-message cap, char-safe, marking the cut so the
+    /// model is not shown a silently amputated value.
+    fn bound_message(&self, content: String) -> String {
+        let cap = (self.max_token_size / Self::MESSAGE_FRACTION).max(256);
+        crate::utils::truncate_for_llm(&content, cap)
+    }
+
     /// Create a new conversation state with token size limit
     pub fn new(max_token_size: usize) -> Self {
         let now = Utc::now();
@@ -88,6 +104,7 @@ impl ConversationState {
 
     /// Add a user input message
     pub fn add_user_input(&mut self, input: String) {
+        let input = self.bound_message(input);
         let message = ConversationMessage {
             timestamp: Utc::now(),
             role: MessageRole::User,
@@ -99,6 +116,7 @@ impl ConversationState {
 
     /// Add an LLM response message
     pub fn add_llm_response(&mut self, response: String, parsed_action: Option<serde_json::Value>) {
+        let response = self.bound_message(response);
         let message = ConversationMessage {
             timestamp: Utc::now(),
             role: MessageRole::Assistant,
@@ -113,6 +131,7 @@ impl ConversationState {
 
     /// Add a retry instruction message
     pub fn add_retry_instruction(&mut self, instruction: String) {
+        let instruction = self.bound_message(instruction);
         let message = ConversationMessage {
             timestamp: Utc::now(),
             role: MessageRole::System,
@@ -124,7 +143,9 @@ impl ConversationState {
 
     /// Add a tool call reference
     pub fn add_tool_call(&mut self, tool_name: String, brief_description: String) {
-        let content = format!("Tool Call - {} ({})", tool_name, brief_description);
+        let brief_description = self.bound_message(brief_description);
+        let content =
+            self.bound_message(format!("Tool Call - {} ({})", tool_name, brief_description));
         let message = ConversationMessage {
             timestamp: Utc::now(),
             role: MessageRole::System,

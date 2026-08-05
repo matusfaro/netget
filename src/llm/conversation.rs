@@ -45,6 +45,25 @@ fn extract_reasoning(response: &str) -> (Option<String>, String) {
     }
 }
 
+/// Default cap on the number of messages kept in the in-flight conversation.
+///
+/// A legitimate run is bounded by `max_tool_iterations` (5), each iteration contributing at
+/// most an assistant response, an action acknowledgement and a tool-results message — 15,
+/// plus the system message and the initial trigger. 24 leaves room for a couple of
+/// corrections on top of a full-length legitimate run and clips only pathological ones.
+pub const DEFAULT_MAX_HISTORY_MESSAGES: usize = 24;
+
+/// Default cap on the total characters of the non-system messages sent to the model.
+///
+/// Roughly 8k tokens. `format_tool_results` already caps each tool result at 2000 chars, so
+/// this holds a full 5-iteration run's worth of tool output plus the surrounding turns. It
+/// is deliberately larger than `ConversationState`'s 8000-char cross-*call* window, which
+/// bounds a different structure and never bounded what is actually sent.
+pub const DEFAULT_MAX_HISTORY_CHARS: usize = 32_000;
+
+/// Stand-in message left in place of history dropped by [`ConversationHandler::trim_history`].
+const TRIM_NOTICE: &str = "[Earlier turns of this conversation were omitted to bound the prompt size. The system message and the original request above are intact.]";
+
 /// Conversation handler for multi-turn LLM interactions
 pub struct ConversationHandler {
     /// Unique conversation ID for tracking
@@ -106,6 +125,19 @@ pub struct ConversationHandler {
 
     /// Whether to use native tool calling (chat_with_tools) vs prompt-based (generate_with_format)
     use_native_tools: bool,
+
+    /// Cap on `messages.len()` — see [`DEFAULT_MAX_HISTORY_MESSAGES`]
+    max_history_messages: usize,
+
+    /// Cap on the total characters of the non-system messages — see [`DEFAULT_MAX_HISTORY_CHARS`]
+    max_history_chars: usize,
+
+    /// Bumped every time [`Self::trim_history`] actually removes messages.
+    ///
+    /// Trimming shifts every index after the protected prefix, so code holding a message
+    /// index across a possible trim compares this first and gives up on a mismatch rather
+    /// than draining the wrong range.
+    trim_generation: u64,
 }
 
 impl ConversationHandler {
@@ -147,6 +179,102 @@ impl ConversationHandler {
             request_source,
             tool_schemas: Vec::new(),
             use_native_tools: false,
+            max_history_messages: DEFAULT_MAX_HISTORY_MESSAGES,
+            max_history_chars: DEFAULT_MAX_HISTORY_CHARS,
+            trim_generation: 0,
+        }
+    }
+
+    /// Override the conversation-history caps (see [`DEFAULT_MAX_HISTORY_MESSAGES`] and
+    /// [`DEFAULT_MAX_HISTORY_CHARS`]).
+    pub fn with_history_limits(mut self, max_messages: usize, max_chars: usize) -> Self {
+        self.max_history_messages = max_messages.max(3);
+        self.max_history_chars = max_chars;
+        self
+    }
+
+    /// Total characters of everything but the system message.
+    fn history_chars(&self) -> usize {
+        self.messages.iter().skip(1).map(|m| m.content.len()).sum()
+    }
+
+    /// Whether the conversation exceeds either history cap.
+    fn over_history_budget(&self) -> bool {
+        self.messages.len() > self.max_history_messages
+            || self.history_chars() > self.max_history_chars
+    }
+
+    /// Bound the conversation that is actually sent to the model.
+    ///
+    /// Without this, `messages` only ever grows: five tool iterations each append an
+    /// assistant response, an acknowledgement and a tool-results block, and every failed
+    /// attempt leaves its response plus a correction behind for the rest of the
+    /// conversation. `ConversationState`'s 8000-char window is a different structure and
+    /// bounds only cross-call history, never the request.
+    ///
+    /// The system message and the first user message — the instruction and the request the
+    /// whole conversation is about — are never dropped, nor are the two most recent
+    /// messages. Everything between is dropped oldest-first and replaced by a single
+    /// [`TRIM_NOTICE`], so the model is told its history was cut rather than left to
+    /// reference turns that silently vanished.
+    ///
+    /// Called before every request; public so the bound is directly assertable.
+    pub fn trim_history(&mut self) {
+        if !self.over_history_budget() {
+            return;
+        }
+
+        let protected = if self.messages.len() > 1 && self.messages[1].role == "user" {
+            2
+        } else {
+            1
+        };
+        // Keep at least the two most recent messages after the protected prefix.
+        let min_len = protected + 2;
+
+        let mut dropped_messages = 0usize;
+        let mut dropped_chars = 0usize;
+        let mut removed_any = false;
+        while self.messages.len() > min_len && self.over_history_budget() {
+            let removed = self.messages.remove(protected);
+            removed_any = true;
+            // A notice left by an earlier trim is replaced, not counted as lost content.
+            if removed.content != TRIM_NOTICE {
+                dropped_messages += 1;
+                dropped_chars += removed.content.len();
+            }
+        }
+
+        if !removed_any {
+            return;
+        }
+
+        // Any removal shifts every index after the protected prefix.
+        self.trim_generation += 1;
+        self.messages
+            .insert(protected, Message::user(TRIM_NOTICE.to_string()));
+        // The notice itself counts against the message cap.
+        if self.messages.len() > self.max_history_messages && self.messages.len() > min_len + 1 {
+            let removed = self.messages.remove(protected + 1);
+            dropped_messages += 1;
+            dropped_chars += removed.content.len();
+        }
+
+        debug!(
+            "Trimmed conversation history: dropped {} message(s) / {} chars, {} message(s) and \
+             {} chars remain (caps: {} messages, {} chars)",
+            dropped_messages,
+            dropped_chars,
+            self.messages.len(),
+            self.history_chars(),
+            self.max_history_messages,
+            self.max_history_chars
+        );
+        if let Some(ref tx) = self.status_tx {
+            let _ = tx.send(format!(
+                "[DEBUG] Trimmed conversation history: dropped {} message(s) / {} chars",
+                dropped_messages, dropped_chars
+            ));
         }
     }
 
@@ -505,6 +633,11 @@ impl ConversationHandler {
 
         let mut all_actions = Vec::new();
         let mut tool_results = Vec::new();
+        // Index of the oldest rejected assistant response not yet superseded by a valid one.
+        // Everything from there up to the current response is dropped once the model gets it
+        // right, so a correction round-trip does not stay in the prompt for the rest of the
+        // conversation.
+        let mut rejected_block_start: Option<(usize, u64)> = None;
         let mut consecutive_tool_failures = 0;
         let mut unknown_action_retries = 0;
         let mut malformed_action_retries = 0;
@@ -531,6 +664,7 @@ impl ConversationHandler {
                 .context("✗  LLM failed to generate valid response after retries.")?;
 
             // Add assistant's response to conversation history (with reasoning preserved)
+            let assistant_idx = self.messages.len();
             self.messages
                 .push(Message::assistant(original_response.clone()));
 
@@ -667,9 +801,9 @@ impl ConversationHandler {
                     }
                 }
 
-                // Add the malformed response as assistant message
-                self.messages
-                    .push(Message::assistant(cleaned_response.clone()));
+                // The rejected response is already in `messages` (pushed above); pushing it a
+                // second time only made the model read its own mistake twice.
+                rejected_block_start.get_or_insert((assistant_idx, self.trim_generation));
 
                 // Add correction as user message
                 self.messages.push(Message::user(correction));
@@ -807,15 +941,33 @@ impl ConversationHandler {
                     ));
                 }
 
-                // Add the malformed response as assistant message
-                self.messages
-                    .push(Message::assistant(cleaned_response.clone()));
+                // The rejected response is already in `messages` (pushed above); pushing it a
+                // second time only made the model read its own mistake twice.
+                rejected_block_start.get_or_insert((assistant_idx, self.trim_generation));
 
                 // Add correction as user message
                 self.messages.push(Message::user(correction));
 
                 // Continue to next iteration to retry
                 continue;
+            }
+
+            // This response passed validation, so the rejected ones before it are superseded:
+            // drop them and their corrections instead of re-sending them every iteration.
+            if let Some((start, generation)) = rejected_block_start.take() {
+                // A trim between the rejection and now would have shifted every index.
+                if generation == self.trim_generation
+                    && assistant_idx > start
+                    && assistant_idx <= self.messages.len()
+                {
+                    let dropped = assistant_idx - start;
+                    self.messages.drain(start..assistant_idx);
+                    self.last_logged_index = self.last_logged_index.min(self.messages.len());
+                    debug!(
+                        "Dropped {} superseded message(s) from rejected action attempt(s)",
+                        dropped
+                    );
+                }
             }
 
             // Collect validated regular actions
@@ -1262,7 +1414,15 @@ impl ConversationHandler {
     /// - original_response: Response with reasoning tags (for conversation history)
     /// - cleaned_response: Response with reasoning stripped (for JSON parsing)
     async fn generate_with_retry(&mut self) -> Result<(String, String)> {
+        // Where this call's messages start. A parse failure appends the unparseable response
+        // and a correction; once a valid response supersedes them they are pure noise that
+        // would otherwise be re-sent for the rest of the conversation, so they are dropped.
+        let attempt_block_start = self.messages.len();
+        let attempt_block_generation = self.trim_generation;
+
         for attempt in 1..=self.max_retries + 1 {
+            // Bound what is actually sent before building the request.
+            self.trim_history();
             info!("LLM request (attempt {}/{})", attempt, self.max_retries + 1);
             debug!("Message count: {}", self.messages.len());
 
@@ -1466,6 +1626,23 @@ impl ConversationHandler {
                         if let Some(ref tx) = self.status_tx {
                             let _ = tx
                                 .send(format!("[INFO] ✓ Retry successful on attempt {}", attempt));
+                        }
+                        // This response supersedes the failed attempts: drop them and their
+                        // corrections rather than carrying them for the rest of the
+                        // conversation. Nothing was appended on the success path, so the
+                        // block is exactly what the failed attempts added.
+                        if self.trim_generation == attempt_block_generation
+                            && self.messages.len() > attempt_block_start
+                        {
+                            let dropped = self.messages.len() - attempt_block_start;
+                            self.messages.truncate(attempt_block_start);
+                            self.last_logged_index =
+                                self.last_logged_index.min(self.messages.len());
+                            debug!(
+                                "Dropped {} superseded message(s) from {} failed parse attempt(s)",
+                                dropped,
+                                attempt - 1
+                            );
                         }
                     } else {
                         info!("✓ Valid response format on first attempt");
