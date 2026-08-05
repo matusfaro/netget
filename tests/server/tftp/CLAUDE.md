@@ -145,7 +145,7 @@ None currently. All tests pass in mock mode.
 cargo test --features tftp --test server::tftp::e2e_test
 
 # Cargo with Ollama
-cargo test --features tftp --test server::tftp::e2e_test -- --use-ollama
+NETGET_USE_OLLAMA=1 cargo test --features tftp --test server::tftp::e2e_test
 ```
 
 ## Test Quality Metrics

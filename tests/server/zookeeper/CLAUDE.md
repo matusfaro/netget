@@ -133,7 +133,7 @@ cargo test --features zookeeper --test server::zookeeper::e2e_test
 ./test-e2e.sh --use-ollama zookeeper
 
 # With cargo
-cargo test --features zookeeper -- --use-ollama
+NETGET_USE_OLLAMA=1 cargo test --features zookeeper
 ```
 
 ### Build First (Recommended)

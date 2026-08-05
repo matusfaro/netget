@@ -152,7 +152,7 @@ Potential future issues:
 cargo test --no-default-features --features openapi --test client::openapi::e2e_test
 
 # Via cargo (with Ollama)
-cargo test --no-default-features --features openapi --test client::openapi::e2e_test -- --use-ollama
+NETGET_USE_OLLAMA=1 cargo test --no-default-features --features openapi --test client::openapi::e2e_test
 ```
 
 ### Test Isolation

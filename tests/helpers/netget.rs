@@ -107,14 +107,21 @@ pub struct NetGetConfig {
     pub force_ollama: bool,
 }
 
-/// Detect if --use-ollama flag is present (from test args or environment)
+/// Detect whether tests should drive a real Ollama rather than the mock.
+///
+/// **Use `NETGET_USE_OLLAMA=1`.** `cargo test … -- --use-ollama` does *not* work:
+/// libtest parses everything after `--` itself and rejects the unknown flag with
+/// `error: Unrecognized option: 'use-ollama'`, so the process exits before any test
+/// runs and the arg scan below is unreachable under the default harness. Several
+/// CLAUDE.md files documented that broken form; they now show the env var, which is
+/// also what `test-e2e.sh` exports.
+///
+/// The arg scan is kept only for a custom harness that forwards unknown flags.
 fn should_use_ollama() -> bool {
-    // Check environment variable (set by test-e2e.sh)
     if std::env::var("NETGET_USE_OLLAMA").is_ok() {
         return true;
     }
 
-    // Check command line args (for cargo test -- --use-ollama)
     std::env::args().any(|arg| arg == "--use-ollama")
 }
 

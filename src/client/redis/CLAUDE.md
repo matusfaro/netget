@@ -45,6 +45,7 @@ interpret responses.
 **Sync Actions** (in response to Redis responses):
 
 - `execute_redis_command` - Execute follow-up command based on response
+- `wait_for_more` - Take no action and wait for more data (use when the reply is incomplete)
 
 **Events:**
 

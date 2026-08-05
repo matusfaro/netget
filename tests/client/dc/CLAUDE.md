@@ -158,7 +158,7 @@ cargo test --features dc --test "client::dc::*"
 ```bash
 ./test-e2e.sh --use-ollama dc
 # or
-cargo test --features dc -- --use-ollama --ignored
+NETGET_USE_OLLAMA=1 cargo test --features dc --ignored
 ```
 
 ### Run specific test

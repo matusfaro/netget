@@ -57,6 +57,7 @@ Unlike TCP (persistent connection), HTTP client is **request/response** based:
 **Sync Actions** (in response to HTTP responses):
 
 - `send_http_request` - Make follow-up request based on response
+- `wait_for_more` - Take no action and wait for the next response
 
 **Events:**
 
