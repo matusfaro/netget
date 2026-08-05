@@ -47,6 +47,13 @@ Delete an entry once its context is no longer useful.
 | — test targets broken under narrow features | `57a4c42f` | `server_stop_releases_port_test` (stale arity after `ec79eda5`) and `examples` (empty feature-gated vec, E0282) failed to *compile* with `--features telnet`, silently disabling every test in those targets |
 | — proxy/tunneling family | `2cf3d4f2`, `ec4231ab`, `a3e101a9`, `a0d8a6cb`, `32a30f83` | Suite went **21 failures → 5**. Proxy's certificate cache returned a regenerated certificate paired with the *cached* key, so every repeat MITM connection to a host failed with `KeyMismatch`; `certificate_mode: "load_from_file"` read the operator's key, **ignored the certificate file entirely** and minted a different CA, so clients trusting the real one rejected everything while the config looked correct; absolute-form request targets were forwarded verbatim, which `curl --proxy` caught and our tests never did. SOCKS5 ended three paths with no reply at all. TLS had the `d70bb5b5` defect again — hex documented, never decoded. TURN demoted to `Incomplete`: it cannot relay a byte, as no relay socket is ever bound |
 | 56 (part) — STUN's actions were invisible | `a0d8a6cb` | STUN's event never called `.with_actions(...)`, so every response was rejected as unknown; five E2E tests failed. Its shipped static example also used three nonexistent fields and a 6-byte transaction id |
+| 29 + 39 + 50 — two documentation gates | `ab04a5c2` | `REQUIRE_DOCS_FOR_OPEN_ACTIONS` now gates both halves; the `DocumentationRequired` retry was unconditional. Measured A/B on the DNS suite: doc-gate round-trips **4 → 0**, total LLM requests **13 → 9**, same 4 tests passing. Note MCP `start_server` never went through this gate — it calls `start_server_from_action` directly |
+| 52 — `scheduled_tasks` created silently | `ab04a5c2` | The `open_server` array path now logs like the standalone `schedule_task` action |
+| 33 — dev builds defaulted to TRACE | `ab04a5c2`, `d6225b03` | Now DEBUG. TRACE is the only level carrying full payloads and full prompts, so it was both the 481 MB/day problem and a credential-disclosure one; `--log-level trace` is unchanged |
+| 28 — `--api-key` world-readable | `c81ab797` | Warns once per process on stderr (never stdout — MCP carries JSON-RPC there); help and the missing-key error name the env vars first |
+| 27 — no CLI client entry point | `767f47e2` | `--client <PROTOCOL> --connect <ADDR>` plus `--client-params`, `--client-handlers`, `--client-list`, routed through `start_client_from_action` |
+| 70 — `--load` panicked; phantom "listening" | `f5092b35` | `--load` built a second tokio runtime inside `#[tokio::main]` and panicked on every use. Also, port 0 is never a real bound port, so unbound spawns now log `(no listening socket)` instead of `listening on 0.0.0.0:0` |
+| — piped stdin was swallowed | `c8938396` | `get_actions_json()` and `get_prompt()` each called `read_to_string()`; the first drained the pipe and the second saw EOF, so `echo '…' \| netget` always failed with "Cannot start in interactive mode without a terminal" |
 | 22 (part) — 46 stale root docs | `ab04a5c2` | Root went 64 markdown files → 18. The removed 46 were single-run artifacts (instance reports, mock batch logs, timestamped test analyses, compilation-fix logs), none touched since Nov 2025, several contradicting current code — which is the actual harm, since a reader cannot tell live from stale. Recoverable via `git show <commit>^:<file>` |
 | 59 — BLE taught an unparseable UUID | `ab04a5c2`, `66d568f4` | `parse_ble_uuid` expands the 16- and 32-bit shorthands the protocol's own examples and docs use; `Uuid::parse_str("180D")` had always failed. 7 tests |
 | — clippy `never_loop`, and the bug behind it | `cfc11d3e` | `s3` and `npm` looped over `protocol_results` with an unconditional `return`, so they examined exactly one result. The lint was pointing at a real defect: both returned a fallback (empty 200 / 500) for anything unrecognised, so a model emitting the documented `show_message` + response pair lost its real answer. Both now return `Option` and the caller scans |
@@ -980,8 +987,11 @@ early data could be processed against a missing entry. Fixed there; the same sha
 
 - `src/cli/banner.rs:31` — a doctest that fails to compile (`module banner is private`), which
   breaks `cargo test --doc` repo-wide.
-- `--load <FILE>` is documented at `src/cli/args.rs:226` and nothing in `src/bin/netget.rs`
-  reads it.
+- ~~`--load <FILE>` is documented and nothing reads it.~~ **Wrong, and the truth was worse.**
+  It *is* read (`src/cli/mod.rs:118` via `get_actions_json()`), but it built a second tokio
+  runtime and `block_on`-ed inside `#[tokio::main]`, so **`--load` panicked every time it was
+  used**. Fixed in `f5092b35` with a synchronous read. The lesson: "nothing reads this flag"
+  was inferred from a grep of `src/bin/netget.rs` alone; the caller was one level up.
 - `src/cli/server_startup.rs` prints `[SERVER] Server #N (WebRTC) listening on 0.0.0.0:0` for a
   protocol that binds nothing — any `spawn` returning a dummy address is reported as listening.
 - `src/server/bgp/mod.rs` never calls `add_connection_to_server`, so BGP peers never appear in
