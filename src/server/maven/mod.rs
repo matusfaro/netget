@@ -430,7 +430,8 @@ async fn handle_maven_request_with_llm(
                         // Handle both UTF-8 text and base64-encoded binary content.
                         // body_base64 is checked first: it is only ever set by the
                         // action executor, which has already validated the encoding.
-                        if let Some(encoded) = json_value.get("body_base64").and_then(|v| v.as_str())
+                        if let Some(encoded) =
+                            json_value.get("body_base64").and_then(|v| v.as_str())
                         {
                             use base64::Engine;
                             match base64::engine::general_purpose::STANDARD.decode(encoded) {

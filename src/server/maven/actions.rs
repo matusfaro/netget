@@ -276,7 +276,10 @@ impl MavenProtocol {
         );
 
         if let Some(latest_ver) = latest {
-            xml.push_str(&format!("    <latest>{}</latest>\n", xml_escape(latest_ver)));
+            xml.push_str(&format!(
+                "    <latest>{}</latest>\n",
+                xml_escape(latest_ver)
+            ));
         }
 
         if let Some(release_ver) = release {
