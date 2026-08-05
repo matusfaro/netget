@@ -97,7 +97,7 @@ impl SmtpServer {
                                             "[DEBUG] TLS handshake completed for connection {}",
                                             connection_id
                                         ));
-                                        if let Err(e) = SmtpSession::handle_tls_session(
+                                        if let Err(e) = SmtpSession::handle_session(
                                             tls_stream,
                                             connection_id,
                                             server_id,
@@ -123,7 +123,7 @@ impl SmtpServer {
                                     }
                                 }
                             } else {
-                                if let Err(e) = SmtpSession::handle_plain_session(
+                                if let Err(e) = SmtpSession::handle_session(
                                     stream,
                                     connection_id,
                                     server_id,
@@ -162,19 +162,30 @@ struct SmtpSession;
 
 #[cfg(feature = "smtp")]
 impl SmtpSession {
-    /// Handle a plain SMTP session (no TLS)
-    async fn handle_plain_session(
-        mut stream: tokio::net::TcpStream,
+    /// Handle one SMTP session, plain or SMTPS.
+    ///
+    /// Generic over the transport: the plain and TLS paths were previously two verbatim
+    /// copies of the same greeting-then-command-loop code.
+    async fn handle_session<S>(
+        stream: S,
         connection_id: crate::server::connection::ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<SmtpProtocol>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+    {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+
         // Send initial greeting
         Self::send_greeting(
-            &mut stream,
+            &mut write_half,
             connection_id,
             server_id,
             &llm_client,
@@ -184,52 +195,72 @@ impl SmtpSession {
         )
         .await?;
 
-        // Handle session
-        Self::handle_session_commands(
-            stream,
-            connection_id,
-            server_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
-    }
+        let mut line = String::new();
 
-    /// Handle a TLS SMTP session (SMTPS)
-    async fn handle_tls_session(
-        mut stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
-        connection_id: crate::server::connection::ConnectionId,
-        server_id: crate::state::ServerId,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        protocol: Arc<SmtpProtocol>,
-    ) -> Result<()> {
-        // Send initial greeting
-        Self::send_greeting_tls(
-            &mut stream,
-            connection_id,
-            server_id,
-            &llm_client,
-            &app_state,
-            &status_tx,
-            &protocol,
-        )
-        .await?;
+        loop {
+            line.clear();
+            let n = reader.read_line(&mut line).await?;
+            if n == 0 {
+                break;
+            }
 
-        // Handle session
-        Self::handle_session_commands_tls(
-            stream,
-            connection_id,
-            server_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
+            let command = line.trim();
+            console_debug!(status_tx, "SMTP received: {}", command);
+
+            let event = Event::new(
+                &SMTP_COMMAND_EVENT,
+                serde_json::json!({
+                    "command": command
+                }),
+            );
+
+            match call_llm(
+                &llm_client,
+                &app_state,
+                server_id,
+                Some(connection_id),
+                &event,
+                protocol.as_ref(),
+            )
+            .await
+            {
+                Ok(execution_result) => {
+                    let mut should_close = false;
+
+                    for protocol_result in execution_result.protocol_results {
+                        match protocol_result {
+                            ActionResult::Output(data) => {
+                                write_half.write_all(&data).await?;
+                                write_half.flush().await?;
+
+                                let response = String::from_utf8_lossy(&data);
+                                console_debug!(status_tx, "SMTP sent: {}", response.trim());
+                            }
+                            // Do not return here: the QUIT reply is normally a 221 followed by
+                            // close_connection in the same batch, and returning early would
+                            // drop the 221 when the ordering came back reversed.
+                            ActionResult::CloseConnection => should_close = true,
+                            _ => {}
+                        }
+                    }
+
+                    if should_close {
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    // Without this the peer just waits: nothing is written and the loop
+                    // silently goes back to reading.
+                    error!(
+                        "SMTP connection {} got no response for {:?}: {:#}",
+                        connection_id, command, e
+                    );
+                    let _ = status_tx.send(format!("[ERROR] SMTP LLM error: {:#}", e));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Send greeting for plain connection
@@ -254,7 +285,7 @@ impl SmtpSession {
             }),
         );
 
-        if let Ok(execution_result) = call_llm(
+        match call_llm(
             llm_client,
             app_state,
             server_id,
@@ -264,165 +295,22 @@ impl SmtpSession {
         )
         .await
         {
-            for protocol_result in execution_result.protocol_results {
-                if let ActionResult::Output(data) = protocol_result {
-                    stream.write_all(&data).await?;
-                    stream.flush().await?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send greeting for TLS connection
-    async fn send_greeting_tls(
-        stream: &mut tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
-        connection_id: crate::server::connection::ConnectionId,
-        server_id: crate::state::ServerId,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        protocol: &Arc<SmtpProtocol>,
-    ) -> Result<()> {
-        Self::send_greeting(
-            stream,
-            connection_id,
-            server_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
-    }
-
-    /// Handle session commands for plain connection
-    async fn handle_session_commands(
-        mut stream: tokio::net::TcpStream,
-        connection_id: crate::server::connection::ConnectionId,
-        server_id: crate::state::ServerId,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        protocol: Arc<SmtpProtocol>,
-    ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-        let (read_half, mut write_half) = tokio::io::split(&mut stream);
-        let mut reader = BufReader::new(read_half);
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line).await?;
-            if n == 0 {
-                break;
-            }
-
-            let command = line.trim();
-            console_debug!(status_tx, "SMTP received: {}", command);
-
-            // Create SMTP command event
-            let event = Event::new(
-                &SMTP_COMMAND_EVENT,
-                serde_json::json!({
-                    "command": command
-                }),
-            );
-
-            // Get LLM response
-            if let Ok(execution_result) = call_llm(
-                &llm_client,
-                &app_state,
-                server_id,
-                Some(connection_id),
-                &event,
-                protocol.as_ref(),
-            )
-            .await
-            {
+            Ok(execution_result) => {
                 for protocol_result in execution_result.protocol_results {
-                    match protocol_result {
-                        ActionResult::Output(data) => {
-                            write_half.write_all(&data).await?;
-                            write_half.flush().await?;
-
-                            let response = String::from_utf8_lossy(&data);
-                            console_debug!(status_tx, "SMTP sent: {}", response.trim());
-                        }
-                        ActionResult::CloseConnection => {
-                            return Ok(());
-                        }
-                        _ => {}
+                    if let ActionResult::Output(data) = protocol_result {
+                        stream.write_all(&data).await?;
+                        stream.flush().await?;
                     }
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    /// Handle session commands for TLS connection
-    async fn handle_session_commands_tls(
-        mut stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
-        connection_id: crate::server::connection::ConnectionId,
-        server_id: crate::state::ServerId,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        protocol: Arc<SmtpProtocol>,
-    ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-        let (read_half, mut write_half) = tokio::io::split(&mut stream);
-        let mut reader = BufReader::new(read_half);
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line).await?;
-            if n == 0 {
-                break;
-            }
-
-            let command = line.trim();
-            console_debug!(status_tx, "SMTP received: {}", command);
-
-            // Create SMTP command event
-            let event = Event::new(
-                &SMTP_COMMAND_EVENT,
-                serde_json::json!({
-                    "command": command
-                }),
-            );
-
-            // Get LLM response
-            if let Ok(execution_result) = call_llm(
-                &llm_client,
-                &app_state,
-                server_id,
-                Some(connection_id),
-                &event,
-                protocol.as_ref(),
-            )
-            .await
-            {
-                for protocol_result in execution_result.protocol_results {
-                    match protocol_result {
-                        ActionResult::Output(data) => {
-                            write_half.write_all(&data).await?;
-                            write_half.flush().await?;
-
-                            let response = String::from_utf8_lossy(&data);
-                            console_debug!(status_tx, "SMTP sent: {}", response.trim());
-                        }
-                        ActionResult::CloseConnection => {
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
+            Err(e) => {
+                // Previously swallowed by `if let Ok(..)`. The peer gets no 220 banner and sits
+                // there until its own timeout, so at least say why in the log.
+                error!(
+                    "SMTP greeting for connection {} failed, no banner sent: {:#}",
+                    connection_id, e
+                );
+                let _ = _status_tx.send(format!("[ERROR] SMTP greeting failed: {:#}", e));
             }
         }
 

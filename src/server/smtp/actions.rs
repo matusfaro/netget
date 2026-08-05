@@ -61,7 +61,16 @@ impl SmtpProtocol {
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
             .unwrap_or_else(|| vec!["8BITMIME", "SIZE 10240000"]);
 
-        let mut response = format!("250-{}\r\n", hostname);
+        // The last line of a multiline SMTP reply uses "250 "; every earlier line uses "250-".
+        // With no extensions the greeting line is itself the last line - emitting "250-host"
+        // and nothing after it leaves the reply unterminated and the client blocks until its
+        // own timeout, which is what `{"extensions": []}` from the model used to do.
+        let mut response = if extensions.is_empty() {
+            format!("250 {}\r\n", hostname)
+        } else {
+            format!("250-{}\r\n", hostname)
+        };
+
         for (i, ext) in extensions.iter().enumerate() {
             if i == extensions.len() - 1 {
                 response.push_str(&format!("250 {}\r\n", ext));
@@ -206,14 +215,23 @@ impl Protocol for SmtpProtocol {
         vec!["smtp", "mail", "email"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual line-based parsing with tokio, optional TLS via rustls")
+            .implementation(
+                "Manual line-based parsing with tokio, optional implicit TLS via rustls",
+            )
             .llm_control("All SMTP commands + responses")
-            .e2e_testing("lettre SMTP client")
-            .notes("Basic MTA functionality, supports plain SMTP and SMTPS (implicit TLS)")
+            .e2e_testing("Raw TCP client driving the SMTP command sequence")
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(25))
+            .notes(
+                "Accepts mail but stores nothing - the model answers every command. No AUTH, no \
+                 STARTTLS, no PIPELINING. Every DATA body line costs one model call unless an \
+                 event handler is configured.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -297,19 +315,19 @@ impl Server for SmtpProtocol {
                     let organizational_unit =
                         params.get_optional_string("tls_organizational_unit")?;
 
-                    match crate::server::tls_cert_manager::generate_custom_tls_config(
-                        common_name,
-                        san_dns_names,
-                        validity_days,
-                        organization,
-                        organizational_unit,
-                    ) {
-                        Ok(config) => Some(config),
-                        Err(e) => {
-                            tracing::error!("Failed to generate TLS config: {}", e);
-                            None
-                        }
-                    }
+                    // Fail the spawn rather than falling back to plain text. Logging the error
+                    // and returning None handed a caller who explicitly asked for SMTPS a
+                    // cleartext mail port that reported itself as Running.
+                    Some(
+                        crate::server::tls_cert_manager::generate_custom_tls_config(
+                            common_name,
+                            san_dns_names,
+                            validity_days,
+                            organization,
+                            organizational_unit,
+                        )
+                        .context("enable_tls was requested but the SMTPS certificate could not be generated")?,
+                    )
                 } else {
                     None
                 }
@@ -585,14 +603,18 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 pub static SMTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smtp_command",
-        "SMTP command received from client",
-        json!({"type": "placeholder", "event_id": "smtp_command"}),
+        "SMTP command line received from client. The synthetic command \
+         'CONNECTION_ESTABLISHED' is delivered once when a client connects and must be answered \
+         with send_smtp_greeting. During DATA every line of the message body arrives as its own \
+         event, ending with a line containing only '.'",
+        json!({"type": "send_smtp_ok", "message": "2.1.0 Sender OK"}),
     )
     .with_parameters(vec![Parameter {
         name: "command".to_string(),
         type_hint: "string".to_string(),
         description:
-            "The SMTP command received (e.g., 'EHLO example.com', 'MAIL FROM:<sender@example.com>')"
+            "The SMTP command received (e.g., 'EHLO example.com', 'MAIL FROM:<sender@example.com>'), \
+             or 'CONNECTION_ESTABLISHED' on a new connection"
                 .to_string(),
         required: true,
     }])

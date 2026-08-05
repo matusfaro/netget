@@ -28,7 +28,17 @@ messages.
 - **Action-based responses** - LLM returns JSON actions for all protocol interactions
 - **Greeting on connect** - Special `CONNECTION_ESTABLISHED` command triggers initial 220 greeting
 - **No state machine** - SMTP state (HELO, MAIL FROM, RCPT TO, DATA) managed implicitly by LLM
+- **DATA is not accumulated** - after `send_smtp_start_data` every body line arrives as its own
+  `smtp_command` event, terminated by a line containing only `.`. That is one model call per
+  line of the message. Use a script or static event handler for anything that receives real
+  mail; the LLM path is only practical for short messages.
 - **Protocol-aware actions** - Dedicated actions for SMTP responses (greeting, OK, EHLO, error, etc.)
+
+### Error Handling
+
+If the LLM call for a command fails, nothing is written and the peer waits until its own
+timeout. That is logged at ERROR on both the tracing and status channels rather than being
+swallowed, so the silence is at least explained in `netget.log`.
 
 ### Session Management
 
@@ -42,12 +52,15 @@ The LLM controls SMTP responses through these actions:
 
 - `send_smtp_greeting` - 220 greeting banner
 - `send_smtp_ok` - 250 OK responses
-- `send_smtp_ehlo` - 250-hostname with extensions
+- `send_smtp_ehlo` - 250-hostname with extensions. An empty `extensions` array emits the
+  single-line form `250 hostname`; emitting `250-hostname` with nothing after it leaves the
+  reply unterminated and the client blocks until its own timeout.
 - `send_smtp_start_data` - 354 start data input
 - `send_smtp_error` - 4xx/5xx error responses
 - `send_smtp_quit` - 221 closing connection
 - `send_smtp_message` - Custom SMTP response
-- `wait_for_more` - Accumulate multi-line DATA
+- `wait_for_more` - Send nothing and read the next line (used during DATA, where SMTP expects
+  no per-line reply)
 - `close_connection` - Terminate session
 
 ## Connection Management
@@ -67,6 +80,9 @@ The LLM controls SMTP responses through these actions:
 
 - **Implicit TLS** - SMTPS on port 465 (connection starts with TLS handshake)
 - **Configurable** - Enable via `enable_tls: true` in open_server action options
+- **Fails closed** - if the certificate cannot be generated, `spawn` returns an error. It used
+  to log and fall back to plain text, handing a caller who asked for SMTPS a cleartext mail
+  port that reported itself as Running.
 - **Self-signed certificates** - Auto-generated using rcgen
 - **Customizable certificates** - LLM can specify CN, SAN, validity, organization
 - **Backward compatible** - TLS is optional, defaults to plain SMTP
@@ -93,7 +109,10 @@ Use the `open_server` action with TLS options:
 
 - **No STARTTLS support** - Only implicit TLS (SMTPS) is supported, not STARTTLS upgrade
 - **No SMTP AUTH** - Authentication not implemented
-- **No message persistence** - Messages logged but not stored
+- **No message persistence** - Messages logged but not stored; NetGet is not an MTA and never
+  delivers or relays anything
+- **Privileged default port** - `metadata()` declares `PrivilegedPort(25)`, so `server_startup`
+  preflights the bind against `SystemCapabilities` instead of failing with a bare EPERM
 - **No PIPELINING** - Commands processed sequentially
 - **No size validation** - MESSAGE_SIZE limits not enforced
 - **No relay control** - Accepts all MAIL FROM/RCPT TO
