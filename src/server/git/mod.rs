@@ -1,21 +1,27 @@
 //! Git Smart HTTP server implementation
 //!
-//! Implements Git's Smart HTTP protocol for serving virtual repositories.
-//! The LLM controls repository content, reference advertisement, and pack generation.
+//! Serves virtual repositories over Git's Smart HTTP transport. The LLM (or a script/static
+//! handler) supplies the repository *content*; this module compiles it into real Git objects
+//! and frames them for the wire.
 //!
 //! Protocol URLs:
-//! - GET  /info/refs?service=git-upload-pack  - Reference discovery
-//! - POST /git-upload-pack                     - Pack negotiation and transfer
+//! - GET  /<repo>/info/refs?service=git-upload-pack  - Reference discovery
+//! - POST /<repo>/git-upload-pack                    - Object transfer
 //!
-//! Read-only implementation (no push support yet).
+//! Read-only (clone/fetch). There is no `git-receive-pack` endpoint, so pushes are refused.
+//!
+//! Both endpoints raise an [`Event`] through [`call_llm`], which means script and static
+//! `event_handlers` work here exactly as they do for every other protocol - and a static
+//! handler is the only way to guarantee the two requests of a clone see the same snapshot.
 
 pub mod actions;
+pub mod pack;
+pub mod pktline;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use base64::Engine;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -25,14 +31,40 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
-use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
-use crate::server::git::actions::GitProtocol;
+use crate::server::git::actions::{
+    GitProtocol, DEFAULT_COMMIT_TIMESTAMP, GIT_INFO_REFS_EVENT, GIT_UPLOAD_PACK_EVENT,
+};
+use crate::server::git::pack::{build_repo, hex_id, write_pack, BuiltRepo, CommitMeta, RepoFile};
 use crate::state::app_state::AppState;
 use crate::{console_error, console_info};
+
+/// Capabilities advertised on the first ref line.
+///
+/// Deliberately minimal. `side-band-64k` is *not* offered: the multiplexed form is only
+/// correct if the server can read which capabilities the client selected, and git compresses
+/// the `git-upload-pack` request body, which this server cannot always decompress. Refusing
+/// the capability keeps every response in the one framing that is always right, at the cost of
+/// no progress or error side-channel during transfer.
+const BASE_CAPABILITIES: &str = "no-progress agent=netget";
+
+/// Shared per-request context, so each handler does not take nine positional arguments.
+struct RequestContext {
+    llm_client: OllamaClient,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+    protocol: Arc<GitProtocol>,
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
+    remote_addr: SocketAddr,
+    default_branch: String,
+}
 
 /// Git Smart HTTP server
 pub struct GitServer;
@@ -44,7 +76,7 @@ impl GitServer {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _send_first: bool,
+        default_branch: String,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
         let listener =
@@ -95,6 +127,7 @@ impl GitServer {
                         let app_state_clone = app_state.clone();
                         let status_tx_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
+                        let default_branch_clone = default_branch.clone();
 
                         // Spawn a task to handle this connection
                         tokio::spawn(async move {
@@ -106,19 +139,17 @@ impl GitServer {
 
                             // Create a service that handles Git Smart HTTP requests with LLM
                             let service = service_fn(move |req: Request<Incoming>| {
-                                let llm_clone = llm_client_clone.clone();
-                                let state_clone = app_state_for_service.clone();
-                                let status_clone = status_for_service.clone();
-                                let protocol_clone = protocol_clone.clone();
-                                handle_git_request(
-                                    req,
+                                let ctx = RequestContext {
+                                    llm_client: llm_client_clone.clone(),
+                                    app_state: app_state_for_service.clone(),
+                                    status_tx: status_for_service.clone(),
+                                    protocol: protocol_clone.clone(),
                                     connection_id,
-                                    llm_clone,
-                                    state_clone,
-                                    status_clone,
-                                    protocol_clone,
                                     server_id,
-                                )
+                                    remote_addr,
+                                    default_branch: default_branch_clone.clone(),
+                                };
+                                handle_git_request(req, ctx)
                             });
 
                             // Serve HTTP/1 on this connection
@@ -158,47 +189,43 @@ impl GitServer {
 /// Handle a Git Smart HTTP request
 async fn handle_git_request(
     req: Request<Incoming>,
-    connection_id: ConnectionId,
-    llm_client: OllamaClient,
-    app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
-    protocol: Arc<GitProtocol>,
-    server_id: crate::state::ServerId,
+    ctx: RequestContext,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path = uri.path();
+    let path = uri.path().to_string();
+    let user_agent = req
+        .headers()
+        .get(hyper::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
 
     debug!("Git request: {} {}", method, path);
-    let _ = status_tx.send(format!("[DEBUG] Git {} {}", method, path));
+    let _ = ctx
+        .status_tx
+        .send(format!("[DEBUG] Git {} {}", method, path));
 
     // Parse repository name from path
     // Format: /<repo>/info/refs or /<repo>/git-upload-pack
-    let repo_name = parse_repo_name(path);
+    let repo = parse_repo_name(&path);
 
     // Track repository access
-    if let Some(ref name) = repo_name {
-        if let Err(e) = track_repo_access(&app_state, server_id, connection_id, name).await {
-            error!("Failed to track repository access: {}", e);
-        }
-    }
+    track_repo_access(&ctx.app_state, ctx.server_id, ctx.connection_id, &repo).await;
 
     // Route based on path
-    match (&method, path) {
+    match (&method, path.as_str()) {
         // Reference discovery: GET /info/refs?service=git-upload-pack
         (&Method::GET, p) if p.ends_with("/info/refs") => {
             let query = uri.query().unwrap_or("");
             if query.contains("service=git-upload-pack") {
-                handle_info_refs(
-                    repo_name,
-                    &llm_client,
-                    &app_state,
-                    &status_tx,
-                    &protocol,
-                    connection_id,
-                    server_id,
-                )
-                .await
+                Ok(handle_info_refs(&ctx, &repo, &user_agent).await)
+            } else if query.contains("service=git-receive-pack") {
+                // Be explicit: this is a read-only server, not a broken one.
+                Ok(build_error_response(
+                    StatusCode::FORBIDDEN,
+                    "Push is not supported: this server implements git-upload-pack only",
+                ))
             } else {
                 // Dumb HTTP protocol not supported
                 Ok(build_error_response(
@@ -208,13 +235,19 @@ async fn handle_git_request(
             }
         }
 
-        // Pack negotiation: POST /git-upload-pack
+        // Object transfer: POST /git-upload-pack
         (&Method::POST, p) if p.ends_with("/git-upload-pack") => {
-            // Read request body (pack negotiation)
+            let content_encoding = req
+                .headers()
+                .get(hyper::header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+
             let body_bytes = match req.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    console_error!(status_tx, "Failed to read request body: {}", e);
+                    console_error!(ctx.status_tx, "Failed to read request body: {}", e);
                     return Ok(build_error_response(
                         StatusCode::BAD_REQUEST,
                         "Failed to read request body",
@@ -223,27 +256,23 @@ async fn handle_git_request(
             };
 
             trace!(
-                "Git upload-pack request body ({} bytes): {:?}",
+                "Git upload-pack request body ({} bytes, encoding {:?})",
                 body_bytes.len(),
-                body_bytes
+                content_encoding
             );
-            let _ = status_tx.send(format!(
+            let _ = ctx.status_tx.send(format!(
                 "[TRACE] Git upload-pack request: {} bytes",
                 body_bytes.len()
             ));
 
-            handle_upload_pack(
-                repo_name,
-                body_bytes,
-                &llm_client,
-                &app_state,
-                &status_tx,
-                &protocol,
-                connection_id,
-                server_id,
-            )
-            .await
+            Ok(handle_upload_pack(&ctx, &repo, &body_bytes, &content_encoding).await)
         }
+
+        // Push endpoint: answer honestly rather than 404.
+        (_, p) if p.ends_with("/git-receive-pack") => Ok(build_error_response(
+            StatusCode::FORBIDDEN,
+            "Push is not supported: this server implements git-upload-pack only",
+        )),
 
         // Unsupported endpoint
         _ => Ok(build_error_response(
@@ -254,417 +283,337 @@ async fn handle_git_request(
 }
 
 /// Parse repository name from URL path
-fn parse_repo_name(path: &str) -> Option<String> {
+fn parse_repo_name(path: &str) -> String {
     // Path formats:
     // /repo-name/info/refs
     // /repo-name/git-upload-pack
     // /info/refs (root repository)
     let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
 
-    if parts.is_empty() {
-        return None;
+    match parts.first() {
+        None | Some(&"") | Some(&"info") | Some(&"git-upload-pack") | Some(&"git-receive-pack") => {
+            "default".to_string()
+        }
+        Some(name) => (*name).to_string(),
     }
-
-    // If path is just /info/refs or /git-upload-pack, no repo name
-    if parts[0] == "info" || parts[0] == "git-upload-pack" {
-        return Some("default".to_string()); // Default repository
-    }
-
-    // Otherwise, first part is repo name
-    Some(parts[0].to_string())
 }
 
 /// Handle GET /info/refs?service=git-upload-pack
 async fn handle_info_refs(
-    repo_name: Option<String>,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<GitProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
-
-    debug!("Git info/refs for repository: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Git info/refs for repo: {}", repo));
-
-    // Get sync actions for reference advertisement
-    let sync_actions = protocol.get_sync_actions();
-
-    // Build prompt for LLM
-    let model = app_state.get_ollama_model().await;
-
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
-    }
-
-    let prompt = format!(
-        r#"A Git client is requesting references (branches and tags) for repository "{}".
-
-{}
-
-You MUST respond with ONE of these actions:
-1. "git_advertise_refs" - Provide list of branches/tags with commit SHAs
-2. "git_error" - If repository doesn't exist or access denied
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "git_advertise_refs",
-      "refs": [
-        {{"name": "refs/heads/main", "sha": "abc123..."}},
-        {{"name": "refs/tags/v1.0", "sha": "def456..."}}
-      ],
-      "capabilities": ["multi_ack", "side-band-64k", "ofs-delta"]
-    }}
-  ]
-}}
-
-The SHA values should be 40-character hex strings (can be fake for virtual repos).
-Provide references for this repository."#,
-        repo, actions_desc
+    ctx: &RequestContext,
+    repo: &str,
+    user_agent: &str,
+) -> Response<Full<Bytes>> {
+    let event = Event::new(
+        &GIT_INFO_REFS_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "user_agent": user_agent,
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
 
-    debug!("Calling LLM for Git ref advertisement: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Calling LLM for ref advertisement"));
-
-    // Call LLM with retry
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
+    let outcome = match resolve_repository(ctx, &event).await {
+        Ok(outcome) => outcome,
+        Err(response) => return response,
     };
-    let llm_response = match llm_client
-        .generate_with_retry(
-            &model_str,
-            &prompt,
-            r#"[{"type": "git_advertise_refs", ...}]"#,
-            1, // max_retries
+
+    let repo_build = match outcome {
+        Outcome::Repository(build) => build,
+        Outcome::Error(response) => return response,
+    };
+
+    let body = build_refs_advertisement(&repo_build);
+    let _ = ctx.status_tx.send(format!(
+        "→ Git advertised {} at {} for '{}'",
+        repo_build.branch,
+        &repo_build.commit_hex()[..8],
+        repo
+    ));
+    record_bytes_sent(ctx, body.len()).await;
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            "Content-Type",
+            "application/x-git-upload-pack-advertisement",
         )
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            console_error!(status_tx, "LLM call failed: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
-            ));
-        }
-    };
-
-    trace!("LLM response for Git refs: {}", llm_response);
-    let _ = status_tx.send("[TRACE] LLM response:".to_string());
-    for line in crate::llm::format_indented_dimmed_lines(&llm_response, 8) {
-        let _ = status_tx.send(format!("[TRACE] {}", line));
-    }
-
-    // Parse LLM response as actions
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
-        Err(e) => {
-            console_error!(status_tx, "Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
-            ));
-        }
-    };
-
-    let actions = actions_result
-        .get("actions")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| {
-            error!("LLM response missing 'actions' array");
-            build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            )
-        });
-
-    let actions = match actions {
-        Ok(a) => a,
-        Err(response) => return Ok(response),
-    };
-
-    // Execute the first action
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "git_refs_response" => {
-                // Build pkt-line format response
-                let response_body = build_refs_response(&data);
-
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header(
-                        "Content-Type",
-                        "application/x-git-upload-pack-advertisement",
-                    )
-                    .header("Cache-Control", "no-cache")
-                    .body(Full::new(Bytes::from(response_body)))
-                    .unwrap())
-            }
-            Ok(ActionResult::Custom { name, data }) if name == "git_error_response" => {
-                let message = data
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Error");
-                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
-                    StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                    message,
-                ))
-            }
-            Ok(_) => {
-                error!("LLM returned unexpected action type");
-                Ok(build_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Unexpected action type",
-                ))
-            }
-            Err(e) => {
-                error!("Failed to execute action: {}", e);
-                Ok(build_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &format!("Action execution failed: {}", e),
-                ))
-            }
-        }
-    } else {
-        error!("No actions in LLM response");
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
-    }
+        .header("Cache-Control", "no-cache")
+        .body(Full::new(Bytes::from(body)))
+        .expect("static header values are valid")
 }
 
 /// Handle POST /git-upload-pack
 async fn handle_upload_pack(
-    repo_name: Option<String>,
-    body: Bytes,
-    llm_client: &OllamaClient,
-    app_state: &Arc<AppState>,
-    status_tx: &mpsc::UnboundedSender<String>,
-    protocol: &Arc<GitProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let repo = repo_name.unwrap_or_else(|| "default".to_string());
+    ctx: &RequestContext,
+    repo: &str,
+    body: &[u8],
+    content_encoding: &str,
+) -> Response<Full<Bytes>> {
+    record_bytes_received(ctx, body.len()).await;
 
-    debug!("Git upload-pack for repository: {}", repo);
-    let _ = status_tx.send(format!("[DEBUG] Git upload-pack for repo: {}", repo));
-
-    // For MVP, we'll just send a simple pack response
-    // In a full implementation, we'd parse the want/have negotiation from body
-
-    let sync_actions = protocol.get_sync_actions();
-    let model = app_state.get_ollama_model().await;
-
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
+    // git compresses small RPC bodies. Without a decompressor the wants cannot be read; the
+    // request is still answered, because for a single-commit repository the answer does not
+    // depend on them - but say so rather than silently reporting "no wants" to the model.
+    let compressed = !content_encoding.is_empty() && content_encoding != "identity";
+    if compressed {
+        debug!(
+            "Git upload-pack body uses Content-Encoding: {} - negotiation details unavailable",
+            content_encoding
+        );
     }
 
-    let prompt = format!(
-        r#"A Git client is requesting a pack file for repository "{}".
+    let request = if compressed {
+        pktline::UploadPackRequest::default()
+    } else {
+        pktline::parse_upload_pack_request(body)
+    };
 
-Pack negotiation data ({} bytes received).
+    // A negotiation round that sends `have` lines without `done` expects acknowledgements
+    // only. Answering it with a pack would desynchronise the client.
+    if !request.done && !request.haves.is_empty() {
+        debug!(
+            "Git upload-pack negotiation round ({} haves, no done) - replying NAK",
+            request.haves.len()
+        );
+        let mut body = Vec::new();
+        body.extend_from_slice(&pktline::encode(b"NAK\n"));
+        return upload_pack_response(ctx, body).await;
+    }
 
-{}
-
-You MUST respond with ONE of these actions:
-1. "git_send_pack" - Send pack file data (base64-encoded)
-2. "git_error" - If repository doesn't exist or error occurred
-
-For MVP, you can send a minimal pack file. In production, this would contain
-the actual Git objects requested by the client.
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "git_send_pack",
-      "pack_data": "<base64 encoded pack file>"
-    }}
-  ]
-}}
-
-Generate a pack file response."#,
-        repo,
-        body.len(),
-        actions_desc
+    let event = Event::new(
+        &GIT_UPLOAD_PACK_EVENT,
+        serde_json::json!({
+            "repository": repo,
+            "wants": request.wants,
+            "haves": request.haves,
+            "capabilities": request.capabilities,
+            "client_ip": ctx.remote_addr.ip().to_string(),
+        }),
     );
 
-    debug!("Calling LLM for Git pack generation: {}", repo);
-    let _ = status_tx.send("[DEBUG] Calling LLM for pack generation".to_string());
-
-    // Call LLM with retry
-    let model_str = match crate::llm::ensure_model_selected(model).await {
-        Ok(m) => m,
-        Err(e) => {
-            console_error!(status_tx, "Failed to select model: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Model selection failed: {}", e),
-            ));
-        }
-    };
-    let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            console_error!(status_tx, "LLM call failed: {}", e);
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Internal error: {}", e),
-            ));
-        }
+    let outcome = match resolve_repository(ctx, &event).await {
+        Ok(outcome) => outcome,
+        Err(response) => return response,
     };
 
-    trace!("LLM response for Git pack: {}", llm_response);
-    let _ = status_tx.send("[TRACE] LLM response for pack generation:".to_string());
-    for line in crate::llm::format_indented_dimmed_lines(&llm_response, 8) {
-        let _ = status_tx.send(format!("[TRACE] {}", line));
+    let repo_build = match outcome {
+        Outcome::Repository(build) => build,
+        Outcome::Error(response) => return response,
+    };
+
+    let commit_hex = repo_build.commit_hex();
+    if !request.wants.is_empty() && !request.wants.contains(&commit_hex) {
+        // The two halves of the clone disagreed. Say exactly why, because the client-side
+        // error ("did not send all necessary objects") gives no hint.
+        error!(
+            "Git upload-pack for '{}': client wants {:?} but the snapshot answered for this \
+             request builds commit {}. The git_info_refs and git_upload_pack events returned \
+             different repository content, so the clone will fail. Use a static or script \
+             event handler, or an instruction that pins the exact file contents.",
+            repo, request.wants, commit_hex
+        );
+        let _ = ctx.status_tx.send(format!(
+            "[ERROR] Git '{}': advertised commit and packed commit differ ({} vs {}); clone will \
+             fail. Pin the repository content with a static event handler.",
+            repo,
+            request.wants.first().map(|w| &w[..8]).unwrap_or("?"),
+            &commit_hex[..8]
+        ));
     }
 
-    // Parse and execute actions (similar to handle_info_refs)
-    let actions_result: Value = match serde_json::from_str(&llm_response) {
-        Ok(v) => v,
+    let pack = write_pack(&repo_build.objects);
+    debug!(
+        "Git pack for '{}': {} objects, {} bytes, commit {}",
+        repo,
+        repo_build.objects.len(),
+        pack.len(),
+        commit_hex
+    );
+
+    let mut body = Vec::with_capacity(pack.len() + 16);
+    body.extend_from_slice(&pktline::encode(b"NAK\n"));
+    body.extend_from_slice(&pack);
+
+    let _ = ctx.status_tx.send(format!(
+        "→ Git sent pack for '{}' ({} objects, {} bytes)",
+        repo,
+        repo_build.objects.len(),
+        pack.len()
+    ));
+
+    upload_pack_response(ctx, body).await
+}
+
+async fn upload_pack_response(ctx: &RequestContext, body: Vec<u8>) -> Response<Full<Bytes>> {
+    record_bytes_sent(ctx, body.len()).await;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/x-git-upload-pack-result")
+        .header("Cache-Control", "no-cache")
+        .body(Full::new(Bytes::from(body)))
+        .expect("static header values are valid")
+}
+
+/// What the model decided to do with a request.
+enum Outcome {
+    Repository(BuiltRepo),
+    Error(Response<Full<Bytes>>),
+}
+
+/// Raise the event, then turn whatever the handler or model produced into a repository.
+async fn resolve_repository(
+    ctx: &RequestContext,
+    event: &Event,
+) -> Result<Outcome, Response<Full<Bytes>>> {
+    let execution_result = match call_llm(
+        &ctx.llm_client,
+        &ctx.app_state,
+        ctx.server_id,
+        Some(ctx.connection_id),
+        event,
+        ctx.protocol.as_ref(),
+    )
+    .await
+    {
+        Ok(result) => result,
         Err(e) => {
-            error!("Failed to parse LLM response: {}", e);
-            return Ok(build_error_response(
+            error!("Git: handling '{}' failed: {:#}", event.id(), e);
+            let _ = ctx
+                .status_tx
+                .send(format!("✗ Git LLM error on {}: {}", event.id(), e));
+            return Err(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response",
+                "Server could not produce a repository for this request",
             ));
         }
     };
 
-    let actions = match actions_result.get("actions").and_then(|v| v.as_array()) {
-        Some(a) => a,
-        None => {
-            return Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid LLM response format",
-            ))
-        }
-    };
+    for message in &execution_result.messages {
+        console_info!(ctx.status_tx, "{}", message);
+    }
 
-    if let Some(action) = actions.first() {
-        match protocol.execute_action(action.clone()) {
-            Ok(ActionResult::Custom { name, data }) if name == "git_pack_response" => {
-                let pack_data = data.get("pack_data").and_then(|v| v.as_str()).unwrap_or("");
-
-                // Decode base64 pack data
-                let pack_bytes = match base64::engine::general_purpose::STANDARD.decode(pack_data) {
-                    Ok(bytes) => bytes,
+    for result in execution_result.protocol_results {
+        match result {
+            ActionResult::Custom { name, data } if name == "git_repository_response" => {
+                match snapshot_to_repo(&data, &ctx.default_branch) {
+                    Ok(build) => return Ok(Outcome::Repository(build)),
                     Err(e) => {
-                        error!("Failed to decode pack data: {}", e);
-                        return Ok(build_error_response(
+                        error!("Git: invalid repository description: {:#}", e);
+                        let _ = ctx
+                            .status_tx
+                            .send(format!("✗ Git: invalid repository description: {}", e));
+                        return Err(build_error_response(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            "Invalid pack data",
+                            &format!("Invalid repository description: {}", e),
                         ));
                     }
-                };
-
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("Content-Type", "application/x-git-upload-pack-result")
-                    .header("Cache-Control", "no-cache")
-                    .body(Full::new(Bytes::from(pack_bytes)))
-                    .unwrap())
+                }
             }
-            Ok(ActionResult::Custom { name, data }) if name == "git_error_response" => {
+            ActionResult::Custom { name, data } if name == "git_error_response" => {
                 let message = data
                     .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Error");
                 let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
-
-                Ok(build_error_response(
+                return Ok(Outcome::Error(build_error_response(
                     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                     message,
-                ))
+                )));
             }
-            Ok(_) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unexpected action type",
-            )),
-            Err(e) => Ok(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Action execution failed: {}", e),
-            )),
+            _ => {}
         }
-    } else {
-        Ok(build_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No actions in response",
-        ))
     }
+
+    warn!(
+        "Git: '{}' produced no git_repository or git_error action",
+        event.id()
+    );
+    let _ = ctx.status_tx.send(format!(
+        "✗ Git: no git_repository/git_error action for {}",
+        event.id()
+    ));
+    Err(build_error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "No repository was provided for this request",
+    ))
 }
 
-/// Build Git pkt-line format refs response
-fn build_refs_response(data: &Value) -> Vec<u8> {
-    let mut response = Vec::new();
+/// Turn the `git_repository` action payload into Git objects.
+fn snapshot_to_repo(data: &Value, default_branch: &str) -> anyhow::Result<BuiltRepo> {
+    let branch = data
+        .get("branch")
+        .and_then(|v| v.as_str())
+        .filter(|b| !b.is_empty())
+        .unwrap_or(default_branch);
 
-    // Service announcement
-    let service_line = "# service=git-upload-pack\n";
-    response
-        .extend_from_slice(format!("{:04x}{}", service_line.len() + 4, service_line).as_bytes());
-    response.extend_from_slice(b"0000"); // Flush packet
-
-    // Get refs from data
-    let refs = data.get("refs").and_then(|v| v.as_array());
-    let capabilities = data
-        .get("capabilities")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_else(|| "multi_ack side-band-64k ofs-delta".to_string());
-
-    if let Some(refs_array) = refs {
-        for (idx, ref_obj) in refs_array.iter().enumerate() {
-            let name = ref_obj
-                .get("name")
+    let mut files = Vec::new();
+    if let Some(entries) = data.get("files").and_then(|v| v.as_array()) {
+        for entry in entries {
+            let path = entry
+                .get("path")
                 .and_then(|v| v.as_str())
-                .unwrap_or("refs/heads/main");
-            let default_sha = "0".repeat(40);
-            let sha = ref_obj
-                .get("sha")
+                .ok_or_else(|| anyhow::anyhow!("A file entry has no 'path'"))?;
+            let content = entry
+                .get("content")
                 .and_then(|v| v.as_str())
-                .unwrap_or(&default_sha);
-
-            let ref_line = if idx == 0 {
-                // First ref includes capabilities
-                format!("{} {}\0{}\n", sha, name, capabilities)
-            } else {
-                format!("{} {}\n", sha, name)
-            };
-
-            let pkt_line = format!("{:04x}{}", ref_line.len() + 4, ref_line);
-            response.extend_from_slice(pkt_line.as_bytes());
+                .unwrap_or("")
+                .to_string();
+            let executable = entry
+                .get("executable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            files.push(RepoFile {
+                path: path.to_string(),
+                content: content.into_bytes(),
+                executable,
+            });
         }
     }
 
-    // Flush packet
-    response.extend_from_slice(b"0000");
+    let meta = CommitMeta {
+        message: data
+            .get("commit_message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Initial commit")
+            .to_string(),
+        author_name: data
+            .get("author_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("NetGet")
+            .to_string(),
+        author_email: data
+            .get("author_email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("netget@localhost")
+            .to_string(),
+        timestamp: data
+            .get("timestamp")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(DEFAULT_COMMIT_TIMESTAMP),
+    };
 
-    response
+    build_repo(branch, &files, &meta)
+}
+
+/// Build the pkt-line reference advertisement for `GET /info/refs`.
+fn build_refs_advertisement(repo: &BuiltRepo) -> Vec<u8> {
+    let sha = hex_id(&repo.commit_id);
+    let branch_ref = format!("refs/heads/{}", repo.branch);
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&pktline::encode(b"# service=git-upload-pack\n"));
+    out.extend_from_slice(pktline::FLUSH);
+
+    // The first ref line carries the capability list after a NUL. symref tells the client
+    // which branch HEAD points at, without which it warns and checks out nothing.
+    let capabilities = format!("{BASE_CAPABILITIES} symref=HEAD:{branch_ref}");
+    out.extend_from_slice(&pktline::encode(
+        format!("{sha} HEAD\0{capabilities}\n").as_bytes(),
+    ));
+    out.extend_from_slice(&pktline::encode(format!("{sha} {branch_ref}\n").as_bytes()));
+    out.extend_from_slice(pktline::FLUSH);
+    out
 }
 
 /// Track repository access in connection state
@@ -673,7 +622,7 @@ async fn track_repo_access(
     server_id: crate::state::ServerId,
     connection_id: ConnectionId,
     repo_name: &str,
-) -> anyhow::Result<()> {
+) {
     app_state
         .with_server_mut(server_id, |server| {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
@@ -697,8 +646,32 @@ async fn track_repo_access(
             }
         })
         .await;
+}
 
-    Ok(())
+async fn record_bytes_sent(ctx: &RequestContext, len: usize) {
+    ctx.app_state
+        .update_connection_stats(
+            ctx.server_id,
+            ctx.connection_id,
+            None,
+            Some(len as u64),
+            None,
+            Some(1),
+        )
+        .await;
+}
+
+async fn record_bytes_received(ctx: &RequestContext, len: usize) {
+    ctx.app_state
+        .update_connection_stats(
+            ctx.server_id,
+            ctx.connection_id,
+            Some(len as u64),
+            None,
+            Some(1),
+            None,
+        )
+        .await;
 }
 
 /// Build an HTTP error response
@@ -707,5 +680,5 @@ fn build_error_response(status: StatusCode, message: &str) -> Response<Full<Byte
         .status(status)
         .header("Content-Type", "text/plain")
         .body(Full::new(Bytes::from(format!("Error: {}\n", message))))
-        .unwrap()
+        .expect("static header values are valid")
 }

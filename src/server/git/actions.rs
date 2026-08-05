@@ -1,7 +1,10 @@
 //! Git Smart HTTP protocol actions
 //!
-//! Defines the action system for Git protocol server.
-//! The LLM controls repository discovery, reference advertisement, and pack file generation.
+//! The model describes a repository as structured data - branch, commit message, and a list
+//! of `{path, content}` files - and the server compiles that into real Git objects
+//! (`super::pack`). It never asks the model for object IDs or pack bytes: SHA-1s are derived
+//! from the content, so the refs advertised by `GET /info/refs` and the objects in the pack
+//! returned by `POST /git-upload-pack` agree and `git clone` can actually complete.
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition};
@@ -13,6 +16,17 @@ use serde_json::{json, Value};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::LazyLock;
+
+/// Commit timestamp used when the action does not supply one.
+///
+/// Fixed, not "now": a clone is two HTTP requests, each answered separately, and the commit
+/// timestamp is part of the commit object. A wall-clock default would give the two requests
+/// different commit SHAs and the clone would fail with "did not send all necessary objects".
+pub const DEFAULT_COMMIT_TIMESTAMP: i64 = 1_700_000_000;
+
+/// Branch used when neither the action nor the `default_branch` startup parameter says.
+pub const FALLBACK_BRANCH: &str = "main";
 
 /// Git Smart HTTP protocol implementation
 #[derive(Clone)]
@@ -30,214 +44,76 @@ impl GitProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for GitProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "default_branch".to_string(),
-                type_hint: "string".to_string(),
-                description: "Default branch name for repositories (e.g., 'main', 'master')"
+        vec![ParameterDefinition {
+            name: "default_branch".to_string(),
+            type_hint: "string".to_string(),
+            description:
+                "Branch name used when a git_repository action does not name one (default: main)"
                     .to_string(),
-                required: false,
-                example: json!("main"),
-            },
-            ParameterDefinition {
-                name: "allow_push".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Whether to allow push operations (true/false)".to_string(),
-                required: false,
-                example: json!(false),
-            },
-        ]
+            required: false,
+            example: json!("main"),
+        }]
     }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "create_git_repository".to_string(),
-                description: "Create a new virtual Git repository".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "name".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Repository name (e.g., 'my-project')".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "description".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Repository description".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "default_branch".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Default branch name".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "create_git_repository",
-                    "name": "my-project",
-                    "description": "My project",
-                    "default_branch": "main"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("Git repository '{name}' created")
-                        .with_debug("Git create repository: name={name}, branch={default_branch}"),
-                ),
-            },
-            ActionDefinition {
-                name: "delete_git_repository".to_string(),
-                description: "Delete a virtual Git repository".to_string(),
-                parameters: vec![Parameter {
-                    name: "name".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Repository name to delete".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "delete_git_repository",
-                    "name": "old-project"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("Git repository '{name}' deleted")
-                        .with_debug("Git delete repository: name={name}"),
-                ),
-            },
-            ActionDefinition {
-                name: "list_git_repositories".to_string(),
-                description: "List all virtual Git repositories".to_string(),
-                parameters: vec![],
-                example: json!({"type": "list_git_repositories"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("Git repositories listed")
-                        .with_debug("Git list repositories"),
-                ),
-            },
-        ]
+        // None. This protocol used to advertise create_git_repository / delete_git_repository /
+        // list_git_repositories; there is no repository store for them to act on (protocols
+        // must not implement storage), and their results were discarded, so they were three
+        // actions the model could call that did nothing at all. The repository is described
+        // per-request by git_repository instead.
+        Vec::new()
     }
+
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "git_advertise_refs".to_string(),
-                description: "Advertise Git references (branches, tags) for a repository"
-                    .to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "refs".to_string(),
-                        type_hint: "array".to_string(),
-                        description: "Array of reference objects with 'name' and 'sha' fields"
-                            .to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "capabilities".to_string(),
-                        type_hint: "array".to_string(),
-                        description: "Array of Git capabilities to advertise".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "git_advertise_refs",
-                    "refs": [{"name": "refs/heads/main", "sha": "abc123"}],
-                    "capabilities": ["multi_ack"]
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> {refs_len} refs advertised")
-                        .with_debug(
-                            "Git advertise refs: {refs_len} refs, capabilities={capabilities}",
-                        ),
-                ),
-            },
-            ActionDefinition {
-                name: "git_send_pack".to_string(),
-                description: "Send a Git pack file for clone/fetch operations".to_string(),
-                parameters: vec![Parameter {
-                    name: "pack_data".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Base64-encoded pack file data".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "git_send_pack",
-                    "pack_data": "PACK..."
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> pack sent")
-                        .with_debug("Git send pack: {pack_data_len}B"),
-                ),
-            },
-            ActionDefinition {
-                name: "git_error".to_string(),
-                description: "Send a Git protocol error response".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "message".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Error message".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "code".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "HTTP status code".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "git_error",
-                    "message": "Repository not found",
-                    "code": 404
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> error {code}: {message}")
-                        .with_debug("Git error: code={code}, message={message}"),
-                ),
-            },
-        ]
+        vec![git_repository_action(), git_error_action()]
     }
+
     fn protocol_name(&self) -> &'static str {
         "Git"
     }
+
     fn get_event_types(&self) -> Vec<EventType> {
-        // Event types define the triggers for LLM calls or script execution
-        // For now, returning empty - Git protocol uses simple request-response pattern
-        vec![]
+        get_git_event_types()
     }
+
     fn stack_name(&self) -> &'static str {
         "ETH>IP>TCP>HTTP>Git"
     }
+
     fn keywords(&self) -> Vec<&'static str> {
         vec!["git", "git server", "via git"]
     }
+
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual Git Smart HTTP (pkt-line format), hyper")
-            .llm_control("References, pack files, repository discovery")
-            .e2e_testing("git clone / git fetch")
-            .notes("Read-only (clone/fetch), virtual repositories, no push")
+            .implementation("Hand-rolled Git Smart HTTP v0 (pkt-line + pack v2) on hyper")
+            .llm_control("Branch, commit metadata and file contents; object IDs are computed")
+            .e2e_testing("git clone / git ls-remote against the real git binary")
+            .notes(
+                "Read-only (clone/fetch), single commit, no history, no push. A clone needs \
+                 the same snapshot from both the info/refs and the git-upload-pack event; a \
+                 static or script handler guarantees that, an LLM answering twice does not.",
+            )
             .build()
     }
+
     fn description(&self) -> &'static str {
         "Git Smart HTTP server for serving virtual repositories"
     }
+
     fn example_prompt(&self) -> &'static str {
-        "listen on port 9418 via git. Create repository 'hello-world' with main branch. README.md contains: '# Hello World'"
+        "listen on port 9418 via git. Serve repository 'hello-world' on branch main with README.md containing '# Hello World'"
     }
+
     fn group_name(&self) -> &'static str {
         "Web & File"
     }
 
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
-        use serde_json::json;
 
         StartupExamples::new(
             // LLM mode
@@ -245,7 +121,7 @@ impl Protocol for GitProtocol {
                 "type": "open_server",
                 "port": 9418,
                 "base_stack": "git",
-                "instruction": "Git HTTP server. Serve virtual repository 'hello-world' with main branch. README.md contains '# Hello World'. Allow clone/fetch operations."
+                "instruction": "Git HTTP server. Serve repository 'hello-world' on branch main containing README.md with the text '# Hello World'. Answer git_info_refs and git_upload_pack with exactly the same git_repository action every time."
             }),
             // Script mode
             json!({
@@ -253,27 +129,30 @@ impl Protocol for GitProtocol {
                 "port": 9418,
                 "base_stack": "git",
                 "event_handlers": [{
-                    "event_pattern": "git_info_refs",
+                    "event_pattern": "*",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": "respond([{'type': 'git_repository', 'branch': 'main', 'files': [{'path': 'README.md', 'content': '# ' + event['repository'] + '\\n'}]}])"
                     }
                 }]
             }),
-            // Static mode
+            // Static mode - the deterministic path, and the one a clone is guaranteed to work on
             json!({
                 "type": "open_server",
                 "port": 9418,
                 "base_stack": "git",
                 "event_handlers": [{
-                    "event_pattern": "git_info_refs",
+                    // One handler for both git_info_refs and git_upload_pack: the same
+                    // snapshot must answer both requests of a clone.
+                    "event_pattern": "*",
                     "handler": {
                         "type": "static",
                         "actions": [{
-                            "type": "git_advertise_refs",
-                            "refs": [{"name": "refs/heads/main", "sha": "abc123def456abc123def456abc123def456abc1"}],
-                            "capabilities": ["multi_ack", "side-band-64k"]
+                            "type": "git_repository",
+                            "branch": "main",
+                            "commit_message": "Initial commit",
+                            "files": [{"path": "README.md", "content": "# Hello World\n"}]
                         }]
                     }
                 }]
@@ -286,17 +165,26 @@ impl Protocol for GitProtocol {
 impl Server for GitProtocol {
     fn spawn(&self, ctx: SpawnContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
+            let default_branch = ctx
+                .startup_params
+                .as_ref()
+                .map(|p| p.get_optional_string("default_branch"))
+                .transpose()?
+                .flatten()
+                .unwrap_or_else(|| FALLBACK_BRANCH.to_string());
+
             crate::server::git::GitServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
-                false,
+                default_branch,
                 ctx.server_id,
             )
             .await
         })
     }
+
     fn execute_action(&self, action: Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
@@ -304,64 +192,37 @@ impl Server for GitProtocol {
             .ok_or_else(|| anyhow!("Missing action type"))?;
 
         match action_type {
-            "create_git_repository" => {
-                let name = action
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing repository name"))?;
+            "git_repository" => {
+                let files = action
+                    .get("files")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| {
+                        anyhow!("git_repository requires a 'files' array (it may be empty)")
+                    })?;
 
-                // For now, just log the action
-                // In a real implementation, we'd store repository metadata in AppState
-                Ok(ActionResult::Custom {
-                    name: "git_repository_created".to_string(),
-                    data: serde_json::json!({
-                        "repository": name,
-                        "success": true
-                    }),
-                })
-            }
-            "delete_git_repository" => {
-                let name = action
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing repository name"))?;
-
-                Ok(ActionResult::Custom {
-                    name: "git_repository_deleted".to_string(),
-                    data: serde_json::json!({
-                        "repository": name,
-                        "success": true
-                    }),
-                })
-            }
-            "list_git_repositories" => Ok(ActionResult::Custom {
-                name: "git_repositories_listed".to_string(),
-                data: serde_json::json!({
-                    "repositories": [],
-                    "success": true
-                }),
-            }),
-            "git_advertise_refs" => {
-                let refs = action.get("refs").ok_or_else(|| anyhow!("Missing refs"))?;
+                // Validate here so a bad path is reported as an action failure the model can
+                // see, rather than surfacing later as an opaque HTTP 500.
+                for file in files {
+                    let path = file
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow!("Every entry of 'files' needs a 'path' string"))?;
+                    if file.get("content").map(|c| !c.is_string()).unwrap_or(false) {
+                        return Err(anyhow!(
+                            "File {path:?}: 'content' must be a string (text only)"
+                        ));
+                    }
+                }
 
                 Ok(ActionResult::Custom {
-                    name: "git_refs_response".to_string(),
-                    data: serde_json::json!({
-                        "refs": refs,
-                        "capabilities": action.get("capabilities").unwrap_or(&serde_json::json!([]))
-                    }),
-                })
-            }
-            "git_send_pack" => {
-                let pack_data = action
-                    .get("pack_data")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing pack_data"))?;
-
-                Ok(ActionResult::Custom {
-                    name: "git_pack_response".to_string(),
-                    data: serde_json::json!({
-                        "pack_data": pack_data
+                    name: "git_repository_response".to_string(),
+                    data: json!({
+                        "branch": action.get("branch").and_then(|v| v.as_str()),
+                        "files": files,
+                        "commit_message": action.get("commit_message").and_then(|v| v.as_str()),
+                        "author_name": action.get("author_name").and_then(|v| v.as_str()),
+                        "author_email": action.get("author_email").and_then(|v| v.as_str()),
+                        "timestamp": action.get("timestamp").and_then(|v| v.as_i64()),
                     }),
                 })
             }
@@ -374,13 +235,230 @@ impl Server for GitProtocol {
 
                 Ok(ActionResult::Custom {
                     name: "git_error_response".to_string(),
-                    data: serde_json::json!({
+                    data: json!({
                         "message": message,
                         "code": code
                     }),
                 })
             }
-            _ => Err(anyhow!("Unknown action type: {}", action_type)),
+            _ => Err(anyhow!("Unknown Git action: {}", action_type)),
         }
     }
+}
+
+fn git_repository_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "git_repository".to_string(),
+        description:
+            "Describe the repository to serve. The server turns this into real Git objects and \
+             computes every SHA itself, so do NOT invent commit or blob hashes. Answer both \
+             git_info_refs and git_upload_pack with this action, and with the SAME content each \
+             time - a clone fetches refs and objects in two separate requests, and if the second \
+             answer differs from the first the client rejects the result."
+                .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "files".to_string(),
+                type_hint: "array".to_string(),
+                description:
+                    "Files in the repository. Each entry: path (string, relative, no '..' or \
+                     '.git'), content (string, UTF-8 text), executable (boolean, optional). An \
+                     empty array serves a repository whose single commit has no files."
+                        .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "branch".to_string(),
+                type_hint: "string".to_string(),
+                description:
+                    "Branch name to publish, e.g. 'main' (default: the server's default_branch)"
+                        .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "commit_message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Commit message (default: 'Initial commit')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "author_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Commit author name (default: 'NetGet')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "author_email".to_string(),
+                type_hint: "string".to_string(),
+                description: "Commit author email (default: 'netget@localhost')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "timestamp".to_string(),
+                type_hint: "number".to_string(),
+                description:
+                    "Commit time as seconds since the Unix epoch. Defaults to a fixed value; \
+                     pass one only if you will pass the identical value on every request for \
+                     this repository, since it changes the commit hash."
+                        .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "git_repository",
+            "branch": "main",
+            "commit_message": "Initial commit",
+            "files": [
+                {"path": "README.md", "content": "# Hello World\n"},
+                {"path": "src/main.rs", "content": "fn main() { println!(\"hi\"); }\n"}
+            ]
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> git repo {branch} ({files_len} files)")
+                .with_debug("Git repository: branch={branch}, files={files_len}"),
+        ),
+    }
+}
+
+fn git_error_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "git_error".to_string(),
+        description: "Refuse the request with an HTTP error (e.g. repository not found)"
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error message shown to the git client".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "code".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status code (default: 500; use 404 for a missing repository)"
+                    .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "git_error",
+            "message": "Repository not found",
+            "code": 404
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> git error {code}: {message}")
+                .with_debug("Git error: code={code}, message={message}"),
+        ),
+    }
+}
+
+/// Reference discovery: `GET /<repo>/info/refs?service=git-upload-pack`.
+pub static GIT_INFO_REFS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "git_info_refs",
+        "Git client asked which branches a repository has (first request of a clone or fetch)",
+        json!({
+            "type": "git_repository",
+            "branch": "main",
+            "commit_message": "Initial commit",
+            "files": [{"path": "README.md", "content": "# Hello World\n"}]
+        }),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "repository".to_string(),
+            type_hint: "string".to_string(),
+            description: "Repository name taken from the URL path".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "user_agent".to_string(),
+            type_hint: "string".to_string(),
+            description: "User-Agent header of the git client, if it sent one".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "Address of the connecting client".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![git_repository_action(), git_error_action()])
+    .with_alternative_example(json!({
+        "type": "git_error",
+        "message": "Repository not found",
+        "code": 404
+    }))
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} git info/refs {repository}")
+            .with_debug("Git info/refs: repository={repository}, agent={user_agent}")
+            .with_trace("Git info/refs: {json_pretty(.)}"),
+    )
+});
+
+/// Object transfer: `POST /<repo>/git-upload-pack`.
+pub static GIT_UPLOAD_PACK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "git_upload_pack",
+        "Git client asked for the objects of a repository (second request of a clone or fetch)",
+        json!({
+            "type": "git_repository",
+            "branch": "main",
+            "commit_message": "Initial commit",
+            "files": [{"path": "README.md", "content": "# Hello World\n"}]
+        }),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "repository".to_string(),
+            type_hint: "string".to_string(),
+            description: "Repository name taken from the URL path".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "wants".to_string(),
+            type_hint: "array".to_string(),
+            description: "Object IDs the client asked for, as advertised by git_info_refs"
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "haves".to_string(),
+            type_hint: "array".to_string(),
+            description: "Object IDs the client already has (empty for a fresh clone)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "capabilities".to_string(),
+            type_hint: "array".to_string(),
+            description: "Protocol capabilities the client selected".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "Address of the connecting client".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![git_repository_action(), git_error_action()])
+    .with_alternative_example(json!({
+        "type": "git_error",
+        "message": "Repository not found",
+        "code": 404
+    }))
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} git upload-pack {repository}")
+            .with_debug("Git upload-pack: repository={repository}, wants={wants}")
+            .with_trace("Git upload-pack: {json_pretty(.)}"),
+    )
+});
+
+pub fn get_git_event_types() -> Vec<EventType> {
+    vec![GIT_INFO_REFS_EVENT.clone(), GIT_UPLOAD_PACK_EVENT.clone()]
 }
