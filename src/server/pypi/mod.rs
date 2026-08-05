@@ -155,6 +155,15 @@ impl PypiServer {
     }
 }
 
+/// Build the 502 sent when model or handler output cannot be turned into a
+/// valid HTTP response (bad status code, malformed header name, ...).
+fn bad_gateway() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(502)
+        .body(Full::new(Bytes::from("Bad Gateway: invalid PyPI response")))
+        .expect("502 response with a literal body is always valid")
+}
+
 /// Handle a single PyPI request with integrated LLM actions
 async fn handle_pypi_request_with_llm_actions(
     req: Request<Incoming>,
@@ -194,9 +203,11 @@ async fn handle_pypi_request_with_llm_actions(
     };
 
     // Determine request type based on path
+    // PEP 503 project URLs end with '/', but pip and poetry both follow
+    // redirects, so a client may also ask for /simple/<name> without one.
     let request_type = if path == "/" || path == "/simple" || path == "/simple/" {
         "list_packages"
-    } else if path.starts_with("/simple/") && path.ends_with('/') {
+    } else if path.starts_with("/simple/") {
         "list_files"
     } else if path.starts_with("/packages/") {
         "download_file"
@@ -291,7 +302,7 @@ async fn handle_pypi_request_with_llm_actions(
             // Default response in case nothing was produced
             let mut status_code = 200;
             let mut response_headers = HashMap::new();
-            let mut response_body = String::new();
+            let mut response_body: Vec<u8> = Vec::new();
 
             for protocol_result in execution_result.protocol_results {
                 if let ActionResult::Output(output_data) = protocol_result {
@@ -311,8 +322,24 @@ async fn handle_pypi_request_with_llm_actions(
                                 }
                             }
                         }
-                        if let Some(body) = json_value.get("body").and_then(|v| v.as_str()) {
-                            response_body = body.to_string();
+                        // body_base64 is only ever set by the action executor,
+                        // which has already validated the encoding.
+                        if let Some(encoded) =
+                            json_value.get("body_base64").and_then(|v| v.as_str())
+                        {
+                            use base64::Engine;
+                            match base64::engine::general_purpose::STANDARD.decode(encoded) {
+                                Ok(decoded) => response_body = decoded,
+                                Err(e) => {
+                                    console_error!(
+                                        status_tx,
+                                        "PyPI response body_base64 is not valid base64: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        } else if let Some(body) = json_value.get("body").and_then(|v| v.as_str()) {
+                            response_body = body.as_bytes().to_vec();
                         }
                     }
                 }
@@ -326,7 +353,8 @@ async fn handle_pypi_request_with_llm_actions(
                 response_body.len()
             ));
 
-            // Build the HTTP response
+            // Build the HTTP response. Status and header names come from model or
+            // handler output, so an invalid one must not take the connection down.
             let mut response = Response::builder().status(status_code);
 
             // Add headers
@@ -334,9 +362,13 @@ async fn handle_pypi_request_with_llm_actions(
                 response = response.header(name, value);
             }
 
-            Ok(response
-                .body(Full::new(Bytes::from(response_body)))
-                .unwrap())
+            match response.body(Full::new(Bytes::from(response_body))) {
+                Ok(resp) => Ok(resp),
+                Err(e) => {
+                    console_error!(status_tx, "Invalid PyPI response ({}), sending 502", e);
+                    Ok(bad_gateway())
+                }
+            }
         }
         Err(e) => {
             let _ = status_tx.send(format!(

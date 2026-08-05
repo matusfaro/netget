@@ -75,9 +75,11 @@ PyPI is built on top of HTTP/1.1:
 
 The server analyzes the request path to determine the type:
 
-- `/` or `/simple/` → `list_packages`
-- `/simple/<package>/` → `list_files` (package name extracted)
-- `/packages/<path>/<filename>` → `download_file` (filename extracted)
+- `/`, `/simple` or `/simple/` → `list_packages`
+- `/simple/<package>` or `/simple/<package>/` → `list_files` (package name
+  extracted; PEP 503 project URLs end with `/`, but a client may omit it)
+- `/packages/<path>/<filename>` → `download_file` (filename extracted into
+  `package_name`)
 - Other paths → `unknown`
 
 This classification is provided to the LLM in the `request_type` parameter.
@@ -145,9 +147,10 @@ The LLM receives a `request_type` parameter indicating what kind of request this
     - Each file as `<a href="../../packages/hash/filename#sha256=...">filename</a>`
 
 3. **`download_file`** - Client requests `/packages/<path>/<filename>`
-    - `package_name` parameter contains the filename
+    - `package_name` parameter contains the requested file name, not a package name
     - LLM should return the actual file content
-    - Can be binary data (wheels, tarballs) or text (setup.py, PKG-INFO)
+    - Text (PKG-INFO, setup.py) goes in `body`; real archive bytes go in
+      `body_base64`
 
 ### Example LLM Response (list_packages)
 
@@ -189,6 +192,9 @@ The LLM receives a `request_type` parameter indicating what kind of request this
 
 ### Example LLM Response (download_file)
 
+A wheel is a ZIP archive. A model cannot write one; a script or static handler
+that already holds the bytes sends them base64-encoded:
+
 ```json
 {
   "actions": [
@@ -196,13 +202,16 @@ The LLM receives a `request_type` parameter indicating what kind of request this
       "type": "send_pypi_response",
       "status": 200,
       "headers": {
-        "Content-Type": "application/zip"
+        "Content-Type": "application/octet-stream"
       },
-      "body": "PK\x03\x04..."
+      "body_base64": "UEsDBBQACAgIAAAAIQ..."
     }
   ]
 }
 ```
+
+pip verifies the download against the `#sha256=` fragment advertised on the
+`list_files` page, so a handler serving `body_base64` must hash the same bytes.
 
 ### Response Format
 
@@ -216,6 +225,9 @@ The `send_pypi_response` action returns structured data:
 }
 ```
 
+A response using `body_base64` carries that field instead of `body`; the server
+decodes it before writing the HTTP body.
+
 ### Default Response
 
 If LLM doesn't provide a response or response parsing fails:
@@ -225,6 +237,9 @@ If LLM doesn't provide a response or response parsing fails:
 - Body: empty string
 
 This ensures the server always responds (no hanging connections), though pip may fail if it receives invalid responses.
+
+A status outside 100-599 is rejected by the action executor. A header name hyper
+cannot parse produces a 502 for that request; the connection and server stay up.
 
 ## Connection Management
 
@@ -255,11 +270,15 @@ ProtocolConnectionInfo::Pypi {
 
 ## Known Limitations
 
-### 1. No Binary File Support
+### 1. Binary Distributions Need a Handler
 
-- LLM must return package files as strings
-- Binary files (wheels, tarballs) are challenging for LLMs to generate
-- Workaround: LLM can return placeholder/dummy files or base64-encoded content
+- `body` is UTF-8 text, sent byte for byte; `body_base64` is decoded first.
+  Exactly one of the two must be present - the encoding is never guessed
+- A model cannot write wheel or sdist bytes: pip rejects a malformed archive.
+  Real distributions come from a script or static handler (e.g. a Python handler
+  that builds a wheel with `zipfile` and base64-encodes it)
+- For a honeypot or a metadata-only demo, serve text through `body` and accept
+  that pip fails at the install step rather than the download step
 
 ### 2. No Package Validation
 

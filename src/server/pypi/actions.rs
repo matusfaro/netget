@@ -90,7 +90,7 @@ impl Protocol for PypiProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "if event.request_type == 'list_packages' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a></body></html>'} elseif event.request_type == 'list_files' then return {type='send_pypi_response', status=200, headers={['Content-Type']='text/html'}, body='<!DOCTYPE html><html><body><a href=\"hello_world-1.0.0-py3-none-any.whl\">hello_world-1.0.0-py3-none-any.whl</a></body></html>'} else return {type='send_pypi_response', status=404, body='Not found'} end"
+                        "code": "import json,sys\nevent = json.load(sys.stdin)['event']\nhtml = {'Content-Type': 'text/html'}\nif event['request_type'] == 'list_packages':\n    action = {'type': 'send_pypi_response', 'status': 200, 'headers': html, 'body': '<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a></body></html>'}\nelif event['request_type'] == 'list_files':\n    action = {'type': 'send_pypi_response', 'status': 200, 'headers': html, 'body': '<!DOCTYPE html><html><body><a href=\"../../packages/hello-world/hello_world-1.0.0-py3-none-any.whl\">hello_world-1.0.0-py3-none-any.whl</a></body></html>'}\nelse:\n    action = {'type': 'send_pypi_response', 'status': 404, 'headers': {'Content-Type': 'text/plain'}, 'body': 'Not found'}\nprint(json.dumps({'actions': [action]}))"
                     }
                 }]
             }),
@@ -152,10 +152,14 @@ impl Server for PypiProtocol {
 impl PypiProtocol {
     /// Execute send_pypi_response sync action
     fn execute_send_pypi_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let status = action
+        let status = match action
             .get("status")
             .and_then(|v| v.as_u64())
-            .context("Missing or invalid 'status' parameter")? as u16;
+            .context("Missing or invalid 'status' parameter")?
+        {
+            status if (100..=599).contains(&status) => status as u16,
+            status => anyhow::bail!("Invalid 'status' {status}: HTTP status codes are 100-599"),
+        };
 
         let headers = action
             .get("headers")
@@ -167,17 +171,37 @@ impl PypiProtocol {
             })
             .unwrap_or_default();
 
-        let body = action
-            .get("body")
-            .and_then(|v| v.as_str())
-            .context("Missing 'body' parameter")?;
+        // The body is either UTF-8 text (PEP 503 HTML, PKG-INFO, JSON) or
+        // base64-encoded bytes for a real distribution file. Exactly one of the
+        // two must be present: guessing would make any hex-looking string
+        // ambiguous between text and encoded bytes.
+        let body = action.get("body").and_then(|v| v.as_str());
+        let body_base64 = action.get("body_base64").and_then(|v| v.as_str());
 
-        // Return structured data for PyPI response
-        let response_data = json!({
-            "status": status,
-            "headers": headers,
-            "body": body
-        });
+        let response_data = match (body, body_base64) {
+            (Some(_), Some(_)) => {
+                anyhow::bail!("Provide either 'body' or 'body_base64', not both")
+            }
+            (None, None) => {
+                anyhow::bail!("Missing 'body' parameter (or 'body_base64' for binary files)")
+            }
+            (Some(text), None) => json!({
+                "status": status,
+                "headers": headers,
+                "body": text
+            }),
+            (None, Some(encoded)) => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .context("'body_base64' is not valid base64")?;
+                json!({
+                    "status": status,
+                    "headers": headers,
+                    "body_base64": encoded
+                })
+            }
+        };
 
         Ok(ActionResult::Output(
             serde_json::to_vec(&response_data).context("Failed to serialize PyPI response")?,
@@ -206,8 +230,14 @@ fn send_pypi_response_action() -> ActionDefinition {
             Parameter {
                 name: "body".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response body (HTML for /simple/ endpoints, binary data for package files)".to_string(),
-                required: true,
+                description: "Response body as UTF-8 text: the PEP 503 HTML for /simple/ endpoints, or text file content. Sent byte for byte. Required unless body_base64 is given".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "body_base64".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response body as base64-encoded bytes, decoded before sending. Only for a real distribution file a script or static handler already holds; do not try to write wheel (ZIP) bytes by hand - pip rejects a malformed archive".to_string(),
+                required: false,
             },
         ],
         example: json!({
@@ -239,7 +269,16 @@ pub static SEND_PYPI_RESPONSE_ACTION: LazyLock<ActionDefinition> =
 
 /// PyPI request event - triggered when client sends a PyPI HTTP request
 pub static PYPI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("pypi_request", "PyPI HTTP request received from client (pip, twine, etc.)", json!({"type": "placeholder", "event_id": "pypi_request"}))
+    EventType::new(
+        "pypi_request",
+        "PyPI HTTP request received from client (pip, twine, etc.)",
+        json!({
+            "type": "send_pypi_response",
+            "status": 200,
+            "headers": {"Content-Type": "text/html"},
+            "body": "<!DOCTYPE html>\n<html>\n<body>\n<a href=\"hello-world/\">hello-world</a>\n</body>\n</html>"
+        }),
+    )
     .with_parameters(vec![
         Parameter {
             name: "method".to_string(),
@@ -280,7 +319,7 @@ pub static PYPI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "package_name".to_string(),
             type_hint: "string".to_string(),
-            description: "Package name if request_type is 'list_files' or 'download_file'".to_string(),
+            description: "Package name when request_type is 'list_files'; the requested file name when request_type is 'download_file'. Empty otherwise".to_string(),
             required: false,
         },
     ])
