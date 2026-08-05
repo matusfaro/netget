@@ -58,8 +58,18 @@ is retained but is no longer what provides ordering.
    rather than a phantom `Running`.
 3. The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
    `stop_server` aborts it and releases the socket.
-4. Per connection: split the stream, register it in `ServerInstance`, raise
-   `ssh_agent_connection_opened`, then read frames until EOF.
+4. Per connection: split the stream, register it in `ServerInstance` **and in the server's own
+   connection map**, then spawn the `ssh_agent_connection_opened` task and the reader task.
+
+The connection-map insert is step 4 and happens synchronously in the accept loop, before either
+task exists. It used to be the first thing the connection-opened task did, racing the reader
+task spawned immediately after it, and `handle_data_with_actions` returns silently when the
+connection is not in the map. For an agent that is worse than a dropped byte: the frame has
+already been taken off the read buffer, the protocol is a strict request/response sequence with
+no retry, so the client blocks forever on a reply that was never generated — `ssh-add -l` hangs.
+7 of 64 clients that wrote immediately after connect hung this way against the pre-fix binary.
+`tests/connection_map_race_test.rs` covers it; the same shape was fixed in `socket_file`
+(`1f3945ee`), `tcp` and `tls`.
 
 ### Responses
 

@@ -180,22 +180,40 @@ impl SshAgentServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        // Handle connection with LLM integration
+                        // Register the connection HERE, before either task is spawned.
+                        //
+                        // This used to be the first thing the connection-opened task did,
+                        // racing the reader task spawned immediately after it, and
+                        // handle_data_with_actions returns silently when the connection is
+                        // not in the map. For an agent that is worse than a dropped byte:
+                        // the frame has already been taken off the read buffer, the protocol
+                        // is a strict request/response sequence with no retry, so the client
+                        // (`ssh-add -l`) blocks forever on a reply that was never generated.
+                        // 7 of 64 clients that wrote immediately after connect hung this way.
+                        connections.lock().await.insert(
+                            connection_id,
+                            ConnectionData {
+                                state: ConnectionState::Idle,
+                                queued_data: Vec::new(),
+                                memory: String::new(),
+                                write_half: write_half_arc.clone(),
+                            },
+                        );
+
+                        // Raise the connection-opened event.
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
                         let status_tx_clone = status_tx.clone();
                         let connections_clone = connections.clone();
-                        let write_half_for_conn = write_half_arc.clone();
                         let protocol_clone = protocol.clone();
                         tokio::spawn(async move {
-                            Self::handle_connection_with_actions(
+                            Self::raise_connection_opened(
                                 connection_id,
                                 server_id,
                                 llm_client_clone,
                                 app_state_clone,
                                 status_tx_clone,
                                 connections_clone,
-                                write_half_for_conn,
                                 protocol_clone,
                             )
                             .await;
@@ -313,28 +331,18 @@ impl SshAgentServer {
         Ok(socket_path)
     }
 
-    /// Handle connection lifecycle
-    async fn handle_connection_with_actions(
+    /// Raise `ssh_agent_connection_opened` for a new connection.
+    ///
+    /// The connection is already registered by the accept loop by the time this runs.
+    async fn raise_connection_opened(
         connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
-        write_half: Arc<Mutex<tokio::io::WriteHalf<UnixStream>>>,
         protocol: Arc<SshAgentProtocol>,
     ) {
-        // Initialize connection
-        connections.lock().await.insert(
-            connection_id,
-            ConnectionData {
-                state: ConnectionState::Idle,
-                queued_data: Vec::new(),
-                memory: String::new(),
-                write_half: write_half.clone(),
-            },
-        );
-
         // Call LLM with connection opened event
         let event = Event::new(
             &SSH_AGENT_CONNECTION_OPENED_EVENT,
