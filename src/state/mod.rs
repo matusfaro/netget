@@ -7,6 +7,7 @@ pub mod client;
 pub mod easy;
 pub mod machine;
 pub mod server;
+pub mod server_handles;
 pub mod sqlite;
 pub mod task;
 
@@ -17,5 +18,6 @@ pub use machine::StateMachine;
 pub use server::{
     ConnectionState, ProtocolConnectionInfo, ProtocolState, ServerId, ServerInstance, ServerStatus,
 };
+pub use server_handles::ServerHandle;
 pub use sqlite::{DatabaseId, DatabaseInstance, DatabaseManager, DatabaseOwner, QueryResult};
 pub use task::{ScheduledTask, TaskExecutionResult, TaskId, TaskScope, TaskStatus, TaskType};

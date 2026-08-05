@@ -372,6 +372,14 @@ struct AppStateInner {
     /// touched through `register_server_task` / `remove_server`, and `ServerInstance`
     /// is constructed by callers outside this module.
     server_tasks: HashMap<ServerId, Vec<tokio::task::JoinHandle<()>>>,
+    /// Type-erased handles to the *running* instance of each server.
+    ///
+    /// Async protocol actions are dispatched on the stateless protocol struct from
+    /// the registry, which has no channel or socket, so anything needing live state
+    /// could only return `NoAction`. This is where the live half is reachable from.
+    /// See `crate::state::server_handles` for the full rationale and the wiring
+    /// still needed in `src/llm/actions/`.
+    server_handles: HashMap<ServerId, crate::state::server_handles::ServerHandle>,
 }
 
 impl AppStateInner {
@@ -389,6 +397,8 @@ impl AppStateInner {
         for handle in self.server_tasks.remove(&server_id).unwrap_or_default() {
             handle.abort();
         }
+        // A live-instance handle must never outlive the server it points at.
+        self.server_handles.remove(&server_id);
         self.drop_tasks_for_server(server_id);
     }
 
@@ -509,6 +519,7 @@ impl AppState {
                 client_llm_calls: HashMap::new(),
                 client_tasks: HashMap::new(),
                 server_tasks: HashMap::new(),
+                server_handles: HashMap::new(),
             })),
         }
     }
@@ -604,6 +615,86 @@ impl AppState {
         let tasks = inner.server_tasks.entry(id).or_default();
         tasks.retain(|h| !h.is_finished());
         tasks.push(handle);
+    }
+
+    /// Register a handle to the *running* instance of a server, so protocol actions
+    /// can reach its live state.
+    ///
+    /// A protocol's `spawn()` calls this with whatever type carries its live state —
+    /// typically a struct of `mpsc::Sender`s and shared views. The type is erased
+    /// here so `AppState` never learns any protocol's types; the protocol recovers
+    /// it with [`Self::server_handle`].
+    ///
+    /// Registering against an already-removed server is a no-op: the handle is
+    /// dropped rather than resurrecting an entry for a server that is gone.
+    ///
+    /// # Reaching this from an action
+    ///
+    /// Async actions are dispatched through `Server::execute_action()` on the
+    /// *stateless* protocol struct, which is why they can only return `NoAction`
+    /// today. Making this registry reachable needs one change in
+    /// `src/llm/actions/`, both parts mechanical:
+    ///
+    /// ```ignore
+    /// // src/llm/actions/protocol_trait.rs, in `trait Server`:
+    /// fn execute_action_with_state(
+    ///     &self,
+    ///     action: serde_json::Value,
+    ///     state: AppState,                       // cheap: AppState is an Arc
+    ///     server_id: Option<crate::state::ServerId>,
+    /// ) -> std::pin::Pin<
+    ///     Box<dyn std::future::Future<Output = anyhow::Result<ActionResult>> + Send + '_>,
+    /// > {
+    ///     // Default keeps every existing protocol working untouched.
+    ///     let _ = (state, server_id);
+    ///     let result = self.execute_action(action);
+    ///     Box::pin(async move { result })
+    /// }
+    ///
+    /// // src/llm/actions/executor.rs, replacing the `proto.execute_action(...)` call:
+    /// match proto
+    ///     .execute_action_with_state(action.clone(), state.clone(), server_id)
+    ///     .await
+    /// { /* unchanged */ }
+    /// ```
+    ///
+    /// A protocol that needs live state then overrides `execute_action_with_state`,
+    /// calls `state.server_handle::<MyHandle>(server_id?)`, and talks to its own
+    /// running server. Nothing about the stateless path changes.
+    pub async fn register_server_handle<T: std::any::Any + Send + Sync>(
+        &self,
+        id: ServerId,
+        handle: std::sync::Arc<T>,
+    ) {
+        let mut inner = self.inner.write().await;
+        if !inner.servers.contains_key(&id) {
+            return;
+        }
+        inner.server_handles.insert(id, handle);
+    }
+
+    /// Look up the live-instance handle of a server, downcast to the protocol's own
+    /// handle type.
+    ///
+    /// Returns `None` if the server is gone, never registered a handle, or
+    /// registered one of a different type — a protocol asking for someone else's
+    /// handle gets a miss, not a panic.
+    pub async fn server_handle<T: std::any::Any + Send + Sync>(
+        &self,
+        id: ServerId,
+    ) -> Option<std::sync::Arc<T>> {
+        self.inner
+            .read()
+            .await
+            .server_handles
+            .get(&id)
+            .cloned()
+            .and_then(|h| h.downcast::<T>().ok())
+    }
+
+    /// Whether a server has registered a live-instance handle
+    pub async fn has_server_handle(&self, id: ServerId) -> bool {
+        self.inner.read().await.server_handles.contains_key(&id)
     }
 
     /// Number of background tasks currently tracked for a server
