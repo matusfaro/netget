@@ -53,11 +53,21 @@ impl Protocol for SvnProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(3690))
-            .implementation("Manual SVN protocol implementation (custom format)")
-            .llm_control("SVN commands (get-latest-rev, get-dir, get-file, update, commit)")
+            // svn:// is port 3690, which is above 1024 and needs no privilege. This used to
+            // declare PrivilegedPort(3690); server_startup.rs only refuses to spawn when the
+            // port is < 1024, so that check could never fire and merely read as protection
+            // that did not exist.
+            .privilege_requirement(PrivilegeRequirement::None)
+            .implementation("Hand-rolled subset of the svn:// wire protocol, line-framed")
+            .llm_control("Greeting, command responses (get-latest-rev, get-dir, stat, log, ...)")
             .e2e_testing("svn command-line client")
-            .notes("Simplified SVN protocol for testing, not full implementation")
+            .notes(
+                "Line-framed subset only: tuples are read one line at a time, so a \
+                 length-prefixed string containing a newline (any file content, any multi-line \
+                 log message) desynchronises the parser. No svndiff, no editor/commit commands, \
+                 no authentication beyond announcing ANONYMOUS. Usable as a honeypot or for \
+                 protocol experiments, not by a real `svn checkout`.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -217,14 +227,14 @@ impl SvnProtocol {
         if let Some(data_val) = data {
             // If data is provided, include it in the response
             if let Some(data_str) = data_val.as_str() {
-                response.push_str(data_str);
+                response.push_str(&svn_item(data_str));
             } else if let Some(data_array) = data_val.as_array() {
                 for (i, item) in data_array.iter().enumerate() {
                     if i > 0 {
                         response.push(' ');
                     }
                     if let Some(s) = item.as_str() {
-                        response.push_str(s);
+                        response.push_str(&svn_item(s));
                     } else {
                         response.push_str(&item.to_string());
                     }
@@ -232,7 +242,7 @@ impl SvnProtocol {
             }
         } else {
             // Default success response
-            response.push_str(message);
+            response.push_str(&svn_item(message));
         }
 
         response.push_str(" ) )\n");
@@ -251,10 +261,13 @@ impl SvnProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("Operation failed");
 
-        // SVN protocol error format
+        // ( failure ( ( apr-err:number message:string file:string line:number ) ... ) )
+        // The message is a counted string, not a quoted one - svn has no quoting.
         let response = format!(
-            "( failure ( ( {} 0 0 0 \"{}\" 0 0 ) ) )\n",
-            error_code, message
+            "( failure ( ( {} {} {} 0 ) ) )\n",
+            error_code,
+            svn_string(message),
+            svn_string("")
         );
 
         Ok(ActionResult::Output(response.into_bytes()))
@@ -266,34 +279,37 @@ impl SvnProtocol {
             .and_then(|v| v.as_array())
             .context("Missing 'items' array")?;
 
-        let mut response = String::from("( success ( ( ");
+        // get-dir returns ( success ( rev:number props:list ( entry... ) ) ) where each
+        // entry is ( name:string kind:word size:number has-props:bool created-rev:number
+        // created-date:list last-author:list ).
+        //
+        // The previous builder emitted an opening "( " for the first entry and a closing
+        // " ) " only for entries after the first, so every response was unbalanced, names
+        // were "double quoted" (svn has no quoting) and the revision was written as the
+        // non-token `rev:N`. Nothing that reads svn could parse any of it.
+        let mut response = String::from("( success ( 0 ( ) ( ");
 
-        for (i, item) in items.iter().enumerate() {
-            if i > 0 {
-                response.push_str(" ( ");
-            }
+        for item in items {
+            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = match item.get("kind").and_then(|v| v.as_str()) {
+                Some("dir") => "dir",
+                Some("none") => "none",
+                Some("unknown") => "unknown",
+                _ => "file",
+            };
+            let size = item.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            let revision = item.get("revision").and_then(|v| v.as_u64()).unwrap_or(0);
 
-            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
-                response.push_str(&format!("\"{}\" ", name));
-
-                let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("file");
-                response.push_str(kind);
-
-                if let Some(size) = item.get("size").and_then(|v| v.as_u64()) {
-                    response.push_str(&format!(" {} ", size));
-                }
-
-                if let Some(rev) = item.get("revision").and_then(|v| v.as_u64()) {
-                    response.push_str(&format!("rev:{} ", rev));
-                }
-            }
-
-            if i > 0 {
-                response.push_str(" ) ");
-            }
+            response.push_str(&format!(
+                "( {} {} {} false {} ( ) ( ) ) ",
+                svn_string(name),
+                kind,
+                size,
+                revision
+            ));
         }
 
-        response.push_str(" ) ) )\n");
+        response.push_str(") ) )\n");
 
         Ok(ActionResult::Output(response.into_bytes()))
     }
@@ -311,6 +327,28 @@ impl SvnProtocol {
         }
 
         Ok(ActionResult::Output(data.into_bytes()))
+    }
+}
+
+/// Encode a value as an svn counted string: `<byte-length>:<bytes>`.
+///
+/// svn has no quoting mechanism at all - a string is always written as its byte length, a
+/// colon, then the raw bytes. Emitting `"foo"` (as this protocol used to) puts three literal
+/// characters plus two quote characters on the wire and no svn parser accepts it.
+fn svn_string(value: &str) -> String {
+    format!("{}:{}", value.len(), value)
+}
+
+/// Encode one datum for a `success` tuple.
+///
+/// A value that is entirely ASCII digits is emitted as a bare number (revisions, sizes and
+/// counts are numbers in the grammar); anything else is emitted as a counted string. A caller
+/// that needs exact control over the tuple should use `send_svn_response` instead.
+fn svn_item(value: &str) -> String {
+    if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
+        value.to_string()
+    } else {
+        svn_string(value)
     }
 }
 
@@ -375,7 +413,7 @@ fn send_success_action() -> ActionDefinition {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "string or array".to_string(),
-                description: "Optional data to include in success response".to_string(),
+                description: "Value(s) to return inside the success tuple. A value made only of digits is sent as an svn number (use this for revisions); any other value is sent as an svn counted string, so \"hello\" goes on the wire as 5:hello. Use send_svn_response if you need to write the tuple yourself".to_string(),
                 required: false,
             },
         ],
@@ -426,11 +464,12 @@ fn send_failure_action() -> ActionDefinition {
 fn send_list_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_svn_list".to_string(),
-        description: "Send SVN directory listing".to_string(),
+        description: "Send an SVN directory listing (the entry list of a get-dir response)"
+            .to_string(),
         parameters: vec![Parameter {
             name: "items".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of items with name, kind, size, revision fields".to_string(),
+            description: "Array of entries. Each entry: name (string), kind (\"file\" or \"dir\"), size (number, optional), revision (number, optional, the created-rev)".to_string(),
             required: true,
         }],
         example: json!({
@@ -506,7 +545,13 @@ pub static SVN_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "svn_command",
         "SVN client sent a protocol command",
-        json!({"type": "placeholder", "event_id": "svn_command"}),
+        // Rendered verbatim into the protocol documentation the model reads
+        // (src/llm/actions/tools.rs, src/mcp_stdio/docs.rs), so it must be an action the
+        // executor accepts - the previous {"type": "placeholder"} was not one.
+        json!({
+            "type": "send_svn_success",
+            "data": "42"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -535,6 +580,11 @@ pub static SVN_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_response_action(),
         close_connection_action(),
     ])
+    .with_alternative_example(json!({
+        "type": "send_svn_failure",
+        "error_code": 210005,
+        "message": "Path not found"
+    }))
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} SVN {command} ({duration_ms}ms)")
