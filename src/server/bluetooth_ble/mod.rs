@@ -278,8 +278,7 @@ impl BluetoothBle {
             let char_uuid_str = char_json["uuid"]
                 .as_str()
                 .context("characteristic requires 'uuid' field")?;
-            let char_uuid =
-                parse_ble_uuid(char_uuid_str).context("Invalid characteristic UUID")?;
+            let char_uuid = parse_ble_uuid(char_uuid_str).context("Invalid characteristic UUID")?;
 
             // Parse properties
             let props_json = char_json["properties"]

@@ -273,12 +273,14 @@ async fn handle_npm_request(
     // Process LLM result
     match llm_result {
         Ok(execution_result) => {
-            // Look for NPM-specific response actions
+            // Scan for the first action that is actually an NPM response. This was a
+            // `for` loop with an unconditional `return` inside it, so it examined only
+            // the first result and returned a 500 if that happened to be something
+            // like `show_message`. It also tripped clippy's `never_loop`.
             for result in execution_result.protocol_results {
-                // Try to process this action result as NPM response
-                let response = process_npm_action_result(result, &status_tx).await;
-                // Return the first successful response
-                return response;
+                if let Some(response) = process_npm_action_result(result, &status_tx).await {
+                    return Ok(response);
+                }
             }
 
             // No NPM actions found, return error
@@ -306,10 +308,16 @@ async fn handle_npm_request(
 }
 
 /// Process LLM action result and build HTTP response
+/// Build an NPM response from one action result.
+///
+/// Returns `None` when the action is not an NPM response action, so the caller can
+/// keep scanning. It used to return a 500 for anything it did not recognise, and the
+/// caller returned unconditionally on the first result — so a model emitting the
+/// documented `show_message` + NPM-response pair got a 500 and lost the real answer.
 async fn process_npm_action_result(
     action_result: crate::llm::ActionResult,
     status_tx: &mpsc::UnboundedSender<String>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Option<Response<Full<Bytes>>> {
     use crate::llm::ActionResult;
 
     match action_result {
@@ -323,11 +331,13 @@ async fn process_npm_action_result(
 
                     debug!("NPM package metadata response");
                     let _ = status_tx.send("[DEBUG] Sending NPM package metadata".to_string());
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/json")
-                        .body(Full::new(Bytes::from(metadata.to_string())))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "application/json")
+                            .body(Full::new(Bytes::from(metadata.to_string())))
+                            .unwrap(),
+                    )
                 }
                 "npm_package_tarball" => {
                     let tarball_data = data
@@ -346,11 +356,13 @@ async fn process_npm_action_result(
                         "[DEBUG] Sending NPM tarball: {} bytes",
                         decoded.len()
                     ));
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/octet-stream")
-                        .body(Full::new(Bytes::from(decoded)))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "application/octet-stream")
+                            .body(Full::new(Bytes::from(decoded)))
+                            .unwrap(),
+                    )
                 }
                 "npm_package_list" => {
                     let packages = data
@@ -360,11 +372,13 @@ async fn process_npm_action_result(
 
                     debug!("NPM package list response");
                     let _ = status_tx.send("[DEBUG] Sending NPM package list".to_string());
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/json")
-                        .body(Full::new(Bytes::from(packages.to_string())))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "application/json")
+                            .body(Full::new(Bytes::from(packages.to_string())))
+                            .unwrap(),
+                    )
                 }
                 "npm_package_search" => {
                     let results = data
@@ -374,11 +388,13 @@ async fn process_npm_action_result(
 
                     debug!("NPM package search response");
                     let _ = status_tx.send("[DEBUG] Sending NPM search results".to_string());
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/json")
-                        .body(Full::new(Bytes::from(results.to_string())))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "application/json")
+                            .body(Full::new(Bytes::from(results.to_string())))
+                            .unwrap(),
+                    )
                 }
                 "npm_error" => {
                     let error_message = data
@@ -395,38 +411,28 @@ async fn process_npm_action_result(
                     let error_response = json!({
                         "error": error_message
                     });
-                    Ok(Response::builder()
-                        .status(
-                            StatusCode::from_u16(status_code)
-                                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                        )
-                        .header("Content-Type", "application/json")
-                        .body(Full::new(Bytes::from(error_response.to_string())))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(
+                                StatusCode::from_u16(status_code)
+                                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                            )
+                            .header("Content-Type", "application/json")
+                            .body(Full::new(Bytes::from(error_response.to_string())))
+                            .unwrap(),
+                    )
                 }
                 _ => {
                     error!("Unknown NPM action: {}", name);
-                    let error_response = json!({
-                        "error": "Unknown NPM action"
-                    });
-                    Ok(Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("Content-Type", "application/json")
-                        .body(Full::new(Bytes::from(error_response.to_string())))
-                        .unwrap())
+                    // Not an NPM action: let the caller keep scanning.
+                    None
                 }
             }
         }
         _ => {
             error!("Unexpected action result type for NPM request");
-            let error_response = json!({
-                "error": "Internal server error"
-            });
-            Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(error_response.to_string())))
-                .unwrap())
+            // Not an NPM action: let the caller keep scanning.
+            None
         }
     }
 }

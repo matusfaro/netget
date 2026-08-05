@@ -18,7 +18,11 @@ fn base(short32: &str) -> String {
 #[test]
 fn expands_the_16_bit_shorthand_the_docs_promise() {
     // The exact values used in the protocol's own action examples.
-    for (short, expect32) in [("180D", "0000180d"), ("2A37", "00002a37"), ("180F", "0000180f")] {
+    for (short, expect32) in [
+        ("180D", "0000180d"),
+        ("2A37", "00002a37"),
+        ("180F", "0000180f"),
+    ] {
         let got = parse_ble_uuid(short).expect("documented shorthand must parse");
         assert_eq!(got.to_string(), base(expect32), "expanding {short}");
     }
@@ -65,9 +69,15 @@ fn garbage_is_rejected_with_a_message_naming_the_input() {
     // Not hex, and not a UUID: must fail rather than silently expand to something.
     let err = parse_ble_uuid("ZZZZ").expect_err("non-hex must be rejected");
     let msg = format!("{err:#}");
-    assert!(msg.contains("ZZZZ"), "error should name the input, got: {msg}");
+    assert!(
+        msg.contains("ZZZZ"),
+        "error should name the input, got: {msg}"
+    );
 
     // Wrong length for a shorthand and not a valid UUID either.
-    assert!(parse_ble_uuid("180").is_err(), "3 hex digits is not a valid shorthand");
+    assert!(
+        parse_ble_uuid("180").is_err(),
+        "3 hex digits is not a valid shorthand"
+    );
     assert!(parse_ble_uuid("").is_err(), "empty input must be rejected");
 }

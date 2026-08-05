@@ -219,12 +219,17 @@ async fn handle_s3_request_with_llm(
     // Process LLM result and build HTTP response
     match llm_result {
         Ok(execution_result) => {
-            // Look for S3-specific response actions
-            for result in execution_result.protocol_results {
-                // Try to process this action result as S3 response
-                let response = process_s3_action_result(result, bucket.as_deref(), &status_tx);
-                // Return the first successful response
-                return response;
+            // Scan for the first action that is actually an S3 response. This was a
+            // `for` loop with an unconditional `return` inside it — so it examined
+            // only the first result and, if that was something like `show_message`,
+            // returned the empty-200 fallback and dropped the real object. It also
+            // tripped clippy's `never_loop`, which is how it was found.
+            if let Some(response) = execution_result
+                .protocol_results
+                .into_iter()
+                .find_map(|result| process_s3_action_result(result, bucket.as_deref(), &status_tx))
+            {
+                return Ok(response);
             }
 
             // No S3 actions found, return empty 200 OK
@@ -362,11 +367,18 @@ fn parse_s3_path(method: &Method, path: &str) -> (Option<String>, Option<String>
 }
 
 /// Process LLM action result and build HTTP response
+/// Build an S3 response from one action result.
+///
+/// Returns `None` when the action is not an S3 response action, so the caller can
+/// keep scanning. This used to return an empty `200 OK` for anything it did not
+/// recognise, and the caller returned unconditionally on the first result — so a
+/// model that emitted the documented `show_message` + `s3_object` pair had its
+/// object silently replaced by an empty body.
 fn process_s3_action_result(
     action_result: ActionResult,
     bucket: Option<&str>,
     status_tx: &mpsc::UnboundedSender<String>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Option<Response<Full<Bytes>>> {
     match action_result {
         ActionResult::Custom { name, data } => {
             match name.as_str() {
@@ -401,9 +413,11 @@ fn process_s3_action_result(
                         builder = header_or_skip(builder, "ETag", etag);
                     }
 
-                    Ok(builder
-                        .body(Full::new(Bytes::from(content)))
-                        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))))
+                    Some(
+                        builder
+                            .body(Full::new(Bytes::from(content)))
+                            .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))),
+                    )
                 }
                 "s3_object_list" => {
                     // Send list of objects as XML
@@ -426,11 +440,13 @@ fn process_s3_action_result(
                         objects.len()
                     ));
 
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/xml")
-                        .body(Full::new(Bytes::from(xml)))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "application/xml")
+                            .body(Full::new(Bytes::from(xml)))
+                            .unwrap(),
+                    )
                 }
                 "s3_bucket_list" => {
                     // Send list of buckets as XML
@@ -448,11 +464,13 @@ fn process_s3_action_result(
                         buckets.len()
                     ));
 
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/xml")
-                        .body(Full::new(Bytes::from(xml)))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header("Content-Type", "application/xml")
+                            .body(Full::new(Bytes::from(xml)))
+                            .unwrap(),
+                    )
                 }
                 "s3_error" => {
                     // Send S3 error response
@@ -479,30 +497,28 @@ fn process_s3_action_result(
                         status_code, error_code
                     ));
 
-                    Ok(Response::builder()
-                        .status(
-                            StatusCode::from_u16(status_code)
-                                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                        )
-                        .header("Content-Type", "application/xml")
-                        .body(Full::new(Bytes::from(xml)))
-                        .unwrap())
+                    Some(
+                        Response::builder()
+                            .status(
+                                StatusCode::from_u16(status_code)
+                                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                            )
+                            .header("Content-Type", "application/xml")
+                            .body(Full::new(Bytes::from(xml)))
+                            .unwrap(),
+                    )
                 }
                 _ => {
                     // Unknown custom action, return empty response
-                    Ok(Response::builder()
-                        .status(StatusCode::OK)
-                        .body(Full::new(Bytes::new()))
-                        .unwrap())
+                    // Not an S3 action: let the caller keep scanning.
+                    None
                 }
             }
         }
         _ => {
             // For non-custom actions (NoAction, etc.), return 200 OK with empty body
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(Full::new(Bytes::new()))
-                .unwrap())
+            // Not an S3 action: let the caller keep scanning.
+            None
         }
     }
 }
