@@ -45,10 +45,14 @@ async fn query_dot(port: u16, domain: &str, record_type: RecordType) -> E2EResul
         .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
     let mut tls_stream = connector.connect(domain_name, tcp_stream).await?;
 
-    // Build DNS query
+    // Build DNS query. A real resolver picks the id at random and drops any reply whose
+    // id does not match, so the test must do the same — otherwise a server that never
+    // echoes the id looks healthy here while failing against every real client (item 47).
     let name = Name::from_str(domain)?;
+    let query_id: u16 = rand::random();
     let mut query_msg = DnsMessage::new();
-    query_msg.add_query(Query::query(name, record_type));
+    query_msg.set_id(query_id);
+    query_msg.add_query(Query::query(name.clone(), record_type));
     query_msg.set_recursion_desired(true);
 
     // Serialize to wire format
@@ -70,7 +74,45 @@ async fn query_dot(port: u16, domain: &str, record_type: RecordType) -> E2EResul
     // Parse DNS response
     let dns_response = DnsMessage::from_vec(&response_buf)?;
 
+    // RFC 1035 §4.1.1: the reply's ID must equal the request's. Enforcing it here is the
+    // whole point of the dynamic mocks above.
+    assert_eq!(
+        dns_response.id(),
+        query_id,
+        "DoT reply for {domain} carried transaction id {} but the query used {query_id}; \
+         a real resolver would discard this reply",
+        dns_response.id()
+    );
+
+    // The reply must also echo the question, which is how a resolver confirms it is
+    // looking at an answer to the query it asked.
+    assert_eq!(
+        dns_response.queries().len(),
+        1,
+        "reply must echo exactly one question"
+    );
+    assert_eq!(
+        dns_response.queries()[0].name(),
+        &name,
+        "reply must echo the queried name"
+    );
+
     Ok(dns_response)
+}
+
+/// The single A record in a reply's answer section, decoded to an address.
+///
+/// Returns `None` if the answer section is empty or holds something other than one A
+/// record — both of which must fail the test rather than pass quietly.
+fn answer_a(response: &DnsMessage) -> Option<std::net::Ipv4Addr> {
+    let answers = response.answers();
+    if answers.len() != 1 {
+        return None;
+    }
+    match answers[0].data() {
+        Some(hickory_proto::rr::RData::A(addr)) => Some(addr.0),
+        _ => None,
+    }
 }
 
 /// Certificate verifier that accepts all certificates (for testing only)
@@ -125,46 +167,59 @@ async fn test_dot_server() -> E2EResult<()> {
         .with_log_level("info")
         .with_mock(|mock| {
             mock
-                // Mock 1: Third DNS query - foo.example.com - MUST BE FIRST (most specific, avoids substring match)
+                // The three query mocks echo the *client's* transaction id and queried name
+                // out of the event, per CLAUDE.md's dynamic-mock rule. They used to hardcode
+                // `"query_id": 1`, which only went unnoticed because the raw TLS client below
+                // never checked the id — so the suite could not have detected a server that
+                // replied with the wrong one. Each response now carries a distinct IP too, so
+                // an answer routed to the wrong query is visible.
+                //
+                // Mock 1: foo.example.com - MUST BE FIRST (most specific, avoids substring match)
                 .on_event("dot_query")
                 .and_event_data_contains("domain", "foo.example.com")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_a_response",
-                        "query_id": 1,
-                        "domain": "foo.example.com",
-                        "ip": "93.184.216.34",
-                        "ttl": 300
-                    }
-                ]))
+                .respond_with_actions_from_event(|event_data| {
+                    serde_json::json!([
+                        {
+                            "type": "send_dns_a_response",
+                            "query_id": event_data["query_id"],
+                            "domain": event_data["domain"],
+                            "ip": "93.184.216.36",
+                            "ttl": 300
+                        }
+                    ])
+                })
                 .expect_calls(1)
                 .and()
-                // Mock 2: First DNS query - example.com - MUST BE SECOND (specific)
+                // Mock 2: example.com - MUST BE SECOND (specific)
                 .on_event("dot_query")
                 .and_event_data_contains("domain", "example.com")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_a_response",
-                        "query_id": 1,
-                        "domain": "example.com",
-                        "ip": "93.184.216.34",
-                        "ttl": 300
-                    }
-                ]))
+                .respond_with_actions_from_event(|event_data| {
+                    serde_json::json!([
+                        {
+                            "type": "send_dns_a_response",
+                            "query_id": event_data["query_id"],
+                            "domain": event_data["domain"],
+                            "ip": "93.184.216.34",
+                            "ttl": 300
+                        }
+                    ])
+                })
                 .expect_calls(1)
                 .and()
-                // Mock 3: Second DNS query - test.com - MUST BE THIRD (specific)
+                // Mock 3: test.com - MUST BE THIRD (specific)
                 .on_event("dot_query")
                 .and_event_data_contains("domain", "test.com")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_dns_a_response",
-                        "query_id": 1,
-                        "domain": "test.com",
-                        "ip": "93.184.216.34",
-                        "ttl": 300
-                    }
-                ]))
+                .respond_with_actions_from_event(|event_data| {
+                    serde_json::json!([
+                        {
+                            "type": "send_dns_a_response",
+                            "query_id": event_data["query_id"],
+                            "domain": event_data["domain"],
+                            "ip": "93.184.216.35",
+                            "ttl": 300
+                        }
+                    ])
+                })
                 .expect_calls(1)
                 .and()
                 // Mock 4: Server startup - MUST BE LAST (less specific)
@@ -191,30 +246,31 @@ async fn test_dot_server() -> E2EResult<()> {
     // Wait for server to fully initialize
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Test multiple queries against the same server
+    // Each query gets a distinct IP so a reply routed to the wrong question is visible.
+    // `query_dot` additionally asserts the transaction id and question are echoed.
     println!("\n[Test 1] First query - example.com A record...");
     let response1 = query_dot(port, "example.com.", RecordType::A).await?;
-    assert!(
-        !response1.answers().is_empty(),
-        "Expected answer for example.com A"
+    assert_eq!(
+        answer_a(&response1),
+        Some("93.184.216.34".parse().unwrap()),
+        "example.com must resolve to the address its handler chose"
     );
-    println!("✓ Got response: {:?}", response1.answers()[0]);
 
     println!("\n[Test 2] Second query - testing TLS connection reuse...");
     let response2 = query_dot(port, "test.com.", RecordType::A).await?;
-    assert!(
-        !response2.answers().is_empty(),
-        "Expected answer for test.com A"
+    assert_eq!(
+        answer_a(&response2),
+        Some("93.184.216.35".parse().unwrap()),
+        "test.com must resolve to its own address, not example.com's"
     );
-    println!("✓ Got response: {:?}", response2.answers()[0]);
 
     println!("\n[Test 3] Third query - different domain...");
     let response3 = query_dot(port, "foo.example.com.", RecordType::A).await?;
-    assert!(
-        !response3.answers().is_empty(),
-        "Expected answer for foo.example.com A"
+    assert_eq!(
+        answer_a(&response3),
+        Some("93.184.216.36".parse().unwrap()),
+        "foo.example.com must resolve to its own address"
     );
-    println!("✓ Got response: {:?}", response3.answers()[0]);
 
     println!("\n=== All DoT tests passed! ===");
 
