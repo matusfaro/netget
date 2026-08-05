@@ -348,6 +348,23 @@ pub async fn handle_h2_request(
         }
     }
 
+    // Record the inbound message against the *connection* (streams are not in the
+    // connection map). This has to happen before the filter check so a filtered
+    // request still refreshes last_activity: cleanup_old_connections evicts any
+    // connection idle for 10s, and an HTTP/2 connection normally outlives that.
+    // A "packet" is one HTTP/2 message; bytes are body only, since h2 has already
+    // consumed the HEADERS frame by this point.
+    app_state
+        .update_connection_stats(
+            server_id,
+            connection_id,
+            Some(body_bytes.len() as u64),
+            None,
+            Some(1),
+            None,
+        )
+        .await;
+
     // Log request
     debug!(
         "HTTP/2 request: {} {} {} ({} bytes) from {:?}",
@@ -383,9 +400,20 @@ pub async fn handle_h2_request(
                 "↩ HTTP/2 filtered {} {} → {} (no LLM call)",
                 method, path, status
             ));
+            let body_len = body.len() as u64;
             let response = build_h2_response_head(status, hdrs, "HTTP/2 filtered_response");
             let mut stream = send_response.send_response(response, false)?;
             stream.send_data(Bytes::from(body), true)?;
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(body_len),
+                    None,
+                    Some(1),
+                )
+                .await;
             return Ok(());
         }
     }
@@ -553,6 +581,17 @@ pub async fn handle_h2_request(
                                                 "⬆ Pushed {} ({} bytes)",
                                                 push.path, push_body_len
                                             ));
+                                            // A push is an extra message on the wire.
+                                            app_state
+                                                .update_connection_stats(
+                                                    server_id,
+                                                    connection_id,
+                                                    None,
+                                                    Some(push_body_len as u64),
+                                                    None,
+                                                    Some(1),
+                                                )
+                                                .await;
                                         }
                                     }
                                     Err(e) => {
@@ -582,19 +621,41 @@ pub async fn handle_h2_request(
 
             // Status and headers come from model output; never let a bogus
             // value abort the request without a response.
+            let body_len = response_body.len() as u64;
             let response = build_h2_response_head(status_code, response_headers, "HTTP/2");
             let mut stream = send_response.send_response(response, false)?;
             stream.send_data(Bytes::from(response_body), true)?;
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(body_len),
+                    None,
+                    Some(1),
+                )
+                .await;
         }
         Err(e) => {
             error!("LLM error generating HTTP/2 response: {}", e);
             let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, e));
 
+            const ERROR_BODY: &str = "Internal Server Error";
             let response = Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(())?;
             let mut stream = send_response.send_response(response, false)?;
-            stream.send_data(Bytes::from("Internal Server Error"), true)?;
+            stream.send_data(Bytes::from(ERROR_BODY), true)?;
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(ERROR_BODY.len() as u64),
+                    None,
+                    Some(1),
+                )
+                .await;
         }
     }
 

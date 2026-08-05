@@ -252,8 +252,79 @@ impl HttpServer {
     }
 }
 
-/// Handle a single HTTP request with integrated LLM actions
+/// Handle a single HTTP request, recording per-connection statistics around it.
+///
+/// This wrapper exists because the counters have to be maintained on *every*
+/// exit path, including the ones that never reach the model (h2c upgrade,
+/// request filter rejection). Two consumers depend on them:
+///
+/// - `ServerInstance::cleanup_old_connections` (`src/state/server.rs`) drops any
+///   connection whose `last_activity` is older than 10s, and both the TUI and
+///   the MCP loop call it on a timer. Without a refresh per request, a keep-alive
+///   connection is evicted from the state map 10s after it opens while it is
+///   still serving traffic, and every later stat update and the eventual
+///   `close_connection_on_server` silently target a connection that is gone.
+/// - Connection-scoped scheduled tasks put these counters and the idle time
+///   straight into the model's prompt (`src/llm/prompt.rs`), which is what an
+///   idle-timeout or rate-limiting instruction is supposed to reason about.
+///
+/// Semantics, matching the other hyper-based servers (see `oauth2`): a "packet"
+/// is one HTTP message, and the byte counts are **message bodies only** —
+/// request/status line and headers are not counted, since hyper has already
+/// parsed them away by the time we see the request.
+#[allow(clippy::too_many_arguments)]
 async fn handle_http_request_with_llm_actions(
+    req: Request<Incoming>,
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
+    llm_client: OllamaClient,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+    protocol: Arc<HttpProtocol>,
+    filter: Arc<crate::server::http_common::handler::RequestFilter>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Count the inbound message before doing anything else, so a request that is
+    // filtered out or upgraded still refreshes last_activity.
+    app_state
+        .update_connection_stats(server_id, connection_id, None, None, Some(1), None)
+        .await;
+
+    let response = handle_http_request_inner(
+        req,
+        connection_id,
+        server_id,
+        llm_client,
+        app_state.clone(),
+        status_tx,
+        protocol,
+        filter,
+    )
+    .await;
+
+    let bytes_sent = response
+        .as_ref()
+        .ok()
+        .and_then(|resp| {
+            use hyper::body::Body;
+            resp.body().size_hint().exact()
+        })
+        .unwrap_or(0);
+    app_state
+        .update_connection_stats(
+            server_id,
+            connection_id,
+            None,
+            Some(bytes_sent),
+            None,
+            Some(1),
+        )
+        .await;
+
+    response
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_http_request_inner(
     req: Request<Incoming>,
     connection_id: ConnectionId,
     server_id: crate::state::ServerId,
@@ -372,6 +443,21 @@ async fn handle_http_request_with_llm_actions(
     // Use shared request extraction logic
     let request_data =
         crate::server::http_common::handler::extract_request_data(req, "HTTP", &status_tx).await;
+
+    // The body is the only part of the request whose byte count survives hyper's
+    // parsing; the packet counter was already incremented by the caller.
+    if !request_data.body_bytes.is_empty() {
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                Some(request_data.body_bytes.len() as u64),
+                None,
+                None,
+                None,
+            )
+            .await;
+    }
 
     // Parse URI into path and query components
     let (path, query_string) = if let Some(pos) = request_data.uri.find('?') {

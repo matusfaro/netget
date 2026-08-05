@@ -81,13 +81,36 @@ There are no async actions: HTTP is purely reactive.
 ### Connection state
 
 One `ConnectionId` per TCP connection, added on accept and closed when the socket
-closes. `ProtocolConnectionInfo` is a generic JSON wrapper (not an enum) and is
-initialized to `{"recent_requests": []}`.
+closes.
 
-**Known gap**: nothing updates it afterwards. `recent_requests` stays empty and
-`bytes_sent`/`bytes_received`/`packets_*`/`last_activity` are never incremented
-for HTTP, so per-connection counters in the TUI stay at zero. Only connect and
-disconnect are tracked.
+`bytes_*`, `packets_*` and `last_activity` are maintained per request by the
+wrapper around `handle_http_request_inner`, on **every** exit path — including
+h2c upgrade and request-filter rejections, which never reach the model.
+Semantics: one "packet" = one HTTP message; byte counts are **message bodies
+only**, because hyper has parsed the request line and headers away before the
+server sees them, and `Full<Bytes>::size_hint()` only knows the response body.
+So the numbers track payload volume, not wire volume.
+
+Two things read them, and both were broken while they stayed at zero:
+
+- `ServerInstance::cleanup_old_connections` (`src/state/server.rs`) drops any
+  connection whose `last_activity` is older than 10s; the TUI and the MCP loop
+  both call it on a timer. Without the refresh, a keep-alive connection was
+  evicted from the state map 10s after it opened while it was still serving, and
+  every later stat update and the final `close_connection_on_server` targeted a
+  connection that no longer existed.
+- Connection-scoped scheduled tasks put the counters and the idle time directly
+  into the model's prompt (`src/llm/prompt.rs`), so idle-timeout and
+  rate-limiting instructions were reasoning about constant zeros.
+
+The TUI's connection list shows only id/address/state
+(`ConnectionDisplayInfo`, `src/ui/app.rs`), so these counters are **not** on
+screen; they reach the model and the cleanup timer instead.
+
+**Still a gap**: `ProtocolConnectionInfo` is initialized to
+`{"recent_requests": []}` and is never appended to. Nothing in the codebase reads
+`recent_requests`, and there is no accessor to push into it — populating it needs
+a new method on `AppState`/`ServerInstance` first, or the field should be dropped.
 
 ## Request filtering
 
@@ -177,7 +200,7 @@ handshakes. Everything is buffered in memory.
 
 WebSocket upgrade · streaming/chunked responses · request-body streaming ·
 binary bodies · multipart/urlencoded form parsing (the body is handed over raw) ·
-LLM control over keep-alive or connection close · ALPN · per-connection stats.
+LLM control over keep-alive or connection close · ALPN · `recent_requests`.
 
 ## References
 

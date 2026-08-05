@@ -86,9 +86,20 @@ decoding that never happens.)
 
 One `ConnectionId` per QUIC connection plus a separate id per stream (both drawn
 from the same unified id counter, so stream ids appear as connection ids in the
-UI). `ProtocolConnectionInfo` starts as `{"stream_count": 0}` and, as with the
-other HTTP protocols, is never updated afterwards; byte/packet counters stay at
-zero.
+UI). **Only the connection is in the server's connection map** — stream ids are
+not, so statistics must be recorded against `connection_id`; an update keyed by a
+stream id silently does nothing.
+
+Byte/packet counters and `last_activity` are maintained per stream read and per
+stream write, threading `connection_id` down through
+`handle_stream_with_actions` into `handle_data_with_actions`. Inbound bytes are
+counted in the read loop, before dispatch, so data that is queued rather than
+processed is still counted exactly once. This keeps `cleanup_old_connections`
+(10s idle threshold, `src/state/server.rs`) from evicting a live QUIC connection
+whose stream is merely slow. See `src/server/http/CLAUDE.md` for who reads them.
+
+**Still a gap**: `ProtocolConnectionInfo` starts as `{"stream_count": 0}` and is
+never updated — the count does not move as streams open and close.
 
 ## Not supported
 
@@ -102,7 +113,7 @@ zero.
 - Binary payloads in either direction (see the encoding asymmetry)
 - Unbounded `wait_for_more` accumulation: no size cap, so a hostile peer can grow
   the buffer indefinitely
-- Per-connection statistics
+- A live `stream_count` in `ProtocolConnectionInfo`
 
 ## Testing
 

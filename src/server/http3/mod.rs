@@ -246,11 +246,18 @@ impl Http3Server {
         Ok(local_addr)
     }
 
-    /// Handle a HTTP3 stream with LLM actions
+    /// Handle a HTTP3 stream with LLM actions.
+    ///
+    /// Statistics are recorded against `connection_id`, not `stream_id`: only the
+    /// QUIC connection is registered in the server's connection map, so an update
+    /// keyed by a stream id would silently do nothing. Keeping `last_activity`
+    /// fresh matters here more than for HTTP/1.1 — `cleanup_old_connections`
+    /// evicts a connection idle for 10s, and a QUIC connection carrying a slow
+    /// stream easily exceeds that.
     #[allow(clippy::too_many_arguments)]
     async fn handle_stream_with_actions(
         stream_id: ConnectionId,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         send_stream: quinn::SendStream,
         mut recv_stream: quinn::RecvStream,
@@ -299,8 +306,11 @@ impl Http3Server {
                 // Handle any initial actions
                 for protocol_result in execution_result.protocol_results {
                     if let ActionResult::Output(output_data) = protocol_result {
-                        let mut send = send_stream_arc.lock().await;
-                        if let Err(e) = send.write_all(&output_data).await {
+                        let write_result = {
+                            let mut send = send_stream_arc.lock().await;
+                            send.write_all(&output_data).await
+                        };
+                        if let Err(e) = write_result {
                             error!("Failed to send initial data on stream {}: {}", stream_id, e);
                         } else {
                             console_debug!(
@@ -309,6 +319,16 @@ impl Http3Server {
                                 output_data.len(),
                                 stream_id
                             );
+                            app_state
+                                .update_connection_stats(
+                                    server_id,
+                                    connection_id,
+                                    None,
+                                    Some(output_data.len() as u64),
+                                    None,
+                                    Some(1),
+                                )
+                                .await;
                         }
                     }
                 }
@@ -325,6 +345,19 @@ impl Http3Server {
             match recv_stream.read(&mut buffer).await {
                 Ok(Some(n)) => {
                     let data = Bytes::copy_from_slice(&buffer[..n]);
+
+                    // Count every inbound read exactly once, before dispatch: the
+                    // handler below may queue the data instead of processing it.
+                    app_state
+                        .update_connection_stats(
+                            server_id,
+                            connection_id,
+                            Some(n as u64),
+                            None,
+                            Some(1),
+                            None,
+                        )
+                        .await;
 
                     // DEBUG: Log summary with data preview
                     if data
@@ -363,6 +396,7 @@ impl Http3Server {
                     // Handle data directly (await to ensure processing completes before stream removal)
                     Self::handle_data_with_actions(
                         stream_id,
+                        connection_id,
                         server_id,
                         data,
                         llm_client.clone(),
@@ -394,6 +428,7 @@ impl Http3Server {
     #[allow(clippy::too_many_arguments)]
     async fn handle_data_with_actions(
         stream_id: ConnectionId,
+        connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         data: Bytes,
         llm_client: OllamaClient,
@@ -519,13 +554,26 @@ impl Http3Server {
                     for protocol_result in execution_result.protocol_results {
                         match protocol_result {
                             ActionResult::Output(output_data) => {
-                                let mut send = send_stream.lock().await;
-                                if let Err(e) = send.write_all(&output_data).await {
+                                let write_result = {
+                                    let mut send = send_stream.lock().await;
+                                    send.write_all(&output_data).await
+                                };
+                                if let Err(e) = write_result {
                                     error!(
                                         "Failed to send response on stream {}: {}",
                                         stream_id, e
                                     );
                                 } else {
+                                    app_state
+                                        .update_connection_stats(
+                                            server_id,
+                                            connection_id,
+                                            None,
+                                            Some(output_data.len() as u64),
+                                            None,
+                                            Some(1),
+                                        )
+                                        .await;
                                     // DEBUG: Log summary with data preview
                                     if output_data
                                         .iter()

@@ -85,10 +85,21 @@ body is decoded lossily with no signal. Add it here if this protocol is promoted
 
 ### Connection state
 
-One `ConnectionId` per TCP connection (not per stream), `ProtocolConnectionInfo`
-initialized to `{"recent_requests": []}`. As with HTTP/1.1, **nothing updates it
-afterwards** — byte/packet counters and `last_activity` stay at their initial
-values.
+One `ConnectionId` per TCP connection (**not** per stream). Statistics are
+therefore recorded against the connection from inside `handle_h2_request`, which
+runs per stream: every request counts one message received (body bytes only —
+`h2` has consumed the HEADERS frame by then), and every response, server push and
+filter rejection counts one message sent. Requests rejected by the filter are
+counted too, so a filtered connection still refreshes `last_activity`.
+
+This matters more here than for HTTP/1.1: `cleanup_old_connections`
+(`src/state/server.rs`) evicts any connection idle for 10s, and an HTTP/2
+connection routinely lives far longer. See `src/server/http/CLAUDE.md` for the
+full rationale and for who reads the counters.
+
+**Still a gap**: `ProtocolConnectionInfo` is initialized to
+`{"recent_requests": []}` and never appended to; nothing reads it and no accessor
+exists to write it.
 
 ## Testing
 
@@ -127,8 +138,8 @@ Deterministic variant (no LLM call):
 ## Not implemented
 
 ALPN negotiation · stream prioritization control · streaming/chunked responses ·
-binary bodies · LLM control over connection lifetime · per-connection stats ·
-`body_is_binary` signalling · trailers.
+binary bodies · LLM control over connection lifetime ·
+`body_is_binary` signalling · trailers · `recent_requests`.
 
 ## References
 
