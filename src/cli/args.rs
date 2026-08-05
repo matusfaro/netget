@@ -24,6 +24,37 @@ fn default_log_level() -> String {
     }
 }
 
+/// Piped stdin, read at most once per process.
+///
+/// `cli::run()` asks for the actions JSON and then for the prompt. Both used to
+/// call `io::stdin().read_to_string()`, so the *first* call drained stdin and
+/// the second saw EOF: a prompt piped in (`echo "listen on port 80" | netget`)
+/// was consumed by the actions-JSON check, discarded because it was not JSON,
+/// and the process then failed with "Cannot start in interactive mode without a
+/// terminal" - only trailing-argument prompts worked non-interactively, despite
+/// `cat prompt.txt | netget` being advertised in --help.
+///
+/// Reading is lazy as well as once: `--mcp`, `--mcp-http`, `--simple` and
+/// `--client` all return before either accessor is called, so stdin is never
+/// touched in the modes that need it for their own protocol. An interactive
+/// terminal is left alone entirely.
+fn piped_stdin() -> &'static str {
+    static PIPED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PIPED
+        .get_or_init(|| {
+            if io::stdin().is_terminal() {
+                return String::new();
+            }
+            let mut buffer = String::new();
+            if let Err(e) = io::stdin().read_to_string(&mut buffer) {
+                tracing::warn!("Failed to read stdin: {}", e);
+                return String::new();
+            }
+            buffer.trim().to_string()
+        })
+        .as_str()
+}
+
 /// Read the `{"actions": [...]}` file named by `--load`.
 ///
 /// Deliberately synchronous. `get_actions_json()` is called from inside the
@@ -482,18 +513,14 @@ impl Args {
         }
 
         // Third priority: stdin if not a terminal (piped/redirected input)
-        if !io::stdin().is_terminal() {
-            let mut buffer = String::new();
-            io::stdin().read_to_string(&mut buffer)?;
-            let trimmed = buffer.trim();
-            if !trimmed.is_empty() {
-                // Check if it's actions JSON instead of a prompt
-                if crate::utils::save_load::is_actions_json(trimmed) {
-                    // This will be handled by get_actions_json() instead
-                    return Ok(None);
-                }
-                return Ok(Some(trimmed.to_string()));
+        let piped = piped_stdin();
+        if !piped.is_empty() {
+            // Check if it's actions JSON instead of a prompt
+            if crate::utils::save_load::is_actions_json(piped) {
+                // This will be handled by get_actions_json() instead
+                return Ok(None);
             }
+            return Ok(Some(piped.to_string()));
         }
 
         // No prompt available
@@ -526,19 +553,15 @@ impl Args {
         }
 
         // Third priority: stdin if not a terminal (piped/redirected input)
-        if !io::stdin().is_terminal() {
-            let mut buffer = String::new();
-            io::stdin().read_to_string(&mut buffer)?;
-            let trimmed = buffer.trim();
-            if !trimmed.is_empty() && save_load::is_actions_json(trimmed) {
-                // Parse {"actions": [...]} format and extract the array
-                let parsed: serde_json::Value = serde_json::from_str(trimmed)?;
-                let actions = parsed["actions"]
-                    .as_array()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
-                    .clone();
-                return Ok(Some(actions));
-            }
+        let piped = piped_stdin();
+        if !piped.is_empty() && save_load::is_actions_json(piped) {
+            // Parse {"actions": [...]} format and extract the array
+            let parsed: serde_json::Value = serde_json::from_str(piped)?;
+            let actions = parsed["actions"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
+                .clone();
+            return Ok(Some(actions));
         }
 
         // No actions JSON available

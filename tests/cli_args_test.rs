@@ -96,6 +96,50 @@ async fn load_flag_reports_missing_file() {
     );
 }
 
+/// A prompt piped on stdin must reach the non-interactive path.
+///
+/// `cli::run()` asks for actions JSON and then for a prompt; when both read
+/// stdin directly, the first read drained it and the piped prompt was lost,
+/// so `echo "..." | netget` died with "Cannot start in interactive mode
+/// without a terminal" even though --help advertises `cat prompt.txt | netget`.
+///
+/// Spawns the real binary because the bug only exists across two calls in one
+/// process. `--ollama-url` points at a closed port, so the run fails at the
+/// model check - which is proof the prompt was accepted.
+#[test]
+fn piped_stdin_prompt_is_not_swallowed() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_netget"))
+        .args(["--ollama-url", "http://127.0.0.1:1", "--log-level", "error"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn netget");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"listen on port 0 via tcp\n")
+        .expect("write prompt");
+    drop(child.stdin.take());
+
+    let out = child.wait_with_output().expect("wait for netget");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        !combined.contains("Cannot start in interactive mode"),
+        "piped prompt was discarded: {combined}"
+    );
+}
+
 /// `--api-key` keeps working (it just warns), and still wins over the
 /// environment so existing callers are not silently switched to another key.
 #[test]
