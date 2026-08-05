@@ -172,11 +172,16 @@ Note clients are less finished than servers: their `JoinHandle` is never stored,
 `remove_client()` does not stop the network loop.
 
 **Startup parameters**: every key a caller may pass must be declared in
-`get_startup_parameters()`. `StartupParams` **panics** on an undeclared key or a wrong-typed
-value (`src/protocol/spawn_context.rs:42` and all `get_*` accessors). Because the JSON comes
-from the LLM or an MCP client, this is remotely triggerable: over MCP the panic kills the
-per-request task before it can reply, so the caller hangs forever with no error and the
-server is left stuck in `Starting`. Until those accessors return `Result`, be exhaustive in
+`get_startup_parameters()`. `StartupParams::new` and all `get_*` accessors return
+`Result<_, StartupParamError>` (`src/protocol/spawn_context.rs`), and params are validated
+*before* `add_server`, so an undeclared key or wrong-typed value produces a clean error naming
+the key and listing the allowed ones, and leaves no half-registered server behind. They used to
+panic, which over MCP killed the per-request task before it could reply — the caller hung with
+no error and the server stuck in `Starting`. Propagate the error with `?`; never `unwrap()` it.
+
+Two related traps when declaring parameters: a parameter that is declared but never read is
+dead weight the model will try to use (nine were found in the cloud protocols alone), and a
+parameter read but never declared is rejected at startup. Both are worth a grep when you touch
 `get_startup_parameters()`.
 
 ## Testing
@@ -374,7 +379,14 @@ Assume other agents work in this repo concurrently.
 
 Read before assuming a subsystem is sound:
 
-- `StartupParams` panics on malformed input, remotely reachable (above).
+- **Fail-open defaults are the most dangerous pattern in this codebase.** When the LLM returns
+  nothing usable, a protocol must not fall through to a permissive default. OAuth2 did: no
+  action meant a hardcoded authorization code, a hardcoded access token, and introspection
+  answering `{"active": true}` for *every* bearer token — so an LLM outage silently issued
+  credentials, and a model's explicit denial was indistinguishable from silence and became an
+  approval. Its own CLAUDE.md documented this as a feature ("ensures the server always responds
+  correctly"). Default to refusal, and make the model's rejection path structurally distinct
+  from its no-answer path.
 - Byte-index string truncation (`&s[..N]` guarded only by `s.len() > N`) across `src/llm/`
   panics on multi-byte UTF-8 at the cut point; the strings involved are LLM output and
   event descriptions.

@@ -851,6 +851,73 @@ Compounding it: `src/server/bluetooth_ble/mod.rs:108` reports "Bluetooth adapter
 on after 10 seconds" for all three of adapter-off, no-adapter, and permission-denied, so a user
 cannot tell which.
 
+### 61. The auth family claimed cryptography it never performed **[verified]**
+
+None of `oauth2`, `openid`, `saml_idp`, `saml_sp` holds a signing key, and none ever did. That
+is defensible for LLM-driven test servers — but three of them said otherwise in the text the
+model and the user read:
+
+- `saml_idp`'s `description()` said it "generates signed SAML assertions". A `<ds:Signature>`
+  appears only if the model invents one, and it will not verify.
+- `saml_sp`'s said it "validates SAML assertions", and `llm_control` listed "assertion
+  validation". There is no signature, issuer, audience, expiry or replay check.
+- `openid` advertised "LLM-generated JWT tokens". Nothing signs and nothing verifies; the JWKS
+  is whatever keys the model invented, unrelated to any signature.
+
+All corrected to state plainly that NetGet performs no cryptography here. Nothing is written to
+disk in any of the five. Fixed across six commits.
+
+### 62. OAuth2 turned a denial into an approval, and failed open **[verified]**
+
+The most serious defect found this session. `/authorize` decided by scanning the model's JSON
+for a `code` field. `oauth2_error_response` — the model's *only* way to refuse — has no such
+field, so **a denial was indistinguishable from silence** and fell through to a hardcoded
+`AUTH_CODE_123`. A client received a working authorization code for a request the model had
+explicitly rejected. `/token` had the mirror defect, returning the error body with `200 OK`.
+
+All three endpoints also failed open on no-answer: `AUTH_CODE_123`, `ACCESS_TOKEN_123`, and
+introspection returning `{"active": true}` for **every** bearer token. So an LLM outage silently
+issued credentials and validated anything presented to it. `src/server/oauth2/CLAUDE.md`
+documented this as a feature — "ensures the server always responds correctly".
+
+Fixed with a result envelope and fail-closed defaults; verified with `curl` that a denial now
+yields `302 …?error=unauthorized_client` and `401 {"error":"invalid_client"}`. The general rule
+is now in CLAUDE.md's systemic-issues list.
+
+Note what this did to the tests: `tests/server/oauth2/e2e_test.rs:227` mocks `send_token_response`,
+which is *openid*'s action name, so the action was always rejected as unknown — and the test
+**passed at HEAD only because the fail-open default masked it**. It now correctly fails. A test
+can be green *because* of the bug it should be catching.
+
+### 63. Two credential-minting protocols have no tests at all **[verified]**
+
+`saml_idp` and `saml_sp` have no `tests/` directory — no `e2e_test.rs`, no `CLAUDE.md`, no
+`pub mod` line. Zero coverage for the two protocols in the repo that mint and consume
+authentication assertions. Also: `tests/server/openid/e2e_test.rs:67,343` starts
+`"base_stack": "http"` and mocks `http_request_received`, so it does not exercise `openid` at
+all.
+
+### 64. Injection surfaces in `saml_sp` and `oauth2` **[verified]**
+
+`saml_sp` took `user_id` from an attacker-supplied assertion and wrote it unescaped into HTML
+*and* raw into `Set-Cookie`. `oauth2`'s `parse_query_params` percent-decodes, so
+`?redirect_uri=http://x/cb%0D%0A` put CRLF into the `Location` header and killed the connection
+task — remotely reachable and unauthenticated. Both fixed and byte-verified with `od -c`.
+
+### 65. `{"type": "placeholder"}` response examples remain in 54 files **[verified]**
+
+Rendered verbatim into prompts (`src/llm/actions/tools.rs`) and MCP docs
+(`src/mcp_stdio/docs.rs:399`), teaching the model an action type that does not exist. Fixed
+piecemeal by protocol reviews; 54 `src/server/` files still carry one. Worth a sweep, or a
+render-time suppression so a placeholder is omitted rather than shown.
+
+### 66. `http_common` is gated too narrowly **[static]**
+
+`src/server/mod.rs:23` gates it on `feature = "http"` or `"http2"`, so `oauth2`, `openid`,
+`saml-idp` and `saml-sp` — all HTTP servers — cannot reach `build_safe_response`
+(`src/server/http_common/handler.rs:135`) and have four local copies of it. Widening the gate
+would collapse them.
+
 ---
 
 ## Suggested order
