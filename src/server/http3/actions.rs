@@ -94,7 +94,12 @@ impl Protocol for Http3Protocol {
         "ETH>IP>UDP>HTTP3"
     }
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["http3"]
+        // Keywords are descriptive text shown to the model, not a lookup key, so
+        // this is the one part of the `http3` -> `quic` rename that can land
+        // without touching the registry or Cargo.toml: a model asked for a QUIC
+        // server now finds the protocol that actually is one. See the "Naming"
+        // section of src/server/http3/CLAUDE.md.
+        vec!["quic", "quic streams", "http3"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{
