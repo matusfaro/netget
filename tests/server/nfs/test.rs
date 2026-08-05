@@ -21,6 +21,210 @@
 // Helper module imported from parent
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+// ---------------------------------------------------------------------------
+// A minimal ONC RPC / XDR client (RFC 5531, RFC 1813)
+//
+// This suite used to assert only that a TCP connection was accepted. That is why
+// `NFS_OPERATION_EVENT` could ship with a *comment* where its action list belonged — leaving
+// every `nfs_*_response` invisible to the model, so no NFS operation could be answered at
+// all — without a single test failing. The tests below speak real RPC and decode the
+// replies, so that class of defect cannot pass again.
+//
+// There is no Rust NFSv3 *server-side* test client, and `nfs3_client`'s builder does not
+// take a port, so the wire format is hand-rolled here. It is small: RPC over TCP is
+// record-marked, and only three procedures are needed.
+// ---------------------------------------------------------------------------
+
+const NFS_PROGRAM: u32 = 100003;
+const MOUNT_PROGRAM: u32 = 100005;
+const RPC_VERSION: u32 = 2;
+
+const NFS_V3: u32 = 3;
+const MOUNT_V3: u32 = 3;
+
+const PROC_NULL: u32 = 0;
+const MOUNTPROC3_MNT: u32 = 1;
+const NFSPROC3_GETATTR: u32 = 1;
+const NFSPROC3_LOOKUP: u32 = 3;
+
+/// Sequential reader over an XDR-encoded buffer.
+///
+/// Every accessor asserts it has the bytes it needs, so a truncated or misencoded reply
+/// fails the test at the field that is wrong rather than producing a plausible value.
+struct Xdr<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Xdr<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn u32(&mut self, what: &str) -> u32 {
+        assert!(
+            self.pos + 4 <= self.buf.len(),
+            "reply ended before {what} at offset {}",
+            self.pos
+        );
+        let v = u32::from_be_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());
+        self.pos += 4;
+        v
+    }
+
+    fn u64(&mut self, what: &str) -> u64 {
+        let hi = self.u32(what) as u64;
+        let lo = self.u32(what) as u64;
+        (hi << 32) | lo
+    }
+
+    /// XDR variable-length opaque: 4-byte length, then the bytes padded to a 4-byte boundary.
+    fn opaque(&mut self, what: &str) -> Vec<u8> {
+        let len = self.u32(what) as usize;
+        assert!(
+            self.pos + len <= self.buf.len(),
+            "reply ended inside {what} ({len} bytes announced)"
+        );
+        let bytes = self.buf[self.pos..self.pos + len].to_vec();
+        self.pos += len + (4 - len % 4) % 4;
+        bytes
+    }
+
+    fn remaining(&self) -> usize {
+        self.buf.len().saturating_sub(self.pos)
+    }
+}
+
+/// A decoded NFSv3 `fattr3`.
+#[derive(Debug)]
+struct Fattr3 {
+    ftype: u32,
+    mode: u32,
+    nlink: u32,
+    uid: u32,
+    gid: u32,
+    size: u64,
+    fileid: u64,
+    mtime_seconds: u32,
+}
+
+fn read_fattr3(xdr: &mut Xdr<'_>) -> Fattr3 {
+    let ftype = xdr.u32("fattr3.ftype");
+    let mode = xdr.u32("fattr3.mode");
+    let nlink = xdr.u32("fattr3.nlink");
+    let uid = xdr.u32("fattr3.uid");
+    let gid = xdr.u32("fattr3.gid");
+    let size = xdr.u64("fattr3.size");
+    let _used = xdr.u64("fattr3.used");
+    let _rdev_major = xdr.u32("fattr3.rdev");
+    let _rdev_minor = xdr.u32("fattr3.rdev");
+    let _fsid = xdr.u64("fattr3.fsid");
+    let fileid = xdr.u64("fattr3.fileid");
+    let _atime = xdr.u64("fattr3.atime");
+    let mtime_seconds = xdr.u32("fattr3.mtime.seconds");
+    let _mtime_nseconds = xdr.u32("fattr3.mtime.nseconds");
+    let _ctime = xdr.u64("fattr3.ctime");
+    Fattr3 {
+        ftype,
+        mode,
+        nlink,
+        uid,
+        gid,
+        size,
+        fileid,
+        mtime_seconds,
+    }
+}
+
+/// An RPC connection to the server under test.
+struct RpcClient {
+    stream: TcpStream,
+    next_xid: u32,
+}
+
+impl RpcClient {
+    async fn connect(port: u16) -> E2EResult<Self> {
+        Ok(Self {
+            stream: TcpStream::connect(format!("127.0.0.1:{port}")).await?,
+            next_xid: 0x5A5A_0001,
+        })
+    }
+
+    /// Issue one RPC call and return the decoded results, positioned just past the
+    /// accepted-reply header.
+    ///
+    /// Asserts the whole RPC envelope: the reply must be a REPLY, MSG_ACCEPTED, SUCCESS, and
+    /// must echo the call's xid. A server that got any of that wrong would be rejected by
+    /// every real client.
+    async fn call(&mut self, prog: u32, vers: u32, proc: u32, args: &[u8]) -> E2EResult<Vec<u8>> {
+        let xid = self.next_xid;
+        self.next_xid += 1;
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&xid.to_be_bytes());
+        body.extend_from_slice(&0u32.to_be_bytes()); // msg_type: CALL
+        body.extend_from_slice(&RPC_VERSION.to_be_bytes());
+        body.extend_from_slice(&prog.to_be_bytes());
+        body.extend_from_slice(&vers.to_be_bytes());
+        body.extend_from_slice(&proc.to_be_bytes());
+        // cred and verf, both AUTH_NULL with an empty body
+        body.extend_from_slice(&[0u8; 8]);
+        body.extend_from_slice(&[0u8; 8]);
+        body.extend_from_slice(args);
+
+        // TCP record marking: high bit set marks the last fragment.
+        let marker = 0x8000_0000u32 | (body.len() as u32);
+        self.stream.write_all(&marker.to_be_bytes()).await?;
+        self.stream.write_all(&body).await?;
+        self.stream.flush().await?;
+
+        // Read one (possibly multi-fragment) record.
+        let mut reply = Vec::new();
+        loop {
+            let mut marker = [0u8; 4];
+            self.stream.read_exact(&mut marker).await?;
+            let marker = u32::from_be_bytes(marker);
+            let last = marker & 0x8000_0000 != 0;
+            let len = (marker & 0x7FFF_FFFF) as usize;
+            let start = reply.len();
+            reply.resize(start + len, 0);
+            self.stream.read_exact(&mut reply[start..]).await?;
+            if last {
+                break;
+            }
+        }
+
+        let mut xdr = Xdr::new(&reply);
+        assert_eq!(
+            xdr.u32("reply xid"),
+            xid,
+            "RPC reply must echo the call xid"
+        );
+        assert_eq!(xdr.u32("msg_type"), 1, "expected msg_type REPLY");
+        assert_eq!(xdr.u32("reply_stat"), 0, "expected MSG_ACCEPTED");
+        assert_eq!(xdr.u32("verf.flavor"), 0, "expected an AUTH_NULL verifier");
+        assert_eq!(
+            xdr.u32("verf.length"),
+            0,
+            "AUTH_NULL verifier must be empty"
+        );
+        assert_eq!(xdr.u32("accept_stat"), 0, "expected accept_stat SUCCESS");
+
+        Ok(reply[xdr.pos..].to_vec())
+    }
+}
+
+/// XDR-encode a variable-length opaque (used for dirpath, filename and file handles).
+fn xdr_opaque(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    out.extend_from_slice(bytes);
+    out.resize(out.len() + (4 - bytes.len() % 4) % 4, 0);
+    out
+}
 
 #[tokio::test]
 async fn test_nfs_server_start() -> E2EResult<()> {
@@ -95,38 +299,18 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
 
     // Give the server a moment to fully initialize
 
-    // Try to connect
-    match tokio::net::TcpStream::connect(&addr).await {
-        Ok(stream) => {
-            println!("✓ TCP connection to NFS server successful");
-
-            // Verify connection is maintained
-
-            // Try to read to verify socket is open (non-blocking)
-            let mut buf = [0u8; 1];
-            match stream.try_read(&mut buf) {
-                Ok(0) => {
-                    // EOF - connection closed immediately
-                    println!("⚠ Connection closed by server");
-                }
-                Ok(_) => {
-                    println!("✓ Received data from server");
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // WouldBlock - connection is open but no data
-                    println!("✓ Connection is open and waiting");
-                }
-                Err(_) => {
-                    println!("⚠ Read error on connection");
-                }
-            }
-
-            drop(stream);
-        }
-        Err(e) => {
-            return Err(format!("Failed to connect to NFS server: {}", e).into());
-        }
-    }
+    // A bare "the socket accepted" check cannot distinguish an NFS server from any other
+    // listener, and its EOF and read-error branches only printed a warning. Issue a real
+    // RPC NULL instead: it needs no LLM call, and only something speaking ONC RPC for the
+    // NFS program can answer it. `call()` asserts the whole reply envelope.
+    let mut rpc = RpcClient::connect(server.port).await?;
+    let null = rpc.call(NFS_PROGRAM, NFS_V3, PROC_NULL, &[]).await?;
+    assert!(
+        null.is_empty(),
+        "NFSPROC3_NULL returns void, got {} bytes",
+        null.len()
+    );
+    println!("✓ NFS NULL answered over {addr}");
 
     // Verify mock expectations
     server.verify_mocks().await?;
@@ -328,49 +512,197 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     server.stop().await?;
     println!("✓ Server stopped gracefully");
 
-    // Verify port is released
-
-    match tokio::net::TcpStream::connect(&addr).await {
-        Ok(_) => {
-            // Connection shouldn't succeed after server stops
-            println!("⚠ Port still accepting connections (server may not have stopped)");
+    // The port must actually be released. This used to print a warning and pass, which is
+    // exactly the failure mode `tests/server_stop_releases_port_test.rs` exists to catch.
+    // Retry briefly: the listener closes asynchronously.
+    let mut released = false;
+    for _ in 0..20 {
+        if tokio::net::TcpStream::connect(&addr).await.is_err() {
+            released = true;
+            break;
         }
-        Err(_) => {
-            println!("✓ Port released after server stop");
-        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    assert!(
+        released,
+        "port {addr} still accepted connections 2s after stop_server"
+    );
+    println!("✓ Port released after server stop");
 
     drop(stream);
     println!("=== Test passed ===\n");
     Ok(())
 }
 
-// NOTE: The following tests are placeholders for future implementation
-// when the full NFS v3 protocol is implemented
-
+/// MOUNT the export, GETATTR the root, and LOOKUP a file in it — decoding every reply.
+///
+/// This replaces three `#[ignore]`d placeholders whose entire bodies were `println!` plus
+/// `Ok(())`: they could not fail, and their presence made the gap look covered. The claim
+/// they carried — that no Rust NFS client exists — is true of client *libraries*, but the
+/// three procedures needed here are small enough to encode directly.
 #[tokio::test]
-#[ignore] // Ignored until NFS protocol is implemented
-async fn test_nfs_mount_export() -> E2EResult<()> {
-    println!("\n=== E2E Test: NFS Mount Export (UNIMPLEMENTED) ===");
-    println!("This test requires full NFS MOUNT protocol implementation");
-    println!("Required: RPC portmapper, MOUNT v3 procedures");
-    Ok(())
-}
+async fn test_nfs_mount_and_lookup() -> E2EResult<()> {
+    println!("\n=== E2E Test: NFS MOUNT + GETATTR + LOOKUP ===");
 
-#[tokio::test]
-#[ignore] // Ignored until NFS protocol is implemented
-async fn test_nfs_file_lookup() -> E2EResult<()> {
-    println!("\n=== E2E Test: NFS File Lookup (UNIMPLEMENTED) ===");
-    println!("This test requires NFS LOOKUP procedure implementation");
-    println!("Required: XDR encoding/decoding, file handle management");
-    Ok(())
-}
+    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Export a directory \
+        containing readme.txt (fileid 42, 13 bytes).";
 
-#[tokio::test]
-#[ignore] // Ignored until NFS protocol is implemented
-async fn test_nfs_read_write() -> E2EResult<()> {
-    println!("\n=== E2E Test: NFS Read/Write (UNIMPLEMENTED) ===");
-    println!("This test requires NFS READ/WRITE procedure implementation");
-    println!("Required: LLM-backed virtual filesystem, data transfer");
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
+        mock
+            // getattr: called once directly, and twice more by LOOKUP for the directory's
+            // and the object's post-op attributes. The handler answers all three.
+            .on_event("nfs_operation")
+            .and_event_data_contains("operation", "getattr")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "nfs_getattr_response",
+                    "file_type": "directory",
+                    "mode": 0o755,
+                    "size": 4096,
+                    "uid": 1000,
+                    "gid": 1000,
+                    "mtime": 1_700_000_000u64
+                }
+            ]))
+            .expect_at_least(1)
+            .and()
+            .on_event("nfs_operation")
+            .and_event_data_contains("operation", "lookup")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "nfs_lookup_response",
+                    "fileid": 42
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_instruction_containing("nfs")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "NFS",
+                    "instruction": "Export a directory containing readme.txt with fileid 42"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = helpers::start_netget_server(server_config).await?;
+    println!("NFS server started on port {}", server.port);
+
+    let mut rpc = RpcClient::connect(server.port).await?;
+
+    // 1. MOUNT NULL — no LLM involved, so this isolates the RPC layer itself. A malformed
+    //    envelope fails inside `call()`.
+    let null = rpc.call(MOUNT_PROGRAM, MOUNT_V3, PROC_NULL, &[]).await?;
+    assert!(
+        null.is_empty(),
+        "MOUNTPROC3_NULL returns void, got {} bytes",
+        null.len()
+    );
+    println!("✓ MOUNT NULL answered with a well-formed RPC reply");
+
+    // 2. MOUNT MNT "/" — returns the root file handle the rest of the session needs.
+    let mnt = rpc
+        .call(MOUNT_PROGRAM, MOUNT_V3, MOUNTPROC3_MNT, &xdr_opaque(b"/"))
+        .await?;
+    let mut xdr = Xdr::new(&mnt);
+    assert_eq!(
+        xdr.u32("mountstat3"),
+        0,
+        "MNT3_OK expected; the export must be mountable"
+    );
+    let root_fh = xdr.opaque("root file handle");
+    assert!(
+        !root_fh.is_empty(),
+        "MNT must return a non-empty file handle"
+    );
+    let auth_count = xdr.u32("auth_flavors count");
+    let flavors: Vec<u32> = (0..auth_count).map(|_| xdr.u32("auth_flavor")).collect();
+    assert!(
+        flavors.contains(&0),
+        "the export must offer AUTH_NULL; offered {flavors:?}"
+    );
+    assert_eq!(xdr.remaining(), 0, "trailing bytes after mountres3");
+    println!("✓ MOUNT MNT returned a {}-byte root handle", root_fh.len());
+
+    // 3. GETATTR on the root handle. This is the first operation that reaches the model, so
+    //    it is what proves the LLM integration answers at all: the handler's attributes must
+    //    come back through the fattr3 on the wire.
+    let getattr = rpc
+        .call(NFS_PROGRAM, NFS_V3, NFSPROC3_GETATTR, &xdr_opaque(&root_fh))
+        .await?;
+    let mut xdr = Xdr::new(&getattr);
+    assert_eq!(
+        xdr.u32("nfsstat3"),
+        0,
+        "GETATTR must succeed; NFS3ERR here means the handler's action was rejected"
+    );
+    let attr = read_fattr3(&mut xdr);
+    assert_eq!(xdr.remaining(), 0, "trailing bytes after fattr3");
+
+    assert_eq!(attr.ftype, 2, "'directory' must encode as NF3DIR (2)");
+    assert_eq!(attr.mode, 0o755, "the handler's mode must reach the client");
+    assert_eq!(attr.size, 4096, "the handler's size must reach the client");
+    assert_eq!(attr.uid, 1000);
+    assert_eq!(attr.gid, 1000);
+    assert_eq!(attr.nlink, 1);
+    assert_eq!(
+        attr.mtime_seconds, 1_700_000_000,
+        "the handler's mtime must reach the client"
+    );
+    assert_eq!(
+        attr.fileid, 1,
+        "the root's fileid is fixed at 1 by the server, not taken from the handler"
+    );
+    println!("✓ GETATTR returned the handler's attributes: {attr:?}");
+
+    // 4. LOOKUP readme.txt in the root. Success carries the new handle plus post-op
+    //    attributes for both the object and the directory.
+    let mut args = xdr_opaque(&root_fh);
+    args.extend_from_slice(&xdr_opaque(b"readme.txt"));
+    let lookup = rpc
+        .call(NFS_PROGRAM, NFS_V3, NFSPROC3_LOOKUP, &args)
+        .await?;
+    let mut xdr = Xdr::new(&lookup);
+    assert_eq!(
+        xdr.u32("nfsstat3"),
+        0,
+        "LOOKUP must succeed; NFS3ERR_NOENT here means nfs_lookup_response was not accepted"
+    );
+    let file_fh = xdr.opaque("object file handle");
+    assert!(!file_fh.is_empty(), "LOOKUP must return a file handle");
+    assert_ne!(
+        file_fh, root_fh,
+        "the looked-up file must not share the directory's handle"
+    );
+
+    assert_eq!(
+        xdr.u32("obj_attributes discriminant"),
+        1,
+        "post-op attributes for the object must be present"
+    );
+    let obj_attr = read_fattr3(&mut xdr);
+    assert_eq!(
+        obj_attr.fileid, 42,
+        "the fileid the handler chose in nfs_lookup_response must reach the client"
+    );
+
+    assert_eq!(
+        xdr.u32("dir_attributes discriminant"),
+        1,
+        "post-op attributes for the directory must be present"
+    );
+    let dir_attr = read_fattr3(&mut xdr);
+    assert_eq!(dir_attr.fileid, 1, "the directory is still the root");
+    assert_eq!(xdr.remaining(), 0, "trailing bytes after LOOKUP3resok");
+
+    println!("✓ LOOKUP resolved readme.txt to fileid 42");
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    println!("=== Test passed ===\n");
     Ok(())
 }

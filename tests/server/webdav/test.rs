@@ -9,6 +9,27 @@
 
 use super::super::super::helpers::{self, E2EResult};
 
+/// Count the `<D:response>` elements in a WebDAV multistatus body, whatever namespace
+/// prefix the server chose.
+///
+/// These tests used to assert only on the HTTP status, which is why WebDAV could be rated
+/// Experimental for a server that never consults the model: a status code says the
+/// `dav-server` library answered, not that anything was stored or listed.
+fn count_multistatus_responses(body: &str) -> usize {
+    body.split('<')
+        .filter(|token| {
+            // Skip closing tags, then drop any namespace prefix ("D:response>" -> "response>").
+            let tag = token.split(':').next_back().unwrap_or(token);
+            !token.starts_with('/') && tag == "response>"
+        })
+        .count()
+}
+
+/// True if a multistatus body lists `href` as one of its resources.
+fn multistatus_lists(body: &str, href: &str) -> bool {
+    body.contains(&format!(">{href}<"))
+}
+
 #[tokio::test]
 async fn test_webdav_server_start() -> E2EResult<()> {
     println!("\n=== E2E Test: WebDAV Server Start ===");
@@ -78,27 +99,67 @@ async fn test_webdav_propfind() -> E2EResult<()> {
     let mut server = helpers::start_netget_server(config).await?;
     println!("WebDAV server started on port {}", server.port);
 
-    // VALIDATION: Make PROPFIND request using reqwest
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/", server.port);
+    let base = format!("http://127.0.0.1:{}", server.port);
 
+    // Put a file in place first, so the listing has something to list. Without this the
+    // test could not distinguish a working PROPFIND from one that returns an empty
+    // multistatus.
+    let put = client
+        .put(format!("{base}/listed.txt"))
+        .body("listed")
+        .send()
+        .await?;
+    assert_eq!(put.status().as_u16(), 201, "PUT must create the file");
+
+    // Depth: 1 on the root must return the collection itself plus its one member.
     let response = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND")?, &url)
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND")?,
+            format!("{base}/"),
+        )
         .header("Depth", "1")
         .send()
         .await?;
 
-    // WebDAV PROPFIND typically returns 207 Multi-Status
     println!("PROPFIND response status: {}", response.status());
-
-    // For now, just verify we got a response (207 or 200 are both acceptable)
+    assert_eq!(
+        response.status().as_u16(),
+        207,
+        "RFC 4918 §9.1: PROPFIND answers 207 Multi-Status"
+    );
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     assert!(
-        response.status().is_success() || response.status().as_u16() == 207,
-        "Expected successful WebDAV response, got {}",
-        response.status()
+        content_type.contains("xml"),
+        "a multistatus body must be XML, got content-type {content_type:?}"
     );
 
-    println!("✓ PROPFIND request handled");
+    let body = response.text().await?;
+    println!("PROPFIND body:\n{body}");
+    assert!(
+        body.contains("multistatus"),
+        "body must be a DAV:multistatus document"
+    );
+    assert_eq!(
+        count_multistatus_responses(&body),
+        2,
+        "Depth: 1 on the root must list the collection and its one member; body was:\n{body}"
+    );
+    assert!(
+        multistatus_lists(&body, "/"),
+        "the collection itself must appear in a Depth: 1 listing"
+    );
+    assert!(
+        multistatus_lists(&body, "/listed.txt"),
+        "the file just created must appear in the listing"
+    );
+
+    println!("✓ PROPFIND returned a well-formed multistatus listing");
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -133,24 +194,46 @@ async fn test_webdav_put_file() -> E2EResult<()> {
     let mut server = helpers::start_netget_server(config).await?;
     println!("WebDAV server started on port {}", server.port);
 
-    // VALIDATION: Make PUT request to create a file
+    // VALIDATION: PUT then GET, so the test proves the bytes were stored rather than that
+    // the request was merely acknowledged.
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/test.txt", server.port);
 
     let response = client.put(&url).body("Hello WebDAV!").send().await?;
 
     println!("PUT response status: {}", response.status());
-
-    // Accept 201 Created or 204 No Content as success
-    assert!(
-        response.status().as_u16() == 201
-            || response.status().as_u16() == 204
-            || response.status().is_success(),
-        "Expected 201/204 for file creation, got {}",
-        response.status()
+    assert_eq!(
+        response.status().as_u16(),
+        201,
+        "RFC 4918 §9.7.1: creating a new resource answers 201 Created"
     );
 
-    println!("✓ File creation request handled");
+    let fetched = client.get(&url).send().await?;
+    assert_eq!(
+        fetched.status().as_u16(),
+        200,
+        "the new file must be GETtable"
+    );
+    assert_eq!(
+        fetched.text().await?,
+        "Hello WebDAV!",
+        "GET must return exactly the bytes PUT stored"
+    );
+
+    // Overwriting an existing resource is 204 No Content, not another 201.
+    let overwrite = client.put(&url).body("Overwritten").send().await?;
+    assert_eq!(
+        overwrite.status().as_u16(),
+        204,
+        "RFC 4918 §9.7.1: overwriting an existing resource answers 204 No Content"
+    );
+    assert_eq!(
+        client.get(&url).send().await?.text().await?,
+        "Overwritten",
+        "the overwrite must be visible to a subsequent GET"
+    );
+
+    println!("✓ PUT/GET round-trip and overwrite semantics verified");
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -185,9 +268,10 @@ async fn test_webdav_mkcol() -> E2EResult<()> {
     let mut server = helpers::start_netget_server(config).await?;
     println!("WebDAV server started on port {}", server.port);
 
-    // VALIDATION: Make MKCOL request to create a directory
+    // VALIDATION: MKCOL, then prove the collection exists and behaves like one.
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/newdir/", server.port);
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let url = format!("{base}/newdir/");
 
     let response = client
         .request(reqwest::Method::from_bytes(b"MKCOL")?, &url)
@@ -195,15 +279,48 @@ async fn test_webdav_mkcol() -> E2EResult<()> {
         .await?;
 
     println!("MKCOL response status: {}", response.status());
-
-    // Accept 201 Created or other success codes
-    assert!(
-        response.status().as_u16() == 201 || response.status().is_success(),
-        "Expected 201 for directory creation, got {}",
-        response.status()
+    assert_eq!(
+        response.status().as_u16(),
+        201,
+        "RFC 4918 §9.3.1: a successful MKCOL answers 201 Created"
     );
 
-    println!("✓ Directory creation request handled");
+    // A second MKCOL on the same path must be refused: the resource already exists.
+    let again = client
+        .request(reqwest::Method::from_bytes(b"MKCOL")?, &url)
+        .send()
+        .await?;
+    assert_eq!(
+        again.status().as_u16(),
+        405,
+        "RFC 4918 §9.3.1: MKCOL on an existing resource answers 405 Method Not Allowed"
+    );
+
+    // And the collection must actually be there: a file placed inside it must be listed.
+    let put = client
+        .put(format!("{base}/newdir/inside.txt"))
+        .body("inside")
+        .send()
+        .await?;
+    assert_eq!(
+        put.status().as_u16(),
+        201,
+        "PUT into the new collection must succeed, which it cannot if MKCOL did nothing"
+    );
+
+    let listing = client
+        .request(reqwest::Method::from_bytes(b"PROPFIND")?, &url)
+        .header("Depth", "1")
+        .send()
+        .await?;
+    assert_eq!(listing.status().as_u16(), 207);
+    let body = listing.text().await?;
+    assert!(
+        multistatus_lists(&body, "/newdir/inside.txt"),
+        "the new collection must list the file placed in it; body was:\n{body}"
+    );
+
+    println!("✓ MKCOL created a real, usable collection");
 
     server.verify_mocks().await?;
     server.stop().await?;
