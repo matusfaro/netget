@@ -27,9 +27,29 @@ Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/proto
 - **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (~97).
 - **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Currently: `bgp`, `usb_smartcard`, `nfc`.
 
-Treat `Experimental` as "compiles and has a test", not "works". Several are explicit
-placeholders with zero actions and zero events (`amqp`, `mqtt`, and five
-`bluetooth_ble_*` profile wrappers) — check `get_sync_actions()` before assuming behavior.
+Treat `Experimental` as "compiles and has a test", not "works". Before assuming a protocol
+behaves, check what it actually offers the model — and check it two ways, because one grep
+lies in both directions:
+
+```bash
+grep -A3 "fn get_sync_actions" src/server/<p>/actions.rs | grep -c 'vec!\[\]'  # hollow?
+grep -cE "DnsProtocol|BluetoothBle::" src/server/<p>/actions.rs                # or delegating?
+grep -c "\.with_actions(" src/server/<p>/actions.rs                            # reachable at all?
+```
+
+An empty `get_sync_actions()` is fine if the protocol **delegates** — `doh` and `dot` forward
+`DnsProtocol`'s set verbatim, so the model sees the full DNS vocabulary. It is a trap if it
+does not. And actions can be declared yet unreachable: `call_llm` builds the model's tool list
+from `event.event_type.actions`, so a protocol whose event types never call `.with_actions(...)`
+leaves the model unable to answer at all. That was found in 17 protocols and is now guarded
+(`EventType::with_no_actions()` marks the deliberate case; anything else logs at ERROR and
+falls back).
+
+The whole `bluetooth_ble_*` family was a third variant: `BluetoothBle::spawn_with_llm_actions`
+hardcodes `BluetoothBleProtocol` when it calls `call_llm`, so all sixteen profiles' own actions
+and events were unreachable regardless of what they declared. Fifteen now delegate explicitly;
+`bluetooth_ble_beacon` is `Incomplete`, because the underlying crate cannot set an advertising
+payload and a beacon is nothing else.
 
 Per-protocol docs: `src/server/<protocol>/CLAUDE.md` and `tests/server/<protocol>/CLAUDE.md`.
 **Read both before modifying a protocol.** Note that these files are frequently more

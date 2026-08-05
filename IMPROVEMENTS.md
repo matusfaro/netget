@@ -804,6 +804,53 @@ grant the client aborts with unknown-issuer.
 Worth revisiting only if CA persistence is ever added — at that point the key file's mode and
 location become a real decision rather than a non-issue.
 
+### 58. The base BLE server ignored every profile's protocol object **[verified]**
+
+Corrected again, and this supersedes both earlier versions of item 21. The count was never
+five, or twelve — it was **all sixteen**, and the reason is structural rather than per-profile:
+`BluetoothBle::spawn_with_llm_actions` hardcodes `BluetoothBleProtocol` when it calls `call_llm`
+(`src/server/bluetooth_ble/mod.rs:124,142,773`). So the base's events were the only ones
+emitted, the base's `.with_actions(...)` lists the only vocabulary offered, and
+`BluetoothBle::execute_action` the only executor. Every profile-specific action and event in
+the family was unreachable no matter what it declared.
+
+Fixed in `3a7bbb5a`, `691de8d8`, `f17e3f1c`: fifteen profiles now delegate explicitly the way
+`doh`/`dot` do, and `bluetooth_ble_beacon` is `Incomplete` — `ble-peripheral-rust` 0.2 exposes
+no advertising-payload API, and a beacon is nothing but its advertising payload, so delegating
+would have handed it a working GATT vocabulary that is precisely not a beacon.
+
+Along the way: two profiles discarded the user's instruction entirely, one had actions declared
+but absent from its own match arm, several advertised a connection table that cannot be
+constructed, and `execute_action` waved unknown actions through as `Custom` rather than
+rejecting them.
+
+**Lesson worth keeping:** three different shapes of "the model cannot act on this" have now
+been found — hollow (`vec![]`, no delegation), declared-but-unadvertised (no `.with_actions()`),
+and structurally overridden (a shared spawn hardcoding the base protocol). A single grep
+detects none of them reliably. The check in CLAUDE.md now covers all three.
+
+### 59. The BLE base teaches a UUID form that cannot parse **[verified]**
+
+`Uuid::parse_str("180D")` fails and no 16-bit expansion helper exists in the tree, yet
+`src/server/bluetooth_ble/CLAUDE.md:285` claims the shorthand is "expanded to" the 128-bit
+form, and the base's own `BLUETOOTH_BLE_STARTED_EVENT` and `add_service` examples
+(`src/server/bluetooth_ble/actions.rs:24,27,449`) both use it. A model copying the protocol's
+own documented example gets "Invalid service UUID". Either add the expansion (`0000XXXX-0000-1000-8000-00805F9B34FB`)
+or correct the examples — the same documented-but-unimplemented class as items 2 and 38.
+
+### 60. `PrivilegeRequirement` cannot express device access **[static]**
+
+`src/protocol/metadata.rs:7-16` offers `None`, `PrivilegedPort`, `RawSockets`, `Root`. BLE needs
+Bluetooth adapter access (D-Bus/BlueZ on Linux, CoreBluetooth TCC on macOS); USB and NFC need
+their own device permissions. None of these is a port or a raw socket, and claiming `Root` would
+be false *and* would block users who genuinely have adapter access. All seventeen BLE protocols
+are therefore left at `None`, which is also wrong. Needs an `AdapterAccess`/`DeviceAccess`
+variant — related to item 55, which wants `has_raw_socket_access` split as well.
+
+Compounding it: `src/server/bluetooth_ble/mod.rs:108` reports "Bluetooth adapter failed to power
+on after 10 seconds" for all three of adapter-off, no-adapter, and permission-denied, so a user
+cannot tell which.
+
 ---
 
 ## Suggested order
