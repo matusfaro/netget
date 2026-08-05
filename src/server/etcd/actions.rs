@@ -62,12 +62,31 @@ pub static ETCD_PUT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "etcd_put_request",
         "Triggered when a client sends a Put request to store a key-value pair",
         json!({
-            "type": "etcd_range_response",
-            "kvs": [],
-            "more": false,
-            "count": 0
+            "type": "etcd_put_response",
+            "revision": 2
         }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "key".to_string(),
+            type_hint: "string".to_string(),
+            description: "Key being written".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "value".to_string(),
+            type_hint: "string".to_string(),
+            description: "Value being written".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "lease".to_string(),
+            type_hint: "number".to_string(),
+            description: "Lease ID attached to the key (0 = no lease)".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![etcd_put_response_action(), etcd_error_action()])
 });
 
 pub static ETCD_DELETE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -75,12 +94,28 @@ pub static ETCD_DELETE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "etcd_delete_request",
         "Triggered when a client sends a DeleteRange request",
         json!({
-            "type": "etcd_range_response",
-            "kvs": [],
-            "more": false,
-            "count": 0
+            "type": "etcd_delete_range_response",
+            "deleted": 1
         }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "key".to_string(),
+            type_hint: "string".to_string(),
+            description: "Key to delete".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "range_end".to_string(),
+            type_hint: "string".to_string(),
+            description: "End of key range for prefix/range deletes".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![
+        etcd_delete_range_response_action(),
+        etcd_error_action(),
+    ])
 });
 
 pub static ETCD_TXN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -88,12 +123,40 @@ pub static ETCD_TXN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "etcd_txn_request",
         "Triggered when a client sends a transaction request",
         json!({
-            "type": "etcd_range_response",
-            "kvs": [],
-            "more": false,
-            "count": 0
+            "type": "etcd_txn_response",
+            "succeeded": true
         }),
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "compare_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of comparison predicates in the transaction".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "success_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of operations to run if the comparisons hold".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "failure_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of operations to run if they do not".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "compares".to_string(),
+            type_hint: "array".to_string(),
+            description: "Comparison predicates as objects with 'key', 'target' \
+                          (VERSION/CREATE/MOD/VALUE), 'result' (EQUAL/GREATER/LESS/NOT_EQUAL) \
+                          and 'value' fields"
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![etcd_txn_response_action(), etcd_error_action()])
 });
 
 // Action definitions
@@ -137,6 +200,79 @@ fn etcd_range_response_action() -> ActionDefinition {
     }
 }
 
+fn etcd_put_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "etcd_put_response".to_string(),
+        description: "Acknowledge a Put. The server increments its own revision counter if you \
+                      omit one."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "revision".to_string(),
+            type_hint: "number".to_string(),
+            description: "Revision this write is recorded at. Omit to let the server increment."
+                .to_string(),
+            required: false,
+        }],
+        example: json!({
+            "type": "etcd_put_response",
+            "revision": 2
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> etcd put ok (rev {revision})")
+                .with_debug("etcd etcd_put_response: revision={revision}"),
+        ),
+    }
+}
+
+fn etcd_delete_range_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "etcd_delete_range_response".to_string(),
+        description: "Acknowledge a DeleteRange, reporting how many keys were removed".to_string(),
+        parameters: vec![Parameter {
+            name: "deleted".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of keys deleted. etcdctl prints this as 'deleted N'.".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "etcd_delete_range_response",
+            "deleted": 1
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> etcd deleted {deleted} key(s)")
+                .with_debug("etcd etcd_delete_range_response: deleted={deleted}"),
+        ),
+    }
+}
+
+fn etcd_txn_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "etcd_txn_response".to_string(),
+        description: "Report whether a transaction's comparisons held. The per-operation results \
+                      are returned empty: nested Range/Put/Delete results inside a Txn are not \
+                      implemented."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "succeeded".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "True if the comparisons held and the success branch was taken"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "etcd_txn_response",
+            "succeeded": true
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> etcd txn succeeded={succeeded}")
+                .with_debug("etcd etcd_txn_response: succeeded={succeeded}"),
+        ),
+    }
+}
+
 fn etcd_error_action() -> ActionDefinition {
     ActionDefinition {
         name: "etcd_error".to_string(),
@@ -171,36 +307,29 @@ fn etcd_error_action() -> ActionDefinition {
 // Implement Protocol trait (common functionality)
 impl Protocol for EtcdProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "cluster_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Cluster identifier name (default: netget-cluster)".to_string(),
-                required: false,
-                example: json!("my-cluster"),
-            },
-            ParameterDefinition {
-                name: "initial_cluster_state".to_string(),
-                type_hint: "string".to_string(),
-                description: "Initial cluster state: 'new' or 'existing' (default: new)"
-                    .to_string(),
-                required: false,
-                example: json!("new"),
-            },
-            ParameterDefinition {
-                name: "max_keys".to_string(),
-                type_hint: "number".to_string(),
-                description: "Maximum number of keys to store (default: 10000)".to_string(),
-                required: false,
-                example: json!(10000),
-            },
-        ]
+        // Only parameters the server actually reads are declared. `initial_cluster_state` and
+        // `max_keys` used to be declared here and were never read; `max_keys` in particular
+        // advertised a key store this protocol does not and must not have.
+        vec![ParameterDefinition {
+            name: "cluster_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Cluster identifier name, used in log lines (default: netget-cluster)"
+                .to_string(),
+            required: false,
+            example: json!("my-cluster"),
+        }]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![etcd_range_response_action(), etcd_error_action()]
+        vec![
+            etcd_range_response_action(),
+            etcd_put_response_action(),
+            etcd_delete_range_response_action(),
+            etcd_txn_response_action(),
+            etcd_error_action(),
+        ]
     }
     fn protocol_name(&self) -> &'static str {
         "etcd"
@@ -216,10 +345,21 @@ impl Protocol for EtcdProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("tonic gRPC, official etcd protobuf schemas")
-            .llm_control("All KV operations (Range, Put, Delete, Txn)")
-            .e2e_testing("etcdctl / etcd-client")
-            .notes("KV service only, no Watch/Lease/Auth, simplified MVCC")
+            .implementation(
+                "hyper HTTP/2 + prost, hand-routed gRPC; etcd protobuf schemas compiled by \
+                 build.rs. tonic is a dependency but this server does not use it.",
+            )
+            .llm_control(
+                "Range, Put, DeleteRange and Txn. Compact is answered without consulting the \
+                 handler; a Txn's nested operations are not executed, only its outcome.",
+            )
+            .e2e_testing("etcd-client (real tonic-based client) in tests/server/etcd")
+            .notes(
+                "KV service only: no Watch, Lease, Auth, Cluster or Maintenance. No storage - \
+                 the handler answers every request; the server keeps only a revision counter. \
+                 Keys and values cross the action boundary as UTF-8 strings, so binary keys \
+                 are lossy.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -328,13 +468,17 @@ impl Server for EtcdProtocol {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
 
+        // Every declared action must be listed here. `etcd_put_response` and
+        // `etcd_delete_range_response` were read by handle_put/handle_delete_range in mod.rs
+        // but rejected here as unknown, so the model could never actually produce them: a Put
+        // could not set its revision and a DeleteRange always reported "deleted 0".
         match action_type {
-            "etcd_range_response" => Ok(ActionResult::Custom {
-                name: "etcd_range_response".to_string(),
-                data: action,
-            }),
-            "etcd_error" => Ok(ActionResult::Custom {
-                name: "etcd_error".to_string(),
+            "etcd_range_response"
+            | "etcd_put_response"
+            | "etcd_delete_range_response"
+            | "etcd_txn_response"
+            | "etcd_error" => Ok(ActionResult::Custom {
+                name: action_type.to_string(),
                 data: action,
             }),
             _ => anyhow::bail!("Unknown etcd action type: {}", action_type),

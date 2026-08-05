@@ -8,8 +8,7 @@ pub mod actions;
 // Re-export protocol for external use
 pub use actions::EtcdProtocol;
 
-use anyhow::{bail, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -28,9 +27,9 @@ use crate::state::app_state::AppState;
 #[cfg(feature = "etcd")]
 use bytes::Bytes;
 #[cfg(feature = "etcd")]
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 #[cfg(feature = "etcd")]
-use hyper::{body::Incoming, Request, Response, StatusCode};
+use hyper::{body::Incoming, header::HeaderValue, Request, Response, StatusCode};
 #[cfg(feature = "etcd")]
 use prost::Message;
 
@@ -53,12 +52,15 @@ use etcdserverpb::{
 #[cfg(feature = "etcd")]
 use mvccpb::KeyValue;
 
-/// In-memory key-value store with MVCC-like revision tracking
+/// Cluster identity plus the monotonic revision counter that every etcd response header
+/// carries.
+///
+/// Deliberately **not** a key-value store: per the no-storage rule this protocol keeps no
+/// keys, and the handler answers every Range/Put/Delete. A `kvs: HashMap<Vec<u8>, KeyValue>`
+/// field used to sit here behind `#[allow(dead_code)]` and was never read or written; it is
+/// gone rather than left as a half-built store.
 #[cfg(feature = "etcd")]
-struct EtcdStore {
-    /// Key-value pairs
-    #[allow(dead_code)] // Will be used when LLM actions wire up to store mutations
-    kvs: HashMap<Vec<u8>, KeyValue>,
+struct EtcdMeta {
     /// Current revision counter
     revision: i64,
     /// Cluster ID
@@ -68,10 +70,9 @@ struct EtcdStore {
 }
 
 #[cfg(feature = "etcd")]
-impl EtcdStore {
+impl EtcdMeta {
     fn new(cluster_id: u64, member_id: u64) -> Self {
         Self {
-            kvs: HashMap::new(),
             revision: 0,
             cluster_id,
             member_id,
@@ -90,6 +91,134 @@ impl EtcdStore {
     fn increment_revision(&mut self) {
         self.revision += 1;
     }
+}
+
+/// Matches etcd's own `--max-request-bytes` default (1.5 MiB).
+#[cfg(feature = "etcd")]
+const MAX_REQUEST_BYTES: usize = 1_572_864;
+
+// gRPC status codes used by this server (google.rpc.Code).
+#[cfg(feature = "etcd")]
+const GRPC_UNKNOWN: i32 = 2;
+#[cfg(feature = "etcd")]
+const GRPC_NOT_FOUND: i32 = 5;
+#[cfg(feature = "etcd")]
+const GRPC_INVALID_ARGUMENT: i32 = 3;
+#[cfg(feature = "etcd")]
+const GRPC_RESOURCE_EXHAUSTED: i32 = 8;
+#[cfg(feature = "etcd")]
+const GRPC_UNIMPLEMENTED: i32 = 12;
+#[cfg(feature = "etcd")]
+const GRPC_INTERNAL: i32 = 13;
+
+/// A failure to be reported to the client as a gRPC status rather than as a transport error.
+#[cfg(feature = "etcd")]
+struct GrpcFailure {
+    status: i32,
+    message: String,
+}
+
+#[cfg(feature = "etcd")]
+impl GrpcFailure {
+    fn new(status: i32, message: String) -> Self {
+        Self { status, message }
+    }
+
+    /// Map the `code` string of an `etcd_error` action onto a gRPC status code. etcd itself
+    /// reports key-space failures this way, so a handler returning `KEY_NOT_FOUND` produces
+    /// `5 NOT_FOUND` rather than a generic internal error.
+    fn from_action_code(code: &str, message: String) -> Self {
+        let status = match code.to_ascii_uppercase().as_str() {
+            "KEY_NOT_FOUND" | "NOT_FOUND" => GRPC_NOT_FOUND,
+            "INVALID_ARGUMENT" | "BAD_REQUEST" => GRPC_INVALID_ARGUMENT,
+            "UNIMPLEMENTED" | "NOT_IMPLEMENTED" => GRPC_UNIMPLEMENTED,
+            "RESOURCE_EXHAUSTED" => GRPC_RESOURCE_EXHAUSTED,
+            "INTERNAL" => GRPC_INTERNAL,
+            _ => GRPC_UNKNOWN,
+        };
+        Self::new(status, message)
+    }
+}
+
+#[cfg(feature = "etcd")]
+impl From<anyhow::Error> for GrpcFailure {
+    fn from(e: anyhow::Error) -> Self {
+        Self::new(GRPC_INTERNAL, e.to_string())
+    }
+}
+
+#[cfg(feature = "etcd")]
+impl From<prost::DecodeError> for GrpcFailure {
+    fn from(e: prost::DecodeError) -> Self {
+        // A body this server cannot decode is the client's malformed input, not a server bug.
+        Self::new(
+            GRPC_INVALID_ARGUMENT,
+            format!("could not decode request message: {}", e),
+        )
+    }
+}
+
+#[cfg(feature = "etcd")]
+impl From<prost::EncodeError> for GrpcFailure {
+    fn from(e: prost::EncodeError) -> Self {
+        Self::new(GRPC_INTERNAL, format!("could not encode response: {}", e))
+    }
+}
+
+/// Scan a handler's action results for an `etcd_error` and turn it into a gRPC status.
+///
+/// `etcd_error` is offered to the model on every etcd event. Before this, no handler looked
+/// for it, so a model correctly reporting "key not found" had its answer dropped and the
+/// client saw an empty success instead.
+#[cfg(feature = "etcd")]
+fn take_etcd_error(
+    results: &[crate::llm::actions::protocol_trait::ActionResult],
+) -> Option<GrpcFailure> {
+    for result in results {
+        if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = result {
+            if name == "etcd_error" {
+                let code = data
+                    .get("code")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("UNKNOWN");
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("etcdserver: request failed")
+                    .to_string();
+                return Some(GrpcFailure::from_action_code(code, message));
+            }
+        }
+    }
+    None
+}
+
+/// Build a body-less gRPC reply carrying a status code.
+///
+/// `HeaderValue::from_str` can fail: `message` originates in LLM output and `anyhow` chains,
+/// either of which may contain non-ASCII or control characters that are illegal in a header
+/// value. Falling back rather than unwrapping keeps a stray "✗" in a model's error message
+/// from panicking the connection task.
+#[cfg(feature = "etcd")]
+fn grpc_status_reply(status: i32, message: &str) -> Response<Full<Bytes>> {
+    let mut res = Response::new(Full::new(Bytes::new()));
+    *res.status_mut() = StatusCode::OK;
+    let headers = res.headers_mut();
+    headers.insert(
+        "content-type",
+        HeaderValue::from_static("application/grpc+proto"),
+    );
+    headers.insert(
+        "grpc-status",
+        HeaderValue::from_str(&status.to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("13")),
+    );
+    headers.insert(
+        "grpc-message",
+        HeaderValue::from_str(message)
+            .unwrap_or_else(|_| HeaderValue::from_static("internal error")),
+    );
+    res
 }
 
 /// etcd v3 server
@@ -124,8 +253,8 @@ impl EtcdServer {
             cluster_name
         );
 
-        // Create in-memory store
-        let store = Arc::new(Mutex::new(EtcdStore::new(cluster_id, member_id)));
+        // Create in-memory meta
+        let meta = Arc::new(Mutex::new(EtcdMeta::new(cluster_id, member_id)));
         let protocol = Arc::new(EtcdProtocol::new());
 
         // Bind to address
@@ -145,7 +274,7 @@ impl EtcdServer {
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
-                        let store_clone = store.clone();
+                        let meta_clone = meta.clone();
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
@@ -157,7 +286,7 @@ impl EtcdServer {
                                 state_clone,
                                 status_clone,
                                 server_id,
-                                store_clone,
+                                meta_clone,
                                 protocol_clone,
                             )
                             .await
@@ -167,7 +296,11 @@ impl EtcdServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "etcd accept error: {}", e);
+                        // A persistent accept error (EMFILE, listener torn down) recurs
+                        // immediately, so continuing spins a hot loop that floods the
+                        // unbounded status channel. Stop the listener instead.
+                        console_error!(status_tx, "etcd accept failed, listener stopped: {}", e);
+                        break;
                     }
                 }
             }
@@ -188,7 +321,7 @@ impl EtcdServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
+        meta: Arc<Mutex<EtcdMeta>>,
         protocol: Arc<EtcdProtocol>,
     ) -> Result<()> {
         use hyper::service::service_fn;
@@ -200,12 +333,12 @@ impl EtcdServer {
             let llm = llm_client.clone();
             let state = app_state.clone();
             let status = status_tx.clone();
-            let store_ref = store.clone();
+            let meta_ref = meta.clone();
             let proto = protocol.clone();
 
             async move {
                 Self::handle_grpc_request(
-                    req, peer_addr, local_addr, llm, state, status, server_id, store_ref, proto,
+                    req, peer_addr, local_addr, llm, state, status, server_id, meta_ref, proto,
                 )
                 .await
             }
@@ -226,60 +359,134 @@ impl EtcdServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
+        meta: Arc<Mutex<EtcdMeta>>,
         protocol: Arc<EtcdProtocol>,
     ) -> Result<Response<Full<Bytes>>> {
+        // Never return Err from here. hyper turns a service error into an abrupt HTTP/2
+        // stream reset with no gRPC status, which a client reports as a transport failure
+        // with no explanation; worse, an error out of service_fn tears down the whole
+        // multiplexed connection, killing every other in-flight RPC on it. Every failure
+        // below becomes a well-formed gRPC status reply instead.
+        Ok(
+            match Self::route_grpc_request(
+                req, llm_client, app_state, status_tx, server_id, meta, protocol,
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(GrpcFailure { status, message }) => grpc_status_reply(status, &message),
+            },
+        )
+    }
+
+    async fn route_grpc_request(
+        req: Request<Incoming>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
+        meta: Arc<Mutex<EtcdMeta>>,
+        protocol: Arc<EtcdProtocol>,
+    ) -> std::result::Result<Response<Full<Bytes>>, GrpcFailure> {
         // Store owned copies before consuming req
         let path = req.uri().path().to_string();
         let method = req.method().as_str().to_string();
 
         console_debug!(status_tx, "etcd gRPC {} {}", method, path);
 
-        // Read request body
-        let whole_body = req.collect().await?.to_bytes();
+        // Cap the body before buffering it. HTTP/2 flow control bounds the window, not the
+        // total, so an unbounded `collect()` lets one client grow the process without limit.
+        // The limit matches etcd's own --max-request-bytes default of 1.5 MiB.
+        let body = Limited::new(req.into_body(), MAX_REQUEST_BYTES);
+        let whole_body = body.collect().await.map_err(|e| {
+            GrpcFailure::new(
+                GRPC_RESOURCE_EXHAUSTED,
+                format!(
+                    "request body rejected (limit {} bytes): {}",
+                    MAX_REQUEST_BYTES, e
+                ),
+            )
+        })?;
+        let whole_body = whole_body.to_bytes();
 
-        // Parse gRPC frame: 5 bytes (compressed flag + length) + protobuf message
+        // Parse gRPC frame: 1 byte compression flag + 4 byte big-endian length + message.
         if whole_body.len() < 5 {
-            bail!("Invalid gRPC frame: too short");
+            return Err(GrpcFailure::new(
+                GRPC_INTERNAL,
+                format!("gRPC frame too short: {} bytes", whole_body.len()),
+            ));
         }
 
-        let _compressed = whole_body[0];
-        let msg_bytes = &whole_body[5..];
+        if whole_body[0] != 0 {
+            // The message is compressed; nothing here can decompress it, and silently
+            // handing the compressed bytes to prost would decode as garbage.
+            return Err(GrpcFailure::new(
+                GRPC_UNIMPLEMENTED,
+                "compressed gRPC messages are not supported".to_string(),
+            ));
+        }
+
+        // Honour the declared length rather than taking "everything after byte 5": the tail
+        // may hold a second frame (which this unary server does not handle) and a short
+        // declared length would otherwise feed trailing bytes into the protobuf decoder.
+        let declared =
+            u32::from_be_bytes([whole_body[1], whole_body[2], whole_body[3], whole_body[4]])
+                as usize;
+        let available = whole_body.len() - 5;
+        if declared > available {
+            return Err(GrpcFailure::new(
+                GRPC_INTERNAL,
+                format!(
+                    "gRPC frame declares {} bytes but only {} follow the header",
+                    declared, available
+                ),
+            ));
+        }
+        let msg_bytes = &whole_body[5..5 + declared];
 
         // Route to appropriate handler based on path
         let response_bytes = match path.as_str() {
             "/etcdserverpb.KV/Range" => {
                 Self::handle_range(
-                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                    msg_bytes, llm_client, app_state, status_tx, server_id, meta, protocol,
                 )
                 .await?
             }
             "/etcdserverpb.KV/Put" => {
                 Self::handle_put(
-                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                    msg_bytes, llm_client, app_state, status_tx, server_id, meta, protocol,
                 )
                 .await?
             }
             "/etcdserverpb.KV/DeleteRange" => {
                 Self::handle_delete_range(
-                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                    msg_bytes, llm_client, app_state, status_tx, server_id, meta, protocol,
                 )
                 .await?
             }
             "/etcdserverpb.KV/Txn" => {
                 Self::handle_txn(
-                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                    msg_bytes, llm_client, app_state, status_tx, server_id, meta, protocol,
                 )
                 .await?
             }
             "/etcdserverpb.KV/Compact" => {
                 Self::handle_compact(
-                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                    msg_bytes, llm_client, app_state, status_tx, server_id, meta, protocol,
                 )
                 .await?
             }
-            _ => {
-                bail!("Unknown gRPC method: {}", path);
+            // Only the KV service is implemented. Answering with UNIMPLEMENTED lets the
+            // client report a real gRPC error and keeps the connection usable; the previous
+            // bail! reset the whole HTTP/2 connection, taking concurrent RPCs with it.
+            other => {
+                return Err(GrpcFailure::new(
+                    GRPC_UNIMPLEMENTED,
+                    format!(
+                        "etcd server implements only etcdserverpb.KV; no method {}",
+                        other
+                    ),
+                ));
             }
         };
 
@@ -289,15 +496,15 @@ impl EtcdServer {
         response_with_frame.extend_from_slice(&(response_bytes.len() as u32).to_be_bytes());
         response_with_frame.extend_from_slice(&response_bytes);
 
-        // Build HTTP/2 response with gRPC headers
         let mut res = Response::new(Full::new(Bytes::from(response_with_frame)));
         *res.status_mut() = StatusCode::OK;
-        res.headers_mut()
-            .insert("content-type", "application/grpc+proto".parse().unwrap());
-        res.headers_mut()
-            .insert("grpc-status", "0".parse().unwrap()); // OK
-        res.headers_mut()
-            .insert("grpc-message", "".parse().unwrap());
+        let headers = res.headers_mut();
+        headers.insert(
+            "content-type",
+            HeaderValue::from_static("application/grpc+proto"),
+        );
+        headers.insert("grpc-status", HeaderValue::from_static("0"));
+        headers.insert("grpc-message", HeaderValue::from_static(""));
 
         Ok(res)
     }
@@ -308,9 +515,9 @@ impl EtcdServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
+        meta: Arc<Mutex<EtcdMeta>>,
         protocol: Arc<EtcdProtocol>,
-    ) -> Result<Vec<u8>> {
+    ) -> std::result::Result<Vec<u8>, GrpcFailure> {
         let request = RangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
@@ -339,8 +546,12 @@ impl EtcdServer {
         )
         .await?;
 
+        if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
+            return Err(failure);
+        }
+
         // Process LLM action results to build response
-        let store_lock = store.lock().await;
+        let meta_lock = meta.lock().await;
         let mut kvs = vec![];
         let mut more = false;
         let mut count = 0;
@@ -387,7 +598,7 @@ impl EtcdServer {
         }
 
         let response = RangeResponse {
-            header: Some(store_lock.get_response_header()),
+            header: Some(meta_lock.get_response_header()),
             kvs,
             more,
             count,
@@ -404,9 +615,9 @@ impl EtcdServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
+        meta: Arc<Mutex<EtcdMeta>>,
         protocol: Arc<EtcdProtocol>,
-    ) -> Result<Vec<u8>> {
+    ) -> std::result::Result<Vec<u8>, GrpcFailure> {
         let request = PutRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
@@ -454,8 +665,12 @@ impl EtcdServer {
             execution_result.protocol_results.len()
         );
 
+        if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
+            return Err(failure);
+        }
+
         // Process LLM action results to build response
-        let mut store_lock = store.lock().await;
+        let mut meta_lock = meta.lock().await;
         let mut revision: i64 = 0;
 
         for protocol_result in &execution_result.protocol_results {
@@ -468,13 +683,13 @@ impl EtcdServer {
                         .get("revision")
                         .and_then(|v| v.as_i64())
                         .unwrap_or_else(|| {
-                            store_lock.increment_revision();
-                            store_lock.revision
+                            meta_lock.increment_revision();
+                            meta_lock.revision
                         });
 
-                    // Update store revision if LLM provided one
-                    if revision > store_lock.revision {
-                        store_lock.revision = revision;
+                    // Update meta revision if LLM provided one
+                    if revision > meta_lock.revision {
+                        meta_lock.revision = revision;
                     }
                 }
             }
@@ -482,11 +697,11 @@ impl EtcdServer {
 
         // If LLM didn't provide revision, increment it ourselves
         if revision == 0 {
-            store_lock.increment_revision();
+            meta_lock.increment_revision();
         }
 
         let response = PutResponse {
-            header: Some(store_lock.get_response_header()),
+            header: Some(meta_lock.get_response_header()),
             prev_kv: None,
         };
 
@@ -501,9 +716,9 @@ impl EtcdServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
+        meta: Arc<Mutex<EtcdMeta>>,
         protocol: Arc<EtcdProtocol>,
-    ) -> Result<Vec<u8>> {
+    ) -> std::result::Result<Vec<u8>, GrpcFailure> {
         let request = DeleteRangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
@@ -548,8 +763,12 @@ impl EtcdServer {
             execution_result.protocol_results.len()
         );
 
+        if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
+            return Err(failure);
+        }
+
         // Process LLM action results to build response
-        let mut store_lock = store.lock().await;
+        let mut meta_lock = meta.lock().await;
         let mut deleted: i64 = 0;
 
         for protocol_result in &execution_result.protocol_results {
@@ -563,10 +782,10 @@ impl EtcdServer {
             }
         }
 
-        store_lock.increment_revision();
+        meta_lock.increment_revision();
 
         let response = DeleteRangeResponse {
-            header: Some(store_lock.get_response_header()),
+            header: Some(meta_lock.get_response_header()),
             deleted,
             prev_kvs: vec![],
         };
@@ -576,25 +795,114 @@ impl EtcdServer {
         Ok(buf)
     }
 
+    /// Handle a Txn.
+    ///
+    /// The comparison predicates are described to the handler and the handler decides whether
+    /// they hold; the *nested* operations inside the success/failure branches are still not
+    /// executed, so `responses` is always empty. This used to hardcode `succeeded: false`
+    /// with no LLM call at all, which made every etcd distributed-lock acquisition fail
+    /// unconditionally - and `etcd_txn_request` was advertised as an event that never fired.
     async fn handle_txn(
         msg_bytes: &[u8],
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
-        _protocol: Arc<EtcdProtocol>,
-    ) -> Result<Vec<u8>> {
-        let _request = TxnRequest::decode(msg_bytes)?;
+        server_id: crate::state::ServerId,
+        meta: Arc<Mutex<EtcdMeta>>,
+        protocol: Arc<EtcdProtocol>,
+    ) -> std::result::Result<Vec<u8>, GrpcFailure> {
+        use crate::server::etcd::actions::ETCD_TXN_REQUEST_EVENT;
 
-        console_debug!(status_tx, "etcd Txn request");
+        let request = TxnRequest::decode(msg_bytes)?;
 
-        let mut store_lock = store.lock().await;
-        store_lock.increment_revision();
+        console_debug!(
+            status_tx,
+            "etcd Txn request: {} compare(s), {} success op(s), {} failure op(s)",
+            request.compare.len(),
+            request.success.len(),
+            request.failure.len()
+        );
+
+        // Describe the predicates as structured JSON. Protobuf enums are rendered as their
+        // spec names rather than raw numbers so a handler can reason about them.
+        let compares: Vec<serde_json::Value> = request
+            .compare
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "key": String::from_utf8_lossy(&c.key),
+                    "range_end": if c.range_end.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::json!(String::from_utf8_lossy(&c.range_end))
+                    },
+                    "result": match c.result {
+                        0 => "EQUAL",
+                        1 => "GREATER",
+                        2 => "LESS",
+                        3 => "NOT_EQUAL",
+                        _ => "UNKNOWN",
+                    },
+                    "target": match c.target {
+                        0 => "VERSION",
+                        1 => "CREATE",
+                        2 => "MOD",
+                        3 => "VALUE",
+                        4 => "LEASE",
+                        _ => "UNKNOWN",
+                    },
+                })
+            })
+            .collect();
+
+        let event = Event::new(
+            &ETCD_TXN_REQUEST_EVENT,
+            serde_json::json!({
+                "compare_count": request.compare.len(),
+                "success_count": request.success.len(),
+                "failure_count": request.failure.len(),
+                "compares": compares,
+            }),
+        );
+
+        let execution_result = call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            None,
+            &event,
+            protocol.as_ref(),
+        )
+        .await?;
+
+        for message in &execution_result.messages {
+            console_info!(status_tx, "{}", message);
+        }
+
+        if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
+            return Err(failure);
+        }
+
+        let mut succeeded = false;
+        for protocol_result in &execution_result.protocol_results {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } =
+                protocol_result
+            {
+                if name == "etcd_txn_response" {
+                    succeeded = data
+                        .get("succeeded")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                }
+            }
+        }
+
+        let mut meta_lock = meta.lock().await;
+        meta_lock.increment_revision();
 
         let response = TxnResponse {
-            header: Some(store_lock.get_response_header()),
-            succeeded: false,
+            header: Some(meta_lock.get_response_header()),
+            succeeded,
             responses: vec![],
         };
 
@@ -609,9 +917,9 @@ impl EtcdServer {
         _app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         _server_id: crate::state::ServerId,
-        store: Arc<Mutex<EtcdStore>>,
+        meta: Arc<Mutex<EtcdMeta>>,
         _protocol: Arc<EtcdProtocol>,
-    ) -> Result<Vec<u8>> {
+    ) -> std::result::Result<Vec<u8>, GrpcFailure> {
         let request = CompactionRequest::decode(msg_bytes)?;
 
         console_debug!(
@@ -620,10 +928,10 @@ impl EtcdServer {
             request.revision
         );
 
-        let store_lock = store.lock().await;
+        let meta_lock = meta.lock().await;
 
         let response = CompactionResponse {
-            header: Some(store_lock.get_response_header()),
+            header: Some(meta_lock.get_response_header()),
         };
 
         let mut buf = Vec::new();
