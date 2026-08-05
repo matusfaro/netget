@@ -29,6 +29,8 @@ impl Protocol for TorrentDhtProtocol {
             SEND_PING_RESPONSE_ACTION.clone(),
             SEND_FIND_NODE_RESPONSE_ACTION.clone(),
             SEND_GET_PEERS_RESPONSE_ACTION.clone(),
+            SEND_ANNOUNCE_PEER_RESPONSE_ACTION.clone(),
+            SEND_DHT_ERROR_RESPONSE_ACTION.clone(),
         ]
     }
     fn protocol_name(&self) -> &'static str {
@@ -39,6 +41,7 @@ impl Protocol for TorrentDhtProtocol {
             DHT_PING_QUERY_EVENT.clone(),
             DHT_FIND_NODE_QUERY_EVENT.clone(),
             DHT_GET_PEERS_QUERY_EVENT.clone(),
+            DHT_ANNOUNCE_PEER_QUERY_EVENT.clone(),
         ]
     }
     fn stack_name(&self) -> &'static str {
@@ -145,9 +148,15 @@ impl Server for TorrentDhtProtocol {
             .context("Missing 'type' field")?;
 
         match action_type {
-            "send_ping_response" => self.execute_send_ping_response(action),
+            // announce_peer's reply is a bare `{"id": ...}`, exactly like ping's (BEP 5).
+            // It gets its own name so the model is not told to answer an announce with a
+            // "ping response".
+            "send_ping_response" | "send_announce_peer_response" => {
+                self.execute_send_ping_response(action)
+            }
             "send_find_node_response" => self.execute_send_find_node_response(action),
             "send_get_peers_response" => self.execute_send_get_peers_response(action),
+            "send_dht_error_response" => self.execute_send_error_response(action),
             _ => Err(anyhow::anyhow!("Unknown DHT action: {}", action_type)),
         }
     }
@@ -309,14 +318,90 @@ impl TorrentDhtProtocol {
         let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response))?;
         Ok(ActionResult::Output(bencode_data))
     }
+
+    /// KRPC error reply (`y=e`, BEP 5): `{"t": <txn>, "y": "e", "e": [code, message]}`.
+    fn execute_send_error_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let transaction_id = hex::decode(
+            action
+                .get("transaction_id")
+                .and_then(|v| v.as_str())
+                .context("Missing transaction_id")?,
+        )?;
+        let code = action.get("code").and_then(|v| v.as_u64()).unwrap_or(201) as i64;
+        let message = action
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Generic Error");
+
+        let mut response = std::collections::HashMap::new();
+        response.insert(
+            b"t".to_vec(),
+            serde_bencode::value::Value::Bytes(transaction_id),
+        );
+        response.insert(
+            b"y".to_vec(),
+            serde_bencode::value::Value::Bytes(b"e".to_vec()),
+        );
+        response.insert(
+            b"e".to_vec(),
+            serde_bencode::value::Value::List(vec![
+                serde_bencode::value::Value::Int(code),
+                serde_bencode::value::Value::Bytes(message.as_bytes().to_vec()),
+            ]),
+        );
+
+        let bencode_data = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(response))?;
+        Ok(ActionResult::Output(bencode_data))
+    }
+}
+
+/// Fields present on every KRPC query event.
+///
+/// `transaction_id` is the correlation id: a reply that does not echo it verbatim is
+/// discarded by the querying node and the client hangs until its own timeout. It is
+/// hex-encoded because the two bytes a client picks are arbitrary and usually not text.
+fn common_query_parameters() -> Vec<Parameter> {
+    vec![
+        Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded KRPC transaction id (`t`). MUST be echoed back \
+                          verbatim in the response or the querying node drops the reply."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "query_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "The `q` method name as it appeared on the wire (ping, find_node, \
+                          get_peers, announce_peer, or something unrecognised)"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Querying node's 20-byte node ID, hex-encoded".to_string(),
+            required: false,
+        },
+    ]
 }
 
 pub static DHT_PING_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dht_ping_query",
-        "DHT ping query",
-        json!({"type": "placeholder", "event_id": "dht_ping_query"}),
+        "DHT node is checking whether we are alive",
+        json!({
+            "type": "send_ping_response",
+            "transaction_id": "{{event.transaction_id}}",
+            "node_id": "0123456789abcdef0123456789abcdef01234567"
+        }),
     )
+    .with_parameters(common_query_parameters())
+    .with_actions(vec![
+        SEND_PING_RESPONSE_ACTION.clone(),
+        SEND_DHT_ERROR_RESPONSE_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} DHT ping ({duration_ms}ms)")
@@ -326,11 +411,29 @@ pub static DHT_PING_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static DHT_FIND_NODE_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    let mut parameters = common_query_parameters();
+    parameters.push(Parameter {
+        name: "target".to_string(),
+        type_hint: "string".to_string(),
+        description: "20-byte node ID being looked up, hex-encoded".to_string(),
+        required: false,
+    });
+
     EventType::new(
         "dht_find_node_query",
-        "DHT find_node query",
-        json!({"type": "placeholder", "event_id": "dht_find_node_query"}),
+        "DHT node is asking for the nodes closest to a target ID",
+        json!({
+            "type": "send_find_node_response",
+            "transaction_id": "{{event.transaction_id}}",
+            "node_id": "0123456789abcdef0123456789abcdef01234567",
+            "nodes": []
+        }),
     )
+    .with_parameters(parameters)
+    .with_actions(vec![
+        SEND_FIND_NODE_RESPONSE_ACTION.clone(),
+        SEND_DHT_ERROR_RESPONSE_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} DHT find_node ({duration_ms}ms)")
@@ -340,11 +443,30 @@ pub static DHT_FIND_NODE_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static DHT_GET_PEERS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    let mut parameters = common_query_parameters();
+    parameters.push(Parameter {
+        name: "info_hash".to_string(),
+        type_hint: "string".to_string(),
+        description: "20-byte torrent info hash being looked up, hex-encoded".to_string(),
+        required: false,
+    });
+
     EventType::new(
         "dht_get_peers_query",
-        "DHT get_peers query",
-        json!({"type": "placeholder", "event_id": "dht_get_peers_query"}),
+        "DHT node is asking which peers are downloading a torrent",
+        json!({
+            "type": "send_get_peers_response",
+            "transaction_id": "{{event.transaction_id}}",
+            "node_id": "0123456789abcdef0123456789abcdef01234567",
+            "token": "aoeusnth",
+            "peers": [{"ip": "127.0.0.1", "port": 51413}]
+        }),
     )
+    .with_parameters(parameters)
+    .with_actions(vec![
+        SEND_GET_PEERS_RESPONSE_ACTION.clone(),
+        SEND_DHT_ERROR_RESPONSE_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} DHT get_peers ({duration_ms}ms)")
@@ -353,17 +475,84 @@ pub static DHT_GET_PEERS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     )
 });
 
+pub static DHT_ANNOUNCE_PEER_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    let mut parameters = common_query_parameters();
+    parameters.extend(vec![
+        Parameter {
+            name: "info_hash".to_string(),
+            type_hint: "string".to_string(),
+            description: "20-byte torrent info hash being announced, hex-encoded".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "port".to_string(),
+            type_hint: "number".to_string(),
+            description: "Port the announcing peer is listening on".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "token".to_string(),
+            type_hint: "string".to_string(),
+            description: "Token this node handed out in an earlier get_peers reply. \
+                          Nothing validates it; reject with send_dht_error_response \
+                          (code 203) if it is wrong."
+                .to_string(),
+            required: false,
+        },
+    ]);
+
+    EventType::new(
+        "dht_announce_peer_query",
+        "DHT node is announcing that it is downloading a torrent",
+        json!({
+            "type": "send_announce_peer_response",
+            "transaction_id": "{{event.transaction_id}}",
+            "node_id": "0123456789abcdef0123456789abcdef01234567"
+        }),
+    )
+    .with_parameters(parameters)
+    .with_actions(vec![
+        SEND_ANNOUNCE_PEER_RESPONSE_ACTION.clone(),
+        SEND_DHT_ERROR_RESPONSE_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("{client_ip} DHT announce_peer ({duration_ms}ms)")
+            .with_debug("DHT announce_peer from {client_ip}: info_hash={info_hash} port={port}")
+            .with_trace("DHT announce_peer: {json_pretty(.)}"),
+    )
+});
+
+/// `transaction_id` and `node_id`, shared by every KRPC reply action.
+fn reply_parameters() -> Vec<Parameter> {
+    vec![
+        Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded transaction id from the query. Use \
+                          \"{{event.transaction_id}}\" — a reply carrying any other value \
+                          is discarded by the querying node."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "node_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "This node's own 20-byte ID, hex-encoded (40 chars). Defaults to \
+                          all zeros, which real nodes treat as suspicious; pick a stable \
+                          random ID instead."
+                .to_string(),
+            required: false,
+        },
+    ]
+}
+
 pub static SEND_PING_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
         name: "send_ping_response".to_string(),
         description: "Send DHT ping response".to_string(),
-        parameters: vec![Parameter {
-            name: "transaction_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Transaction ID (hex)".to_string(),
-            required: true,
-        }],
-        example: json!({"type": "send_ping_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567"}),
+        parameters: reply_parameters(),
+        example: json!({"type": "send_ping_response", "transaction_id": "{{event.transaction_id}}", "node_id": "0123456789abcdef0123456789abcdef01234567"}),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> DHT ping response")
@@ -375,22 +564,22 @@ pub static SEND_PING_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new
 pub static SEND_FIND_NODE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
         name: "send_find_node_response".to_string(),
-        description: "Send DHT find_node response".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "transaction_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Transaction ID (hex)".to_string(),
-                required: true,
-            },
-            Parameter {
+        description: "Send DHT find_node response carrying the closest nodes we know of"
+            .to_string(),
+        parameters: {
+            let mut p = reply_parameters();
+            p.push(Parameter {
                 name: "nodes".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of node objects with id, ip, port".to_string(),
+                description: "Array of {id (40 hex chars), ip (IPv4 dotted quad), port}. \
+                              Entries with a non-20-byte id or a non-IPv4 address are \
+                              silently dropped; an empty array is a valid answer."
+                    .to_string(),
                 required: false,
-            },
-        ],
-        example: json!({"type": "send_find_node_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567", "nodes": [{"id": "0123456789abcdef0123456789abcdef01234567", "ip": "192.168.1.100", "port": 6881}]}),
+            });
+            p
+        },
+        example: json!({"type": "send_find_node_response", "transaction_id": "{{event.transaction_id}}", "node_id": "0123456789abcdef0123456789abcdef01234567", "nodes": [{"id": "0123456789abcdef0123456789abcdef01234567", "ip": "192.168.1.100", "port": 6881}]}),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> DHT find_node: {nodes_len} nodes")
@@ -402,26 +591,90 @@ pub static SEND_FIND_NODE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock
 pub static SEND_GET_PEERS_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {
         name: "send_get_peers_response".to_string(),
-        description: "Send DHT get_peers response".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "transaction_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Transaction ID (hex)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "peers".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of peer objects with ip, port".to_string(),
-                required: false,
-            },
-        ],
-        example: json!({"type": "send_get_peers_response", "transaction_id": "aa", "node_id": "0123456789abcdef0123456789abcdef01234567", "token": "aoeusnth", "peers": [{"ip": "192.168.1.100", "port": 51413}]}),
+        description: "Send DHT get_peers response with the peers we know for the info_hash"
+            .to_string(),
+        parameters: {
+            let mut p = reply_parameters();
+            p.extend(vec![
+                Parameter {
+                    name: "token".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Opaque token the querier must echo in a later \
+                                  announce_peer (default: \"token\"). Sent as plain text, \
+                                  not hex."
+                        .to_string(),
+                    required: false,
+                },
+                Parameter {
+                    name: "peers".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Array of {ip (IPv4 dotted quad), port}. Omit the key \
+                                  entirely to signal 'no peers known'; non-IPv4 entries \
+                                  are dropped."
+                        .to_string(),
+                    required: false,
+                },
+            ]);
+            p
+        },
+        example: json!({"type": "send_get_peers_response", "transaction_id": "{{event.transaction_id}}", "node_id": "0123456789abcdef0123456789abcdef01234567", "token": "aoeusnth", "peers": [{"ip": "192.168.1.100", "port": 51413}]}),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> DHT get_peers: {peers_len} peers")
                 .with_debug("DHT get_peers response: {peers_len} peers"),
+        ),
+    }
+});
+
+pub static SEND_ANNOUNCE_PEER_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "send_announce_peer_response".to_string(),
+        description: "Acknowledge an announce_peer query. The reply body is just this \
+                      node's ID (BEP 5); nothing about the announcement is stored."
+            .to_string(),
+        parameters: reply_parameters(),
+        example: json!({"type": "send_announce_peer_response", "transaction_id": "{{event.transaction_id}}", "node_id": "0123456789abcdef0123456789abcdef01234567"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHT announce_peer ack")
+                .with_debug("DHT announce_peer response: node_id={node_id}"),
+        ),
+    }
+});
+
+pub static SEND_DHT_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "send_dht_error_response".to_string(),
+        description: "Reject a query with a KRPC error (`y=e`)".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "transaction_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Hex-encoded transaction id from the query; use \
+                              \"{{event.transaction_id}}\""
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "code".to_string(),
+                type_hint: "number".to_string(),
+                description: "BEP 5 error code: 201 generic (default), 202 server error, \
+                              203 protocol error, 204 method unknown"
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Human-readable error text".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({"type": "send_dht_error_response", "transaction_id": "{{event.transaction_id}}", "code": 204, "message": "Method Unknown"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> DHT error {code}: {message}")
+                .with_debug("DHT error response: code={code} message={message}"),
         ),
     }
 });

@@ -111,7 +111,20 @@ impl TorrentDhtServer {
                                         "ping" => &actions::DHT_PING_QUERY_EVENT,
                                         "find_node" => &actions::DHT_FIND_NODE_QUERY_EVENT,
                                         "get_peers" => &actions::DHT_GET_PEERS_QUERY_EVENT,
-                                        _ => &actions::DHT_PING_QUERY_EVENT, // Default to ping
+                                        "announce_peer" => &actions::DHT_ANNOUNCE_PEER_QUERY_EVENT,
+                                        // An unrecognised `q` still reaches the ping
+                                        // handler, whose reply shape (`{"id": ...}`) is the
+                                        // KRPC minimum. `query_type` in the event data says
+                                        // what actually arrived, so a handler can answer
+                                        // with send_dht_error_response code 204 instead.
+                                        other => {
+                                            tracing::warn!(
+                                                "BitTorrent DHT: unsupported query '{}', \
+                                                 routing to dht_ping_query",
+                                                other
+                                            );
+                                            &actions::DHT_PING_QUERY_EVENT
+                                        }
                                     };
                                     let event = Event::new(event_type, serde_json::json!(params));
 
@@ -255,8 +268,12 @@ impl TorrentDhtServer {
                     }
                 });
 
-                // Get arguments
+                // Get arguments.
+                //
+                // `query_type` is always present so a handler can tell an announce_peer
+                // from an unsupported method, both of which reach the ping event.
                 let mut params = serde_json::Map::new();
+                params.insert("query_type".to_string(), serde_json::json!(&query_type));
                 if let Some(transaction_id) = transaction_id {
                     params.insert(
                         "transaction_id".to_string(),
@@ -267,7 +284,17 @@ impl TorrentDhtServer {
                 if let Some(Value::Dict(args)) = dict.get::<[u8]>(b"a") {
                     for (k, v) in args {
                         let key = String::from_utf8_lossy(k).to_string();
-                        let value = Self::bencode_to_json(v);
+                        // `id`, `target` and `info_hash` are always 20 raw bytes and are
+                        // documented as hex. bencode_to_json would render them as text
+                        // whenever all 20 bytes happened to be printable ASCII, so the
+                        // same field arrived hex-encoded or not depending on the client's
+                        // random ID — and hex::decode on the response side then failed.
+                        let value = match (key.as_str(), v) {
+                            ("id" | "target" | "info_hash", Value::Bytes(bytes)) => {
+                                serde_json::json!(hex::encode(bytes))
+                            }
+                            _ => Self::bencode_to_json(v),
+                        };
                         params.insert(key, value);
                     }
                 }

@@ -90,68 +90,70 @@ impl TorrentDhtServer {
 
 **Protocol Trait Implementation**: `Server` trait from `crate::llm::actions::protocol_trait`
 
+Every event type calls `.with_actions(...)` and `.with_parameters(...)`. Until they did,
+`call_llm` advertised none of the DHT's actions — it builds the model's tool list from
+`event.event_type.actions`, not from `get_sync_actions()` — so the model was never told a
+`transaction_id` existed to echo, and every DHT action it produced was rejected as unknown.
+
+**Correlation**: KRPC's transaction id (`t`) is the correlation key. A reply that does not
+echo it verbatim is discarded by the querying node, which then hangs until its own timeout.
+It reaches handlers hex-encoded (the two bytes a client picks are arbitrary and usually not
+text) and every reply action takes it back in the same form. A static handler can echo it
+without an LLM call: `"transaction_id": "{{event.transaction_id}}"`.
+
 **Sync Actions** (network-triggered):
 
 1. **send_ping_response** - Respond to DHT ping
-    - Parameters: `transaction_id` (hex string), `node_id` (hex string, optional)
-    - Output: Bencode KRPC response
+    - Parameters: `transaction_id` (hex, required), `node_id` (hex, 40 chars, optional —
+      defaults to all zeros, which real nodes treat as suspicious)
     - Example:
    ```json
-   {
-     "type": "send_ping_response",
-     "transaction_id": "aa",
-     "node_id": "0123456789abcdef0123456789abcdef01234567"
-   }
+   {"type": "send_ping_response", "transaction_id": "{{event.transaction_id}}",
+    "node_id": "0123456789abcdef0123456789abcdef01234567"}
    ```
 
 2. **send_find_node_response** - Return closest nodes to target
-    - Parameters: `transaction_id`, `node_id`, `nodes` (array of {id, ip, port})
-    - Output: Bencode response with compact node info (26 bytes per node: 20 ID + 4 IP + 2 port)
-    - Example:
-   ```json
-   {
-     "type": "send_find_node_response",
-     "transaction_id": "aa",
-     "node_id": "0123456789abcdef0123456789abcdef01234567",
-     "nodes": [
-       {"id": "fedcba9876543210fedcba9876543210fedcba98", "ip": "192.168.1.100", "port": 6881}
-     ]
-   }
-   ```
+    - Parameters: `transaction_id`, `node_id`, `nodes` (array of `{id, ip, port}`)
+    - Output: compact node info, 26 bytes per node (20 ID + 4 IPv4 + 2 port). Entries with
+      a non-20-byte id or a non-IPv4 address are silently dropped.
 
-3. **send_get_peers_response** - Return peers for info_hash (or closest nodes)
-    - Parameters: `transaction_id`, `node_id`, `token`, `peers` (optional array)
-    - Output: Bencode response with compact peer list (6 bytes per peer: 4 IP + 2 port)
-    - Example:
-   ```json
-   {
-     "type": "send_get_peers_response",
-     "transaction_id": "aa",
-     "node_id": "0123456789abcdef0123456789abcdef01234567",
-     "token": "aoeusnth",
-     "peers": [
-       {"ip": "192.168.1.100", "port": 51413}
-     ]
-   }
-   ```
+3. **send_get_peers_response** - Return peers for info_hash
+    - Parameters: `transaction_id`, `node_id`, `token` (plain text, default `"token"`),
+      `peers` (array of `{ip, port}`)
+    - Output: compact peer list under `values`, 6 bytes per peer (4 IPv4 + 2 port). Omit
+      `peers` entirely to signal "no peers known".
+
+4. **send_announce_peer_response** - Acknowledge an announce_peer
+    - Parameters: `transaction_id`, `node_id`
+    - The BEP 5 reply body for announce_peer is just the responding node's ID, identical to
+      ping's. It gets its own action name so the model is not told to answer an
+      announcement with a "ping response". Nothing about the announcement is stored.
+
+5. **send_dht_error_response** - Reject a query with a KRPC error (`y=e`)
+    - Parameters: `transaction_id`, `code` (201 generic (default) / 202 server / 203
+      protocol / 204 method unknown), `message`
+    - Available on every event; the natural answer to a `query_type` this server does not
+      support is code 204.
 
 **Event Types** (incoming queries):
 
-1. **dht_ping_query** - DHT node health check
-    - Payload: `{transaction_id: "aa", id: "node_id_hex"}`
-    - Purpose: Verify node is alive
+Every query event carries `transaction_id`, `query_type` and (when present) `id`.
+`query_type` is the `q` method name exactly as it arrived.
 
-2. **dht_find_node_query** - Request closest nodes to target ID
-    - Payload: `{transaction_id: "aa", id: "querier_node_id", target: "target_node_id"}`
-    - Purpose: Kademlia routing table population
+1. **dht_ping_query** — node health check
+2. **dht_find_node_query** — adds `target` (hex)
+3. **dht_get_peers_query** — adds `info_hash` (hex)
+4. **dht_announce_peer_query** — adds `info_hash` (hex), `port`, `token`
 
-3. **dht_get_peers_query** - Request peers for info_hash
-    - Payload: `{transaction_id: "aa", id: "querier_node_id", info_hash: "torrent_info_hash"}`
-    - Purpose: Peer discovery for specific torrent
+An unrecognised `q` also reaches `dht_ping_query`, whose reply shape (`{"id": ...}`) is the
+KRPC minimum, but `query_type` says what actually arrived so a handler can answer with
+`send_dht_error_response` code 204 instead. This is logged at WARN.
 
-4. **dht_announce_peer_query** (not implemented yet)
-    - Payload: `{transaction_id: "aa", id: "querier_node_id", info_hash: "...", port: 6881, token: "..."}`
-    - Purpose: Announce peer's participation in torrent
+**Hex encoding of ID fields**: `id`, `target` and `info_hash` are always rendered as hex,
+unconditionally. The generic `bencode_to_json` converter renders a byte string as *text*
+whenever every byte happens to be printable ASCII, so the same field used to arrive
+hex-encoded or not depending on the client's random node ID — and `hex::decode` on the
+response side then failed. These three keys bypass that heuristic.
 
 ### Compact Encoding
 
@@ -268,23 +270,19 @@ You are a BitTorrent DHT node. Respond to ping queries with your node ID. For fi
 
 ## Connection State Tracking
 
-**ProtocolConnectionInfo Variant**:
-
-```rust
-TorrentDht {
-    recent_queries: Vec<(String, Instant)>,  // Query type + timestamp
-}
-```
-
-Note: UDP is connectionless, so each datagram creates a temporary "connection" entry. Connections are short-lived (
-single query-response).
+`protocol_info` is `ProtocolConnectionInfo::empty()`. `ProtocolConnectionInfo` is a generic
+`serde_json::Value` wrapper (`state/server.rs`), not the per-protocol enum earlier versions
+of this file described: there is no `TorrentDht` variant and no `recent_queries` list. UDP
+is connectionless, so each datagram creates one short-lived connection entry.
 
 ## Limitations
 
 1. **No Routing Table**: LLM-based DHT doesn't maintain a persistent Kademlia routing table. Responses may be random or
    empty.
 
-2. **No Peer Storage**: Peers announced via announce_peer are not persisted (unless LLM explicitly tracks them).
+2. **No Peer Storage**: `send_announce_peer_response` acknowledges an announcement and
+   records nothing. Protocols must not implement storage; the LLM's memory (or the generic
+   SQLite facility, if it opts in) is where any peer table would live.
 
 3. **No Bootstrap**: No automatic bootstrapping to join the global DHT network. Node exists in isolation unless manually
    connected.
@@ -296,8 +294,9 @@ single query-response).
 6. **Stateless**: Each query is independent. No concept of "good" vs "bad" nodes, timeouts, or routing table
    maintenance.
 
-7. **Limited Query Types**: Only ping, find_node, get_peers implemented. announce_peer parsing exists but no action
-   defined yet.
+7. **Limited Query Types**: ping, find_node, get_peers and announce_peer are implemented.
+   Anything else falls through to `dht_ping_query` with `query_type` set to the real
+   method name.
 
 ## DHT Concepts
 
