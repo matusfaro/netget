@@ -999,6 +999,36 @@ early data could be processed against a missing entry. Fixed there; the same sha
 - `src/server/openvpn/actions.rs:194` still shows `{"type": "no_action"}` in a startup example;
   `no_action` exists nowhere in NetGet.
 
+### 77. pgwire panics the PostgreSQL connection on a malformed simple query **[verified]**
+
+`pgwire` 0.35's `decode_packet` (`codec.rs:62-83`) bounds the declared message length only
+from *above*, then hands `decode_fn` the entire remaining buffer rather than a slice limited
+to `msg_len`. `get_cstring` (`codec.rs:26`) scans for a NUL, exits with `i == buf.remaining()`
+when there isn't one, and calls `split_to(i + 1)` — which panics.
+
+**Reproduced against a running NetGet PostgreSQL server**, and the repro corrects the
+audit's framing in one respect worth keeping straight:
+
+- The audit described it as unauthenticated and reachable with six bytes. Sending
+  `51 00 00 00 05 78` on a fresh connection does **nothing** — no panic, no reply.
+- It needs the startup handshake first. After a valid startup message, the same six bytes
+  panic inside `bytes-1.10.1/src/bytes_mut.rs:396`.
+
+Since NetGet's PostgreSQL server performs no authentication — the model answers everything —
+"unauthenticated" is fair *for NetGet*, but the precise repro is handshake-then-six-bytes, and
+anyone writing this up upstream needs that distinction.
+
+Severity, measured rather than assumed: the panic kills **that connection's task only**. The
+server stayed up and accepted a further connection. So this is not in the class of item 71's
+server-killers; it is a malformed message producing a panic instead of a clean protocol error.
+Still worth fixing, because a panicking connection is a silent one.
+
+The fix belongs upstream — `pgwire` owns the socket loop, so NetGet cannot bound the frame
+without wrapping the stream. Report it there. `opensrv-mysql`'s `params.rs` cluster (five
+malformed `COM_STMT_EXECUTE` shapes, including an explicit `panic!("bad column type")` on a
+client-chosen byte) and `kafka-protocol`'s unbounded element counts are the same shape and are
+documented in the panic audit.
+
 ### 71. Running tally of remotely-reachable crashes **[verified]**
 
 Ten found and fixed this session, all in socket tasks where a panic is silent while the server
