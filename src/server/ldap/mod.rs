@@ -1,11 +1,28 @@
-//! LDAP server implementation
+//! LDAPv3 server with hand-written ASN.1 BER coding.
+//!
+//! No LDAP crate is used, so this module decodes attacker-controlled BER by hand — the
+//! highest-risk parsing in the file-service protocol group. The invariant every decoder here
+//! keeps: **no index or range is used before it has been checked against the remaining
+//! buffer.** `read_ber_element` is the single entry point, and it validates that an element's
+//! claimed length actually fits before handing back a `value` slice; nothing else slices raw
+//! input. Recursion (search filters) is depth-limited, and message size is capped.
+//!
+//! There is no directory. A bind is granted by the model, a search returns entries the model
+//! names, and add/modify/delete are acknowledged without anything changing here, because there
+//! is nothing here to change. Whether a following search agrees with an earlier add is the
+//! model's memory to keep.
+//!
+//! Not implemented: SASL (the mechanism is reported so it can be refused), StartTLS, LDAPS,
+//! referrals, controls, extended operations, compare, modifyDN, and abandon. Search scope,
+//! filter and requested-attribute list are decoded and handed to the model as text, but never
+//! evaluated here.
 pub mod actions;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::console_error;
 #[cfg(feature = "ldap")]
@@ -21,7 +38,10 @@ use crate::server::LdapProtocol;
 #[cfg(feature = "ldap")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "ldap")]
-use actions::{LDAP_BIND_EVENT, LDAP_SEARCH_EVENT, LDAP_UNBIND_EVENT};
+use actions::{
+    LDAP_ADD_EVENT, LDAP_BIND_EVENT, LDAP_DELETE_EVENT, LDAP_MODIFY_EVENT, LDAP_SEARCH_EVENT,
+    LDAP_UNBIND_EVENT,
+};
 
 /// LDAP server that handles directory operations with LLM
 pub struct LdapServer;
@@ -119,15 +139,76 @@ struct LdapSession {
 
 #[cfg(feature = "ldap")]
 impl LdapSession {
+    /// Read LDAP messages off the socket and answer them.
+    ///
+    /// Messages are framed by their BER length rather than by read boundaries. The previous
+    /// implementation treated one `read()` as exactly one message, which is wrong in both
+    /// directions: `ldapsearch` pipelines bind and search into a single segment (the second
+    /// message was silently discarded), and any message larger than the 8 KiB buffer, or split
+    /// across segments by the network, was rejected as malformed.
     async fn handle(&mut self) -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        loop {
-            // Read LDAP message (ASN.1 BER encoded)
-            // LDAP messages are SEQUENCE { messageID INTEGER, protocolOp CHOICE, controls OPTIONAL }
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut chunk = vec![0u8; READ_CHUNK];
 
-            let mut buf = vec![0u8; 8192];
-            let n = match self.stream.read(&mut buf).await {
+        loop {
+            // Drain every complete message already buffered before reading more.
+            loop {
+                let message_len = match ldap_message_len(&buffer) {
+                    Ok(Some(len)) => len,
+                    Ok(None) => break, // need more bytes
+                    Err(e) => {
+                        error!("LDAP framing error: {}", e);
+                        let _ = self
+                            .status_tx
+                            .send(format!("[ERROR] LDAP framing error: {}", e));
+                        return Ok(());
+                    }
+                };
+
+                let message: Vec<u8> = buffer.drain(..message_len).collect();
+                trace!("LDAP message {} bytes: {:02x?}", message.len(), message);
+
+                let step = match self.handle_message(&message).await {
+                    Ok(step) => step,
+                    Err(e) => {
+                        error!("LDAP parse error: {}", e);
+                        let _ = self
+                            .status_tx
+                            .send(format!("[ERROR] LDAP parse error: {}", e));
+                        return Ok(());
+                    }
+                };
+
+                let (response, close_after) = match step {
+                    SessionStep::Respond(response) => (Some(response), false),
+                    SessionStep::RespondAndClose(response) => (Some(response), true),
+                    SessionStep::Close => (None, true),
+                };
+
+                if let Some(response) = response {
+                    trace!("LDAP sending {} bytes: {:02x?}", response.len(), response);
+                    let _ = self
+                        .status_tx
+                        .send(format!("[TRACE] LDAP sending {} bytes", response.len()));
+                    self.stream.write_all(&response).await?;
+                    self.stream.flush().await?;
+                }
+
+                if close_after {
+                    return Ok(());
+                }
+            }
+
+            if buffer.len() >= MAX_LDAP_MESSAGE {
+                // Only reachable when a peer sends a long-form length header promising a huge
+                // message; ldap_message_len rejects those, so this is belt and braces.
+                error!("LDAP receive buffer exceeded {} bytes", MAX_LDAP_MESSAGE);
+                return Ok(());
+            }
+
+            let n = match self.stream.read(&mut chunk).await {
                 Ok(0) => break, // Connection closed
                 Ok(n) => n,
                 Err(e) => {
@@ -138,129 +219,166 @@ impl LdapSession {
                     break;
                 }
             };
-
-            buf.truncate(n);
-            trace!("LDAP received {} bytes: {:02x?}", n, buf);
             let _ = self
                 .status_tx
                 .send(format!("[TRACE] LDAP received {} bytes", n));
-
-            // Parse LDAP message
-            match self.parse_ldap_message(&buf).await {
-                Ok(Some(response)) => {
-                    trace!("LDAP sending {} bytes: {:02x?}", response.len(), response);
-                    let _ = self
-                        .status_tx
-                        .send(format!("[TRACE] LDAP sending {} bytes", response.len()));
-
-                    self.stream.write_all(&response).await?;
-                    self.stream.flush().await?;
-                }
-                Ok(None) => {
-                    // No response needed (e.g., unbind)
-                    break;
-                }
-                Err(e) => {
-                    error!("LDAP parse error: {}", e);
-                    let _ = self
-                        .status_tx
-                        .send(format!("[ERROR] LDAP parse error: {}", e));
-                    break;
-                }
-            }
+            buffer.extend_from_slice(&chunk[..n]);
         }
 
         Ok(())
     }
 
-    async fn parse_ldap_message(&mut self, data: &[u8]) -> Result<Option<Vec<u8>>> {
-        // Simple LDAP message parser
-        // This is a simplified implementation that handles basic Bind, Search, and Unbind operations
-
-        if data.len() < 7 {
-            anyhow::bail!("LDAP message too short");
+    /// Decode one complete LDAPMessage and dispatch on its protocolOp.
+    async fn handle_message(&mut self, data: &[u8]) -> Result<SessionStep> {
+        let envelope = read_ber_element(data).context("LDAPMessage envelope")?;
+        if envelope.tag != TAG_SEQUENCE {
+            anyhow::bail!(
+                "Invalid LDAP message: expected SEQUENCE, got tag 0x{:02x}",
+                envelope.tag
+            );
         }
+        let body = envelope.value;
 
-        // Parse SEQUENCE tag (0x30)
-        if data[0] != 0x30 {
-            anyhow::bail!("Invalid LDAP message: expected SEQUENCE");
+        let id_element = read_ber_element(body).context("messageID")?;
+        if id_element.tag != TAG_INTEGER {
+            anyhow::bail!(
+                "Invalid LDAP message: expected messageID INTEGER, got tag 0x{:02x}",
+                id_element.tag
+            );
         }
+        let msg_id = ber_integer(id_element.value).context("messageID value")? as i32;
 
-        // Parse message length
-        let (_msg_len, len_bytes) = parse_ber_length(&data[1..])?;
-        let header_len = 1 + len_bytes;
+        let op = read_ber_element(&body[id_element.total_len..]).context("protocolOp")?;
+        debug!(
+            "LDAP message id={} op=0x{:02x} ({} bytes)",
+            msg_id,
+            op.tag,
+            op.value.len()
+        );
 
-        // Parse messageID (INTEGER)
-        let msg_start = header_len;
-        if data[msg_start] != 0x02 {
-            anyhow::bail!("Invalid LDAP message: expected messageID INTEGER");
-        }
-
-        let (msg_id, id_bytes) = parse_ber_integer(&data[msg_start..])?;
-        debug!("LDAP message ID: {}", msg_id);
-
-        // Parse protocolOp (APPLICATION tag)
-        let op_start = msg_start + id_bytes;
-        let op_tag = data[op_start];
-
-        match op_tag {
-            0x60 => self.handle_bind_request(msg_id, &data[op_start..]).await,
-            0x63 => self.handle_search_request(msg_id, &data[op_start..]).await,
-            0x42 => self.handle_unbind_request().await,
-            _ => {
-                debug!("LDAP unsupported operation: 0x{:02x}", op_tag);
+        match op.tag {
+            OP_BIND_REQUEST => self.handle_bind_request(msg_id, op.value).await,
+            OP_SEARCH_REQUEST => self.handle_search_request(msg_id, op.value).await,
+            OP_ADD_REQUEST => self.handle_add_request(msg_id, op.value).await,
+            OP_MODIFY_REQUEST => self.handle_modify_request(msg_id, op.value).await,
+            OP_DELETE_REQUEST => self.handle_delete_request(msg_id, op.value).await,
+            OP_UNBIND_REQUEST => self.handle_unbind_request().await,
+            other => {
+                debug!("LDAP unsupported operation: 0x{:02x}", other);
                 let _ = self.status_tx.send(format!(
                     "[DEBUG] LDAP unsupported operation: 0x{:02x}",
-                    op_tag
+                    other
                 ));
-                Ok(Some(encode_ldap_error(msg_id, 2))) // protocolError
+                // Answer with the response type that matches the request where we know it, so
+                // the client's decoder does not reject the reply outright. This used to always
+                // send a BindResponse, which an ldap3 client answering a search reports as a
+                // protocol violation rather than as the protocolError it is.
+                Ok(SessionStep::Respond(encode_ldap_result(
+                    msg_id,
+                    response_tag_for(other),
+                    RESULT_PROTOCOL_ERROR,
+                    "Operation not supported by this server",
+                )))
             }
         }
     }
 
-    async fn handle_bind_request(&mut self, msg_id: i32, data: &[u8]) -> Result<Option<Vec<u8>>> {
-        // Parse BindRequest: version, name (DN), authentication
-        let (_, len_bytes) = parse_ber_length(&data[1..])?;
-        let bind_start = 1 + len_bytes;
+    /// Run one LLM round-trip for `event` and turn the result into a session step.
+    ///
+    /// `default` is what the peer gets when the model fails or returns nothing usable - never
+    /// silence, because a client with no response simply hangs until its own timeout.
+    async fn respond_via_llm(
+        &mut self,
+        event: crate::protocol::Event,
+        default: Vec<u8>,
+    ) -> SessionStep {
+        let execution_result = match call_llm(
+            &self.llm_client,
+            &self.app_state,
+            self.server_id,
+            Some(self.connection_id),
+            &event,
+            self.protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!("LDAP LLM call failed: {}", e);
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] LDAP LLM call failed: {}", e));
+                return SessionStep::Respond(default);
+            }
+        };
 
-        // Parse version (INTEGER)
-        if data[bind_start] != 0x02 {
-            return Ok(Some(encode_ldap_error(msg_id, 2)));
+        let mut output: Option<Vec<u8>> = None;
+        let mut close = false;
+        for protocol_result in execution_result.protocol_results {
+            match protocol_result {
+                ActionResult::Output(data) => {
+                    if output.is_none() {
+                        output = Some(data);
+                    }
+                }
+                ActionResult::CloseConnection => close = true,
+                _ => {}
+            }
         }
-        let (version, version_bytes) = parse_ber_integer(&data[bind_start..])?;
 
-        // Parse name/DN (OCTET STRING)
-        let name_start = bind_start + version_bytes;
-        if data[name_start] != 0x04 {
-            return Ok(Some(encode_ldap_error(msg_id, 2)));
+        match (output, close) {
+            (Some(data), false) => SessionStep::Respond(data),
+            (Some(data), true) => SessionStep::RespondAndClose(data),
+            (None, true) => SessionStep::Close,
+            (None, false) => {
+                warn!("LDAP: LLM returned no response action, sending default");
+                let _ = self.status_tx.send(
+                    "[WARN] LDAP: LLM returned no response action, sending default".to_string(),
+                );
+                SessionStep::Respond(default)
+            }
         }
+    }
 
-        let (dn_bytes, dn_len_bytes) = parse_ber_length(&data[name_start + 1..])?;
-        let dn_data_start = name_start + 1 + dn_len_bytes;
-        let dn =
-            String::from_utf8_lossy(&data[dn_data_start..dn_data_start + dn_bytes]).to_string();
+    async fn handle_bind_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
+        // BindRequest ::= [APPLICATION 0] SEQUENCE {
+        //     version INTEGER, name LDAPDN, authentication AuthenticationChoice }
+        let version_element = read_ber_element(data).context("bind version")?;
+        let version = ber_integer(version_element.value).context("bind version value")?;
 
-        // Parse authentication (simple: OCTET STRING with context tag [0])
-        let auth_start = dn_data_start + dn_bytes;
-        let password = if auth_start < data.len() && (data[auth_start] == 0x80) {
-            let (pwd_bytes, pwd_len_bytes) = parse_ber_length(&data[auth_start + 1..])?;
-            let pwd_start = auth_start + 1 + pwd_len_bytes;
-            String::from_utf8_lossy(&data[pwd_start..pwd_start + pwd_bytes]).to_string()
+        let after_version = &data[version_element.total_len..];
+        let name_element = read_ber_element(after_version).context("bind name")?;
+        let dn = ber_string(name_element.value);
+
+        let after_name = &after_version[name_element.total_len..];
+        let (auth_type, password) = if after_name.is_empty() {
+            ("none".to_string(), String::new())
         } else {
-            String::new()
+            let auth = read_ber_element(after_name).context("bind authentication")?;
+            match auth.tag {
+                AUTH_SIMPLE => ("simple".to_string(), ber_string(auth.value)),
+                AUTH_SASL => {
+                    // SaslCredentials ::= SEQUENCE { mechanism LDAPString, credentials OPTIONAL }
+                    let mechanism = read_ber_element(auth.value)
+                        .map(|m| ber_string(m.value))
+                        .unwrap_or_default();
+                    (format!("sasl:{}", mechanism), String::new())
+                }
+                other => (format!("unknown:0x{:02x}", other), String::new()),
+            }
         };
 
         debug!(
-            "LDAP Bind request: version={}, dn={}, password_len={}",
+            "LDAP Bind request: version={}, dn={}, auth={}, password_len={}",
             version,
             dn,
+            auth_type,
             password.len()
         );
         let _ = self
             .status_tx
             .send(format!("[DEBUG] LDAP Bind request: dn={}", dn));
 
-        // Create Bind event for LLM
         let event = Event::new(
             &LDAP_BIND_EVENT,
             serde_json::json!({
@@ -268,72 +386,94 @@ impl LdapSession {
                 "version": version,
                 "dn": dn,
                 "password": password,
+                "auth_type": auth_type,
             }),
         );
 
-        // Get LLM response
-        if let Ok(execution_result) = call_llm(
-            &self.llm_client,
-            &self.app_state,
-            self.server_id,
-            Some(self.connection_id),
-            &event,
-            self.protocol.as_ref(),
-        )
-        .await
+        // Read the bind outcome from the action the model produced rather than by scanning the
+        // encoded bytes back out of the response, which is what this used to do.
+        let default =
+            encode_bind_response(msg_id, RESULT_INVALID_CREDENTIALS, "Invalid credentials");
+        let step = self.respond_via_llm(event, default).await;
+
+        if let SessionStep::Respond(ref response) | SessionStep::RespondAndClose(ref response) =
+            step
         {
-            for protocol_result in execution_result.protocol_results {
-                if let ActionResult::Output(data) = protocol_result {
-                    // Update session state if bind succeeded
-                    if let Ok(success) = check_bind_success(&data) {
-                        if success {
-                            self.authenticated = true;
-                            self.bind_dn = Some(dn.clone());
-                            info!(
-                                "LDAP connection {} authenticated as {}",
-                                self.connection_id, dn
-                            );
-                            let _ = self.status_tx.send(format!(
-                                "✓ LDAP connection {} authenticated as {}",
-                                self.connection_id, dn
-                            ));
-                        }
-                    }
-                    return Ok(Some(data));
-                }
+            if bind_succeeded(response) {
+                self.authenticated = true;
+                self.bind_dn = Some(dn.clone());
+                info!(
+                    "LDAP connection {} authenticated as {}",
+                    self.connection_id, dn
+                );
+                let _ = self.status_tx.send(format!(
+                    "✓ LDAP connection {} authenticated as {}",
+                    self.connection_id, dn
+                ));
             }
         }
 
-        // Default: return bind failure
-        Ok(Some(encode_bind_response(
-            msg_id,
-            49,
-            "Invalid credentials",
-        )))
+        Ok(step)
     }
 
-    async fn handle_search_request(&mut self, msg_id: i32, data: &[u8]) -> Result<Option<Vec<u8>>> {
-        // Parse SearchRequest
-        let (_, len_bytes) = parse_ber_length(&data[1..])?;
-        let search_start = 1 + len_bytes;
+    async fn handle_search_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
+        // SearchRequest ::= [APPLICATION 3] SEQUENCE {
+        //     baseObject LDAPDN, scope ENUMERATED, derefAliases ENUMERATED,
+        //     sizeLimit INTEGER, timeLimit INTEGER, typesOnly BOOLEAN,
+        //     filter Filter, attributes AttributeSelection }
+        let base_element = read_ber_element(data).context("search baseObject")?;
+        let base_dn = ber_string(base_element.value);
 
-        // Parse baseObject (OCTET STRING)
-        if data[search_start] != 0x04 {
-            return Ok(Some(encode_ldap_error(msg_id, 2)));
+        let mut rest = &data[base_element.total_len..];
+        let mut scope = "sub".to_string();
+        if let Ok(scope_element) = read_ber_element(rest) {
+            scope = match ber_integer(scope_element.value).unwrap_or(2) {
+                0 => "base",
+                1 => "one",
+                _ => "sub",
+            }
+            .to_string();
+            rest = &rest[scope_element.total_len..];
         }
 
-        let (base_bytes, base_len_bytes) = parse_ber_length(&data[search_start + 1..])?;
-        let base_start = search_start + 1 + base_len_bytes;
-        let base_dn =
-            String::from_utf8_lossy(&data[base_start..base_start + base_bytes]).to_string();
+        // derefAliases, sizeLimit, timeLimit, typesOnly: read past them without interpreting.
+        for _ in 0..4 {
+            match read_ber_element(rest) {
+                Ok(element) => rest = &rest[element.total_len..],
+                Err(_) => break,
+            }
+        }
 
-        // For simplicity, we'll just extract the base DN and let the LLM handle the rest
-        debug!("LDAP Search request: base_dn={}", base_dn);
+        let filter = match read_ber_element(rest) {
+            Ok(filter_element) => {
+                let text = render_filter(&filter_element, 0);
+                rest = &rest[filter_element.total_len..];
+                text
+            }
+            Err(_) => "(objectClass=*)".to_string(),
+        };
+
+        let attributes = match read_ber_element(rest) {
+            Ok(list) => {
+                let mut names = Vec::new();
+                let mut cursor = list.value;
+                while let Ok(element) = read_ber_element(cursor) {
+                    names.push(serde_json::Value::String(ber_string(element.value)));
+                    cursor = &cursor[element.total_len..];
+                }
+                names
+            }
+            Err(_) => Vec::new(),
+        };
+
+        debug!(
+            "LDAP Search request: base_dn={}, scope={}, filter={}",
+            base_dn, scope, filter
+        );
         let _ = self
             .status_tx
             .send(format!("[DEBUG] LDAP Search request: base_dn={}", base_dn));
 
-        // Create Search event for LLM
         let event = Event::new(
             &LDAP_SEARCH_EVENT,
             serde_json::json!({
@@ -341,39 +481,165 @@ impl LdapSession {
                 "base_dn": base_dn,
                 "authenticated": self.authenticated,
                 "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
+                "scope": scope,
+                "filter": filter,
+                "attributes": attributes,
             }),
         );
 
-        // Get LLM response
-        if let Ok(execution_result) = call_llm(
-            &self.llm_client,
-            &self.app_state,
-            self.server_id,
-            Some(self.connection_id),
-            &event,
-            self.protocol.as_ref(),
-        )
-        .await
-        {
-            for protocol_result in execution_result.protocol_results {
-                if let ActionResult::Output(data) = protocol_result {
-                    return Ok(Some(data));
-                }
+        // Default is an empty but successful result set: a client that gets nothing back at
+        // all hangs, and a failure code here would look like a directory error rather than an
+        // empty search.
+        let default = encode_search_done(msg_id, RESULT_SUCCESS, "");
+        Ok(self.respond_via_llm(event, default).await)
+    }
+
+    async fn handle_add_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
+        // AddRequest ::= [APPLICATION 8] SEQUENCE {
+        //     entry LDAPDN, attributes AttributeList }
+        let entry_element = read_ber_element(data).context("add entry DN")?;
+        let dn = ber_string(entry_element.value);
+
+        let attributes = match read_ber_element(&data[entry_element.total_len..]) {
+            Ok(list) => parse_attribute_list(list.value),
+            Err(_) => serde_json::Map::new(),
+        };
+
+        debug!(
+            "LDAP Add request: dn={}, {} attributes",
+            dn,
+            attributes.len()
+        );
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] LDAP Add request: dn={}", dn));
+
+        let event = Event::new(
+            &LDAP_ADD_EVENT,
+            serde_json::json!({
+                "message_id": msg_id,
+                "dn": dn,
+                "attributes": attributes,
+                "authenticated": self.authenticated,
+                "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
+            }),
+        );
+
+        let default = encode_ldap_result(
+            msg_id,
+            RESPONSE_ADD,
+            RESULT_UNWILLING_TO_PERFORM,
+            "No response from server policy",
+        );
+        Ok(self.respond_via_llm(event, default).await)
+    }
+
+    async fn handle_modify_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
+        // ModifyRequest ::= [APPLICATION 6] SEQUENCE {
+        //     object LDAPDN,
+        //     changes SEQUENCE OF SEQUENCE { operation ENUMERATED, modification PartialAttribute } }
+        let object_element = read_ber_element(data).context("modify object DN")?;
+        let dn = ber_string(object_element.value);
+
+        let mut changes = Vec::new();
+        if let Ok(change_list) = read_ber_element(&data[object_element.total_len..]) {
+            let mut cursor = change_list.value;
+            while let Ok(change) = read_ber_element(cursor) {
+                cursor = &cursor[change.total_len..];
+
+                let Ok(operation_element) = read_ber_element(change.value) else {
+                    continue;
+                };
+                let operation = match ber_integer(operation_element.value).unwrap_or(-1) {
+                    0 => "add",
+                    1 => "delete",
+                    2 => "replace",
+                    3 => "increment",
+                    _ => "unknown",
+                };
+
+                let modification = &change.value[operation_element.total_len..];
+                let (attribute, values) = match read_ber_element(modification) {
+                    Ok(partial) => parse_partial_attribute(partial.value),
+                    Err(_) => (String::new(), Vec::new()),
+                };
+
+                changes.push(serde_json::json!({
+                    "operation": operation,
+                    "attribute": attribute,
+                    "values": values,
+                }));
             }
         }
 
-        // Default: return empty search result
-        Ok(Some(encode_search_done(msg_id, 0, "")))
+        debug!("LDAP Modify request: dn={}, {} changes", dn, changes.len());
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] LDAP Modify request: dn={}", dn));
+
+        let event = Event::new(
+            &LDAP_MODIFY_EVENT,
+            serde_json::json!({
+                "message_id": msg_id,
+                "dn": dn,
+                "changes": changes,
+                "authenticated": self.authenticated,
+                "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
+            }),
+        );
+
+        let default = encode_ldap_result(
+            msg_id,
+            RESPONSE_MODIFY,
+            RESULT_UNWILLING_TO_PERFORM,
+            "No response from server policy",
+        );
+        Ok(self.respond_via_llm(event, default).await)
     }
 
-    async fn handle_unbind_request(&mut self) -> Result<Option<Vec<u8>>> {
+    async fn handle_delete_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
+        // DelRequest ::= [APPLICATION 10] LDAPDN - the DN is the primitive value itself.
+        let dn = ber_string(data);
+
+        debug!("LDAP Delete request: dn={}", dn);
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] LDAP Delete request: dn={}", dn));
+
+        let event = Event::new(
+            &LDAP_DELETE_EVENT,
+            serde_json::json!({
+                "message_id": msg_id,
+                "dn": dn,
+                "authenticated": self.authenticated,
+                "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
+            }),
+        );
+
+        let default = encode_ldap_result(
+            msg_id,
+            RESPONSE_DELETE,
+            RESULT_UNWILLING_TO_PERFORM,
+            "No response from server policy",
+        );
+        Ok(self.respond_via_llm(event, default).await)
+    }
+
+    async fn handle_unbind_request(&mut self) -> Result<SessionStep> {
         debug!("LDAP Unbind request from {}", self.connection_id);
         let _ = self.status_tx.send(format!(
             "[DEBUG] LDAP Unbind request from {}",
             self.connection_id
         ));
 
-        // Create Unbind event for LLM (informational)
+        // Informational. RFC 4511 forbids a response to an unbind, and the event type says so
+        // with .with_no_actions(), so nothing here reads the result - it exists to let script
+        // and static handlers observe the disconnect.
+        //
+        // Raised on a detached task, because awaiting it here delays closing the socket by a
+        // whole model round-trip. Verified with ldapadd against a real model: the add was
+        // answered promptly and the client then sat for fifteen seconds on unbind waiting for
+        // a connection teardown that was blocked on an LLM call whose result is discarded.
         let event = Event::new(
             &LDAP_UNBIND_EVENT,
             serde_json::json!({
@@ -381,22 +647,155 @@ impl LdapSession {
             }),
         );
 
-        // Call LLM but don't wait for response (unbind is fire-and-forget)
-        let _ = call_llm(
-            &self.llm_client,
-            &self.app_state,
-            self.server_id,
-            Some(self.connection_id),
-            &event,
-            self.protocol.as_ref(),
-        )
-        .await;
+        let llm_client = self.llm_client.clone();
+        let app_state = self.app_state.clone();
+        let protocol = self.protocol.clone();
+        let server_id = self.server_id;
+        let connection_id = self.connection_id;
+        tokio::spawn(async move {
+            let _ = call_llm(
+                &llm_client,
+                &app_state,
+                server_id,
+                Some(connection_id),
+                &event,
+                protocol.as_ref(),
+            )
+            .await;
+        });
 
-        // No response for unbind
-        Ok(None)
+        Ok(SessionStep::Close)
     }
 }
 
+/// What the session should do after handling one message.
+#[cfg(feature = "ldap")]
+enum SessionStep {
+    Respond(Vec<u8>),
+    RespondAndClose(Vec<u8>),
+    Close,
+}
+
+// ============================================================================
+// BER decoding
+//
+// Every function here takes attacker-controlled bytes. The rule is that no index or range is
+// used before it has been checked against the remaining buffer: the previous implementation
+// indexed `data[op_start]` and sliced `data[start..start + len]` using lengths read straight
+// off the wire, so a seven-byte message could panic the connection task - silently, while the
+// server kept reporting Running.
+// ============================================================================
+
+/// Largest LDAP message accepted, in bytes. A long-form length header can promise up to 4 GiB.
+#[cfg(feature = "ldap")]
+const MAX_LDAP_MESSAGE: usize = 1 << 20;
+
+/// Socket read size. Unrelated to message size now that messages are reassembled.
+#[cfg(feature = "ldap")]
+const READ_CHUNK: usize = 8192;
+
+/// Maximum search-filter nesting rendered. Filters are recursive and client-supplied, so an
+/// unbounded renderer would overflow the stack on a deliberately deep filter.
+#[cfg(feature = "ldap")]
+const MAX_FILTER_DEPTH: usize = 32;
+
+#[cfg(feature = "ldap")]
+const TAG_SEQUENCE: u8 = 0x30;
+#[cfg(feature = "ldap")]
+const TAG_INTEGER: u8 = 0x02;
+
+#[cfg(feature = "ldap")]
+const OP_BIND_REQUEST: u8 = 0x60;
+#[cfg(feature = "ldap")]
+const OP_SEARCH_REQUEST: u8 = 0x63;
+#[cfg(feature = "ldap")]
+const OP_MODIFY_REQUEST: u8 = 0x66;
+#[cfg(feature = "ldap")]
+const OP_ADD_REQUEST: u8 = 0x68;
+#[cfg(feature = "ldap")]
+const OP_DELETE_REQUEST: u8 = 0x4A;
+#[cfg(feature = "ldap")]
+const OP_UNBIND_REQUEST: u8 = 0x42;
+
+#[cfg(feature = "ldap")]
+const RESPONSE_BIND: u8 = 0x61;
+#[cfg(feature = "ldap")]
+const RESPONSE_SEARCH_DONE: u8 = 0x65;
+#[cfg(feature = "ldap")]
+const RESPONSE_MODIFY: u8 = 0x67;
+#[cfg(feature = "ldap")]
+const RESPONSE_ADD: u8 = 0x69;
+#[cfg(feature = "ldap")]
+const RESPONSE_DELETE: u8 = 0x6B;
+#[cfg(feature = "ldap")]
+const RESPONSE_EXTENDED: u8 = 0x78;
+
+#[cfg(feature = "ldap")]
+const AUTH_SIMPLE: u8 = 0x80;
+#[cfg(feature = "ldap")]
+const AUTH_SASL: u8 = 0xA3;
+
+#[cfg(feature = "ldap")]
+const RESULT_SUCCESS: u8 = 0;
+#[cfg(feature = "ldap")]
+const RESULT_PROTOCOL_ERROR: u8 = 2;
+#[cfg(feature = "ldap")]
+const RESULT_INVALID_CREDENTIALS: u8 = 49;
+#[cfg(feature = "ldap")]
+const RESULT_UNWILLING_TO_PERFORM: u8 = 53;
+
+/// The response type matching a request type, for error replies.
+#[cfg(feature = "ldap")]
+fn response_tag_for(request_tag: u8) -> u8 {
+    match request_tag {
+        OP_BIND_REQUEST => RESPONSE_BIND,
+        OP_SEARCH_REQUEST => RESPONSE_SEARCH_DONE,
+        OP_MODIFY_REQUEST => RESPONSE_MODIFY,
+        OP_ADD_REQUEST => RESPONSE_ADD,
+        OP_DELETE_REQUEST => RESPONSE_DELETE,
+        _ => RESPONSE_EXTENDED,
+    }
+}
+
+/// One decoded BER tag-length-value.
+#[cfg(feature = "ldap")]
+struct BerElement<'a> {
+    tag: u8,
+    /// The content octets, already bounds-checked against the input.
+    value: &'a [u8],
+    /// Tag + length + content, i.e. how far to advance to reach the next element.
+    total_len: usize,
+}
+
+/// Decode the element at the start of `data`, verifying it fits.
+#[cfg(feature = "ldap")]
+fn read_ber_element(data: &[u8]) -> Result<BerElement<'_>> {
+    if data.is_empty() {
+        anyhow::bail!("Truncated BER element: no tag");
+    }
+
+    let (content_len, len_bytes) = parse_ber_length(&data[1..])?;
+    let header_len = 1 + len_bytes;
+    let total_len = header_len
+        .checked_add(content_len)
+        .context("BER length overflow")?;
+
+    if total_len > data.len() {
+        anyhow::bail!(
+            "Truncated BER element: claims {} content bytes, {} available",
+            content_len,
+            data.len().saturating_sub(header_len)
+        );
+    }
+
+    Ok(BerElement {
+        tag: data[0],
+        value: &data[header_len..total_len],
+        total_len,
+    })
+}
+
+/// Decode a BER length. Returns (length, bytes consumed by the length field).
 #[cfg(feature = "ldap")]
 fn parse_ber_length(data: &[u8]) -> Result<(usize, usize)> {
     if data.is_empty() {
@@ -409,10 +808,13 @@ fn parse_ber_length(data: &[u8]) -> Result<(usize, usize)> {
         // Short form: length is in the first byte
         Ok((first_byte as usize, 1))
     } else {
-        // Long form: first byte's lower 7 bits indicate how many bytes encode the length
+        // Long form: the low 7 bits say how many bytes encode the length
         let num_len_bytes = (first_byte & 0x7F) as usize;
         if num_len_bytes == 0 || num_len_bytes > 4 {
-            anyhow::bail!("Invalid BER length encoding");
+            anyhow::bail!(
+                "Invalid BER length encoding ({} length bytes)",
+                num_len_bytes
+            );
         }
 
         if data.len() < 1 + num_len_bytes {
@@ -420,33 +822,220 @@ fn parse_ber_length(data: &[u8]) -> Result<(usize, usize)> {
         }
 
         let mut length = 0usize;
-        for i in 0..num_len_bytes {
-            length = (length << 8) | data[1 + i] as usize;
+        for byte in &data[1..1 + num_len_bytes] {
+            length = (length << 8) | *byte as usize;
         }
 
         Ok((length, 1 + num_len_bytes))
     }
 }
 
+/// Decode INTEGER/ENUMERATED content octets.
 #[cfg(feature = "ldap")]
-fn parse_ber_integer(data: &[u8]) -> Result<(i32, usize)> {
-    if data.len() < 2 || data[0] != 0x02 {
-        anyhow::bail!("Invalid BER INTEGER");
+fn ber_integer(value: &[u8]) -> Result<i64> {
+    if value.is_empty() {
+        anyhow::bail!("Empty BER INTEGER");
+    }
+    if value.len() > 8 {
+        anyhow::bail!("BER INTEGER too wide ({} bytes)", value.len());
     }
 
-    let (length, len_bytes) = parse_ber_length(&data[1..])?;
-    let value_start = 1 + len_bytes;
+    // Sign-extend from the first byte, as BER integers are two's complement.
+    let mut result = if value[0] & 0x80 != 0 { -1i64 } else { 0i64 };
+    for byte in value {
+        result = (result << 8) | *byte as i64;
+    }
+    Ok(result)
+}
 
-    if data.len() < value_start + length {
-        anyhow::bail!("Insufficient data for INTEGER");
+/// Decode OCTET STRING content octets as text.
+#[cfg(feature = "ldap")]
+fn ber_string(value: &[u8]) -> String {
+    String::from_utf8_lossy(value).to_string()
+}
+
+/// Length of the complete LDAPMessage at the front of `buffer`, if it has all arrived.
+///
+/// `Ok(None)` means "need more bytes"; `Err` means the stream is not LDAP and the connection
+/// should be dropped.
+#[cfg(feature = "ldap")]
+fn ldap_message_len(buffer: &[u8]) -> Result<Option<usize>> {
+    if buffer.is_empty() {
+        return Ok(None);
+    }
+    if buffer[0] != TAG_SEQUENCE {
+        anyhow::bail!(
+            "Invalid LDAP message: expected SEQUENCE, got tag 0x{:02x}",
+            buffer[0]
+        );
+    }
+    if buffer.len() < 2 {
+        return Ok(None);
     }
 
-    let mut value = 0i32;
-    for i in 0..length {
-        value = (value << 8) | data[value_start + i] as i32;
+    let first = buffer[1];
+    let (content_len, len_bytes) = if first & 0x80 == 0 {
+        (first as usize, 1)
+    } else {
+        let n = (first & 0x7F) as usize;
+        if n == 0 || n > 4 {
+            anyhow::bail!("Invalid BER length encoding ({} length bytes)", n);
+        }
+        if buffer.len() < 2 + n {
+            return Ok(None);
+        }
+        let mut value = 0usize;
+        for byte in &buffer[2..2 + n] {
+            value = (value << 8) | *byte as usize;
+        }
+        (value, 1 + n)
+    };
+
+    let total = 1 + len_bytes + content_len;
+    if total > MAX_LDAP_MESSAGE {
+        anyhow::bail!(
+            "LDAP message of {} bytes exceeds the {} byte cap",
+            total,
+            MAX_LDAP_MESSAGE
+        );
+    }
+    if buffer.len() < total {
+        return Ok(None);
+    }
+    Ok(Some(total))
+}
+
+/// Decode `AttributeList ::= SEQUENCE OF SEQUENCE { type, vals SET OF value }`.
+#[cfg(feature = "ldap")]
+fn parse_attribute_list(mut data: &[u8]) -> serde_json::Map<String, serde_json::Value> {
+    let mut attributes = serde_json::Map::new();
+    while let Ok(attribute) = read_ber_element(data) {
+        data = &data[attribute.total_len..];
+        let (name, values) = parse_partial_attribute(attribute.value);
+        if !name.is_empty() {
+            attributes.insert(name, serde_json::Value::Array(values));
+        }
+    }
+    attributes
+}
+
+/// Decode the inside of `PartialAttribute ::= SEQUENCE { type, vals SET OF value }`.
+#[cfg(feature = "ldap")]
+fn parse_partial_attribute(data: &[u8]) -> (String, Vec<serde_json::Value>) {
+    let Ok(type_element) = read_ber_element(data) else {
+        return (String::new(), Vec::new());
+    };
+    let name = ber_string(type_element.value);
+
+    let mut values = Vec::new();
+    if let Ok(set) = read_ber_element(&data[type_element.total_len..]) {
+        let mut cursor = set.value;
+        while let Ok(value_element) = read_ber_element(cursor) {
+            cursor = &cursor[value_element.total_len..];
+            values.push(serde_json::Value::String(ber_string(value_element.value)));
+        }
     }
 
-    Ok((value, value_start + length))
+    (name, values)
+}
+
+/// Render a search filter back into RFC 4515 text for the event.
+///
+/// Depth-limited: `depth` counts nesting and the renderer stops at MAX_FILTER_DEPTH rather
+/// than recursing as deep as a client asks.
+#[cfg(feature = "ldap")]
+fn render_filter(element: &BerElement<'_>, depth: usize) -> String {
+    if depth >= MAX_FILTER_DEPTH {
+        return "(...)".to_string();
+    }
+
+    let render_children = |data: &[u8], prefix: &str| -> String {
+        let mut out = String::from("(");
+        out.push_str(prefix);
+        let mut cursor = data;
+        while let Ok(child) = read_ber_element(cursor) {
+            cursor = &cursor[child.total_len..];
+            out.push_str(&render_filter(&child, depth + 1));
+        }
+        out.push(')');
+        out
+    };
+
+    let render_comparison = |data: &[u8], operator: &str| -> String {
+        let Ok(attribute) = read_ber_element(data) else {
+            return "(?)".to_string();
+        };
+        let value = read_ber_element(&data[attribute.total_len..])
+            .map(|v| ber_string(v.value))
+            .unwrap_or_default();
+        format!("({}{}{})", ber_string(attribute.value), operator, value)
+    };
+
+    match element.tag {
+        0xA0 => render_children(element.value, "&"),
+        0xA1 => render_children(element.value, "|"),
+        0xA2 => render_children(element.value, "!"),
+        0xA3 => render_comparison(element.value, "="),
+        0xA5 => render_comparison(element.value, ">="),
+        0xA6 => render_comparison(element.value, "<="),
+        0xA8 => render_comparison(element.value, "~="),
+        0xA4 => {
+            // substrings: SEQUENCE { type, SEQUENCE OF CHOICE { initial, any, final } }
+            let Ok(attribute) = read_ber_element(element.value) else {
+                return "(?)".to_string();
+            };
+            let mut pattern = String::new();
+            if let Ok(parts) = read_ber_element(&element.value[attribute.total_len..]) {
+                let mut cursor = parts.value;
+                let mut leading_star = true;
+                while let Ok(part) = read_ber_element(cursor) {
+                    cursor = &cursor[part.total_len..];
+                    match part.tag {
+                        0x80 => {
+                            pattern.push_str(&ber_string(part.value));
+                            leading_star = false;
+                        }
+                        _ => {
+                            if leading_star {
+                                pattern.push('*');
+                                leading_star = false;
+                            }
+                            pattern.push('*');
+                            pattern.push_str(&ber_string(part.value));
+                        }
+                    }
+                }
+            }
+            format!("({}={}*)", ber_string(attribute.value), pattern)
+        }
+        0x87 => format!("({}=*)", ber_string(element.value)),
+        other => format!("(filter-0x{:02x}=*)", other),
+    }
+}
+
+/// True when an encoded BindResponse carries resultCode success.
+///
+/// Reads the message structurally instead of scanning for a 0x61 byte, which the old
+/// implementation did and which any DN or diagnostic message containing that byte could fool.
+#[cfg(feature = "ldap")]
+fn bind_succeeded(response: &[u8]) -> bool {
+    let Ok(envelope) = read_ber_element(response) else {
+        return false;
+    };
+    let Ok(message_id) = read_ber_element(envelope.value) else {
+        return false;
+    };
+    let Ok(op) = read_ber_element(&envelope.value[message_id.total_len..]) else {
+        return false;
+    };
+    if op.tag != RESPONSE_BIND {
+        return false;
+    }
+    read_ber_element(op.value)
+        .ok()
+        .and_then(|result_code| ber_integer(result_code.value).ok())
+        .map(|code| code == RESULT_SUCCESS as i64)
+        .unwrap_or(false)
 }
 
 #[cfg(feature = "ldap")]
@@ -545,9 +1134,41 @@ fn encode_search_done(msg_id: i32, result_code: u8, diagnostic_message: &str) ->
     encode_ldap_message(msg_id, search_msg)
 }
 
+/// Encode any LDAPResult-shaped response under the given APPLICATION tag.
+///
+/// BindResponse [1] = 0x61, SearchResultDone [5] = 0x65, ModifyResponse [7] = 0x67,
+/// AddResponse [9] = 0x69, DelResponse [11] = 0x6B, ExtendedResponse [24] = 0x78. All share
+/// the LDAPResult prefix (resultCode, matchedDN, diagnosticMessage), which is why one encoder
+/// serves them all.
 #[cfg(feature = "ldap")]
-fn encode_ldap_error(msg_id: i32, result_code: u8) -> Vec<u8> {
-    encode_bind_response(msg_id, result_code, "")
+fn encode_ldap_result(
+    msg_id: i32,
+    response_tag: u8,
+    result_code: u8,
+    diagnostic_message: &str,
+) -> Vec<u8> {
+    let mut result = Vec::new();
+
+    // resultCode (ENUMERATED)
+    result.push(0x0A);
+    result.push(0x01);
+    result.push(result_code);
+
+    // matchedDN (empty OCTET STRING)
+    result.push(0x04);
+    result.push(0x00);
+
+    // diagnosticMessage (OCTET STRING)
+    result.push(0x04);
+    let diag_bytes = diagnostic_message.as_bytes();
+    result.extend_from_slice(&encode_ber_length(diag_bytes.len()));
+    result.extend_from_slice(diag_bytes);
+
+    let mut message = vec![response_tag];
+    message.extend_from_slice(&encode_ber_length(result.len()));
+    message.extend_from_slice(&result);
+
+    encode_ldap_message(msg_id, message)
 }
 
 #[cfg(feature = "ldap")]
@@ -566,29 +1187,6 @@ fn encode_ldap_message(msg_id: i32, protocol_op: Vec<u8>) -> Vec<u8> {
     message.extend_from_slice(&content);
 
     message
-}
-
-#[cfg(feature = "ldap")]
-fn check_bind_success(data: &[u8]) -> Result<bool> {
-    // Check if bind response indicates success (resultCode = 0)
-    // This is a simple check - looks for the pattern of a successful bind
-
-    if data.len() < 12 {
-        return Ok(false);
-    }
-
-    // Look for BindResponse tag (0x61) and check resultCode
-    for i in 0..data.len().saturating_sub(4) {
-        if data[i] == 0x61 && i + 4 < data.len() {
-            // Found BindResponse, check if resultCode (ENUMERATED) is 0
-            let result_start = i + 2; // Skip tag and length
-            if data[result_start] == 0x0A && data[result_start + 1] == 0x01 {
-                return Ok(data[result_start + 2] == 0);
-            }
-        }
-    }
-
-    Ok(false)
 }
 
 #[cfg(not(feature = "ldap"))]

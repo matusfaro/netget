@@ -1,219 +1,179 @@
 # LDAP Protocol Implementation
 
-## Overview
+**Status**: `DevelopmentState::Experimental`.
+**Privilege**: `PrivilegeRequirement::PrivilegedPort(389)` — 389 is below 1024 and is where
+every LDAP client looks by default, so the preflight check in `server_startup.rs` fires rather
+than letting the bind fail with a bare EPERM.
 
-LDAP (Lightweight Directory Access Protocol) server implementing basic LDAPv3 functionality for directory operations.
-Supports bind (authentication), search, add, modify, delete, and unbind operations.
+LDAPv3 (RFC 4511) over TCP, with hand-written ASN.1 BER coding — no LDAP crate. That makes this
+the highest-risk parsing in the file/directory protocol group, and the section on decoding
+below is the important part of this document.
 
-## Library Choices
+## No storage
 
-- **Manual Implementation** - No external LDAP library used
-- **Manual ASN.1 BER encoding/decoding** - Custom parsers for LDAP messages
-- Raw TCP handling with tokio for async I/O
-- Chosen for maximum LLM control over directory data and responses
+There is no directory. A bind is granted or refused by the model; a search returns the entries
+the model names; add, modify and delete are acknowledged and change nothing here, because
+there is nothing here to change. Whether a search after an add agrees with it is the model's
+memory to keep — say so in the instruction if you care.
 
-## Architecture Decisions
+## Decoding attacker-controlled BER
 
-### ASN.1 BER Protocol
+**The invariant: no index or range is used before it has been checked against the remaining
+buffer.** `read_ber_element` is the only place raw input is sliced. It validates that an
+element's claimed length actually fits and hands back a `value` slice that is already in
+bounds; every parser above it walks `BerElement`s and never indexes the wire buffer itself.
 
-LDAP uses ASN.1 BER (Basic Encoding Rules) for message encoding:
-
-- **Manual parsers** implemented for:
-    - `parse_ber_length()` - Decode BER length encoding (short/long form)
-    - `parse_ber_integer()` - Decode BER INTEGER
-    - `parse_ldap_message()` - Parse LDAP message SEQUENCE
-- **Manual encoders** implemented for:
-    - `encode_ber_length()` - Encode BER length
-    - `encode_ber_integer()` - Encode BER INTEGER
-    - `encode_ber_string()` - Encode BER OCTET STRING
-    - `encode_ldap_message()` - Build LDAP message SEQUENCE
-
-### LLM Integration
-
-- **Three event types**:
-    - `LDAP_BIND_EVENT` - Bind (authentication) request
-    - `LDAP_SEARCH_EVENT` - Search request
-    - `LDAP_UNBIND_EVENT` - Unbind (disconnect) notification
-- **Action-based responses** - LLM returns JSON actions for directory operations
-- **Binary protocol** - Actions produce raw BER-encoded binary data
-- **No state persistence** - LLM manages directory entries in memory/context
-
-### Session Management
-
-Session tracked in local `LdapSession` struct:
+The previous implementation did the opposite — it indexed and sliced using lengths read
+straight off the wire:
 
 ```rust
-authenticated: bool
-bind_dn: Option<String>
+let op_start = msg_start + id_bytes;
+let op_tag = data[op_start];                                   // panic
+let dn = String::from_utf8_lossy(&data[dn_data_start..dn_data_start + dn_bytes]); // panic
+let pwd = &data[pwd_start..pwd_start + pwd_bytes];             // panic
 ```
 
-Operations:
+Concretely, the seven-byte message `30 82 00 01 02 01 01` walked `op_start` to exactly
+`data.len()` and panicked on `data[op_start]`. A panic in a connection task is silent: the task
+dies, the client sees a closed socket, and the server keeps reporting `Running`.
 
-- **Bind** - Authentication sets `authenticated = true`, stores `bind_dn`
-- **Search** - Passes authentication status to LLM
-- **Add/Modify/Delete** - LLM decides authorization based on session
-- **Unbind** - Fire-and-forget, no response required
+Also bounded now:
 
-### Response Actions
+- **Message size** — `MAX_LDAP_MESSAGE` (1 MiB). A long-form BER length can promise 4 GiB.
+- **Filter nesting** — `MAX_FILTER_DEPTH` (32). `render_filter` recurses over client-supplied
+  structure, so an unbounded renderer overflows the stack on a deliberately deep filter.
+- **Integer width** — `ber_integer` rejects INTEGERs wider than 8 bytes and sign-extends
+  properly, rather than shifting an arbitrary number of bytes into an `i32`.
 
-The LLM controls LDAP responses through these actions:
+Verified by fuzzing a running server (2026-08-05): truncated headers, lengths pointing past the
+buffer, a 4 GiB long-form length, empty DNs, truncated attribute lists, a 200-deep nested
+filter, and 40 random-garbage messages. No panic; the server answered a valid bind afterwards.
 
-- `ldap_bind_response` - Bind response (success/failure)
-- `ldap_search_response` - Search results (entries + done)
-- `ldap_add_response` - Add entry result
-- `ldap_modify_response` - Modify entry result
-- `ldap_delete_response` - Delete entry result
-- `wait_for_more` - Accumulate data (not used)
-- `close_connection` - Terminate session
+## Message framing
 
-### Binary Response Encoding
+Messages are framed by their BER length and reassembled across reads (`ldap_message_len` plus
+a persistent buffer). The old loop treated one `read()` as exactly one message, which is wrong
+in both directions:
 
-Actions produce BER-encoded binary responses:
+- `ldapsearch` pipelines bind and search into one segment — the second message was discarded
+  and the client hung.
+- Any message split across TCP segments, or larger than the 8 KiB buffer, was rejected as
+  malformed.
 
-- **BindResponse** `[APPLICATION 1]` - Result code 0 = success, 49 = invalidCredentials
-- **SearchResultEntry** `[APPLICATION 4]` - DN + attributes (repeated for each entry)
-- **SearchResultDone** `[APPLICATION 5]` - Final result code
-- **AddResponse** `[APPLICATION 9]` - Result code 0 = success, 68 = entryAlreadyExists
-- **ModifyResponse** `[APPLICATION 7]` - Result code 0 = success, 32 = noSuchObject
-- **DelResponse** `[APPLICATION 11]` - Result code 0 = success, 32 = noSuchObject
+## Operations
 
-## Connection Management
+| request | tag | event | response tag |
+|---|---|---|---|
+| BindRequest | 0x60 | `ldap_bind` | BindResponse 0x61 |
+| SearchRequest | 0x63 | `ldap_search` | SearchResultEntry 0x64 + SearchResultDone 0x65 |
+| ModifyRequest | 0x66 | `ldap_modify` | ModifyResponse 0x67 |
+| AddRequest | 0x68 | `ldap_add` | AddResponse 0x69 |
+| DelRequest | 0x4A | `ldap_delete` | DelResponse 0x6B |
+| UnbindRequest | 0x42 | `ldap_unbind` | none (RFC 4511 forbids one) |
+| anything else | — | — | protocolError under the matching response tag, or ExtendedResponse 0x78 |
 
-- Connections spawn independent async tasks
-- No connection tracking in `AppState` (not properly integrated)
-- Binary message parsing with buffer reading
-- Write operations directly to TcpStream
+**Add, modify and delete were dead.** The three actions `ldap_add_response`,
+`ldap_modify_response` and `ldap_delete_response` were declared, had working executors and were
+documented — but no request parser and no event ever produced them. `ldapadd` got a
+protocolError, and worse, that error was encoded with the *BindResponse* tag whatever the
+request was, so a client decoding a search or add reply saw a protocol violation rather than
+the protocolError it was meant to see. Both are fixed: the operations are parsed and raised as
+events, and `response_tag_for` picks the tag matching the request.
 
-## State Management
+## Events
 
-- **Session state** - Local to `LdapSession` (not in `AppState`)
-- **Directory data** - Managed by LLM in conversation context
-- **No persistence** - Entries exist only in LLM memory
-- **Authentication** - Checked per operation, passed to LLM
+Six, each advertising exactly the actions that can answer it:
 
-## Limitations
+| event | data | actions |
+|---|---|---|
+| `ldap_bind` | `message_id`, `version`, `dn`, `password`, `auth_type` | `ldap_bind_response`, `close_connection` |
+| `ldap_search` | `message_id`, `base_dn`, `scope`, `filter`, `attributes`, `authenticated`, `bind_dn` | `ldap_search_response`, `close_connection` |
+| `ldap_add` | `message_id`, `dn`, `attributes`, `authenticated`, `bind_dn` | `ldap_add_response`, `close_connection` |
+| `ldap_modify` | `message_id`, `dn`, `changes`, `authenticated`, `bind_dn` | `ldap_modify_response`, `close_connection` |
+| `ldap_delete` | `message_id`, `dn`, `authenticated`, `bind_dn` | `ldap_delete_response`, `close_connection` |
+| `ldap_unbind` | `bind_dn` | none, declared with `.with_no_actions()` |
 
-- **No LDAP persistence** - All directory data ephemeral
-- **No LDAPS** - TLS not implemented (port 389 only)
-- **No SASL** - Only simple bind (username/password) supported
-- **Simplified parsing** - Only handles basic BindRequest, SearchRequest, UnbindRequest
-- **No ADD/MODIFY/DELETE parsing** - Operations detected but not fully parsed
-- **No schema validation** - LLM decides attribute validity
-- **No referrals** - No LDAP server chaining
-- **No access control** - LLM decides authorization
-- **No operational attributes** - createTimestamp, modifyTimestamp not tracked
+`ldap_unbind` used to carry `.with_actions(vec![])`, which is indistinguishable from a
+forgotten action list: `call_llm` treats that as a bug and fires a `debug_assert!(false, ...)`,
+so **every unbind panicked the connection task in a dev build**. `.with_no_actions()` states the
+intent, and the assert no longer fires.
 
-## Examples
+All three event response examples were `{"type": "placeholder", "event_id": "..."}`. The
+response example is rendered verbatim into the prompt, so the model was being shown an action
+named `placeholder` as the way to answer. They are now real responses, with a failure case as
+an alternative example on each.
 
-### Example LLM Prompt
+Search now reports `scope`, `filter` (rendered back to RFC 4515 text such as
+`(&(objectClass=person)(cn=j*))`) and the requested `attributes`. None of them is enforced —
+the model decides what matches — but it could not decide before, because it was only told the
+base DN.
 
-```
-Start LDAP server on port 389. Accept bind for 'cn=admin,dc=example,dc=com' with password 'secret'.
-For search on 'dc=example,dc=com', return 2 users:
-- cn=john,dc=example,dc=com with mail=john@example.com
-- cn=jane,dc=example,dc=com with mail=jane@example.com
-```
+## Actions
 
-### Example LLM Response (Bind Success)
+`ldap_bind_response`, `ldap_search_response`, `ldap_add_response`, `ldap_modify_response`,
+`ldap_delete_response`, `close_connection`. All carry structured fields; the BER encoding is
+built here.
 
-```json
-{
-  "actions": [
-    {
-      "type": "ldap_bind_response",
-      "message_id": 1,
-      "success": true,
-      "message": "Bind successful"
-    }
-  ]
-}
-```
+`wait_for_more` was removed. Messages are framed by length and reassembled by the session, and
+the session only ever consumed an `ActionResult::Output` — `WaitForMore` was discarded, leaving
+the client waiting for a response that would never arrive.
 
-### Example LLM Response (Bind Failure)
+Result codes: 0 success, 2 protocolError, 32 noSuchObject, 49 invalidCredentials, 50
+insufficientAccessRights, 53 unwillingToPerform, 68 entryAlreadyExists.
 
-```json
-{
-  "actions": [
-    {
-      "type": "ldap_bind_response",
-      "message_id": 1,
-      "success": false,
-      "message": "Invalid credentials"
-    }
-  ]
-}
-```
+## Failure behaviour
 
-### Example LLM Response (Search)
+Every operation has a default response, so a model failure never leaves the peer waiting for
+its own timeout: bind defaults to invalidCredentials, search to an empty but successful result
+set, and add/modify/delete to unwillingToPerform. A model that returns `close_connection` with
+no response closes the connection; one that returns nothing gets the default plus a WARN.
 
-```json
-{
-  "actions": [
-    {
-      "type": "ldap_search_response",
-      "message_id": 2,
-      "entries": [
-        {
-          "dn": "cn=john,dc=example,dc=com",
-          "attributes": {
-            "cn": ["john"],
-            "mail": ["john@example.com"],
-            "objectClass": ["person", "inetOrgPerson"]
-          }
-        },
-        {
-          "dn": "cn=jane,dc=example,dc=com",
-          "attributes": {
-            "cn": ["jane"],
-            "mail": ["jane@example.com"],
-            "objectClass": ["person", "inetOrgPerson"]
-          }
-        }
-      ],
-      "result_code": 0
-    }
-  ]
-}
-```
+Bind success is now read structurally from the encoded BindResponse (`bind_succeeded`) rather
+than by scanning the byte stream for `0x61`, which any DN or diagnostic message containing that
+byte could fool.
 
-### Example LLM Response (Add)
+`ldap_unbind` is raised on a detached task rather than awaited. Awaiting it delayed closing the
+socket by a whole model round-trip — measured with `ldapadd` against a real model, the add was
+answered promptly and the client then sat for fifteen seconds waiting for a teardown blocked on
+an LLM call whose result is discarded.
 
-```json
-{
-  "actions": [
-    {
-      "type": "ldap_add_response",
-      "message_id": 3,
-      "success": true,
-      "result_code": 0,
-      "message": "Entry added successfully"
-    }
-  ]
-}
+## Not implemented
+
+SASL (the mechanism is reported so it can be refused), StartTLS, LDAPS, referrals, controls,
+extended operations, compare, modifyDN, abandon, schema validation, and paged results. Search
+scope, filter and requested-attribute list are decoded and reported but never evaluated.
+
+Note there are two copies of the BER *encoders* — `actions.rs` builds responses, `mod.rs`
+builds defaults and errors. They agree today; if you change one, change both.
+
+## Manual verification
+
+```bash
+./cargo-isolated.sh run --release --no-default-features --features ldap
+# start on 13890 with static handlers for ldap_bind / ldap_search / ldap_add / ldap_modify /
+# ldap_delete, then:
+
+ldapsearch -x -H ldap://127.0.0.1:13890 -D "cn=admin,dc=example,dc=com" -w secret \
+           -b "dc=example,dc=com" "(objectClass=person)" cn mail
+ldapadd    -x -H ldap://127.0.0.1:13890 -D "cn=admin,dc=example,dc=com" -w secret -f add.ldif
+ldapmodify -x -H ldap://127.0.0.1:13890 -D "cn=admin,dc=example,dc=com" -w secret -f mod.ldif
+ldapdelete -x -H ldap://127.0.0.1:13890 -D "cn=admin,dc=example,dc=com" -w secret \
+           "cn=testuser,dc=example,dc=com"
 ```
 
-## ASN.1 BER Encoding Notes
+Verified 2026-08-05 against OpenLDAP's client tools: bind succeeds, the search returns both
+entries with all attributes and `result: 0 Success`, and add/modify/delete all return success —
+with modify's two changes decoded (`2 changes` in the log).
 
-LDAP messages are SEQUENCE structures:
+## Testing
 
-```
-LDAPMessage ::= SEQUENCE {
-    messageID       INTEGER,
-    protocolOp      CHOICE { ... },
-    controls        [0] Controls OPTIONAL
-}
-```
-
-Result codes:
-
-- 0 = success
-- 2 = protocolError
-- 32 = noSuchObject
-- 49 = invalidCredentials
-- 68 = entryAlreadyExists
+`tests/server/ldap/e2e_test.rs` — 7 tests via the `ldap3` crate (bind success/failure, search,
+filtered search, add, modify, delete). All pass. Note the add/modify/delete tests define no
+mock for their own event and assert nothing about the result code, which is how those
+operations could be entirely unimplemented while the tests stayed green.
 
 ## References
 
-- RFC 4511 - Lightweight Directory Access Protocol (LDAP): The Protocol
-- RFC 4510 - Lightweight Directory Access Protocol (LDAP): Technical Specification Road Map
-- ITU-T X.690 - ASN.1 encoding rules (BER, CER, DER)
+- [RFC 4511: LDAP Protocol](https://tools.ietf.org/html/rfc4511)
+- [RFC 4515: LDAP Search Filter String Representation](https://tools.ietf.org/html/rfc4515)
+- [ITU-T X.690: BER/CER/DER](https://www.itu.int/rec/T-REC-X.690)

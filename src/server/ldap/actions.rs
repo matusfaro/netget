@@ -1,4 +1,12 @@
-//! LDAP protocol actions implementation
+//! LDAP protocol actions implementation.
+//!
+//! The directory is entirely LLM-supplied: nothing here stores an entry, an attribute or a
+//! password. A bind is granted or refused by the model; a search returns whatever entries the
+//! model names; an add, modify or delete is acknowledged by the model and changes nothing on
+//! this side, because there is nothing on this side to change.
+//!
+//! Actions carry structured entries (`{"dn": ..., "attributes": {...}}`), never bytes: the
+//! BER encoding of every response is built here from those fields.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -178,7 +186,7 @@ impl Protocol for LdapProtocol {
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
-                    description: "Whether the server should send the first message after connection (not typically needed for this protocol)".to_string(),
+                    description: "Accepted and ignored: LDAP is strictly client-driven, so the server never speaks first".to_string(),
                     required: false,
                     example: serde_json::json!(false),
                 },
@@ -188,6 +196,12 @@ impl Protocol for LdapProtocol {
         // LDAP doesn't need async actions for now
         Vec::new()
     }
+    /// Every event advertises its own subset of these; this list is the union.
+    ///
+    /// `wait_for_more` used to be declared here and is gone: LDAP messages are framed by their
+    /// BER length, the session reassembles them itself, and the session only ever looks for an
+    /// `ActionResult::Output`. `ActionResult::WaitForMore` was discarded, so the client was
+    /// left waiting for a response that would never come.
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             ldap_bind_response_action(),
@@ -195,7 +209,6 @@ impl Protocol for LdapProtocol {
             ldap_add_response_action(),
             ldap_modify_response_action(),
             ldap_delete_response_action(),
-            wait_for_more_action(),
             close_connection_action(),
         ]
     }
@@ -214,12 +227,25 @@ impl Protocol for LdapProtocol {
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
+        use crate::protocol::metadata::PrivilegeRequirement;
+
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("Manual ASN.1 BER encoding/decoding")
-            .llm_control("Directory queries + authentication")
-            .e2e_testing("ldap3 client")
-            .notes("Lightweight directory")
+            // 389 is below 1024 and is the port every LDAP client defaults to, so the
+            // preflight check in server_startup.rs should fire rather than letting the bind
+            // fail later with a bare EPERM.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(389))
+            .implementation("Manual ASN.1 BER encoding/decoding, no LDAP crate")
+            .llm_control("Bind decisions, search results, add/modify/delete outcomes")
+            .e2e_testing("ldap3 crate and the ldapsearch/ldapadd command-line tools")
+            .notes(
+                "LDAPv3 simple bind only - no SASL, no StartTLS, no LDAPS. Search filters, \
+                 scope and requested-attribute lists are parsed off the wire but not \
+                 evaluated: the model is given the base DN and scope and decides what to \
+                 return. No directory is stored; add/modify/delete are acknowledged, not \
+                 applied. No referrals, no schema validation, no access control beyond what \
+                 the model chooses.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -319,7 +345,6 @@ impl Server for LdapProtocol {
             "ldap_add_response" => self.execute_ldap_add_response(action),
             "ldap_modify_response" => self.execute_ldap_modify_response(action),
             "ldap_delete_response" => self.execute_ldap_delete_response(action),
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
             "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown LDAP action: {}", action_type)),
         }
@@ -550,18 +575,6 @@ fn ldap_delete_response_action() -> ActionDefinition {
     }
 }
 
-fn wait_for_more_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "wait_for_more".to_string(),
-        description: "Wait for more data before responding".to_string(),
-        parameters: vec![],
-        example: json!({
-            "type": "wait_for_more"
-        }),
-        log_template: Some(LogTemplate::new().with_debug("LDAP waiting for more data")),
-    }
-}
-
 fn close_connection_action() -> ActionDefinition {
     ActionDefinition {
         name: "close_connection".to_string(),
@@ -592,8 +605,6 @@ pub static LDAP_MODIFY_RESPONSE_ACTION: LazyLock<ActionDefinition> =
     LazyLock::new(|| ldap_modify_response_action());
 pub static LDAP_DELETE_RESPONSE_ACTION: LazyLock<ActionDefinition> =
     LazyLock::new(|| ldap_delete_response_action());
-pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> =
-    LazyLock::new(|| wait_for_more_action());
 pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
     LazyLock::new(|| close_connection_action());
 
@@ -606,8 +617,19 @@ pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ldap_bind",
         "LDAP bind (authentication) request received",
-        json!({"type": "placeholder", "event_id": "ldap_bind"}),
+        json!({
+            "type": "ldap_bind_response",
+            "message_id": 1,
+            "success": true,
+            "message": "Bind successful"
+        }),
     )
+    .with_alternative_example(json!({
+        "type": "ldap_bind_response",
+        "message_id": 1,
+        "success": false,
+        "message": "Invalid credentials"
+    }))
     .with_parameters(vec![
         Parameter {
             name: "message_id".to_string(),
@@ -630,7 +652,16 @@ pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "password".to_string(),
             type_hint: "string".to_string(),
-            description: "Password for simple authentication".to_string(),
+            description: "Password for simple authentication (empty for an anonymous bind)"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "auth_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "'simple' or 'sasl'. SASL is not supported: the mechanism is reported \
+                          but no credentials are available, so a SASL bind can only be refused."
+                .to_string(),
             required: true,
         },
     ])
@@ -648,7 +679,29 @@ pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// LDAP search event - triggered when client performs a directory search
 pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_search", "LDAP search request received", json!({"type": "placeholder", "event_id": "ldap_search"}))
+    EventType::new(
+        "ldap_search",
+        "LDAP search request received",
+        json!({
+            "type": "ldap_search_response",
+            "message_id": 2,
+            "entries": [{
+                "dn": "cn=john,ou=people,dc=example,dc=com",
+                "attributes": {
+                    "cn": ["john"],
+                    "mail": ["john@example.com"],
+                    "objectClass": ["person", "inetOrgPerson"]
+                }
+            }],
+            "result_code": 0
+        }),
+    )
+        .with_alternative_example(json!({
+            "type": "ldap_search_response",
+            "message_id": 2,
+            "entries": [],
+            "result_code": 0
+        }))
         .with_parameters(vec![
             Parameter {
                 name: "message_id".to_string(),
@@ -674,6 +727,24 @@ pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 description: "DN of authenticated user (empty if not authenticated)".to_string(),
                 required: true,
             },
+            Parameter {
+                name: "scope".to_string(),
+                type_hint: "string".to_string(),
+                description: "'base', 'one' or 'sub'. Reported, not enforced - the entries you return are returned as-is.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "filter".to_string(),
+                type_hint: "string".to_string(),
+                description: "Search filter in RFC 4515 text form, e.g. '(objectClass=person)'. Reported, not evaluated: decide for yourself which entries match.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "attributes".to_string(),
+                type_hint: "array".to_string(),
+                description: "Attribute names the client asked for; empty means all. Reported, not enforced.".to_string(),
+                required: true,
+            },
         ])
         .with_actions(vec![
             LDAP_SEARCH_RESPONSE_ACTION.clone(),
@@ -682,17 +753,211 @@ pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         .with_log_template(
             LogTemplate::new()
                 .with_info("LDAP SEARCH {client_ip} base={base_dn}")
-                .with_debug("LDAP search from {client_ip}:{client_port}, base_dn={base_dn}, authenticated={authenticated}")
+                .with_debug("LDAP search from {client_ip}:{client_port}, base_dn={base_dn}, scope={scope}, filter={filter}")
                 .with_trace("LDAP search: {json_pretty(.)}"),
         )
 });
 
+/// LDAP add event - triggered when a client asks to create an entry
+///
+/// Nothing is stored: the response tells the client whether the add "succeeded". A server
+/// instruction that accepts adds is claiming the entry exists from then on, and it is the
+/// model's memory that has to make the following search agree.
+pub static LDAP_ADD_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ldap_add",
+        "LDAP add (create entry) request received",
+        json!({
+            "type": "ldap_add_response",
+            "message_id": 3,
+            "success": true,
+            "message": "Entry added"
+        }),
+    )
+    .with_alternative_example(json!({
+        "type": "ldap_add_response",
+        "message_id": 3,
+        "success": false,
+        "result_code": 50,
+        "message": "Insufficient access rights"
+    }))
+    .with_parameters(vec![
+        Parameter {
+            name: "message_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "LDAP message ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "Distinguished Name of the entry to create".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "attributes".to_string(),
+            type_hint: "object".to_string(),
+            description: "Attributes of the new entry, name -> array of values".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "authenticated".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether this connection completed a successful bind".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bind_dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "DN of authenticated user (empty if not authenticated)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        LDAP_ADD_RESPONSE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("LDAP ADD {client_ip} dn={dn}")
+            .with_debug("LDAP add from {client_ip}:{client_port}, dn={dn}")
+            .with_trace("LDAP add: {json_pretty(.)}"),
+    )
+});
+
+/// LDAP modify event - triggered when a client asks to change an entry
+pub static LDAP_MODIFY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ldap_modify",
+        "LDAP modify (update entry) request received",
+        json!({
+            "type": "ldap_modify_response",
+            "message_id": 4,
+            "success": true,
+            "message": "Entry modified"
+        }),
+    )
+    .with_alternative_example(json!({
+        "type": "ldap_modify_response",
+        "message_id": 4,
+        "success": false,
+        "result_code": 32,
+        "message": "No such object"
+    }))
+    .with_parameters(vec![
+        Parameter {
+            name: "message_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "LDAP message ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "Distinguished Name of the entry being modified".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "changes".to_string(),
+            type_hint: "array".to_string(),
+            description: "Requested changes: [{\"operation\": \"add\"|\"delete\"|\"replace\", \
+                          \"attribute\": \"mail\", \"values\": [\"a@example.com\"]}]"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "authenticated".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether this connection completed a successful bind".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bind_dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "DN of authenticated user (empty if not authenticated)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        LDAP_MODIFY_RESPONSE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("LDAP MODIFY {client_ip} dn={dn}")
+            .with_debug("LDAP modify from {client_ip}:{client_port}, dn={dn}")
+            .with_trace("LDAP modify: {json_pretty(.)}"),
+    )
+});
+
+/// LDAP delete event - triggered when a client asks to remove an entry
+pub static LDAP_DELETE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "ldap_delete",
+        "LDAP delete (remove entry) request received",
+        json!({
+            "type": "ldap_delete_response",
+            "message_id": 5,
+            "success": true,
+            "message": "Entry deleted"
+        }),
+    )
+    .with_alternative_example(json!({
+        "type": "ldap_delete_response",
+        "message_id": 5,
+        "success": false,
+        "result_code": 32,
+        "message": "No such object"
+    }))
+    .with_parameters(vec![
+        Parameter {
+            name: "message_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "LDAP message ID".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "Distinguished Name of the entry to delete".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "authenticated".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether this connection completed a successful bind".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bind_dn".to_string(),
+            type_hint: "string".to_string(),
+            description: "DN of authenticated user (empty if not authenticated)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        LDAP_DELETE_RESPONSE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("LDAP DELETE {client_ip} dn={dn}")
+            .with_debug("LDAP delete from {client_ip}:{client_port}, dn={dn}")
+            .with_trace("LDAP delete: {json_pretty(.)}"),
+    )
+});
+
 /// LDAP unbind event - triggered when client closes connection
+///
+/// Purely informational: RFC 4511 forbids a response to an unbind, so there is no protocol
+/// action to offer. `.with_no_actions()` says so explicitly - an empty `.with_actions(vec![])`
+/// is indistinguishable from a forgotten action list, and `call_llm` treats that as a bug,
+/// firing a `debug_assert!` that panics the connection task in dev builds.
 pub static LDAP_UNBIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ldap_unbind",
         "LDAP unbind (disconnect) request received",
-        json!({"type": "placeholder", "event_id": "ldap_unbind"}),
+        json!({"type": "show_message", "message": "LDAP client disconnected"}),
     )
     .with_parameters(vec![Parameter {
         name: "bind_dn".to_string(),
@@ -700,7 +965,7 @@ pub static LDAP_UNBIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "DN of authenticated user (empty if not authenticated)".to_string(),
         required: true,
     }])
-    .with_actions(vec![])
+    .with_no_actions()
     .with_log_template(
         LogTemplate::new()
             .with_info("LDAP UNBIND {client_ip}")
@@ -714,6 +979,9 @@ pub fn get_ldap_event_types() -> Vec<EventType> {
     vec![
         LDAP_BIND_EVENT.clone(),
         LDAP_SEARCH_EVENT.clone(),
+        LDAP_ADD_EVENT.clone(),
+        LDAP_MODIFY_EVENT.clone(),
+        LDAP_DELETE_EVENT.clone(),
         LDAP_UNBIND_EVENT.clone(),
     ]
 }
