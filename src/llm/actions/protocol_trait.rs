@@ -286,3 +286,52 @@ pub trait Server: Protocol {
     /// * `Err(_)` - If action execution failed
     fn execute_action(&self, action: serde_json::Value) -> anyhow::Result<ActionResult>;
 }
+
+/// Report event types that declare no actions while their protocol declares sync actions.
+///
+/// This is the item-56 defect: the model answering such an event is handed only
+/// `set_memory`/`append_memory`/`show_message`/`append_to_log`, so every protocol action it
+/// returns is rejected as unknown, retried twice, and fails. It silently disabled sixteen
+/// protocols. An `EventType` that genuinely needs no actions declares that with
+/// `.with_no_actions()`, which this ignores.
+///
+/// Returns one human-readable finding per offending event; empty means the protocol is clean.
+///
+/// # Where this belongs
+///
+/// Call it **once per protocol at server-startup time** — `src/cli/server_startup.rs`, after
+/// the protocol object is resolved from the registry and before `spawn()` — so a
+/// misdeclared event is reported against a named server the user just tried to start, and
+/// the failure is attributable. The equivalent check must not live on the per-event path:
+/// that runs once per connection inside a tokio task, where a `debug_assert!` panic is
+/// swallowed by the task and leaves the server still reporting `Running`.
+///
+/// `tests/event_action_declarations_test.rs` runs this over the whole registry, which
+/// catches the defect in CI for every protocol rather than only for the ones a run happens
+/// to start.
+pub fn audit_event_action_declarations(protocol: &dyn Protocol) -> Vec<String> {
+    let sync_action_count = protocol.get_sync_actions().len();
+    if sync_action_count == 0 {
+        // A protocol with no sync actions has nothing to advertise, so an event with an
+        // empty action list is not withholding anything.
+        return Vec::new();
+    }
+
+    protocol
+        .get_event_types()
+        .into_iter()
+        .filter(|event_type| event_type.has_no_usable_actions())
+        .map(|event_type| {
+            format!(
+                "event '{}' of protocol '{}' declares no actions of its own, so the model \
+                 would be offered none of the protocol's {} sync action(s) and anything \
+                 protocol-specific it returned would be rejected as an unknown action. Fix by \
+                 adding .with_actions(...) to the event type, or .with_no_actions() if it \
+                 genuinely needs none.",
+                event_type.id,
+                protocol.protocol_name(),
+                sync_action_count
+            )
+        })
+        .collect()
+}

@@ -468,6 +468,15 @@ pub async fn call_llm(
     // model is then handed only set_memory/append_memory/show_message/append_to_log, and every
     // protocol action it returns is rejected as unknown, retried twice, and fails. That shape
     // silently disabled sixteen protocols, so it is reported and repaired instead of shipped.
+    //
+    // This path deliberately does NOT assert. It runs once per connection inside a tokio task,
+    // where a `debug_assert!` panic is swallowed by the task and leaves the server still
+    // reporting `Running` — the quietest possible way to be loud, and an NFS reviewer hit
+    // exactly that. The loud, attributable failure lives in
+    // `crate::llm::actions::protocol_trait::audit_event_action_declarations`, which is checked
+    // over the whole registry by `tests/event_action_declarations_test.rs` and is meant to be
+    // called once per protocol at startup in `src/cli/server_startup.rs`. Here: ERROR and
+    // recover, so the connection is served rather than dropped.
     if event.event_type.has_no_usable_actions() {
         let fallback = protocol.get_sync_actions();
         if !fallback.is_empty() {
@@ -477,14 +486,6 @@ pub async fn call_llm(
                  protocol-specific it returned would be rejected as an unknown action. Falling \
                  back to the full sync action set. Fix by adding .with_actions(...) to the event \
                  type, or .with_no_actions() if it genuinely needs none.",
-                event.id(),
-                protocol.protocol_name(),
-                fallback.len()
-            );
-            debug_assert!(
-                false,
-                "event type '{}' ({}) declares no actions while the protocol declares {}; add \
-                 .with_actions(...) to the event type or .with_no_actions() if intentional",
                 event.id(),
                 protocol.protocol_name(),
                 fallback.len()
