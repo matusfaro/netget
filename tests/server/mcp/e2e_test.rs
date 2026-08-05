@@ -98,11 +98,14 @@ async fn test_mcp_initialize() -> E2EResult<()> {
             .and()
             // Mock 2: Initialize request
             .on_event("mcp_initialize")
+            // `mcp_initialize_response`, not `send_jsonrpc_response` — the latter belongs
+            // to the *jsonrpc* protocol and `McpProtocol::execute_action` rejects it.
+            // The handler supplies only the `result` body; the server echoes the JSON-RPC
+            // `id` itself, so the mock must not carry one.
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 1,
-                    "result": {
+                    "type": "mcp_initialize_response",
+                    "response": {
                         "protocolVersion": "2024-11-05",
                         "capabilities": {
                             "resources": {
@@ -159,50 +162,43 @@ async fn test_mcp_initialize() -> E2EResult<()> {
         "Expected 'id' field to match request id"
     );
 
-    // Validate initialize response structure
-    if let Some(result) = response.get("result") {
-        println!("✓ Received initialize result");
+    // The whole handler-supplied `result` must reach the client verbatim. Asserting on
+    // the decoded body (not merely on its presence) is what proves the action was
+    // accepted and executed rather than falling back to a canned reply.
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Check protocol version
-        assert_eq!(
-            result.get("protocolVersion").and_then(|v| v.as_str()),
-            Some("2024-11-05"),
-            "Expected protocolVersion to be '2024-11-05'"
-        );
+    assert_eq!(
+        result.get("protocolVersion").and_then(|v| v.as_str()),
+        Some("2024-11-05"),
+        "Expected protocolVersion to be '2024-11-05'"
+    );
+    assert_eq!(
+        result.pointer("/serverInfo/name").and_then(|v| v.as_str()),
+        Some("netget-mcp"),
+        "serverInfo.name must come from the handler's response"
+    );
+    assert_eq!(
+        result
+            .pointer("/serverInfo/version")
+            .and_then(|v| v.as_str()),
+        Some("0.1.0"),
+        "serverInfo.version must come from the handler's response"
+    );
+    assert_eq!(
+        result
+            .pointer("/capabilities/resources/subscribe")
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "declared capabilities must survive the round trip"
+    );
 
-        // Check server info
-        if let Some(server_info) = result.get("serverInfo") {
-            println!(
-                "  Server: {} v{}",
-                server_info
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown"),
-                server_info
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-            );
-        }
+    println!("✓ MCP Initialize test completed\n");
 
-        // Check capabilities
-        if let Some(capabilities) = result.get("capabilities") {
-            println!(
-                "  Capabilities: {}",
-                serde_json::to_string_pretty(capabilities)?
-            );
-        }
+    server.verify_mocks().await?;
 
-        println!("✓ MCP Initialize test completed\n");
-
-        // Verify mocks
-        server.verify_mocks().await?;
-
-        Ok(())
-    } else {
-        println!("✗ No result in response: {:?}", response.get("error"));
-        Err("Initialize failed".into())
-    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -288,9 +284,8 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
             .on_event("mcp_resources_list")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 3,
-                    "result": {
+                    "type": "mcp_resources_list_response",
+                    "response": {
                         "resources": [
                             {
                                 "uri": "file:///example.txt",
@@ -327,28 +322,33 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
     );
     assert_eq!(response.get("id"), Some(&json!(3)));
 
-    if let Some(result) = response.get("result") {
-        if let Some(resources) = result.get("resources").and_then(|v| v.as_array()) {
-            println!("✓ Received {} resources", resources.len());
-            for resource in resources {
-                if let (Some(uri), Some(name)) = (
-                    resource.get("uri").and_then(|v| v.as_str()),
-                    resource.get("name").and_then(|v| v.as_str()),
-                ) {
-                    println!("  - {}: {}", name, uri);
-                }
-            }
-        }
-        println!("✓ MCP Resources List test completed\n");
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    let resources = result
+        .get("resources")
+        .and_then(|v| v.as_array())
+        .expect("result must carry a `resources` array");
+    assert_eq!(resources.len(), 2, "both mocked resources must be returned");
+    assert_eq!(
+        resources[0].get("uri").and_then(|v| v.as_str()),
+        Some("file:///example.txt")
+    );
+    assert_eq!(
+        resources[0].get("name").and_then(|v| v.as_str()),
+        Some("Example File")
+    );
+    assert_eq!(
+        resources[1].get("uri").and_then(|v| v.as_str()),
+        Some("file:///data.json")
+    );
 
-        Ok(())
-    } else {
-        println!("✗ Resources list failed: {:?}", response.get("error"));
-        Err("Resources list failed".into())
-    }
+    println!("✓ MCP Resources List test completed\n");
+
+    server.verify_mocks().await?;
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -380,9 +380,8 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
             .and_event_data_contains("uri", "file:///example.txt")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 4,
-                    "result": {
+                    "type": "mcp_resources_read_response",
+                    "response": {
                         "contents": [
                             {
                                 "uri": "file:///example.txt",
@@ -421,31 +420,32 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
     );
     assert_eq!(response.get("id"), Some(&json!(4)));
 
-    if let Some(result) = response.get("result") {
-        if let Some(contents) = result.get("contents").and_then(|v| v.as_array()) {
-            println!("✓ Received {} content items", contents.len());
-            for content in contents {
-                if let Some(text) = content.get("text").and_then(|v| v.as_str()) {
-                    println!("  Content: {}", text);
-                }
-            }
-        }
-        println!("✓ MCP Resources Read test completed\n");
+    // The old version accepted a JSON-RPC *error* here as "resource not found is
+    // expected", which made the test unfailable: it stayed green for as long as the mock
+    // returned an action MCP rejects. The mock supplies a specific body, so demand it.
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    let contents = result
+        .get("contents")
+        .and_then(|v| v.as_array())
+        .expect("result must carry a `contents` array");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(
+        contents[0].get("uri").and_then(|v| v.as_str()),
+        Some("file:///example.txt")
+    );
+    assert_eq!(
+        contents[0].get("text").and_then(|v| v.as_str()),
+        Some("Hello from NetGet MCP server!")
+    );
 
-        Ok(())
-    } else {
-        println!("Resource read error: {:?}", response.get("error"));
-        // Resource not found is acceptable for this test
-        println!("✓ MCP Resources Read test completed (resource not found is expected)\n");
+    println!("✓ MCP Resources Read test completed\n");
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    server.verify_mocks().await?;
 
-        Ok(())
-    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -476,9 +476,8 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
             .on_event("mcp_tools_list")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 5,
-                    "result": {
+                    "type": "mcp_tools_list_response",
+                    "response": {
                         "tools": [
                             {
                                 "name": "calculate",
@@ -529,28 +528,38 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
     );
     assert_eq!(response.get("id"), Some(&json!(5)));
 
-    if let Some(result) = response.get("result") {
-        if let Some(tools) = result.get("tools").and_then(|v| v.as_array()) {
-            println!("✓ Received {} tools", tools.len());
-            for tool in tools {
-                if let (Some(name), Some(desc)) = (
-                    tool.get("name").and_then(|v| v.as_str()),
-                    tool.get("description").and_then(|v| v.as_str()),
-                ) {
-                    println!("  - {}: {}", name, desc);
-                }
-            }
-        }
-        println!("✓ MCP Tools List test completed\n");
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    let tools = result
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .expect("result must carry a `tools` array");
+    assert_eq!(tools.len(), 2, "both mocked tools must be returned");
+    assert_eq!(
+        tools[0].get("name").and_then(|v| v.as_str()),
+        Some("calculate")
+    );
+    // The JSON Schema is the part a real MCP client needs in order to call the tool, so
+    // assert it survives rather than only its name.
+    assert_eq!(
+        tools[0]
+            .pointer("/inputSchema/properties/expression/type")
+            .and_then(|v| v.as_str()),
+        Some("string"),
+        "inputSchema must round-trip intact"
+    );
+    assert_eq!(
+        tools[1].get("name").and_then(|v| v.as_str()),
+        Some("search")
+    );
 
-        Ok(())
-    } else {
-        println!("✗ Tools list failed: {:?}", response.get("error"));
-        Err("Tools list failed".into())
-    }
+    println!("✓ MCP Tools List test completed\n");
+
+    server.verify_mocks().await?;
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -582,9 +591,8 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
             .and_event_data_contains("name", "calculate")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 6,
-                    "result": {
+                    "type": "mcp_tools_call_response",
+                    "response": {
                         "content": [
                             {
                                 "type": "text",
@@ -626,31 +634,32 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
     );
     assert_eq!(response.get("id"), Some(&json!(6)));
 
-    if let Some(result) = response.get("result") {
-        if let Some(content) = result.get("content").and_then(|v| v.as_array()) {
-            println!("✓ Received {} content items", content.len());
-            for item in content {
-                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                    println!("  Result: {}", text);
-                }
-            }
-        }
-        println!("✓ MCP Tools Call test completed\n");
+    // Previously an "execution error is expected" branch swallowed the failure case,
+    // leaving nothing that could fail.
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    let content = result
+        .get("content")
+        .and_then(|v| v.as_array())
+        .expect("result must carry a `content` array");
+    assert_eq!(content.len(), 1);
+    assert_eq!(
+        content[0].get("type").and_then(|v| v.as_str()),
+        Some("text")
+    );
+    assert_eq!(
+        content[0].get("text").and_then(|v| v.as_str()),
+        Some("4"),
+        "the handler's calculate(2+2) result must reach the client"
+    );
 
-        Ok(())
-    } else {
-        println!("Tool call error: {:?}", response.get("error"));
-        // Tool execution error is acceptable for this test
-        println!("✓ MCP Tools Call test completed (execution error is expected)\n");
+    println!("✓ MCP Tools Call test completed\n");
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    server.verify_mocks().await?;
 
-        Ok(())
-    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -681,9 +690,8 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
             .on_event("mcp_prompts_list")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 7,
-                    "result": {
+                    "type": "mcp_prompts_list_response",
+                    "response": {
                         "prompts": [
                             {
                                 "name": "code-review",
@@ -718,28 +726,33 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
     );
     assert_eq!(response.get("id"), Some(&json!(7)));
 
-    if let Some(result) = response.get("result") {
-        if let Some(prompts) = result.get("prompts").and_then(|v| v.as_array()) {
-            println!("✓ Received {} prompts", prompts.len());
-            for prompt in prompts {
-                if let (Some(name), Some(desc)) = (
-                    prompt.get("name").and_then(|v| v.as_str()),
-                    prompt.get("description").and_then(|v| v.as_str()),
-                ) {
-                    println!("  - {}: {}", name, desc);
-                }
-            }
-        }
-        println!("✓ MCP Prompts List test completed\n");
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    let prompts = result
+        .get("prompts")
+        .and_then(|v| v.as_array())
+        .expect("result must carry a `prompts` array");
+    assert_eq!(prompts.len(), 2, "both mocked prompts must be returned");
+    assert_eq!(
+        prompts[0].get("name").and_then(|v| v.as_str()),
+        Some("code-review")
+    );
+    assert_eq!(
+        prompts[0].get("description").and_then(|v| v.as_str()),
+        Some("Review code for quality and bugs")
+    );
+    assert_eq!(
+        prompts[1].get("name").and_then(|v| v.as_str()),
+        Some("summarize")
+    );
 
-        Ok(())
-    } else {
-        println!("✗ Prompts list failed: {:?}", response.get("error"));
-        Err("Prompts list failed".into())
-    }
+    println!("✓ MCP Prompts List test completed\n");
+
+    server.verify_mocks().await?;
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -771,9 +784,8 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
             .and_event_data_contains("name", "code-review")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_jsonrpc_response",
-                    "id": 8,
-                    "result": {
+                    "type": "mcp_prompts_get_response",
+                    "response": {
                         "messages": [
                             {
                                 "role": "user",
@@ -815,31 +827,33 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
     );
     assert_eq!(response.get("id"), Some(&json!(8)));
 
-    if let Some(result) = response.get("result") {
-        if let Some(messages) = result.get("messages").and_then(|v| v.as_array()) {
-            println!("✓ Received {} messages", messages.len());
-            for message in messages {
-                if let Some(role) = message.get("role").and_then(|v| v.as_str()) {
-                    println!("  Message role: {}", role);
-                }
-            }
-        }
-        println!("✓ MCP Prompts Get test completed\n");
+    // Previously a "prompt not found is expected" branch made this test unfailable.
+    let result = response
+        .get("result")
+        .unwrap_or_else(|| panic!("expected a result, got {:?}", response.get("error")));
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    let messages = result
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("result must carry a `messages` array");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].get("role").and_then(|v| v.as_str()),
+        Some("user")
+    );
+    assert_eq!(
+        messages[0]
+            .pointer("/content/text")
+            .and_then(|v| v.as_str()),
+        Some("Review this code"),
+        "the prompt body must reach the client"
+    );
 
-        Ok(())
-    } else {
-        println!("Prompt get error: {:?}", response.get("error"));
-        // Prompt not found is acceptable for this test
-        println!("✓ MCP Prompts Get test completed (prompt not found is expected)\n");
+    println!("✓ MCP Prompts Get test completed\n");
 
-        // Verify mocks
-        server.verify_mocks().await?;
+    server.verify_mocks().await?;
 
-        Ok(())
-    }
+    Ok(())
 }
 
 #[tokio::test]

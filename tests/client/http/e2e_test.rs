@@ -85,11 +85,18 @@ mod http_client_tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: Client receives response (http_response_received event)
+                    // Mock 3: Client receives response (http_response_received event).
+                    //
+                    // This answered `wait_for_more`, which the HTTP client has no executor
+                    // for — `HttpClientProtocol::execute_action` knows only
+                    // `send_http_request`. `set_memory` is the honest way to say "note the
+                    // response and send nothing further": it is a common action the executor
+                    // handles itself, so it actually runs.
                     .on_event("http_response_received")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "wait_for_more"
+                            "type": "set_memory",
+                            "value": "response received"
                         }
                     ]))
                     .expect_calls(1)
@@ -199,11 +206,13 @@ mod http_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Client receives response
+                // Mock 3: Client receives response. See the note above: `wait_for_more` is
+                // not an action this client can execute.
                 .on_event("http_response_received")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "wait_for_more"
+                        "type": "set_memory",
+                        "value": "response received"
                     }
                 ]))
                 .expect_calls(1)

@@ -76,11 +76,18 @@ mod redis_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Redis response received
+                // Mock 3: Redis response received.
+                //
+                // This answered `wait_for_more`, which the Redis client has no executor for
+                // — `RedisClientProtocol::execute_action` knows only `execute_redis_command`
+                // and `disconnect`. `set_memory` is the honest way to say "note the reply
+                // and send nothing further": it is a common action the executor handles
+                // itself, so it actually runs.
                 .on_event("redis_response_received")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "wait_for_more"
+                        "type": "set_memory",
+                        "value": "PING answered"
                     }
                 ]))
                 .expect_calls(1)

@@ -224,7 +224,9 @@ async fn test_oauth2_client_credentials_flow() -> E2EResult<()> {
             .and_event_data_contains("grant_type", "client_credentials")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_token_response",
+                    // `oauth2_token_response`, not `send_token_response` — the latter is
+                    // an *openid* action name and OAuth2's executor rejects it.
+                    "type": "oauth2_token_response",
                     "access_token": "SERVICE_token_123",
                     "token_type": "Bearer",
                     "expires_in": 3600,
@@ -276,16 +278,24 @@ async fn test_oauth2_client_credentials_flow() -> E2EResult<()> {
     let json: Value = token_response.json().await?;
     println!("Token response: {}", serde_json::to_string_pretty(&json)?);
 
-    // Validate token response
-    assert!(
-        json.get("access_token").and_then(|v| v.as_str()).is_some(),
-        "Expected 'access_token' field"
+    // Assert the *value* the handler chose, not merely that some token came back — a
+    // presence check passes on any canned fallback and so cannot detect a rejected action.
+    assert_eq!(
+        json.get("access_token").and_then(|v| v.as_str()),
+        Some("SERVICE_token_123"),
+        "the handler's access_token must reach the client"
     );
 
     assert_eq!(
         json.get("token_type").and_then(|v| v.as_str()),
         Some("Bearer"),
         "Expected 'token_type' to be 'Bearer'"
+    );
+
+    assert_eq!(
+        json.get("scope").and_then(|v| v.as_str()),
+        Some("api:read api:write"),
+        "granted scopes must survive the round trip"
     );
 
     println!("✓ Access token: {}", json["access_token"].as_str().unwrap());
@@ -474,11 +484,20 @@ async fn test_oauth2_token_revocation() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2: Revocation request
+            // Mock 2: Revocation request.
+            //
+            // `oauth2_revoke` declares `with_no_actions()` on purpose: RFC 7009 §2.2 fixes
+            // the reply at 200 with an empty body whether or not the token existed, so no
+            // protocol action can change it and `mod.rs` sends it regardless. The only
+            // useful thing a handler can do is note the revocation, so the mock answers
+            // with the common `append_memory` action — which is also what the event's own
+            // example shows. It previously answered `send_revoke_response`, an action no
+            // protocol defines at all.
             .on_event("oauth2_revoke")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_revoke_response"
+                    "type": "append_memory",
+                    "value": "revoked token: ACCESS_token_to_revoke"
                 }
             ]))
             .expect_calls(1)

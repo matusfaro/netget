@@ -326,6 +326,15 @@ impl MockResponseBuilder {
 
     /// Finish this rule and continue building
     pub fn and(self) -> MockLlmBuilder {
+        // A rule keyed on an event id must answer with an action that event's protocol can
+        // actually execute. See `mock_action_names` for why this is checked here.
+        if let (Some(event_id), MockResponse::Actions { actions }) = (
+            self.rule_builder.serialized_matcher.event_type.as_deref(),
+            &self.response,
+        ) {
+            super::mock_action_names::assert_actions_valid_for_event(event_id, actions);
+        }
+
         // Create completed rule
         let mut rule = MockRule::new(
             self.rule_builder.matcher,
