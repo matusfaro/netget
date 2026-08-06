@@ -285,6 +285,34 @@ pub trait Server: Protocol {
     /// * `Ok(ActionResult)` - Result of execution (data to send, close connection, etc.)
     /// * `Err(_)` - If action execution failed
     fn execute_action(&self, action: serde_json::Value) -> anyhow::Result<ActionResult>;
+
+    /// Execute a protocol-specific action with access to application state.
+    ///
+    /// Actions are dispatched on the *stateless* protocol struct held by the registry — a
+    /// zero-sized description with no channel, socket or peer table. That is fine for sync
+    /// actions, which are answers carried back to the connection task that raised the event,
+    /// but it leaves async actions (`list_peers`, `get_server_info` and their kin) with
+    /// nothing to read from, so the only honest thing they could return was `NoAction`.
+    ///
+    /// Overriding this method is how a protocol reaches its running instance: call
+    /// [`AppState::server_handle`] with the handle type its `spawn()` registered via
+    /// [`AppState::register_server_handle`], and talk to the live server.
+    ///
+    /// The default delegates to [`Self::execute_action`], so every protocol that does not
+    /// need live state is unaffected and nothing has to opt in.
+    fn execute_action_with_state<'a>(
+        &'a self,
+        action: serde_json::Value,
+        state: AppState,
+        server_id: Option<crate::state::ServerId>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<ActionResult>> + Send + 'a>,
+    > {
+        // AppState is an Arc internally, so taking it by value is cheap.
+        let _ = (state, server_id);
+        let result = self.execute_action(action);
+        Box::pin(async move { result })
+    }
 }
 
 /// Report event types that declare no actions while their protocol declares sync actions.

@@ -257,7 +257,10 @@ pub async fn execute_actions(
 
         // Try protocol-specific action
         if let Some(proto) = protocol {
-            match proto.execute_action(action.clone()) {
+            match proto
+                .execute_action_with_state(action.clone(), state.clone(), server_id)
+                .await
+            {
                 Ok(action_result) => {
                     // Find action definition to get log template
                     let action_def = proto
