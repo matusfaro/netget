@@ -86,6 +86,67 @@ jobs:
           cargo test --locked --no-default-features --features "$CI_FEATURES" \
             -- --test-threads=100
 
+  single-feature:
+    name: Single-feature build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: single-feature
+
+      # Guards a class of breakage that no other job in this file can catch.
+      #
+      # A protocol whose Cargo.toml feature under-declares its dependencies still
+      # compiles under --all-features or under any multi-feature set that happens to
+      # pull the missing crate in for some *other* protocol. It only fails when built
+      # alone - which is exactly how a user running
+      # `--no-default-features --features <protocol>` builds it, and what the "use
+      # minimal features" workflow in CLAUDE.md does all day.
+      #
+      # `--tests` is deliberate and not decoration: `cargo check` alone compiles the
+      # lib and skips every test target, so a test file that no longer compiles under
+      # a narrow feature set contributes nothing and fails silently rather than
+      # visibly. Three test targets were found in exactly that state (stale arity
+      # after a parameter was added, an E0282 on an all-feature-gated vec).
+      #
+      # One job looping rather than a 14-way matrix: the iterations share a single
+      # cargo cache and target dir, so later features reuse the earlier builds'
+      # dependencies instead of each matrix leg paying for its own cold start.
+      #
+      # Every feature listed here was verified to build standalone. Keep it that way:
+      # add a protocol only after checking it, and only if it needs no system library
+      # this runner lacks (protoc, libpcap, dbus, libusb, pcsclite - see CLAUDE.md).
+      - name: cargo check --tests, one protocol feature at a time
+        shell: bash
+        run: |
+          set -uo pipefail
+          FEATURES="tcp udp dns http redis tls telnet ftp ldap syslog ntp tftp socks5 mqtt"
+          status=0
+          failed=""
+          for f in $FEATURES; do
+            echo "::group::cargo check --tests --features $f"
+            if cargo check --locked --no-default-features --features "$f" --tests; then
+              echo "OK: $f builds standalone"
+            else
+              echo "::error::Feature '$f' does not build standalone (--no-default-features --features $f --tests)."
+              failed="$failed $f"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$status" != "0" ]; then
+            echo "::error::Under-declared feature(s):$failed"
+            echo "Each listed feature builds under --all-features but not on its own, which means"
+            echo "its Cargo.toml entry is missing a dependency that another feature happens to"
+            echo "supply. Add the missing optional dep to that feature's list in Cargo.toml."
+          fi
+          exit $status
+
   orphaned-tests:
     name: Orphaned test check
     runs-on: ubuntu-22.04
