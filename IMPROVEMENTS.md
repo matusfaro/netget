@@ -11,10 +11,10 @@ Findings marked **[static]** come from code reading only.
 
 ## START HERE — what to do next
 
-State at the time of writing: **HEAD `292e5794`, 217 signed commits**, working tree clean,
+State at the time of writing: **HEAD `2a48ccfb`, 222 signed commits**, working tree clean,
 `cargo check --all-features --tests` green, `cargo fmt --check` passing, `clippy -D correctness
--D suspicious` clean, test suite **379 passed / 0 failed / 28 ignored** on the CI feature set
-(`tcp,http,dns,udp,redis,mcp-stdio`) — the first zero-failure run this session.
+-D suspicious` clean, test suite **388 passed / 0 failed / 29 ignored** on the CI feature set
+(`tcp,http,dns,udp,redis,mcp-stdio`). All 29 ignored are doctests or pre-existing `#[ignore]`s.
 
 **No agents are running and no file is reserved** — every area is free to edit.
 
@@ -79,6 +79,11 @@ Delete an entry once its context is no longer useful.
 
 | Item | Commit | What landed |
 |---|---|---|
+| 65 — placeholder response examples | `3e5b5f7a` | `effective_response_example()` derives a real example from the event's first attached action; guard test pins the rendered property, so the 215 literals can be swept incrementally |
+| 46 — no single-feature CI | `5bed7583` | `single-feature` job runs `cargo check --tests` over 14 protocol features one at a time — the only way to catch an under-declared feature |
+| 20 — dependency system inert | `2a48ccfb` | `get_dependencies()` derives from `privilege_requirement` instead of 116 restatements. Also fixed `PromiscuousMode` reading the raw-socket flag instead of the capture flag |
+| — ARP/DataLink/IS-IS misdeclared privilege | `f48e26da` | Declared `RawSockets`; they do layer-2 capture. A macOS ChmodBPF user was hard-refused three protocols they can run. `PacketCapture` had existed with zero adopters |
+| — CLAUDE.md drift | `9949fb5d` | Maturity ratings, four fixed-but-still-documented bugs, and an orphan-check snippet whose `awk $2` reported every directory as orphaned |
 | 56 — events with no action vocabulary (remainder) | `0619bab9` | Last 22 events; all 8 SSH-Agent events were affected, so that whole protocol reached the model with no vocabulary. Four events that genuinely have none now say so with `.with_no_actions()`. `KNOWN_MISDECLARED` is empty |
 | 31 — async actions had no live state | `e5f58be9`, `da5cf2f0` | Type-erased server-handle registry, then the defaulted `Server::execute_action_with_state` and the executor call site |
 | 10 — vestigial instance handles | `652d452d` | Deleted `ServerInstance.handle`/`ClientInstance.handle`; they were the only reason the structs could not derive `Clone`, which forced four hand-written field-by-field copies that silently dropped new fields |
