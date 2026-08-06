@@ -7,6 +7,95 @@ file:line so it can be verified independently.
 Findings marked **[verified]** were reproduced against a binary built from HEAD.
 Findings marked **[static]** come from code reading only.
 
+---
+
+## START HERE — what to do next
+
+State at the time of writing: **HEAD `067f9b44`, 211 signed commits**, working tree clean,
+`cargo check --all-features` green, `cargo fmt --check` passing, `clippy -D correctness
+-D suspicious` clean, test suite **375 passed / 4 failed / 28 ignored** on the CI feature set
+(`tcp,http,dns,udp,redis,mcp-stdio`), `tests/server.rs` 31/0/0.
+
+**No agents are running and no file is reserved** — every area is free to edit.
+
+Work these in order. Each is independently landable.
+
+1. **Item 56 remainder — 22 events still advertise no actions.** The highest-value item left.
+   Quarantined in `KNOWN_MISDECLARED` at `tests/event_action_declarations_test.rs:31-52`, with
+   a test that fails if the list grows. Breakdown: all **8 SSH-Agent** events
+   (`src/server/ssh_agent/actions.rs` calls neither `.with_actions()` nor `.with_no_actions()`
+   on any event, so every SSH-agent operation reaches the model with no vocabulary), **12 USB**
+   events across `usb-serial`/`usb-msc`/`usb-mouse`/`usb-keyboard`, plus
+   `http3_connection_opened` and `mongodb_disconnected`. Fix by attaching the actions that
+   legitimately answer each event, or `.with_no_actions()` where none does — note
+   `ssh_agent_connection_opened`'s own description says "returning no action is normal", which
+   is exactly what `.with_no_actions()` declares. Remove each from `KNOWN_MISDECLARED` as it
+   is fixed.
+
+2. **Item 31 hand-off — two lines.** The state half landed in `e5f58be9`
+   (`src/state/server_handles.rs`, type-erased so `AppState` learns no protocol types). Read
+   that commit message: it specifies the exact defaulted `execute_action_with_state` method to
+   add to `trait Server` in `src/llm/actions/protocol_trait.rs`, and the one-line call-site
+   change at `src/llm/actions/executor.rs:203`. Nothing else changes and no existing protocol
+   is affected until it overrides.
+
+3. **Item 10 hand-off — delete two vestigial fields.** Neither is written any more.
+   `ClientInstance.handle`: `src/state/client.rs:119-120` (decl), `:164`, `:7` (unused
+   `JoinHandle` import), `src/state/app_state.rs:1788` and `:1822`,
+   `src/cli/client_startup.rs:223`, `src/utils/save_load.rs:165`. `ServerInstance.handle` is
+   now in the same position after `30`: `src/state/server.rs:229`,
+   `src/cli/server_startup.rs:446`, `src/utils/save_load.rs:117`, and the two clones in
+   `app_state.rs` (~725, ~760). One commit for both.
+
+4. **The 4 remaining test failures are real.** `client::udp` — genuine product bugs, untouched
+   and unrelated to anything fixed this session. Diagnose them.
+
+5. **Keyword resolution is wrong, and a test encodes the old behavior.**
+   `src/server/tcp/actions.rs:107` declares `"ftp"` as a TCP keyword, from before a real FTP
+   protocol existed; `src/server/tftp/actions.rs:188` declares the over-generic `"file"` and
+   `"transfer"`, which collide with NFS and FTP. `tests/base_stack_test.rs:28` asserts
+   `parse_from_str("ftp") == TCP` and `:190` asserts `"file server" == NFS`; both now resolve
+   elsewhere and correctly fail. **The tests are wrong, not the code** — fix the keywords and
+   the expectations together. Underlying design smell worth noting: `parse_from_str`
+   (`src/protocol/server_registry.rs:608`) is a hand-maintained priority ladder falling through
+   to a loop over a `HashMap`, with one comment reading "avoid hash order collisions".
+
+6. **Item 65 — `{"type": "placeholder"}` response examples in ~54 files.** Rendered verbatim
+   into prompts (`src/llm/actions/tools.rs`) and MCP docs (`src/mcp_stdio/docs.rs:399`),
+   teaching the model an action type that does not exist. Either sweep them or suppress
+   placeholders at render time.
+
+7. **Item 46 — add a CI job for single-feature builds**, using `cargo check --tests` (not
+   `cargo check`): `--all-features` is structurally unable to catch an under-declared feature,
+   and a test target that fails to compile contributes nothing rather than failing visibly.
+   Both classes were found this session.
+
+8. Then the remaining numbered items below: **54** (ARP/DataLink still absent from the Linux
+   `dist` set), **20/20b** (the dependency system is plumbed but no protocol declares
+   dependencies, so adoption is cheap), **23** (architectural ceilings), **35** (the `easy`
+   layer), **40** remainder, **63**/**76** follow-ups.
+
+### Decisions that are the maintainer's, not an agent's
+
+- **`--llm-agent`** (`bdc11148`, 871 lines) was built and merged by an agent scoped to
+  something narrower. It works and is tested, but it is a product decision nobody made.
+  `git revert -m 1 bdc11148` removes it cleanly.
+- **`http3` → `quic` rename**, recommended with reasoning in `src/server/http3/CLAUDE.md`.
+  Touches `Cargo.toml`, both registries, `cli/server_startup.rs`, `src/server/mod.rs`, the
+  directory itself and `tests/server/http3/`.
+- **`ollama_model_test`** is now gated behind `NETGET_USE_OLLAMA=1`. Confirm that is the wanted
+  behavior rather than deleting the harness.
+
+### Working rules that were learned the hard way
+
+Read the "Multi-instance collaboration" section of `CLAUDE.md` before starting parallel work.
+In particular: **never `git add -A`, `.`, `-u`, or `commit -a`** — all three broke `master` or
+misattributed work this session — and verify HEAD in a throwaway worktree rather than trusting
+the working tree, which during parallel work is routinely mid-edit and whose failures belong to
+nobody.
+
+---
+
 ## Fixed
 
 Items below are resolved; kept here with their commit so the reasoning stays findable.
