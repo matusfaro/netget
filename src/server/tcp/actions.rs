@@ -104,7 +104,9 @@ impl Protocol for TcpProtocol {
         "ETH>IP>TCP"
     }
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["tcp", "raw", "ftp", "custom"]
+        // No "ftp": it was here from before a real FTP protocol existed, and a request for an
+        // FTP server resolved to raw TCP. FTP is its own protocol now and owns that keyword.
+        vec!["tcp", "raw", "custom"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};

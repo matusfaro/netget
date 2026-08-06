@@ -185,7 +185,10 @@ impl Protocol for TftpProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["tftp", "file", "transfer", "pxe", "boot"]
+        // No bare "file" or "transfer": both are too generic to own. "file" swallowed NFS's
+        // "file server" and "transfer" swallowed FTP's "file transfer", so a request for
+        // either resolved to TFTP.
+        vec!["tftp", "pxe", "boot"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

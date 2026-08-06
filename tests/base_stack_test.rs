@@ -25,7 +25,21 @@ fn test_parse_tcp_stack() {
         registry().parse_from_str("raw tcp"),
         Some("TCP".to_string())
     );
-    assert_eq!(registry().parse_from_str("ftp"), Some("TCP".to_string()));
+}
+
+/// "ftp" belongs to FTP, not TCP.
+///
+/// TCP used to declare it as a keyword, from before a real FTP protocol existed, so a request
+/// for an FTP server silently got a raw TCP socket. This test is gated on the `ftp` feature
+/// rather than `tcp` because with only `tcp` compiled there is nothing for "ftp" to resolve to.
+#[test]
+#[cfg(feature = "ftp")]
+fn test_parse_ftp_stack() {
+    assert_eq!(registry().parse_from_str("ftp"), Some("FTP".to_string()));
+    assert_eq!(
+        registry().parse_from_str("file transfer"),
+        Some("FTP".to_string())
+    );
 }
 
 #[test]
