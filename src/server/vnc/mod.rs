@@ -425,7 +425,16 @@ impl VncServer {
                     let x = read_half.read_u16().await?;
                     let y = read_half.read_u16().await?;
 
-                    trace!("PointerEvent: buttons={}, x={}, y={}", button_mask, x, y);
+                    // Logged and discarded, like KeyEvent above: there is no event and
+                    // no LLM call. Dual-logged so pointer input is visible in the TUI
+                    // and over MCP — it was trace!-only, so the only client input this
+                    // protocol receives was invisible in exactly the place someone
+                    // watching a VNC session would look.
+                    debug!("PointerEvent: buttons={}, x={}, y={}", button_mask, x, y);
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] VNC PointerEvent: buttons={}, x={}, y={}",
+                        button_mask, x, y
+                    ));
                 }
                 6 => {
                     // ClientCutText
