@@ -99,8 +99,9 @@ pub static MONGODB_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static MONGODB_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mongodb_disconnected",
-        "MongoDB client disconnected",
-        json!({"type": "placeholder", "event_id": "mongodb_disconnected"}),
+        "A MongoDB client disconnected. Purely informational - the socket is already closed, so \
+         nothing can be sent in reply. Use it to record what happened in memory or the log.",
+        json!({"type": "show_message", "message": "MongoDB client disconnected"}),
     )
     .with_parameters(vec![Parameter {
         name: "reason".to_string(),
@@ -110,6 +111,7 @@ pub static MONGODB_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             .to_string(),
         required: false,
     }])
+    .with_no_actions()
     .with_log_template(
         LogTemplate::new()
             .with_info("{client_ip} MongoDB disconnected: {reason}")

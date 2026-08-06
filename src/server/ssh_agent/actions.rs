@@ -12,6 +12,137 @@ use anyhow::Result;
 use serde_json::json;
 use std::sync::LazyLock;
 
+// ============================================================================
+// Action constants
+//
+// These are defined here rather than inline in `get_sync_actions` so that each event type can
+// attach the actions that actually answer it. An event that lists none leaves the model with
+// only the common actions (`set_memory`, `show_message`, ...), so every agent action it returns
+// is rejected as unknown and the request fails after two retries - which is what happened to
+// all eight of these events. See `tests/event_action_declarations_test.rs`.
+// ============================================================================
+
+pub static SEND_IDENTITIES_LIST_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "send_identities_list".to_string(),
+        description: "Answer ssh_agent_request_identities with the keys this agent \
+            holds. This is the ONLY valid answer to that event - send_success does not \
+            satisfy it. An empty 'identities' array is valid and means the agent holds \
+            no keys, which is what `ssh-add -l` reports as \"no identities\"."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "identities".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of objects, one per key. Each needs \
+                'public_key_blob_hex' (the SSH public key blob, hex-encoded: the wire \
+                encoding of the key, which for ssh-ed25519 is the string \"ssh-ed25519\" \
+                followed by the 32-byte public key, each length-prefixed) and 'comment' \
+                (the label `ssh-add -l` prints, e.g. \"deploy-key\"). A blob that is not \
+                valid hex, or decodes to zero bytes, fails the whole request rather than \
+                sending a broken identity"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({"type": "send_identities_list", "identities": [{"public_key_blob_hex": "0000000b7373682d6564323535313900000020e5a1b3", "comment": "deploy-key"}]}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SSH Agent {identities_len} identities")
+                .with_debug("SSH Agent send_identities_list: count={identities_len}"),
+        ),
+    }
+});
+
+pub static SEND_SIGN_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
+    ActionDefinition {
+        name: "send_sign_response".to_string(),
+        description: "Answer ssh_agent_sign_request with a signature over the data the \
+            client sent. NOTE: no private key exists here - you are fabricating the \
+            signature bytes, so a real client will fail to verify them against the \
+            public key it holds. Useful for honeypots and for exercising the protocol; \
+            reply with send_failure to refuse the signature instead."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "signature_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded SSH signature blob: the signature algorithm name \
+                and the signature itself, each length-prefixed, as in the event's \
+                'public_key_blob_hex' encoding. Invalid hex, or hex decoding to zero \
+                bytes, fails the request instead of sending an empty signature"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({"type": "send_sign_response", "signature_hex": "0000000b7373682d65643235353139000000400a1b2c3d"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SSH Agent signature")
+                .with_debug("SSH Agent send_sign_response"),
+        ),
+    }
+});
+
+pub static SEND_SUCCESS_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
+    name: "send_success".to_string(),
+    description: "Send SSH_AGENT_SUCCESS: the operation was accepted. This is the \
+        expected answer to ssh_agent_add_identity, ssh_agent_remove_identity, \
+        ssh_agent_remove_all_identities, ssh_agent_lock and ssh_agent_unlock. It is \
+        NOT a valid answer to a request for identities or a signature."
+        .to_string(),
+    parameters: vec![],
+    example: json!({"type": "send_success"}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> SSH Agent SUCCESS")
+            .with_debug("SSH Agent send_success"),
+    ),
+});
+
+pub static SEND_FAILURE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
+    name: "send_failure".to_string(),
+    description: "Send SSH_AGENT_FAILURE: refuse the operation. Use it to deny a \
+        signature, reject a key, or refuse an unlock whose passphrase does not \
+        match. Every event accepts this. If you return no action at all the server \
+        sends nothing and the client blocks, so refuse explicitly."
+        .to_string(),
+    parameters: vec![],
+    example: json!({"type": "send_failure"}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> SSH Agent FAILURE")
+            .with_debug("SSH Agent send_failure"),
+    ),
+});
+
+pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
+        name: "close_connection".to_string(),
+        description: "Close the agent connection that raised this event, without \
+        replying to the request. The client sees the socket drop. Use send_failure \
+        instead when you want to refuse an operation but keep the session."
+            .to_string(),
+        parameters: vec![],
+        example: json!({"type": "close_connection"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> SSH Agent close connection")
+                .with_debug("SSH Agent close_connection"),
+        ),
+    });
+
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
+    name: "wait_for_more".to_string(),
+    description: "Send no reply and wait for the next message. Rarely correct: the \
+        agent protocol is strict request/response and a client blocks until it gets \
+        an answer, so prefer send_success or send_failure."
+        .to_string(),
+    parameters: vec![],
+    example: json!({"type": "wait_for_more"}),
+    log_template: Some(
+        LogTemplate::new()
+            .with_info("-> SSH Agent wait")
+            .with_debug("SSH Agent wait_for_more"),
+    ),
+});
+
 // Event type constants
 pub static SSH_AGENT_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
@@ -19,9 +150,10 @@ pub static SSH_AGENT_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::ne
         "A client connected to the agent socket and has not sent a request yet. Nothing is \
          expected of you here - it exists so you can set up state before the first request. \
          Returning no action is normal; do NOT send send_success, which would put an \
-         unrequested reply on the wire and desynchronise the client.",
+         unrequested reply on the wire and desynchronise the client. Close the connection if \
+         you want to refuse the client outright.",
         json!({
-            "type": "send_success"
+            "type": "close_connection"
         }),
     )
     .with_parameter(Parameter {
@@ -30,6 +162,9 @@ pub static SSH_AGENT_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::ne
         description: "Unique connection identifier".to_string(),
         required: true,
     })
+    // Only close_connection: replying to a request the client has not made desynchronises it,
+    // which the description above spells out. Refusing the connection outright is legitimate.
+    .with_actions(vec![CLOSE_CONNECTION_ACTION.clone()])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent connection opened")
@@ -48,6 +183,11 @@ pub static SSH_AGENT_REQUEST_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::n
             "identities": []
         }),
     )
+    .with_actions(vec![
+        SEND_IDENTITIES_LIST_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent REQUEST_IDENTITIES")
@@ -103,6 +243,11 @@ pub static SSH_AGENT_SIGN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
                 .to_string(),
             required: true,
         },
+    ])
+    .with_actions(vec![
+        SEND_SIGN_RESPONSE_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
     ])
     .with_log_template(
         LogTemplate::new()
@@ -160,6 +305,11 @@ pub static SSH_AGENT_ADD_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(|| 
             required: true,
         },
     ])
+    .with_actions(vec![
+        SEND_SUCCESS_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent ADD_IDENTITY {key_type} ({comment})")
@@ -185,6 +335,11 @@ pub static SSH_AGENT_REMOVE_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(
             .to_string(),
         required: true,
     }])
+    .with_actions(vec![
+        SEND_SUCCESS_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent REMOVE_IDENTITY")
@@ -202,6 +357,11 @@ pub static SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock
             "type": "send_success"
         }),
     )
+    .with_actions(vec![
+        SEND_SUCCESS_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent REMOVE_ALL_IDENTITIES")
@@ -227,6 +387,11 @@ pub static SSH_AGENT_LOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "The passphrase the client sent, in the clear".to_string(),
         required: true,
     })
+    .with_actions(vec![
+        SEND_SUCCESS_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent LOCK")
@@ -251,6 +416,11 @@ pub static SSH_AGENT_UNLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "The passphrase the client sent, in the clear".to_string(),
         required: true,
     })
+    .with_actions(vec![
+        SEND_SUCCESS_ACTION.clone(),
+        SEND_FAILURE_ACTION.clone(),
+        CLOSE_CONNECTION_ACTION.clone(),
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("SSH Agent UNLOCK")
@@ -294,116 +464,12 @@ impl Protocol for SshAgentProtocol {
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
-            ActionDefinition {
-                name: "send_identities_list".to_string(),
-                description: "Answer ssh_agent_request_identities with the keys this agent \
-                    holds. This is the ONLY valid answer to that event - send_success does not \
-                    satisfy it. An empty 'identities' array is valid and means the agent holds \
-                    no keys, which is what `ssh-add -l` reports as \"no identities\"."
-                    .to_string(),
-                parameters: vec![Parameter {
-                    name: "identities".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Array of objects, one per key. Each needs \
-                        'public_key_blob_hex' (the SSH public key blob, hex-encoded: the wire \
-                        encoding of the key, which for ssh-ed25519 is the string \"ssh-ed25519\" \
-                        followed by the 32-byte public key, each length-prefixed) and 'comment' \
-                        (the label `ssh-add -l` prints, e.g. \"deploy-key\"). A blob that is not \
-                        valid hex, or decodes to zero bytes, fails the whole request rather than \
-                        sending a broken identity"
-                        .to_string(),
-                    required: true,
-                }],
-                example: json!({"type": "send_identities_list", "identities": [{"public_key_blob_hex": "0000000b7373682d6564323535313900000020e5a1b3", "comment": "deploy-key"}]}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> SSH Agent {identities_len} identities")
-                        .with_debug("SSH Agent send_identities_list: count={identities_len}"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_sign_response".to_string(),
-                description: "Answer ssh_agent_sign_request with a signature over the data the \
-                    client sent. NOTE: no private key exists here - you are fabricating the \
-                    signature bytes, so a real client will fail to verify them against the \
-                    public key it holds. Useful for honeypots and for exercising the protocol; \
-                    reply with send_failure to refuse the signature instead."
-                    .to_string(),
-                parameters: vec![Parameter {
-                    name: "signature_hex".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Hex-encoded SSH signature blob: the signature algorithm name \
-                        and the signature itself, each length-prefixed, as in the event's \
-                        'public_key_blob_hex' encoding. Invalid hex, or hex decoding to zero \
-                        bytes, fails the request instead of sending an empty signature"
-                        .to_string(),
-                    required: true,
-                }],
-                example: json!({"type": "send_sign_response", "signature_hex": "0000000b7373682d65643235353139000000400a1b2c3d"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> SSH Agent signature")
-                        .with_debug("SSH Agent send_sign_response"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_success".to_string(),
-                description: "Send SSH_AGENT_SUCCESS: the operation was accepted. This is the \
-                    expected answer to ssh_agent_add_identity, ssh_agent_remove_identity, \
-                    ssh_agent_remove_all_identities, ssh_agent_lock and ssh_agent_unlock. It is \
-                    NOT a valid answer to a request for identities or a signature."
-                    .to_string(),
-                parameters: vec![],
-                example: json!({"type": "send_success"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> SSH Agent SUCCESS")
-                        .with_debug("SSH Agent send_success"),
-                ),
-            },
-            ActionDefinition {
-                name: "send_failure".to_string(),
-                description: "Send SSH_AGENT_FAILURE: refuse the operation. Use it to deny a \
-                    signature, reject a key, or refuse an unlock whose passphrase does not \
-                    match. Every event accepts this. If you return no action at all the server \
-                    sends nothing and the client blocks, so refuse explicitly."
-                    .to_string(),
-                parameters: vec![],
-                example: json!({"type": "send_failure"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> SSH Agent FAILURE")
-                        .with_debug("SSH Agent send_failure"),
-                ),
-            },
-            ActionDefinition {
-                name: "close_connection".to_string(),
-                description: "Close the agent connection that raised this event, without \
-                    replying to the request. The client sees the socket drop. Use send_failure \
-                    instead when you want to refuse an operation but keep the session."
-                    .to_string(),
-                parameters: vec![],
-                example: json!({"type": "close_connection"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> SSH Agent close connection")
-                        .with_debug("SSH Agent close_connection"),
-                ),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Send no reply and wait for the next message. Rarely correct: the \
-                    agent protocol is strict request/response and a client blocks until it gets \
-                    an answer, so prefer send_success or send_failure."
-                    .to_string(),
-                parameters: vec![],
-                example: json!({"type": "wait_for_more"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> SSH Agent wait")
-                        .with_debug("SSH Agent wait_for_more"),
-                ),
-            },
+            SEND_IDENTITIES_LIST_ACTION.clone(),
+            SEND_SIGN_RESPONSE_ACTION.clone(),
+            SEND_SUCCESS_ACTION.clone(),
+            SEND_FAILURE_ACTION.clone(),
+            CLOSE_CONNECTION_ACTION.clone(),
+            WAIT_FOR_MORE_ACTION.clone(),
         ]
     }
 

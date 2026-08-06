@@ -16,41 +16,13 @@
 use netget::llm::actions::protocol_trait::{audit_event_action_declarations, Protocol};
 use netget::protocol::server_registry::registry;
 
-/// Events that already had this defect when the audit was written, in protocols outside the
-/// LLM layer. They are quarantined rather than ignored: the test fails on any *new*
-/// occurrence, and this list is meant to shrink to nothing.
+/// Events that had this defect when the audit was written and are not yet fixed.
 ///
-/// All of these are `--all-features`-only protocols, so the CI feature set never sees them.
-/// Each needs `.with_actions(...)` on the event type, or `.with_no_actions()` if the event
-/// genuinely wants none — `ssh_agent_connection_opened`'s own description says "returning no
-/// action is normal", which is precisely what `.with_no_actions()` declares, and the
-/// `*_detached`/`*_disconnected` events are the same shape. `src/server/ssh_agent/actions.rs`
-/// calls neither method on any of its eight event types, so every SSH-agent operation is
-/// currently answered with no protocol vocabulary at all.
-const KNOWN_MISDECLARED: &[(&str, &str)] = &[
-    ("SSH Agent", "ssh_agent_connection_opened"),
-    ("SSH Agent", "ssh_agent_request_identities"),
-    ("SSH Agent", "ssh_agent_sign_request"),
-    ("SSH Agent", "ssh_agent_add_identity"),
-    ("SSH Agent", "ssh_agent_remove_identity"),
-    ("SSH Agent", "ssh_agent_remove_all_identities"),
-    ("SSH Agent", "ssh_agent_lock"),
-    ("SSH Agent", "ssh_agent_unlock"),
-    ("HTTP3", "http3_connection_opened"),
-    ("USB-Serial", "usb_serial_attached"),
-    ("USB-Serial", "usb_serial_detached"),
-    ("USB-Serial", "usb_serial_data_received"),
-    ("USB-MassStorage", "usb_msc_attached"),
-    ("USB-MassStorage", "usb_msc_detached"),
-    ("USB-MassStorage", "usb_msc_read"),
-    ("USB-MassStorage", "usb_msc_write"),
-    ("USB-Mouse", "usb_mouse_attached"),
-    ("USB-Mouse", "usb_mouse_detached"),
-    ("USB-Keyboard", "usb_keyboard_attached"),
-    ("USB-Keyboard", "usb_keyboard_detached"),
-    ("USB-Keyboard", "usb_keyboard_led_status"),
-    ("MongoDB", "mongodb_disconnected"),
-];
+/// Empty, and meant to stay that way. Every entry that was here — all eight SSH-Agent events,
+/// the twelve USB events, `http3_connection_opened` and `mongodb_disconnected` — now either
+/// attaches the actions that answer it or declares `.with_no_actions()`. Leave this list empty
+/// and let the test fail rather than re-quarantining a new occurrence.
+const KNOWN_MISDECLARED: &[(&str, &str)] = &[];
 
 fn is_quarantined(protocol_name: &str, event_id: &str) -> bool {
     KNOWN_MISDECLARED

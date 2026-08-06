@@ -21,12 +21,100 @@ use std::{
 #[cfg(feature = "usb-serial")]
 use tokio::sync::Mutex;
 
+// Action constructors. Free functions rather than inline definitions so each event type can
+// declare the actions that answer it - an event listing none leaves the model with only the
+// common actions and every USB-Serial action it returns is rejected as unknown.
+#[cfg(feature = "usb-serial")]
+fn send_data_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_data".to_string(),
+        description: "Send data to the host over the virtual serial port, as if a device had \
+            written it to the wire."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "Text to send. Include an explicit \"\\n\" or \"\\r\\n\" if the host \
+                expects line-terminated output"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({"type": "send_data", "data": "Hello\n"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB serial send {data_len}B")
+                .with_debug("USB-Serial send_data: data='{data}'"),
+        ),
+    }
+}
+
+#[cfg(feature = "usb-serial")]
+fn set_line_coding_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "set_line_coding".to_string(),
+        description: "Set the baud rate and line parameters this virtual port reports. Defaults \
+            to 115200 8N1."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "baud_rate".to_string(),
+                type_hint: "number".to_string(),
+                description: "Bits per second (e.g., 115200)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_bits".to_string(),
+                type_hint: "number".to_string(),
+                description: "5, 6, 7, 8, or 16".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "parity".to_string(),
+                type_hint: "string".to_string(),
+                description: "'none', 'odd', 'even', 'mark', 'space'".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "stop_bits".to_string(),
+                type_hint: "number".to_string(),
+                description: "1, 1.5, or 2".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({"type": "set_line_coding", "baud_rate": 9600}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB serial line coding {baud_rate} baud")
+                .with_debug("USB-Serial set_line_coding: baud={baud_rate} data_bits={data_bits} parity={parity} stop_bits={stop_bits}"),
+        ),
+    }
+}
+
+#[cfg(feature = "usb-serial")]
+fn wait_for_more_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "wait_for_more".to_string(),
+        description: "Send nothing and wait for the host to write more. Correct whenever the \
+            input so far is incomplete - a partial line, for instance."
+            .to_string(),
+        parameters: vec![],
+        example: json!({"type": "wait_for_more"}),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB serial wait for more")
+                .with_debug("USB-Serial wait_for_more"),
+        ),
+    }
+}
+
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_serial_attached",
-        "Host attached to USB serial port",
-        json!({"type": "placeholder", "event_id": "usb_serial_attached"}),
+        "A host opened this virtual serial port (it appears as /dev/ttyACM0 on Linux). Send a \
+         banner or prompt if the device should greet the host, adjust the line coding, or \
+         wait_for_more to stay silent until the host writes.",
+        json!({"type": "send_data", "data": "READY\r\n"}),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -34,14 +122,21 @@ pub static USB_SERIAL_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID".to_string(),
         required: true,
     }])
+    .with_actions(vec![
+        send_data_action(),
+        set_line_coding_action(),
+        wait_for_more_action(),
+    ])
+    .with_alternative_example(json!({"type": "wait_for_more"}))
 });
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_serial_detached",
-        "Host detached from USB serial port",
-        json!({"type": "placeholder", "event_id": "usb_serial_detached"}),
+        "The host closed this virtual serial port. Purely informational - the port is gone, so \
+         written data has nowhere to go.",
+        json!({"type": "show_message", "message": "USB serial host detached"}),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -49,14 +144,16 @@ pub static USB_SERIAL_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID".to_string(),
         required: true,
     }])
+    .with_no_actions()
 });
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_serial_data_received",
-        "Data received from host",
-        json!({"type": "placeholder", "event_id": "usb_serial_data_received"}),
+        "The host wrote data to the virtual serial port. Reply with send_data, or wait_for_more \
+         if what arrived is only part of a command.",
+        json!({"type": "send_data", "data": "OK\r\n"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -72,6 +169,12 @@ pub static USB_SERIAL_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
             required: true,
         },
     ])
+    .with_actions(vec![
+        send_data_action(),
+        set_line_coding_action(),
+        wait_for_more_action(),
+    ])
+    .with_alternative_example(json!({"type": "wait_for_more"}))
 });
 
 #[cfg(feature = "usb-serial")]
@@ -103,69 +206,9 @@ impl Protocol for UsbSerialProtocol {
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
-            ActionDefinition {
-                name: "send_data".to_string(),
-                description: "Send data to serial port".to_string(),
-                parameters: vec![Parameter {
-                    name: "data".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Data to send".to_string(),
-                    required: true,
-                }],
-                example: json!({"type": "send_data", "data": "Hello\n"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> USB serial send {data_len}B")
-                        .with_debug("USB-Serial send_data: data='{data}'"),
-                ),
-            },
-            ActionDefinition {
-                name: "set_line_coding".to_string(),
-                description: "Set baud rate and line parameters".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "baud_rate".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Bits per second (e.g., 115200)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "data_bits".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "5, 6, 7, 8, or 16".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "parity".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "'none', 'odd', 'even', 'mark', 'space'".to_string(),
-                        required: false,
-                    },
-                    Parameter {
-                        name: "stop_bits".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "1, 1.5, or 2".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({"type": "set_line_coding", "baud_rate": 9600}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> USB serial line coding {baud_rate} baud")
-                        .with_debug("USB-Serial set_line_coding: baud={baud_rate} data_bits={data_bits} parity={parity} stop_bits={stop_bits}"),
-                ),
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more data".to_string(),
-                parameters: vec![],
-                example: json!({"type": "wait_for_more"}),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> USB serial wait for more")
-                        .with_debug("USB-Serial wait_for_more"),
-                ),
-            },
+            send_data_action(),
+            set_line_coding_action(),
+            wait_for_more_action(),
         ]
     }
     fn protocol_name(&self) -> &'static str {

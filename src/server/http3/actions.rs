@@ -353,8 +353,10 @@ pub static CLOSE_THIS_STREAM_ACTION: LazyLock<ActionDefinition> =
 pub static HTTP3_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "http3_connection_opened",
-        "New HTTP3 connection established with TLS 1.3 encryption",
-        json!({"type": "placeholder", "event_id": "http3_connection_opened"}),
+        "A QUIC connection was established (TLS 1.3 complete), but the client has not opened a \
+         stream yet. Purely informational: every send action needs a stream to write to, and \
+         none exists yet. Act on http3_stream_opened instead.",
+        json!({"type": "show_message", "message": "QUIC connection established"}),
     )
     // No parameters - just connection opened notification
     .with_log_template(
@@ -363,7 +365,10 @@ pub static HTTP3_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(||
             .with_debug("HTTP/3 connection established with TLS 1.3")
             .with_trace("HTTP/3 connection: {json_pretty(.)}"),
     )
-    .with_actions(vec![])
+    // Deliberately none: send_http3_data and close_this_stream both address a stream, and this
+    // event fires before any stream exists. `.with_no_actions()` rather than an empty list so
+    // this reads as intentional - see tests/event_action_declarations_test.rs.
+    .with_no_actions()
 });
 
 /// HTTP3 stream opened event - triggered when client opens a new stream

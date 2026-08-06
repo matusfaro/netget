@@ -29,7 +29,8 @@ use tokio::sync::Mutex;
 pub static USB_KEYBOARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_keyboard_attached",
-        "Host attached to USB keyboard device",
+        "A USB/IP host attached to this virtual keyboard and will now accept HID reports. Type \
+         text, press a key or a combination, or wait_for_more to stay idle.",
         json!({
             "type": "type_text",
             "text": "Hello, World!",
@@ -42,16 +43,23 @@ pub static USB_KEYBOARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID of the USB/IP session".to_string(),
         required: true,
     }])
+    .with_actions(vec![
+        type_text_action(),
+        press_key_action(),
+        press_key_combo_action(),
+        release_all_keys_action(),
+        wait_for_more_action(),
+    ])
+    .with_alternative_example(json!({"type": "wait_for_more"}))
 });
 
 #[cfg(feature = "usb-keyboard")]
 pub static USB_KEYBOARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_keyboard_detached",
-        "Host detached from USB keyboard device",
-        json!({
-            "type": "release_all_keys"
-        }),
+        "The host detached from this virtual keyboard. Purely informational - the USB/IP \
+         session is gone, so a HID report has nowhere to go.",
+        json!({"type": "show_message", "message": "USB keyboard host detached"}),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -59,13 +67,16 @@ pub static USB_KEYBOARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID of the USB/IP session".to_string(),
         required: true,
     }])
+    .with_no_actions()
 });
 
 #[cfg(feature = "usb-keyboard")]
 pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_keyboard_led_status",
-        "Host changed keyboard LED status (Num Lock, Caps Lock, Scroll Lock)",
+        "The host changed the keyboard LEDs (Num Lock, Caps Lock, Scroll Lock). This is how the \
+         host reports lock state back to a keyboard - use it to tell whether Caps Lock is on \
+         before typing, and correct it with press_key if it is not what you want.",
         json!({
             "type": "wait_for_more"
         }),
@@ -96,6 +107,14 @@ pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(||
             required: true,
         },
     ])
+    .with_actions(vec![
+        type_text_action(),
+        press_key_action(),
+        press_key_combo_action(),
+        release_all_keys_action(),
+        wait_for_more_action(),
+    ])
+    .with_alternative_example(json!({"type": "press_key", "key": "capslock"}))
 });
 
 /// USB HID Keyboard protocol action handler

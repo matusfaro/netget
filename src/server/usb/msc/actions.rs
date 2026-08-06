@@ -29,7 +29,9 @@ use tokio::sync::Mutex;
 pub static USB_MSC_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_attached",
-        "Host attached to USB mass storage device",
+        "A USB/IP host attached to this virtual mass-storage device and can now read and write \
+         sectors. Mount a disk image to give it contents, set write protection, or wait_for_more \
+         to leave the currently mounted image in place.",
         json!({
             "type": "wait_for_more"
         }),
@@ -54,16 +56,21 @@ pub static USB_MSC_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_actions(vec![
+        mount_disk_action(),
+        eject_disk_action(),
+        set_write_protect_action(),
+        wait_for_more_action(),
+    ])
 });
 
 #[cfg(feature = "usb-msc")]
 pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_detached",
-        "Host detached from USB mass storage device",
-        json!({
-            "type": "eject_disk"
-        }),
+        "The host detached from this virtual mass-storage device. Purely informational - the \
+         USB/IP session is gone, so there is nothing left to mount, eject or write-protect.",
+        json!({"type": "show_message", "message": "USB mass storage host detached"}),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -71,13 +78,16 @@ pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID of the USB/IP session".to_string(),
         required: true,
     }])
+    .with_no_actions()
 });
 
 #[cfg(feature = "usb-msc")]
 pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_read",
-        "Host read sectors from the mass storage device",
+        "The host read sectors from the mass-storage device. Informational: the read has already \
+         been served from the mounted image. Answer wait_for_more unless you want to swap the \
+         image or change write protection in response.",
         json!({
             "type": "wait_for_more"
         }),
@@ -108,13 +118,21 @@ pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
+    .with_actions(vec![
+        mount_disk_action(),
+        eject_disk_action(),
+        set_write_protect_action(),
+        wait_for_more_action(),
+    ])
 });
 
 #[cfg(feature = "usb-msc")]
 pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_write",
-        "Host wrote sectors to the mass storage device",
+        "The host wrote sectors to the mass-storage device. Informational: the write has already \
+         been applied to the mounted image. Answer wait_for_more unless you want to swap the \
+         image or write-protect it in response.",
         json!({
             "type": "wait_for_more"
         }),
@@ -144,6 +162,12 @@ pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "Total bytes written".to_string(),
             required: true,
         },
+    ])
+    .with_actions(vec![
+        mount_disk_action(),
+        eject_disk_action(),
+        set_write_protect_action(),
+        wait_for_more_action(),
     ])
 });
 

@@ -29,8 +29,9 @@ use tokio::sync::Mutex;
 pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_mouse_attached",
-        "Host attached to USB mouse device",
-        json!({"type": "placeholder", "event_id": "usb_mouse_attached"}),
+        "A USB/IP host attached to this virtual mouse and will now accept input reports. Move, \
+         click, scroll or drag to drive the host's pointer, or wait_for_more to stay idle.",
+        json!({"type": "move_relative", "x": 50, "y": -20}),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -38,14 +39,24 @@ pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID of the USB/IP session".to_string(),
         required: true,
     }])
+    .with_actions(vec![
+        move_relative_action(),
+        move_absolute_action(),
+        click_action(),
+        scroll_action(),
+        drag_action(),
+        wait_for_more_action(),
+    ])
+    .with_alternative_example(json!({"type": "click", "button": "left"}))
 });
 
 #[cfg(feature = "usb-mouse")]
 pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_mouse_detached",
-        "Host detached from USB mouse device",
-        json!({"type": "placeholder", "event_id": "usb_mouse_detached"}),
+        "The host detached from this virtual mouse. Purely informational - the USB/IP session \
+         is gone, so an input report has nowhere to go.",
+        json!({"type": "show_message", "message": "USB mouse host detached"}),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -53,6 +64,7 @@ pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Connection ID of the USB/IP session".to_string(),
         required: true,
     }])
+    .with_no_actions()
 });
 
 /// USB HID Mouse protocol action handler
