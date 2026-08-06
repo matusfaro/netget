@@ -418,36 +418,24 @@ indication the protocol exists but was compiled out.
 Fix: add `arp` to `dist-darwin` and `icmp` to `dist`; make the registry distinguish "no such
 protocol" from "compiled out of this build" in its error.
 
-### 20. The dependency system is plumbed but inert — adopting it is cheap **[verified]**
+### 20b. Startup still does not consult the dependency system **[static]**
 
-Corrected: an earlier version of this item said nothing calls it. Not so.
-`get_excluded_protocols()` is genuinely called from `src/events/handler.rs:2155,2159` and
-`src/cli/sticky_footer.rs:1327,1334`, and both registries expose `get_available_protocols()`
-and `is_protocol_available()` on top of it. The plumbing reaches the TUI and the event handler
-already.
+Item 20 is fixed (see the Fixed table): `Protocol::get_dependencies()` now derives from
+`metadata().privilege_requirement`, so all 116 protocols report correct data and
+`get_excluded_protocols()` is live in the TUI footer and the event handler.
 
-What is missing is the *data*: `get_excluded_protocols` computes exclusions by calling
-`protocol.get_dependencies()`, and **no protocol overrides it** — every one inherits the empty
-default at `src/llm/actions/protocol_trait.rs:171`, so the exclusion map is always empty and
-the whole mechanism silently does nothing.
+What remains is the *startup* half. Neither `start_server_by_id` nor `start_server_from_action`
+calls `is_protocol_available()` before `spawn()`. `server_startup.rs` does gate on
+`PrivilegeRequirement::is_met_by()`, so a privilege-derived dependency is in practice enforced
+there — but a protocol that *overrides* `get_dependencies()` to add a `SystemLibrary` or
+`ToolInPath` has no such gate, and would be excluded from the TUI list while a direct
+`start_server` still attempts it and fails with whatever raw error the underlying library
+produces. One call in the startup path closes that gap.
 
-That makes this cheap rather than a rewrite: add `get_dependencies()` to the protocols that
-need it and the TUI, the event handler and the LLM's protocol list all start excluding them
-with the install hints the design already produces. The trait doc at
-`protocol_trait.rs:165-168` even spells out the intended values — pcap and raw sockets for
-ARP/DataLink, TUN and root for WireGuard, `protoc` for gRPC. Start with the raw-socket and
-system-library protocols, which are exactly the ones that currently fail with an opaque OS
-error. `src/protocol/dependencies.rs` should be kept, not deleted.
-
-<!-- superseded wording removed -->
-
-### 20b. Startup still does not consult it **[static]**
-
-Separately from the missing data above: neither `start_server_by_id` nor
-`start_server_from_action` calls `is_protocol_available()` before `spawn()`. So even once
-protocols declare their dependencies, the TUI and the LLM's protocol list will exclude an
-unusable protocol while a direct `start_server` still attempts it and fails with whatever raw
-error the underlying library produces. One call in the startup path closes that gap.
+Note the two mechanisms differ in force on purpose: `privilege_requirement` refuses startup,
+dependencies inform. Do not turn the informational one into a second hard gate without deciding
+what happens to a protocol whose dependency probe is merely unsure — `DeviceAccess` derives no
+dependency for exactly that reason.
 
 ### 21. Five protocols expose zero actions — and the grep that found them was misleading **[verified]**
 

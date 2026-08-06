@@ -167,9 +167,62 @@ pub trait Protocol: Send + Sync {
     /// - gRPC: vec![ProtocolDependency::ToolInPath("protoc")] (for .proto file support)
     /// - SSH on port 22: vec![ProtocolDependency::PrivilegedPort(22)]
     ///
-    /// Default implementation returns empty vector (no special dependencies).
+    /// The default **derives dependencies from `metadata().privilege_requirement`** rather
+    /// than returning an empty vector, so every protocol reports correct data without
+    /// declaring anything twice.
+    ///
+    /// This mechanism was fully plumbed — `get_excluded_protocols()` is called from the event
+    /// handler and the TUI footer — but not one protocol overrode this method, so the exclusion
+    /// map was always empty and the whole feature did nothing. Deriving is better than asking
+    /// 116 protocols to restate what they already declare: two sources of the same fact drift,
+    /// and `privilege_requirement` is the one that already gates startup, so it is the one kept
+    /// honest.
+    ///
+    /// Note the two consumers differ in force. `privilege_requirement` is a hard gate in
+    /// `server_startup.rs` — fail it and the server refuses to start. Dependencies are
+    /// **informational**: they tell a user, and the model, why a protocol will not work here,
+    /// with an installation hint. Nothing is blocked by this method.
+    ///
+    /// `DeviceAccess` maps to nothing deliberately. There is no `ProtocolDependency` variant for
+    /// a Bluetooth adapter, USB device or NFC reader, and no probe that would answer honestly;
+    /// claiming an unmet dependency we cannot check would exclude protocols that work.
+    ///
+    /// Override this to add what privilege cannot express — a system library, or a tool in
+    /// PATH. Call `default_dependencies_from_privilege(self)` and extend it rather than
+    /// replacing it, so the privilege-derived entries are not silently dropped.
     fn get_dependencies(&self) -> Vec<ProtocolDependency> {
-        Vec::new()
+        default_dependencies_from_privilege(self)
+    }
+}
+
+/// Translate a protocol's declared `privilege_requirement` into runtime dependencies.
+///
+/// This is the body of [`Protocol::get_dependencies`]'s default. It is a free function so an
+/// overriding protocol can extend the derived list instead of replacing it:
+///
+/// ```rust,ignore
+/// fn get_dependencies(&self) -> Vec<ProtocolDependency> {
+///     let mut deps = default_dependencies_from_privilege(self);
+///     deps.push(ProtocolDependency::SystemLibrary("pcap"));
+///     deps
+/// }
+/// ```
+///
+/// `DeviceAccess` yields nothing on purpose — see the note on `get_dependencies`.
+pub fn default_dependencies_from_privilege<P: Protocol + ?Sized>(
+    protocol: &P,
+) -> Vec<ProtocolDependency> {
+    use crate::protocol::metadata::PrivilegeRequirement as P9;
+
+    match protocol.metadata().privilege_requirement {
+        P9::None => Vec::new(),
+        P9::PrivilegedPort(port) => vec![ProtocolDependency::PrivilegedPort(port)],
+        P9::RawSockets => vec![ProtocolDependency::RawSocketAccess],
+        P9::PacketCapture => vec![ProtocolDependency::PromiscuousMode],
+        // No probe can answer honestly for an adapter/reader, so claim nothing rather than
+        // exclude a protocol that works.
+        P9::DeviceAccess(_) => Vec::new(),
+        P9::Root => vec![ProtocolDependency::RootAccess],
     }
 }
 

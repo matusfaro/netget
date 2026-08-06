@@ -96,7 +96,12 @@ impl ProtocolDependency {
                     caps.is_root
                 }
             }
-            Self::PromiscuousMode => caps.has_raw_socket_access,
+            // Capture access, not raw-socket access. These are genuinely separable: a macOS
+            // user in the ChmodBPF group owns /dev/bpf* without being root, so they can capture
+            // (ARP, DataLink, IS-IS) while `SOCK_RAW` still fails. Checking the raw-socket flag
+            // here reported those protocols as unavailable to precisely the users who can run
+            // them — the mistake `SystemCapabilities` was split apart to make impossible.
+            Self::PromiscuousMode => caps.has_packet_capture_access,
         }
     }
 
