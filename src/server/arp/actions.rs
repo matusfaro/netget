@@ -81,7 +81,7 @@ impl Protocol for ArpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("libpcap (pcap crate) + pnet for ARP packet handling")
             .llm_control("Full control - can respond to ARP requests with custom MAC addresses")
             .e2e_testing("pnet for packet crafting and validation")

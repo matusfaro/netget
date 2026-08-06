@@ -54,6 +54,29 @@ fn capture_access_alone_does_not_satisfy_raw_ip_sockets() {
     );
 }
 
+/// The protocols named above must actually *declare* what the test above asserts about them.
+///
+/// The test above names ARP/DataLink/IS-IS but only exercises the enum variant, so it passed
+/// for the entire period in which `PacketCapture` existed and none of those three adopted it —
+/// all still declared `RawSockets`, and `server_startup.rs` hard-gates on `is_met_by()`, so a
+/// capture-only user was refused all three. Testing the mechanism is not testing the adoption.
+#[test]
+fn the_capture_protocols_declare_packet_capture() {
+    use netget::protocol::server_registry::registry;
+
+    for name in ["ARP", "DataLink", "ISIS"] {
+        let Some(protocol) = registry().get(name) else {
+            continue; // not compiled in under this feature set
+        };
+        assert_eq!(
+            protocol.metadata().privilege_requirement,
+            PrivilegeRequirement::PacketCapture,
+            "{name} does layer-2 capture, so it must declare PacketCapture. Declaring \
+             RawSockets refuses a macOS ChmodBPF user who can in fact run it"
+        );
+    }
+}
+
 #[test]
 fn raw_ip_socket_access_alone_does_not_satisfy_capture() {
     let caps = SystemCapabilities {

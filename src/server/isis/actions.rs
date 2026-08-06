@@ -82,7 +82,7 @@ impl Protocol for IsisProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")
             .llm_control("Hello PDUs, LSPs, neighbor adjacencies, multicast MAC")
             .e2e_testing("Raw socket packet injection with pcap")

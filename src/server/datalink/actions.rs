@@ -97,7 +97,7 @@ impl Protocol for DataLinkProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Beta)
-            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("libpcap (pcap crate) for Layer 2 packet capture")
             .llm_control("Observation only - no packet injection")
             .e2e_testing("libpcap for packet validation")
