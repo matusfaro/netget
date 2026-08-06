@@ -220,7 +220,6 @@ pub async fn start_client_from_action(
         memory: String::new(),
         status: ClientStatus::Connecting,
         connection: None,
-        handle: None,
         created_at: std::time::Instant::now(),
         status_changed_at: std::time::Instant::now(),
         startup_params: startup_params.clone(),

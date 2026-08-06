@@ -580,12 +580,6 @@ impl AppState {
 
         inner.teardown_server(id);
 
-        // Defensive: nothing writes `ServerInstance.handle` any more (see the field's
-        // docs), but abort it if some caller ever does.
-        if let Some(handle) = server.as_ref().and_then(|s| s.handle.as_ref()) {
-            handle.abort();
-        }
-
         // Set mode to Idle if no more servers and no clients
         if inner.servers.is_empty() && inner.clients.is_empty() {
             inner.mode = Mode::Idle;
@@ -710,31 +704,7 @@ impl AppState {
 
     /// Get a server instance (cloned)
     pub async fn get_server(&self, id: ServerId) -> Option<ServerInstance> {
-        // Note: ServerInstance doesn't impl Clone because it contains JoinHandle
-        // We'll need to provide specific access methods instead
-        self.inner.read().await.servers.get(&id).map(|s| {
-            // Create a lightweight copy without the handle
-            ServerInstance {
-                id: s.id,
-                port: s.port,
-                protocol_name: s.protocol_name.clone(),
-                instruction: s.instruction.clone(),
-                memory: s.memory.clone(),
-                status: s.status.clone(),
-                connections: s.connections.clone(),
-                handle: None,
-                created_at: s.created_at,
-                status_changed_at: s.status_changed_at,
-                local_addr: s.local_addr,
-                startup_params: s.startup_params.clone(),
-                event_handler_config: s.event_handler_config.clone(),
-                protocol_data: s.protocol_data.clone(),
-                log_files: s.log_files.clone(),
-                feedback_instructions: s.feedback_instructions.clone(),
-                feedback_buffer: s.feedback_buffer.clone(),
-                last_feedback_processed: s.last_feedback_processed,
-            }
-        })
+        self.inner.read().await.servers.get(&id).cloned()
     }
 
     /// Get all server IDs
@@ -742,34 +712,9 @@ impl AppState {
         self.inner.read().await.servers.keys().copied().collect()
     }
 
-    /// Get all servers (lightweight copies without handles)
+    /// Get all servers (cloned)
     pub async fn get_all_servers(&self) -> Vec<ServerInstance> {
-        self.inner
-            .read()
-            .await
-            .servers
-            .values()
-            .map(|s| ServerInstance {
-                id: s.id,
-                port: s.port,
-                protocol_name: s.protocol_name.clone(),
-                instruction: s.instruction.clone(),
-                memory: s.memory.clone(),
-                status: s.status.clone(),
-                connections: s.connections.clone(),
-                handle: None,
-                created_at: s.created_at,
-                status_changed_at: s.status_changed_at,
-                local_addr: s.local_addr,
-                startup_params: s.startup_params.clone(),
-                event_handler_config: s.event_handler_config.clone(),
-                protocol_data: s.protocol_data.clone(),
-                log_files: s.log_files.clone(),
-                feedback_instructions: s.feedback_instructions.clone(),
-                feedback_buffer: s.feedback_buffer.clone(),
-                last_feedback_processed: s.last_feedback_processed,
-            })
-            .collect()
+        self.inner.read().await.servers.values().cloned().collect()
     }
 
     /// Update server status
@@ -1773,30 +1718,7 @@ impl AppState {
 
     /// Get a client instance (cloned)
     pub async fn get_client(&self, id: ClientId) -> Option<ClientInstance> {
-        // Note: ClientInstance doesn't impl Clone because it contains JoinHandle
-        // We'll need to provide specific access methods instead
-        self.inner.read().await.clients.get(&id).map(|c| {
-            // Create a lightweight copy without the handle
-            ClientInstance {
-                id: c.id,
-                remote_addr: c.remote_addr.clone(),
-                protocol_name: c.protocol_name.clone(),
-                instruction: c.instruction.clone(),
-                memory: c.memory.clone(),
-                status: c.status.clone(),
-                connection: c.connection.clone(),
-                handle: None,
-                created_at: c.created_at,
-                status_changed_at: c.status_changed_at,
-                startup_params: c.startup_params.clone(),
-                event_handler_config: c.event_handler_config.clone(),
-                protocol_data: c.protocol_data.clone(),
-                log_files: c.log_files.clone(),
-                feedback_instructions: c.feedback_instructions.clone(),
-                feedback_buffer: c.feedback_buffer.clone(),
-                last_feedback_processed: c.last_feedback_processed,
-            }
-        })
+        self.inner.read().await.clients.get(&id).cloned()
     }
 
     /// Get all client IDs
@@ -1804,33 +1726,9 @@ impl AppState {
         self.inner.read().await.clients.keys().copied().collect()
     }
 
-    /// Get all clients (lightweight copies without handles)
+    /// Get all clients (cloned)
     pub async fn get_all_clients(&self) -> Vec<ClientInstance> {
-        self.inner
-            .read()
-            .await
-            .clients
-            .values()
-            .map(|c| ClientInstance {
-                id: c.id,
-                remote_addr: c.remote_addr.clone(),
-                protocol_name: c.protocol_name.clone(),
-                instruction: c.instruction.clone(),
-                memory: c.memory.clone(),
-                status: c.status.clone(),
-                connection: c.connection.clone(),
-                handle: None,
-                created_at: c.created_at,
-                feedback_instructions: c.feedback_instructions.clone(),
-                feedback_buffer: c.feedback_buffer.clone(),
-                last_feedback_processed: c.last_feedback_processed,
-                status_changed_at: c.status_changed_at,
-                startup_params: c.startup_params.clone(),
-                event_handler_config: c.event_handler_config.clone(),
-                protocol_data: c.protocol_data.clone(),
-                log_files: c.log_files.clone(),
-            })
-            .collect()
+        self.inner.read().await.clients.values().cloned().collect()
     }
 
     /// Update client status

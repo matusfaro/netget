@@ -479,7 +479,6 @@ pub async fn start_server_from_action(
         status: ServerStatus::Starting,
         connections: Default::default(),
         local_addr: None,
-        handle: None,
         created_at: std::time::Instant::now(),
         status_changed_at: std::time::Instant::now(),
         startup_params: startup_params.clone(),

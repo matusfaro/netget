@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
-use tokio::task::JoinHandle;
 
 use crate::server::connection::ConnectionId;
 
@@ -209,7 +208,13 @@ pub struct ConnectionState {
 }
 
 /// A server instance with its own connections, state, and configuration
-#[derive(Debug)]
+///
+/// `Clone` is derived. It used to hold a `JoinHandle` — which is not `Clone` — so every
+/// caller that wanted a copy wrote the fields out by hand and each new field had to be added
+/// to all four copies or be silently dropped. Background tasks now live in
+/// `AppState::register_server_task`, so the handle is gone and the hand-written copies with
+/// it.
+#[derive(Debug, Clone)]
 pub struct ServerInstance {
     /// Unique server ID
     pub id: ServerId,
@@ -225,15 +230,6 @@ pub struct ServerInstance {
     pub status: ServerStatus,
     /// Active connections for this server
     pub connections: HashMap<ConnectionId, ConnectionState>,
-    /// Server task handle (for cleanup).
-    ///
-    /// **Vestigial — nothing writes this any more.** A server's background tasks are
-    /// tracked by `AppState::register_server_task` in a per-server `Vec` on
-    /// `AppStateInner`, because one slot could hold only one handle and silently
-    /// dropped every earlier one. It is kept only because `ServerInstance` is built
-    /// by struct literal in `src/cli/server_startup.rs` and `src/utils/save_load.rs`;
-    /// deleting it means deleting the `handle: None,` line in both.
-    pub handle: Option<JoinHandle<()>>,
     /// When the server was created
     pub created_at: Instant,
     /// When the server status last changed (for cleanup reaper)
@@ -274,7 +270,6 @@ impl ServerInstance {
             memory: String::new(),
             status: ServerStatus::Starting,
             connections: HashMap::new(),
-            handle: None,
             created_at: now,
             status_changed_at: now,
             local_addr: None,

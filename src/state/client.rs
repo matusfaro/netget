@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
-use tokio::task::JoinHandle;
 
 /// Unique identifier for a client instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -100,7 +99,10 @@ pub struct ClientConnectionState {
 }
 
 /// A client instance with its own connection, state, and configuration
-#[derive(Debug)]
+///
+/// `Clone` is derived; see [`crate::state::server::ServerInstance`] for why the hand-written
+/// copies it replaces existed.
+#[derive(Debug, Clone)]
 pub struct ClientInstance {
     /// Unique client ID
     pub id: ClientId,
@@ -116,8 +118,6 @@ pub struct ClientInstance {
     pub status: ClientStatus,
     /// Connection state (if connected)
     pub connection: Option<ClientConnectionState>,
-    /// Client task handle (for cleanup)
-    pub handle: Option<JoinHandle<()>>,
     /// When the client was created
     pub created_at: Instant,
     /// When the client status last changed
@@ -161,7 +161,6 @@ impl ClientInstance {
             memory: String::new(),
             status: ClientStatus::Connecting,
             connection: None,
-            handle: None,
             created_at: now,
             status_changed_at: now,
             startup_params: None,
