@@ -396,7 +396,7 @@ fn render_event(out: &mut String, event: &EventType) {
     }
 
     out.push_str("Example handler response:\n\n```json\n");
-    let example = serde_json::json!({ "actions": [event.response_example.clone()] });
+    let example = serde_json::json!({ "actions": [event.effective_response_example()] });
     out.push_str(&serde_json::to_string_pretty(&example).unwrap_or_default());
     out.push_str("\n```\n\n");
 

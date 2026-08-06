@@ -2038,7 +2038,8 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
                 // Response example is always present (required field)
                 result.push_str("**Response Example:**\n```json\n");
                 result.push_str(
-                    &serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default(),
+                    &serde_json::to_string_pretty(&event_type.effective_response_example())
+                        .unwrap_or_default(),
                 );
                 result.push_str("\n```\n\n");
 
@@ -2202,7 +2203,8 @@ async fn execute_read_client_documentation(protocols: &[String]) -> ToolResult {
                 // Response example is always present (required field)
                 result.push_str("**Action Example:**\n```json\n");
                 result.push_str(
-                    &serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default(),
+                    &serde_json::to_string_pretty(&event_type.effective_response_example())
+                        .unwrap_or_default(),
                 );
                 result.push_str("\n```\n\n");
 
@@ -2401,7 +2403,7 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
                     result.push_str(&format!("### Event: {}\n\n", event_type.id));
                     result.push_str("**Response Example:**\n```json\n");
                     result.push_str(
-                        &serde_json::to_string_pretty(&event_type.response_example)
+                        &serde_json::to_string_pretty(&event_type.effective_response_example())
                             .unwrap_or_default(),
                     );
                     result.push_str("\n```\n\n");
@@ -2462,7 +2464,7 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
                     result.push_str(&format!("### Event: {}\n\n", event_type.id));
                     result.push_str("**Action Example:**\n```json\n");
                     result.push_str(
-                        &serde_json::to_string_pretty(&event_type.response_example)
+                        &serde_json::to_string_pretty(&event_type.effective_response_example())
                             .unwrap_or_default(),
                     );
                     result.push_str("\n```\n\n");

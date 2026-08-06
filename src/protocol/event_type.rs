@@ -121,6 +121,43 @@ impl EventType {
         self
     }
 
+    /// The response example to actually show a model, with placeholders repaired.
+    ///
+    /// `response_example` is rendered verbatim into the prompt (`src/llm/actions/tools.rs`) and
+    /// into the MCP protocol docs (`src/mcp_stdio/docs.rs`), so it teaches the model how to
+    /// answer this event. 215 of them across 92 files are the literal
+    /// `{"type": "placeholder", "event_id": "..."}`, which teaches an action type that does not
+    /// exist and that the executor rejects as unknown.
+    ///
+    /// Rather than leave those rendering as-is, derive a real one: the first action attached to
+    /// this event is by construction a valid answer to it, and its `example` is a complete,
+    /// protocol-specific action object. Events that legitimately have no action
+    /// ([`Self::with_no_actions`]) fall back to `show_message`, which is a common action and is
+    /// always accepted.
+    ///
+    /// A declared example that is not a placeholder is returned untouched, so this changes
+    /// nothing for the events that already carry a real one. `tests/placeholder_examples_test.rs`
+    /// asserts no registered protocol renders a placeholder through this path.
+    pub fn effective_response_example(&self) -> JsonValue {
+        if !Self::is_placeholder(&self.response_example) {
+            return self.response_example.clone();
+        }
+        if let Some(action) = self.actions.first() {
+            if !Self::is_placeholder(&action.example) {
+                return action.example.clone();
+            }
+        }
+        serde_json::json!({
+            "type": "show_message",
+            "message": format!("Handled {}", self.id),
+        })
+    }
+
+    /// Whether a response example is the `{"type": "placeholder", ...}` stand-in.
+    pub fn is_placeholder(example: &JsonValue) -> bool {
+        example.get("type").and_then(|t| t.as_str()) == Some("placeholder")
+    }
+
     /// True when this event advertises no protocol action *and* never said it meant to.
     ///
     /// This is exactly the bug shape: the protocol declares sync actions, but the event type the
