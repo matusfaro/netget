@@ -22,10 +22,26 @@ netget --mcp   # then call list_protocols / get_protocol_docs
 
 Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/protocol/metadata.rs`):
 
-- **Stable** — real spec compliance, good LLM prompting, scripting support. Currently: `tor_relay`, `wireguard`, `openvpn`.
-- **Beta** — human-reviewed, works against real clients (13 protocols).
-- **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (~97).
-- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Currently: `bgp`, `usb_smartcard`, `nfc`.
+- **Stable** — real spec compliance, good LLM prompting, scripting support. Currently **only
+  `wireguard`**. `tor_relay` and `openvpn` were rated Stable and neither had ever been
+  validated against a real client; both were demoted on inspection.
+- **Beta** — human-reviewed, works against real clients (12 protocols).
+- **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (87).
+- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Now 12:
+  `amqp`, `bgp`, `bluetooth_ble_beacon`, `kafka`, `nfc`, `openvpn`, `turn`, `usb/smartcard`,
+  `vnc`, `webdav`, `webrtc`, `zookeeper`.
+
+Four protocols declare no state at all and default to whatever `ProtocolMetadataV2::builder()`
+gives them: `usb/keyboard`, `usb/mouse`, `usb/msc`, `usb/serial`. (`http_common` also matches
+the grep below but is a shared module, not a registered protocol.) Those same four are the ones
+whose events are largely never emitted — see the USB note under "Adding a server protocol".
+Derive all of this rather than trusting the counts above, which drift:
+
+```bash
+for f in src/server/*/actions.rs src/server/*/*/actions.rs; do
+  echo "$(grep -oE '\.state\(DevelopmentState::[A-Za-z]+\)' $f | head -1 | grep -oE 'Stable|Beta|Experimental|Incomplete') $f"
+done | sort | uniq -c
+```
 
 Treat `Experimental` as "compiles and has a test", not "works". Before assuming a protocol
 behaves, check what it actually offers the model — and check it two ways, because one grep
@@ -41,9 +57,21 @@ An empty `get_sync_actions()` is fine if the protocol **delegates** — `doh` an
 `DnsProtocol`'s set verbatim, so the model sees the full DNS vocabulary. It is a trap if it
 does not. And actions can be declared yet unreachable: `call_llm` builds the model's tool list
 from `event.event_type.actions`, so a protocol whose event types never call `.with_actions(...)`
-leaves the model unable to answer at all. That was found in 17 protocols and is now guarded
-(`EventType::with_no_actions()` marks the deliberate case; anything else logs at ERROR and
-falls back).
+leaves the model unable to answer at all. That was found in 17 protocols, is now fixed
+everywhere, and is guarded two ways: `EventType::with_no_actions()` marks the deliberate case,
+anything else logs at ERROR and falls back, and `tests/event_action_declarations_test.rs` fails
+the build on any new occurrence across every registered protocol.
+
+**A fourth variant, still open: an event can be declared and never emitted.** Declaring actions
+on it then buys nothing, because it never fires. The USB family is the live case — only
+`*_attached` is ever raised for `usb-mouse`/`usb-keyboard`/`usb-msc` (one `call_llm_on_attach`
+per `mod.rs`), and `usb-serial` raises nothing at all, so `usb_*_detached`, `usb_msc_read`,
+`usb_msc_write`, `usb_keyboard_led_status` and all three `usb_serial_*` events are advertised to
+the model and cannot fire. Check the emit side, not just the declaration:
+
+```bash
+grep -rn "_EVENT" src/server/<p>/mod.rs   # which events does the server actually raise?
+```
 
 The whole `bluetooth_ble_*` family was a third variant: `BluetoothBle::spawn_with_llm_actions`
 hardcodes `BluetoothBleProtocol` when it calls `call_llm`, so all sixteen profiles' own actions
@@ -105,13 +133,14 @@ produce or parse them. Use structured fields: `{"method": "GET", "path": "/", "h
 not `{"data": "SGVsbG8="}`.
 
 **If an action does document a hex or encoded field, the executor must actually decode it.**
-There is a live bug of exactly this shape: `send_tcp_data` is documented as accepting
-"text or hex-encoded binary" in three places (`src/server/tcp/actions.rs:355,359`, the
-protocol docs served to the LLM, and `src/server/tcp/CLAUDE.md`), but
-`execute_send_tcp_data` does `data.as_bytes()` (`src/server/tcp/actions.rs:242,276`) — hex is
-never decoded, so a model following the documentation puts literal ASCII on the wire.
-Inbound data *is* hex-encoded when non-printable, so the round-trip is asymmetric. When you
-touch a protocol, verify its documented encoding matches its executor.
+TCP had a bug of exactly this shape and it is worth knowing as the reference case (fixed in
+`d70bb5b5`): `send_tcp_data` was documented in three places as accepting "text or hex-encoded
+binary", but its executor did `data.as_bytes()` and never decoded hex, so a model following the
+documentation put literal ASCII on the wire. Inbound data *was* hex-encoded when non-printable,
+making the round-trip asymmetric — an echo server could not echo. The fix was an explicit
+`encoding` field (`"utf8"` default, `"hex"`) on both directions rather than sniffing, because
+`"48656c6c6f"` is simultaneously valid text and valid hex and only the sender knows which it
+means. When you touch a protocol, verify its documented encoding matches its executor.
 
 **Protocols must not implement storage** — no databases, filesystems, or persistence written
 into a protocol's Rust implementation. The LLM supplies all data via actions, scripts, static
@@ -206,10 +235,14 @@ test when its expectation is genuinely wrong.
 **All tests live in `tests/`. Never add `#[cfg(test)] mod tests` to `src/`.** Tests reach
 internals via `use netget::` public APIs; make items public or refactor if needed.
 
-This policy is currently violated by 8 files in `src/` containing ~23 unit tests
-(`llm/config`, `llm/reference_parser`, `llm/hybrid_manager`, `protocol/event_logger`,
-`protocol/log_template`, `system_stats`, `server/proxy/cert_cache`). Migrate them if you are
-working nearby; do not add more.
+This policy is currently violated by 9 files in `src/` (`llm/config`, `llm/reference_parser`,
+`llm/hybrid_manager`, `llm/embedded_inference`, `protocol/event_logger`, `protocol/log_template`,
+`system_stats`, `server/proxy/cert_cache`, `server/bluetooth_ble/mod`). Migrate them if you are
+working nearby; do not add more. Current list:
+
+```bash
+grep -rln "#\[cfg(test)\]" src/ --include='*.rs'
+```
 
 ### The mod.rs footgun (CRITICAL)
 
@@ -217,14 +250,19 @@ working nearby; do not add more.
 `tests/server/mod.rs` / `tests/client/mod.rs`. **A test directory that exists on disk but is
 not declared is silently never compiled and never run — no error, no warning.**
 
-This is currently the single largest hole in the suite: **15 of 116 server test dirs and 61 of
-83 client test dirs are orphaned**, including complete, correctly-gated E2E suites for `arp`,
-`whois`, `bitcoin`, `igmp`, `tls`, `sip`, and every USB protocol. Verify with:
+This was the single largest hole in the suite — **15 of 116 server test dirs and 61 of 83
+client test dirs were orphaned**, including complete, correctly-gated E2E suites for `arp`,
+`whois`, `bitcoin`, `igmp`, `tls`, `sip`, and every USB protocol. All 76 are now declared, and
+the `orphaned-tests` job in `.github/workflows/ci.yml` fails the build if it happens again.
+Verify locally with:
 
 ```bash
 comm -23 <(ls -d tests/server/*/ | sed 's|tests/server/||;s|/||' | sort) \
-         <(grep -oE "pub mod [a-z0-9_]+" tests/server/mod.rs | awk '{print $2}' | sort)
+         <(grep -oE "pub mod [a-z0-9_]+" tests/server/mod.rs | awk '{print $3}' | sort)
 ```
+
+Note `$3`, not `$2`: `grep -oE "pub mod <name>"` yields three fields and `$2` is the literal
+word `mod`, so the version this file carried until now reported every directory as orphaned.
 
 ### Mocks
 
@@ -270,10 +308,21 @@ fix the hang rather than serializing the suite.
 
 ### CI reality
 
-`.github/workflows/release.yml` is the only workflow. It triggers on `v*` tags and manual
-dispatch, and runs `cargo build` for the `dist*` feature sets across 6 targets.
-**No CI job ever runs `cargo test`.** There is no PR gate and no lint job — the entire
-1,038-test suite is developer-run only. Run the relevant tests yourself before claiming done.
+Two workflows. `release.yml` triggers on `v*` tags and manual dispatch, and runs `cargo build`
+for the `dist*` feature sets across 6 targets. `ci.yml` is the PR/push-to-master gate, added
+after a long period when no CI job ran `cargo test` at all:
+
+| Job | Blocking | What it does |
+|---|---|---|
+| `lint` | yes | `cargo fmt --check`; `clippy -D correctness -D suspicious`. A full default clippy runs advisory-only — ~50 style/complexity warnings predate the gate |
+| `test` | yes | `cargo test` on `tcp,http,dns,udp,redis,mcp-stdio` |
+| `single-feature` | yes | `cargo check --tests` on 14 protocol features **one at a time** — catches a feature whose deps are under-declared, which no multi-feature build can |
+| `orphaned-tests` | yes | Fails if a test dir on disk is undeclared in `mod.rs` (see the footgun above) |
+
+The gate is deliberately not `--all-features`: that needs system libraries the runner does not
+install (`protoc`, `libpcap`, `dbus`, `libusb`, `pcsclite`). So **the CI feature set covers 6 of
+116 protocols** — a green PR says nothing about the other 110. Run the relevant tests yourself
+before claiming done.
 
 ## Building
 
@@ -404,12 +453,11 @@ Read before assuming a subsystem is sound:
   approval. Its own CLAUDE.md documented this as a feature ("ensures the server always responds
   correctly"). Default to refusal, and make the model's rejection path structurally distinct
   from its no-answer path.
-- Byte-index string truncation (`&s[..N]` guarded only by `s.len() > N`) across `src/llm/`
-  panics on multi-byte UTF-8 at the cut point; the strings involved are LLM output and
-  event descriptions.
-- `call_llm_for_feedback` passes an empty action list to the validator while telling the model
-  actions are available, so `feedback_instructions` can only no-op or hard-fail
-  (`src/llm/action_helper.rs:752`).
+- Byte-index string truncation (`&s[..N]` guarded only by `s.len() > N`) panicked on multi-byte
+  UTF-8 at the cut point, on LLM output and event descriptions. Fixed in `b9aa1058` —
+  `src/utils/truncate.rs` has char-boundary helpers; use `truncate_for_log` rather than slicing.
+  `src/protocol/log_template.rs` was the important one (`c1515188`): being shared
+  infrastructure, it defeated protocols' own local fixes.
 - `git` and `mercurial` call `generate_with_retry` directly, bypassing the rate limiter, the
   retry/repair loop, and event-handler dispatch — script/static handlers are ignored for them.
 - On LLM failure most protocols reset to Idle and write nothing, leaving the peer to hang
