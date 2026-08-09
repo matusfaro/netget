@@ -1253,6 +1253,22 @@ impl NetGetMcpService {
     }
 }
 
+impl NetGetMcpService {
+    /// The `AppState` this service drives.
+    ///
+    /// `SharedState` is crate-private and the `#[tool]` methods are private to the
+    /// router, so an integration test can only observe a tool's *text* result. That
+    /// is not enough to assert teardown: `stop_server` reports "stopped" whether or
+    /// not the server's scheduled tasks went with it. This accessor is what lets
+    /// `tests/mcp_stop_cleanup_test.rs` check the state behind the tool surface.
+    ///
+    /// Handing out a clone is safe — `AppState` is an `Arc` over the shared lock, so
+    /// this is the same state the tools mutate, not a snapshot.
+    pub fn app_state(&self) -> AppState {
+        self.state.app_state.clone()
+    }
+}
+
 #[tool_handler]
 impl ServerHandler for NetGetMcpService {
     fn get_info(&self) -> <RoleServer as rmcp::service::ServiceRole>::Info {

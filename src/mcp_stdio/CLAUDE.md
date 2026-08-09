@@ -137,10 +137,25 @@ whole teardown rather than leaving half of it to the caller:
 - the scheduled tasks scoped to that server — **and** to its connections — are
   cancelled.
 
-The cleanup used to live only in the TUI's stop paths, so the MCP tools left
-orphaned recurring tasks firing on their interval, each tick producing a failed LLM
-prompt for a server that no longer existed. Doing it inside `remove_server` is what
-stops that recurring.
+The cleanup used to live only in the TUI's stop paths (`cleanup_server_tasks`), so the
+MCP tools left orphaned tasks behind on every stop. Doing it inside `remove_server` is
+what stops that recurring — no caller can forget half the teardown.
+
+`tests/mcp_stop_cleanup_test.rs` pins this from the tool surface rather than the state
+API (`tests/server_stop_cleans_scheduled_tasks_test.rs` covers the latter), so a
+rewrite of `stop_server`/`stop_all` that stops routing through `remove_server` fails a
+test instead of shipping. It needs to see behind the tools — a tool result is text, and
+`stop_server` reports "stopped" whether or not the tasks went with it — so
+`NetGetMcpService::app_state()` exposes the service's `AppState` (a clone of the `Arc`,
+i.e. the live state the tools mutate).
+
+**Scheduled tasks are registered in MCP mode but never execute.** `execute_due_tasks`
+is driven only by the TUI event loop (`rolling_tui.rs`) and the non-interactive runner;
+`spawn_state_reaper` does not tick it. So `start_server`'s `scheduled_tasks` array and
+the `schedule_task` action both create tasks that sit at `Scheduled` forever. The leak
+above was therefore *accumulation* in MCP mode rather than repeated firing — but the
+tasks are equally wrong to keep, and the two halves are independent bugs. Do not read
+the cleanup fix as making `scheduled_tasks` work over MCP.
 
 `register_server_task()` stores a `Vec` of handles per server, like the client side:
 a protocol with two long-lived loops (a UDP listener plus a TUN reader) gets both
@@ -233,11 +248,15 @@ All logging goes to stderr (stdout is JSON-RPC). Status messages from protocol s
 - **No elicitation yet**: Interactive config gathering not implemented
 - **No dynamic tool list**: All tools exposed from start (no `tools/list_changed`)
 - **No sampling**: protocol servers always use NetGet's own LLM backend, never the MCP client's model
+- **Scheduled tasks never fire**: accepted and stored, but nothing ticks them in MCP mode (see "Server teardown" above)
 
 ## Testing
 
 Automated in-process smoke tests (no Ollama, no real stdio) live in
-`tests/mcp_stdio_test.rs` — see `tests/mcp_stdio_CLAUDE.md`.
+`tests/mcp_stdio_test.rs` — see `tests/mcp_stdio_CLAUDE.md`. Teardown regressions are
+pinned separately in `tests/mcp_stop_cleanup_test.rs`. Both drive the real tools over
+`tokio::io::duplex`, so they are root-level test files rather than entries in
+`tests/server/mod.rs` and are compiled without the mod.rs footgun.
 
 ```bash
 # Build
