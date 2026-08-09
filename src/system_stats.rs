@@ -73,7 +73,11 @@ impl SystemStats {
 }
 
 /// Format bytes as human-readable string (KB, MB, GB, etc.)
-fn format_bytes(bytes: u64) -> String {
+///
+/// `pub` so `tests/system_stats_test.rs` can exercise it directly — CLAUDE.md
+/// forbids unit-test modules in `src/`, so an internal helper has to be
+/// reachable to be tested.
+pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
     let mut unit_index = 0;
@@ -187,32 +191,5 @@ impl SystemStatsMonitor {
 impl Default for SystemStatsMonitor {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_format_bytes() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(500), "500 B");
-        assert_eq!(format_bytes(1024), "1.0 KB");
-        assert_eq!(format_bytes(1536), "1.5 KB");
-        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
-    }
-
-    #[tokio::test]
-    async fn test_stats_monitor() {
-        let monitor = SystemStatsMonitor::new();
-        let stats = monitor.get_stats().await;
-
-        // Basic sanity checks
-        assert!(stats.cpu_usage >= 0.0 && stats.cpu_usage <= 100.0);
-        assert!(stats.memory_used > 0);
-        assert!(stats.memory_total > 0);
-        assert!(stats.memory_used <= stats.memory_total);
     }
 }

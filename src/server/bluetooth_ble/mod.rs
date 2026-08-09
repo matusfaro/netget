@@ -79,7 +79,7 @@ struct ServerData {
 /// Accepts a 4-hex-digit (16-bit) or 8-hex-digit (32-bit) shorthand, or any
 /// form `Uuid::parse_str` already understands.
 ///
-/// `pub` so `tests/` can exercise it directly — CLAUDE.md forbids `#[cfg(test)]`
+/// `pub` so `tests/` can exercise it directly — CLAUDE.md forbids unit-test
 /// modules in `src/`, so an internal helper has to be reachable to be tested.
 #[cfg(feature = "bluetooth-ble")]
 pub fn parse_ble_uuid(s: &str) -> Result<Uuid> {

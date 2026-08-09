@@ -289,25 +289,3 @@ impl HybridLLMManager {
         config.set_embedded_model(path)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_backend_type() {
-        let client = OllamaClient::new("http://localhost:11434");
-        let backend = ActiveBackend::Ollama(client);
-        assert_eq!(backend.backend_type(), LlmBackendType::Ollama);
-        assert_eq!(backend.name(), "Ollama");
-    }
-
-    #[cfg(feature = "embedded-llm")]
-    #[tokio::test]
-    #[ignore] // Requires model file
-    async fn test_embedded_backend() {
-        let backend = EmbeddedLLMBackend::new("./test-model.gguf").await.unwrap();
-        let active = ActiveBackend::Embedded(Arc::new(backend));
-        assert_eq!(active.backend_type(), LlmBackendType::Embedded);
-    }
-}

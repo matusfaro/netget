@@ -78,7 +78,11 @@ impl<'a> EventLogContext<'a> {
     /// Build enriched data with context fields
     ///
     /// Adds client_ip, client_port, server_id, connection_id to the event data.
-    fn build_enriched_data(&self) -> Value {
+    ///
+    /// `pub` so `tests/event_logger_test.rs` can assert on the enrichment
+    /// directly — CLAUDE.md forbids unit-test modules in `src/`, so an
+    /// internal helper has to be reachable to be tested.
+    pub fn build_enriched_data(&self) -> Value {
         let mut data = self.event.data.clone();
         if let Some(obj) = data.as_object_mut() {
             if let Some(addr) = self.client_addr {
@@ -317,82 +321,5 @@ pub fn log_action_result(
         if let Some(tx) = status_tx {
             let _ = tx.send(format!("[DEBUG] Action: {}", summary));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::event_type::EventType;
-    use crate::server::connection::ConnectionId;
-    use serde_json::json;
-    use std::sync::LazyLock;
-
-    static TEST_EVENT_TYPE: LazyLock<EventType> = LazyLock::new(|| {
-        EventType::new(
-            "test_event",
-            "Test event for unit tests",
-            json!({"type": "test_action"}),
-        )
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("{client_ip} {method} {path} -> {status}")
-                .with_debug("Test {method} {path} from {client_ip}")
-                .with_trace("Full data: {json_pretty(.)}"),
-        )
-    });
-
-    #[test]
-    fn test_event_log_context_creation() {
-        let event = Event::new(
-            &TEST_EVENT_TYPE,
-            json!({
-                "method": "GET",
-                "path": "/api",
-                "status": 200
-            }),
-        );
-
-        let ctx = EventLogContext::new(
-            &event,
-            ServerId::new(1),
-            Some(ConnectionId::new(42)),
-            Some("192.168.1.1:12345".parse().unwrap()),
-            "HTTP",
-        );
-
-        assert_eq!(ctx.protocol_name, "HTTP");
-        assert_eq!(ctx.server_id.as_u32(), 1);
-        assert_eq!(ctx.connection_id.map(|c| c.as_u32()), Some(42));
-    }
-
-    #[test]
-    fn test_enriched_data() {
-        let event = Event::new(
-            &TEST_EVENT_TYPE,
-            json!({
-                "method": "GET",
-                "path": "/test"
-            }),
-        );
-
-        let ctx = EventLogContext::new(
-            &event,
-            ServerId::new(5),
-            Some(ConnectionId::new(10)),
-            Some("10.0.0.1:8080".parse().unwrap()),
-            "TEST",
-        );
-
-        let enriched = ctx.build_enriched_data();
-        assert_eq!(enriched["client_ip"], "10.0.0.1");
-        assert_eq!(enriched["client_port"], 8080);
-        assert_eq!(enriched["server_id"], 5);
-        assert_eq!(enriched["connection_id"], 10);
-        assert_eq!(enriched["protocol"], "TEST");
-        assert_eq!(enriched["event_id"], "test_event");
-        // Original data is preserved
-        assert_eq!(enriched["method"], "GET");
-        assert_eq!(enriched["path"], "/test");
     }
 }
