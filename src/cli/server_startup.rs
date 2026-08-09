@@ -132,6 +132,52 @@ pub async fn start_server_by_id(
         });
     }
 
+    // Non-privilege dependencies: a missing system library or tool in PATH.
+    //
+    // `Protocol::get_dependencies()` derives from `privilege_requirement`, which the block
+    // above already enforced — re-checking those here would report the same failure twice with
+    // a worse message. What it cannot express is a library or binary the protocol needs at
+    // runtime, which a protocol supplies by overriding `get_dependencies()`. Those had no gate
+    // at all: the TUI and the model's protocol list would exclude such a protocol while a
+    // direct `start_server` still attempted it and failed with whatever raw error the
+    // underlying library produced.
+    //
+    // Only definitively-unmet dependencies refuse. `DeviceAccess` deliberately derives no
+    // dependency because no probe can answer honestly for an adapter or reader, and this gate
+    // must never turn "we could not tell" into "no".
+    let missing: Vec<_> = protocol
+        .get_dependencies()
+        .into_iter()
+        .filter(|dep| {
+            matches!(
+                dep,
+                crate::protocol::dependencies::ProtocolDependency::SystemLibrary(_)
+                    | crate::protocol::dependencies::ProtocolDependency::ToolInPath(_)
+            )
+        })
+        .filter(|dep| !dep.is_available(&system_caps))
+        .collect();
+
+    if let Some(dep) = missing.first() {
+        let full_error = format!(
+            "Cannot start {} server on port {}: {}. {}",
+            protocol_name,
+            server.port,
+            dep.description(),
+            dep.installation_hint()
+        );
+
+        state
+            .update_server_status(server_id, ServerStatus::Error(full_error.clone()))
+            .await;
+        let _ = status_tx.send(format!("[ERROR] {}", full_error));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        return Err(ActionExecutionError::PrivilegeDenied {
+            requirement: dep.name(),
+            message: full_error,
+        });
+    }
+
     // Build type-safe startup params if provided
     //
     // The JSON comes from the LLM or an MCP client, so a bad key must become a

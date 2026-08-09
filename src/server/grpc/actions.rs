@@ -95,6 +95,28 @@ impl Protocol for GrpcProtocol {
     fn keywords(&self) -> Vec<&'static str> {
         vec!["grpc", "grpcserver", "protobuf"]
     }
+
+    /// `protoc` must be on PATH at **runtime**, not merely at build time.
+    ///
+    /// `proto_schema` is a required startup parameter and every path that turns it into a
+    /// descriptor set shells out to `protoc` — `compile_proto_file` for a path on disk and
+    /// `compile_proto_text` for inline proto3 source (`mod.rs`, both via `Command::new`). So a
+    /// host without `protoc` cannot start a gRPC server at all, whatever the schema looks like.
+    /// gRPC is the only protocol that shells out to anything.
+    ///
+    /// Declaring it here means `server_startup` refuses with the installation hint before
+    /// registering the server, and the TUI and the model's protocol list exclude gRPC on a host
+    /// that lacks it, rather than everyone discovering it from a failure part-way through
+    /// startup.
+    ///
+    /// Note this is unrelated to `etcd`/`kubernetes`/`zookeeper`, which need `protoc` to
+    /// *compile* (prost/tonic build scripts) and not to run.
+    fn get_dependencies(&self) -> Vec<crate::protocol::dependencies::ProtocolDependency> {
+        let mut deps =
+            crate::llm::actions::protocol_trait::default_dependencies_from_privilege(self);
+        deps.push(crate::protocol::dependencies::ProtocolDependency::ToolInPath("protoc"));
+        deps
+    }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
