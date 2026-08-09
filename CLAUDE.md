@@ -26,21 +26,29 @@ Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/proto
   `wireguard`**. `tor_relay` and `openvpn` were rated Stable and neither had ever been
   validated against a real client; both were demoted on inspection.
 - **Beta** — human-reviewed, works against real clients (12 protocols).
-- **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (87).
+- **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (91).
 - **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Now 12:
   `amqp`, `bgp`, `bluetooth_ble_beacon`, `kafka`, `nfc`, `openvpn`, `turn`, `usb/smartcard`,
   `vnc`, `webdav`, `webrtc`, `zookeeper`.
 
-Four protocols declare no state at all and default to whatever `ProtocolMetadataV2::builder()`
-gives them: `usb/keyboard`, `usb/mouse`, `usb/msc`, `usb/serial`. (`http_common` also matches
-the grep below but is a shared module, not a registered protocol.) Those same four are the ones
-whose events are largely never emitted — see the USB note under "Adding a server protocol".
-Derive all of this rather than trusting the counts above, which drift:
+Derive these rather than trusting the counts, which drift. **Match the fully-qualified form
+too** — roughly half the protocols write `crate::protocol::metadata::DevelopmentState::X`, and a
+pattern anchored on the bare `DevelopmentState::` silently reports them as declaring nothing.
+An earlier version of this section claimed four USB protocols declared no state for exactly that
+reason; all four declare one:
 
 ```bash
-for f in src/server/*/actions.rs src/server/*/*/actions.rs; do
-  echo "$(grep -oE '\.state\(DevelopmentState::[A-Za-z]+\)' $f | head -1 | grep -oE 'Stable|Beta|Experimental|Incomplete') $f"
-done | sort | uniq -c
+python3 - <<'EOF'
+import re, pathlib
+from collections import Counter
+rows=[]
+for f in sorted(list(pathlib.Path('src/server').glob('*/actions.rs'))
+              + list(pathlib.Path('src/server').glob('*/*/actions.rs'))):
+    m=re.search(r'\.state\(\s*(?:crate::protocol::metadata::)?DevelopmentState::([A-Za-z]+)',
+                f.read_text(errors='ignore'))
+    rows.append((m.group(1) if m else 'NONE', str(f)))
+print(Counter(r[0] for r in rows))
+EOF
 ```
 
 Treat `Experimental` as "compiles and has a test", not "works". Before assuming a protocol

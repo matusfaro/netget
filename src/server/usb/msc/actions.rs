@@ -273,12 +273,12 @@ impl Protocol for UsbMscProtocol {
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
             .implementation("Virtual USB Mass Storage device using USB/IP protocol")
             .llm_control("LLM controls virtual disk (mount, eject, write-protect)")
             .e2e_testing("E2E tests pending full SCSI implementation")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("Requires client to have vhci-hcd kernel module. SCSI command implementation pending.")
+            .notes("NON-FUNCTIONAL. Same tokio 0.3 versus tokio 1.x reactor panic as usb-keyboard: the usbip 0.3.1 server panics on every attach and the detached task hides it. It also binds the client ephemeral address rather than a listening one.")
             .build()
     }
 

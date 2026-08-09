@@ -365,13 +365,14 @@ impl Protocol for UsbFido2Protocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Experimental)
+            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
             .implementation("Virtual FIDO2/U2F security key over USB/IP protocol")
             .llm_control("Approval of authentication/registration requests, credential management")
             .e2e_testing("Manual testing with web browsers (Chrome/Firefox) via USB/IP attach")
             .notes(
                 "Requires vhci-hcd kernel module (Linux only). Inspired by softfido architecture.",
             )
+            .notes("NON-FUNCTIONAL. Same tokio 0.3 / tokio 1.x reactor panic as usb-keyboard: usbip::server() panics on every attach and the detached task hides it.")
             .build()
     }
 

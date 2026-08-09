@@ -212,12 +212,12 @@ impl Protocol for UsbKeyboardProtocol {
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
             .implementation("Virtual USB HID keyboard device using USB/IP protocol")
             .llm_control("LLM controls keyboard input (typing, key presses, combinations)")
             .e2e_testing("E2E tests using Linux usbip client")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("Requires client to have vhci-hcd kernel module and run 'usbip attach'")
+            .notes("NON-FUNCTIONAL. usbip 0.3.1 depends on tokio 0.3, so usbip::server() calls the tokio 0.3 TcpListener::bind from the tokio 1.x runtime netget runs on, and panics with 'there is no reactor running' on every attach. The task is detached, so the panic is swallowed and the server still reports Running. Verified 2026-08-09. Also hardcodes USB/IP port 3240, so only one instance can exist per host.")
             .build()
     }
 

@@ -229,12 +229,12 @@ impl Protocol for UsbSerialProtocol {
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
             .implementation("Virtual USB CDC ACM serial port using USB/IP protocol")
             .llm_control("LLM controls serial data transmission and line parameters")
             .e2e_testing("E2E tests using Linux usbip client and /dev/ttyACM0")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("Appears as /dev/ttyACM0 on Linux after usbip attach")
+            .notes("NON-FUNCTIONAL. The connection handler body is a single error! log reading 'placeholder - full USB/IP integration needed'. It never calls call_llm, so all three of its events are unreachable.")
             .build()
     }
     fn description(&self) -> &'static str {
