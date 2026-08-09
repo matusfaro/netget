@@ -76,8 +76,6 @@ pub mod grpc;
 pub mod http;
 #[cfg(feature = "http2")]
 pub mod http2;
-#[cfg(feature = "http3")]
-pub mod http3;
 #[cfg(feature = "icmp")]
 pub mod icmp;
 #[cfg(feature = "igmp")]
@@ -146,6 +144,8 @@ pub mod postgresql;
 pub mod proxy;
 #[cfg(feature = "pypi")]
 pub mod pypi;
+#[cfg(feature = "quic")]
+pub mod quic;
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "rip")]

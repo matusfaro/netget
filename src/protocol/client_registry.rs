@@ -123,6 +123,9 @@ impl ClientRegistry {
         #[cfg(feature = "http2")]
         self.register(Arc::new(crate::client::http2::Http2ClientProtocol::new()));
 
+        // Real RFC 9114 HTTP/3 (the `h3` crate), so it keeps the `http3` name.
+        // The `http3` feature no longer builds a server - NetGet's QUIC server
+        // lives behind `quic` and cannot be spoken to by this client.
         #[cfg(feature = "http3")]
         self.register(Arc::new(crate::client::http3::Http3ClientProtocol::new()));
 

@@ -1,0 +1,446 @@
+//! QUIC protocol actions implementation
+
+use crate::llm::actions::{
+    protocol_trait::{ActionResult, Protocol, Server},
+    ActionDefinition, Parameter,
+};
+use crate::protocol::log_template::LogTemplate;
+use crate::protocol::EventType;
+use crate::server::connection::ConnectionId;
+use crate::state::app_state::AppState;
+use anyhow::{Context, Result};
+use quinn::SendStream;
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
+use tokio::sync::Mutex;
+
+/// Stream data for QUIC protocol
+pub struct StreamData {
+    pub send_stream: Arc<Mutex<SendStream>>,
+}
+
+/// QUIC protocol action handler
+pub struct QuicProtocol {
+    /// Map of active streams (for async actions)
+    streams: Arc<Mutex<HashMap<ConnectionId, StreamData>>>,
+}
+
+impl Default for QuicProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl QuicProtocol {
+    pub fn new() -> Self {
+        Self {
+            streams: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_streams(streams: Arc<Mutex<HashMap<ConnectionId, StreamData>>>) -> Self {
+        Self { streams }
+    }
+
+    /// Add a stream to the protocol handler
+    pub async fn add_stream(&self, stream_id: ConnectionId, send_stream: Arc<Mutex<SendStream>>) {
+        self.streams
+            .lock()
+            .await
+            .insert(stream_id, StreamData { send_stream });
+    }
+
+    /// Remove a stream from the protocol handler
+    pub async fn remove_stream(&self, stream_id: &ConnectionId) {
+        self.streams.lock().await.remove(stream_id);
+    }
+
+    /// Get list of active stream IDs
+    pub async fn list_stream_ids(&self) -> Vec<ConnectionId> {
+        self.streams.lock().await.keys().copied().collect()
+    }
+}
+
+// Implement Protocol trait (common functionality)
+impl Protocol for QuicProtocol {
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        crate::server::tls_cert_manager::get_tls_startup_parameters()
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // Intentionally empty. `send_to_stream`, `close_stream` and
+        // `list_streams` used to be advertised here, but nothing ever consumed
+        // their results: the async (user-triggered) path has no stream context,
+        // so the bytes were serialized into an ActionResult that was dropped on
+        // the floor and the model was told an action had succeeded when nothing
+        // reached the wire. Do not re-add them without an executor that owns the
+        // quinn SendStream (see src/server/quic/CLAUDE.md).
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_quic_data_action(),
+            wait_for_more_action(),
+            close_this_stream_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "QUIC"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_quic_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>QUIC"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        // Deliberately no `http3` keyword. This server does not speak RFC 9114,
+        // so resolving "http3" here would hand a request for an HTTP/3 server a
+        // raw QUIC socket that no HTTP/3 client can use - the same silent
+        // mis-resolution that `ftp` -> TCP used to cause. NetGet's HTTP/3
+        // *client* keeps the `http3` name because it really is HTTP/3.
+        vec!["quic", "quic streams", "quic server", "raw quic"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            // QUIC's default port is UDP 443; the preflight check only fires
+            // when the requested port is actually < 1024.
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(443))
+            .implementation("quinn v0.11 raw QUIC streams with TLS 1.3 (no HTTP/3 framing layer)")
+            .llm_control("Full stream control - all bytes sent/received on bidirectional streams")
+            .e2e_testing("quinn::Endpoint client + mocked LLM, tests/server/quic/e2e_test.rs")
+            .notes(
+                "Raw QUIC streams (RFC 9000/9001), NOT an RFC 9114 HTTP/3 server: bidirectional \
+                 streams under ALPN h3 with no HEADERS/DATA frames and no QPACK, so real HTTP/3 \
+                 clients (curl --http3, browsers, and NetGet's own http3 client) cannot talk to \
+                 it. The peer must be a raw QUIC client. request_filter is not supported.",
+            )
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "QUIC server with multiplexed bidirectional streams (raw stream bytes, not HTTP/3 framing)"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "QUIC stream echo server on port 4433; echo back all data received on each stream"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
+
+    fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
+        use crate::llm::actions::StartupExamples;
+
+        StartupExamples::new(
+            json!({
+                "type": "open_server",
+                "port": 4433,
+                "base_stack": "quic",
+                "instruction": "QUIC multiplexed stream server with TLS 1.3"
+            }),
+            json!({
+                "type": "open_server",
+                "port": 4433,
+                "base_stack": "quic",
+                "event_handlers": [{
+                    "event_pattern": "quic_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<quic_handler>"
+                    }
+                }]
+            }),
+            json!({
+                "type": "open_server",
+                "port": 4433,
+                "base_stack": "quic",
+                "event_handlers": [
+                    {
+                        "event_pattern": "quic_stream_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_quic_data",
+                                "data": "Hello QUIC\n"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "quic_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_quic_data",
+                                "data": "ACK\n"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        )
+    }
+}
+
+// Implement Server trait (server-specific functionality)
+impl Server for QuicProtocol {
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::quic::QuicServer;
+
+            // Parse TLS configuration from startup_params (QUIC always uses TLS)
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                // For QUIC, extract TLS config or use default
+                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
+                    Ok(Some(config)) => Some(config),
+                    Ok(None) => {
+                        // If tls_enabled is false or not set, use default for QUIC
+                        match crate::server::tls_cert_manager::generate_default_tls_config() {
+                            Ok(config) => Some(config),
+                            Err(e) => {
+                                return Err(anyhow::anyhow!(
+                                    "Failed to generate default TLS config: {}",
+                                    e
+                                ));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
+                    }
+                }
+            } else {
+                // Use default self-signed certificate
+                match crate::server::tls_cert_manager::generate_default_tls_config() {
+                    Ok(config) => Some(config),
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Failed to generate default TLS config: {}",
+                            e
+                        ));
+                    }
+                }
+            };
+
+            QuicServer::spawn_with_llm_actions(
+                ctx.legacy_listen_addr(),
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                tls_config,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_quic_data" => self.execute_send_quic_data(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_this_stream" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown QUIC action: {action_type}")),
+        }
+    }
+}
+
+impl QuicProtocol {
+    /// Execute send_quic_data sync action
+    fn execute_send_quic_data(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let data = action
+            .get("data")
+            .and_then(|v| v.as_str())
+            .context("Missing 'data' parameter")?;
+
+        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+    }
+}
+
+/// Action definition for send_quic_data (sync)
+fn send_quic_data_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_quic_data".to_string(),
+        description: "Send data on the QUIC stream that triggered this event. The stream carries \
+            raw bytes - there is no HTTP/3 framing, so if the peer expects an HTTP-shaped reply \
+            you must write the full message yourself."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "Text to send. It is written to the stream verbatim as UTF-8: hex is NOT \
+                decoded, so \"48656c6c6f\" puts those 10 ASCII characters on the wire, not the 5 \
+                bytes they spell. Binary payloads therefore cannot be sent. Note the asymmetry \
+                with the inbound direction, where a non-printable payload is shown to you as hex \
+                (encoding=\"hex\") - you cannot echo such data back unchanged."
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "send_quic_data",
+            "data": "Hello from QUIC\n"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> QUIC data")
+                .with_debug("QUIC send_quic_data"),
+        ),
+    }
+}
+
+/// Action definition for wait_for_more (sync)
+fn wait_for_more_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "wait_for_more".to_string(),
+        description: "Wait for more data before responding (accumulate incomplete protocol data)"
+            .to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "wait_for_more"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("QUIC wait for more")
+                .with_debug("QUIC wait_for_more"),
+        ),
+    }
+}
+
+/// Action definition for close_this_stream (sync)
+fn close_this_stream_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_this_stream".to_string(),
+        description: "Close the current QUIC stream".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "close_this_stream"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("QUIC close this stream")
+                .with_debug("QUIC close_this_stream"),
+        ),
+    }
+}
+
+// ============================================================================
+// QUIC Action Constants
+// ============================================================================
+
+pub static SEND_QUIC_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(send_quic_data_action);
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(wait_for_more_action);
+pub static CLOSE_THIS_STREAM_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(close_this_stream_action);
+
+// ============================================================================
+// QUIC Event Type Constants
+// ============================================================================
+
+/// QUIC connection opened event - triggered when new connection is established
+pub static QUIC_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "quic_connection_opened",
+        "A QUIC connection was established (TLS 1.3 complete), but the client has not opened a \
+         stream yet. Purely informational: every send action needs a stream to write to, and \
+         none exists yet. Act on quic_stream_opened instead.",
+        json!({"type": "show_message", "message": "QUIC connection established"}),
+    )
+    // No parameters - just connection opened notification
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("QUIC connection opened")
+            .with_debug("QUIC connection established with TLS 1.3")
+            .with_trace("QUIC connection: {json_pretty(.)}"),
+    )
+    // Deliberately none: send_quic_data and close_this_stream both address a stream, and this
+    // event fires before any stream exists. `.with_no_actions()` rather than an empty list so
+    // this reads as intentional - see tests/event_action_declarations_test.rs.
+    .with_no_actions()
+});
+
+/// QUIC stream opened event - triggered when client opens a new stream
+pub static QUIC_STREAM_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "quic_stream_opened",
+        "New bidirectional stream opened by client",
+        json!({"type": "send_quic_data", "data": "Hello QUIC"}),
+    )
+    .with_parameters(vec![Parameter {
+        name: "stream_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "The stream ID (QUIC uses per-connection stream numbering)".to_string(),
+        required: true,
+    }])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("QUIC stream opened: {stream_id}")
+            .with_debug("QUIC stream {stream_id} opened")
+            .with_trace("QUIC stream: {json_pretty(.)}"),
+    )
+    .with_actions(vec![
+        SEND_QUIC_DATA_ACTION.clone(),
+        CLOSE_THIS_STREAM_ACTION.clone(),
+    ])
+});
+
+/// QUIC data received event - triggered when data is received on a stream
+pub static QUIC_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("quic_data_received", "Data received on QUIC stream", json!({"type": "placeholder", "event_id": "quic_data_received"}))
+        .with_parameters(vec![
+            Parameter {
+                name: "stream_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "The stream ID this data was received on".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "The data received. Printable payloads are given verbatim as text; \
+                    anything else is hex-encoded. Check the `encoding` field before interpreting it."
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "encoding".to_string(),
+                type_hint: "string".to_string(),
+                description: "How `data` is encoded: \"text\" (verbatim UTF-8) or \"hex\" (the \
+                    payload was not printable). send_quic_data always writes text verbatim, so \
+                    hex data cannot be echoed back unchanged."
+                    .to_string(),
+                required: true,
+            },
+        ])
+        .with_log_template(
+            LogTemplate::new()
+                .with_info("QUIC data on {stream_id}")
+                .with_debug("QUIC data received on stream {stream_id}")
+                .with_trace("QUIC data: {json_pretty(.)}"),
+        )
+        .with_actions(vec![
+            SEND_QUIC_DATA_ACTION.clone(),
+            WAIT_FOR_MORE_ACTION.clone(),
+            CLOSE_THIS_STREAM_ACTION.clone(),
+        ])
+});
+
+/// Get QUIC event types
+pub fn get_quic_event_types() -> Vec<EventType> {
+    vec![
+        QUIC_CONNECTION_OPENED_EVENT.clone(),
+        QUIC_STREAM_OPENED_EVENT.clone(),
+        QUIC_DATA_RECEIVED_EVENT.clone(),
+    ]
+}

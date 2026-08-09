@@ -38,7 +38,7 @@ pub mod socket_helpers;
 ))]
 pub mod http_common;
 
-// TLS certificate management for DoT, DoH, HTTP, HTTP/2, HTTP/3, SMTP, POP3 and TLS protocols.
+// TLS certificate management for DoT, DoH, HTTP, HTTP/2, QUIC, SMTP, POP3 and TLS protocols.
 // Keep this list in sync with the protocols that actually call into it: POP3's TLS session
 // path is fully implemented and its spawn already takes the config, but it was missing here,
 // so POP3S could not be built at all.
@@ -47,7 +47,7 @@ pub mod http_common;
     feature = "doh",
     feature = "http",
     feature = "http2",
-    feature = "http3",
+    feature = "quic",
     feature = "smtp",
     feature = "pop3",
     feature = "tls"
@@ -666,12 +666,14 @@ pub use kafka::actions::KafkaProtocol;
 #[cfg(feature = "kafka")]
 pub use kafka::KafkaServer;
 
-#[cfg(feature = "http3")]
-pub mod http3;
-#[cfg(feature = "http3")]
-pub use http3::actions::Http3Protocol;
-#[cfg(feature = "http3")]
-pub use http3::Http3Server;
+// Raw QUIC stream server (RFC 9000/9001). Deliberately not HTTP/3 - the HTTP/3
+// *client* lives at src/client/http3/ behind the separate `http3` feature.
+#[cfg(feature = "quic")]
+pub mod quic;
+#[cfg(feature = "quic")]
+pub use quic::actions::QuicProtocol;
+#[cfg(feature = "quic")]
+pub use quic::QuicServer;
 
 #[cfg(feature = "torrent-tracker")]
 pub mod torrent_tracker;

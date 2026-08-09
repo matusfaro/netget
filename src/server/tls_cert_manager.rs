@@ -253,7 +253,7 @@ pub fn get_tls_startup_parameters() -> Vec<crate::llm::actions::ParameterDefinit
         ParameterDefinition {
             name: "tls_enabled".to_string(),
             type_hint: "boolean".to_string(),
-            description: "Enable TLS/SSL encryption (default: false for HTTP/HTTP2, always true for HTTP3)".to_string(),
+            description: "Enable TLS/SSL encryption (default: false for HTTP/HTTP2, always true for QUIC)".to_string(),
             required: false,
             example: serde_json::json!(true),
         },

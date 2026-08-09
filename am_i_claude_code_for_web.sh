@@ -52,7 +52,7 @@ if [ $exit_code -eq 0 ]; then
     echo ""
     echo "✓ RECOMMENDED BUILD COMMAND (maximum features for web):"
     echo "  ./cargo-isolated.sh build --no-default-features --features \\"
-    echo "  tcp,socket_file,http,http2,http3,pypi,maven,udp,datalink,arp,dc,dns,dot,doh,dhcp,bootp,ntp,whois,snmp,igmp,syslog,ssh,ssh-agent,svn,irc,xmpp,telnet,smtp,mdns,mysql,ipp,postgresql,redis,rss,proxy,webdav,nfs,cassandra,smb,stun,turn,webrtc,sip,ldap,imap,pop3,nntp,mqtt,amqp,socks5,elasticsearch,dynamo,s3,sqs,npm,openai,ollama,oauth2,jsonrpc,wireguard,openvpn,ipsec,bgp,ospf,isis,rip,bitcoin,mcp,xmlrpc,tor,vnc,openapi,openid,git,mercurial,torrent-tracker,torrent-dht,torrent-peer,tls,saml-idp,saml-sp,embedded-llm"
+    echo "  tcp,socket_file,http,http2,quic,http3,pypi,maven,udp,datalink,arp,dc,dns,dot,doh,dhcp,bootp,ntp,whois,snmp,igmp,syslog,ssh,ssh-agent,svn,irc,xmpp,telnet,smtp,mdns,mysql,ipp,postgresql,redis,rss,proxy,webdav,nfs,cassandra,smb,stun,turn,webrtc,sip,ldap,imap,pop3,nntp,mqtt,amqp,socks5,elasticsearch,dynamo,s3,sqs,npm,openai,ollama,oauth2,jsonrpc,wireguard,openvpn,ipsec,bgp,ospf,isis,rip,bitcoin,mcp,xmlrpc,tor,vnc,openapi,openid,git,mercurial,torrent-tracker,torrent-dht,torrent-peer,tls,saml-idp,saml-sp,embedded-llm"
     echo ""
     echo "✓ SAFE: Single protocol testing"
     echo "  ./cargo-isolated.sh build --no-default-features --features tcp"
