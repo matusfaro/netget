@@ -318,28 +318,40 @@ mod tests {
         let manager = ApprovalManager::new(config);
         let manager_clone = manager.clone();
 
-        // Spawn a task that requests multiple approvals
+        // Spawn a task that requests an approval and parks on it.
+        //
+        // Both calls used to be made without `.await`, so the futures were created and dropped
+        // unpolled -- `request_approval` is async, and `let _ =` silenced the unused-future
+        // warning that would have said so. No approval was ever registered, `list_pending()`
+        // was correctly empty, and the test failed on every run. It is awaited now, which is
+        // also what leaves it pending: nothing answers it, so it sits until the 30s timeout.
         let request_task = tokio::spawn(async move {
-            let _ = manager_clone.request_approval(
-                OperationType::Register,
-                "example.com".to_string(),
-                Some("user1@example.com".to_string()),
-                None,
-            );
-            let _ = manager_clone.request_approval(
-                OperationType::Authenticate,
-                "test.com".to_string(),
-                None,
-                None,
-            );
+            let _ = manager_clone
+                .request_approval(
+                    OperationType::Register,
+                    "example.com".to_string(),
+                    Some("user1@example.com".to_string()),
+                    None,
+                )
+                .await;
         });
 
-        // Wait a bit for requests to be pending
-        sleep(Duration::from_millis(50)).await;
+        // Poll rather than sleeping a fixed 50ms: the old fixed wait was a bet on the spawned
+        // task being scheduled inside an arbitrary window, which is exactly the shape that
+        // makes a test flake under parallel load.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let pending = loop {
+            let pending = manager.list_pending().await;
+            if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
+                break pending;
+            }
+            sleep(Duration::from_millis(10)).await;
+        };
 
-        // List pending requests
-        let pending = manager.list_pending().await;
-        assert!(pending.len() >= 1, "Should have at least 1 pending request");
+        assert!(
+            !pending.is_empty(),
+            "an awaited request_approval must appear in list_pending() within 5s"
+        );
 
         // Cancel the request task
         request_task.abort();
