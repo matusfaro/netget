@@ -11,7 +11,14 @@ fn has_raw_socket_capability() -> bool {
 // ICMP client tests require CAP_NET_RAW or root privileges
 // Tests will skip gracefully if privileges are not available
 
+/// Not implemented. `#[ignore]`d rather than returning `Ok(())` after printing "TODO":
+/// unconditionally returning success counts as passing coverage, so the suite reported a green
+/// ICMP echo test that never sent a packet. The capability check below also passed silently on
+/// any machine without `CAP_NET_RAW`, which is most of them.
+///
+/// When implementing: ping `127.0.0.1`, not `8.8.8.8` — CLAUDE.md requires localhost only.
 #[tokio::test]
+#[ignore = "Not implemented: asserts nothing. Needs echo request/reply against 127.0.0.1 with RTT and LLM action verification, and CAP_NET_RAW to run."]
 async fn test_icmp_echo_request() -> anyhow::Result<()> {
     // Check for raw socket capability
     if !has_raw_socket_capability() {
@@ -52,7 +59,9 @@ async fn test_icmp_timestamp_request() -> anyhow::Result<()> {
 }
 */
 
+/// Not implemented — same shape as `test_icmp_echo_request` above.
 #[tokio::test]
+#[ignore = "Not implemented: asserts nothing. Needs a TTL-limited probe sequence against 127.0.0.1 and CAP_NET_RAW to run."]
 async fn test_icmp_traceroute_simulation() -> anyhow::Result<()> {
     // Check for raw socket capability
     if !has_raw_socket_capability() {
