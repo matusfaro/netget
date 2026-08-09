@@ -81,10 +81,7 @@ impl UsbCdcAcmSerialHandler {
     pub fn set_line_coding(&mut self, line_coding: LineCoding) {
         debug!(
             "USB serial line coding set by handler: {} baud, {} data bits, parity {}, stop {}",
-            line_coding.baud_rate,
-            line_coding.data_bits,
-            line_coding.parity,
-            line_coding.stop_bits
+            line_coding.baud_rate, line_coding.data_bits, line_coding.parity, line_coding.stop_bits
         );
         self.line_coding = line_coding;
     }
@@ -207,7 +204,9 @@ impl usbip::UsbInterfaceHandler for UsbCdcAcmSerialHandler {
 
     fn get_class_specific_descriptor(&self) -> Vec<u8> {
         // The CDC header and ACM functional descriptors, as built by the usbip crate.
-        usbip::UsbInterfaceHandler::get_class_specific_descriptor(&usbip::cdc::UsbCdcAcmHandler::new())
+        usbip::UsbInterfaceHandler::get_class_specific_descriptor(
+            &usbip::cdc::UsbCdcAcmHandler::new(),
+        )
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {

@@ -247,7 +247,10 @@ impl UsbSerialProtocol {
         if let Some(id) = action["connection_id"].as_u64() {
             let connection_id = ConnectionId::new(id as u32);
             return handlers.get(&connection_id).cloned().ok_or_else(|| {
-                anyhow::anyhow!("No USB serial port attached on connection {}", connection_id)
+                anyhow::anyhow!(
+                    "No USB serial port attached on connection {}",
+                    connection_id
+                )
             });
         }
 

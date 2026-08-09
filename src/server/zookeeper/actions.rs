@@ -79,7 +79,8 @@ fn header_parameters(zxid_description: &str) -> Vec<Parameter> {
 
 /// Answer `getData` (opcode 4) with the znode's contents.
 fn zookeeper_data_action() -> ActionDefinition {
-    let mut parameters = header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
+    let mut parameters =
+        header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
     parameters.push(Parameter {
         name: "data".to_string(),
         type_hint: "string".to_string(),
@@ -117,7 +118,8 @@ fn zookeeper_data_action() -> ActionDefinition {
 
 /// Answer `getChildren` (opcode 8) / `getChildren2` (opcode 12).
 fn zookeeper_children_action() -> ActionDefinition {
-    let mut parameters = header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
+    let mut parameters =
+        header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
     parameters.push(Parameter {
         name: "children".to_string(),
         type_hint: "array".to_string(),
@@ -158,7 +160,8 @@ fn zookeeper_children_action() -> ActionDefinition {
 
 /// Answer `exists` (opcode 3) / `setData` (opcode 5), whose reply is a bare `Stat`.
 fn zookeeper_stat_action() -> ActionDefinition {
-    let mut parameters = header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
+    let mut parameters =
+        header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
     parameters.push(Parameter {
         name: "version".to_string(),
         type_hint: "integer".to_string(),
@@ -201,7 +204,8 @@ fn zookeeper_stat_action() -> ActionDefinition {
 
 /// Answer `create` (opcode 1), whose reply is the created path.
 fn zookeeper_created_action() -> ActionDefinition {
-    let mut parameters = header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
+    let mut parameters =
+        header_parameters("ZooKeeper transaction ID (server-assigned change counter)");
     parameters.push(Parameter {
         name: "path".to_string(),
         type_hint: "string".to_string(),

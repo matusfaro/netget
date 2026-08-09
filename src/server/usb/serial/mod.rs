@@ -143,10 +143,7 @@ impl UsbSerialServer {
                         // A persistent accept error (EMFILE, socket torn down) recurs
                         // immediately, so continuing spins a hot loop on an unbounded status
                         // channel. Give up the listener instead.
-                        error!(
-                            "USB serial accept failed, stopping accept loop: {}",
-                            e
-                        );
+                        error!("USB serial accept failed, stopping accept loop: {}", e);
                         break;
                     }
                 }

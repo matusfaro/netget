@@ -310,11 +310,8 @@ impl ZookeeperServer {
             match request_info.op_code {
                 OP_PING => {
                     trace!("ZooKeeper connection {} ping", connection_id);
-                    Self::write_frame(
-                        &mut write_half,
-                        &Self::reply(request_info.xid, 0, 0, &[]),
-                    )
-                    .await?;
+                    Self::write_frame(&mut write_half, &Self::reply(request_info.xid, 0, 0, &[]))
+                        .await?;
                     continue;
                 }
                 OP_CLOSE_SESSION => {
@@ -322,11 +319,8 @@ impl ZookeeperServer {
                         "ZooKeeper connection {} closed its session on request",
                         connection_id
                     );
-                    Self::write_frame(
-                        &mut write_half,
-                        &Self::reply(request_info.xid, 0, 0, &[]),
-                    )
-                    .await?;
+                    Self::write_frame(&mut write_half, &Self::reply(request_info.xid, 0, 0, &[]))
+                        .await?;
                     return Ok(());
                 }
                 _ => {}
@@ -636,7 +630,8 @@ impl ZookeeperSession {
         let timeout_ms = if req.timeout_ms <= 0 {
             MIN_SESSION_TIMEOUT_MS
         } else {
-            req.timeout_ms.clamp(MIN_SESSION_TIMEOUT_MS, MAX_SESSION_TIMEOUT_MS)
+            req.timeout_ms
+                .clamp(MIN_SESSION_TIMEOUT_MS, MAX_SESSION_TIMEOUT_MS)
         };
 
         // A client presenting a session id is resuming. There is no session table to check it
