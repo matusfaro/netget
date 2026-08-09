@@ -2,45 +2,115 @@
 
 ## Overview
 
-Virtual USB CDC ACM serial port using USB/IP protocol. Appears as `/dev/ttyACM0` on Linux.
+Virtual USB CDC ACM serial port exported over USB/IP. A Linux host that imports it sees
+`/dev/ttyACM0`; anything that speaks USB/IP over TCP can drive it with no kernel module.
 
-## CDC ACM Protocol
+**State: Experimental.** The connection handler used to be a single
+`error!("... placeholder - full USB/IP integration needed")`, so none of the three events could
+fire. It is now implemented and E2E-tested against a real USB/IP client.
 
-**Two Interfaces**:
+## Layout
 
-1. Communication Interface (control): Line coding, DTR/RTS signals
-2. Data Interface (bulk): Bidirectional serial data transfer
+| File | What it does |
+|---|---|
+| `mod.rs` | Accept loop, USB/IP session, the three events, connection state machine |
+| `handler.rs` | `UsbCdcAcmSerialHandler` — the `usbip::UsbInterfaceHandler` implementation |
+| `actions.rs` | Action/event definitions, per-connection handler registry, `execute_action` |
+
+## Why the handler is hand-written
+
+`usbip` 0.9 ships `cdc::UsbCdcAcmHandler`, but it is a demo:
+
+- a host write on the bulk OUT endpoint is `info!`-logged and thrown away, so
+  `usb_serial_data_received` could never fire;
+- the CDC class requests (`SET_LINE_CODING`, `GET_LINE_CODING`, `SET_CONTROL_LINE_STATE`,
+  `SEND_BREAK`) are not handled at all.
+
+So `handler.rs` implements `handle_urb` itself but still takes the CDC functional descriptors
+(`get_class_specific_descriptor`) and the endpoint layout (`endpoints()`) from the crate — it is
+the authority on what a CDC ACM interface looks like on the wire.
+
+Endpoints, from the crate: interrupt IN `0x81` (notifications, never used), bulk IN `0x82`,
+bulk OUT `0x02`, 512-byte packets.
+
+## Wiring the sync handler to the async LLM
+
+`handle_urb` is synchronous and cannot await an LLM call. Host writes are pushed onto an
+unbounded channel; the connection task in `mod.rs` receives them and raises
+`usb_serial_data_received`. While an LLM call is in flight the task is not reading the channel,
+so writes queue up; the next receive coalesces everything pending into a single event rather
+than firing one round-trip per URB.
+
+Device-to-host data goes the other way: `send_data` appends to the handler's `tx_buffer`, and
+the host drains it on its next bulk IN URB, `min(max_packet_size, transfer_buffer_length)` bytes
+at a time.
+
+## The detach path
+
+`handle_connection` does **not** park on `sleep(u64::MAX)` — that is what the rest of the USB
+family does, and it is why `usb_*_detached` never fires anywhere else. Here the task selects
+over the rx channel and the USB/IP session's `JoinHandle`; when the session ends, the loop
+breaks, `usb_serial_detached` is raised, the handler is dropped from the registry and the
+connection is closed in `AppState`.
 
 ## LLM Actions
 
-**send_data**: Transmit data to serial port
+**send_data**: queue text for the host's next read.
 
 ```json
 {"type": "send_data", "data": "Hello\n"}
 ```
 
-**set_line_coding**: Configure baud rate and parameters
+**set_line_coding**: change what the port reports on `GET_LINE_CODING`.
 
 ```json
-{"type": "set_line_coding", "baud_rate": 115200, "data_bits": 8, "parity": "none", "stop_bits": 1}
+{"type": "set_line_coding", "baud_rate": 9600, "data_bits": 8, "parity": "none", "stop_bits": 1}
 ```
+
+`parity` and `stop_bits` are named, not numeric; an unknown value is an error rather than a
+silent default. Default line coding is 115200 8N1.
+
+**wait_for_more**: send nothing.
+
+### `connection_id` is optional
+
+Both wire actions take an optional `connection_id`. With exactly one host attached it is
+inferred; with several, omitting it is an error naming the candidates. The rest of the USB
+family requires the model to copy the id back from the event, which is a reliable source of
+wrong answers — and a serial port normally has exactly one host.
 
 ## LLM Events
 
-- `usb_serial_attached`: Device opened
-- `usb_serial_detached`: Device closed
-- `usb_serial_data_received`: Data from host
+- `usb_serial_attached` — a host connected. Fields: `connection_id`.
+- `usb_serial_data_received` — the host wrote. Fields: `connection_id`, `data` (text).
+- `usb_serial_detached` — the USB/IP session ended. Fields: `connection_id`. Declared
+  `with_no_actions()`: the port is gone, so there is nothing to write to.
 
-## Line Coding
+## Known limitations
 
-Default: 115200 baud, 8 data bits, no parity, 1 stop bit (115200 8N1)
-
-## Status
-
-**Experimental**: Framework complete, USB/IP integration needed.
+- **Real Linux attach is untested.** `sudo usbip attach -r <host> -b 0-0-0` needs `vhci-hcd` and
+  root on the client; the E2E tests speak USB/IP directly over TCP instead.
+- **The host changing the baud rate raises no event.** `SET_LINE_CODING` from the host is
+  recorded in the handler and logged, but a script or the model cannot react to it.
+- **No flow control and no serial-state notifications.** The interrupt IN endpoint exists but
+  never reports break, DCD, or framing errors.
+- **`data` is text.** Bytes that are not valid UTF-8 are lossily converted before reaching the
+  handler, per the project's no-raw-bytes rule for event data.
 
 ## Build
 
 ```bash
 ./cargo-isolated.sh build --no-default-features --features usb-serial
 ```
+
+Needs `libusb-1.0` (the `usbip` crate links it): `brew install libusb pkg-config` on macOS,
+`apt-get install libusb-1.0-0-dev pkg-config` on Debian. Not available in Claude Code for Web.
+
+## Testing
+
+```bash
+./cargo-isolated.sh test --no-default-features --features usb-serial \
+    --test server -- --test-threads=100 usb_serial
+```
+
+See `tests/server/usb_serial/CLAUDE.md`.

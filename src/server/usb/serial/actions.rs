@@ -18,12 +18,28 @@ use std::{
     collections::HashMap,
     sync::{Arc, LazyLock},
 };
-#[cfg(feature = "usb-serial")]
-use tokio::sync::Mutex;
 
 // Action constructors. Free functions rather than inline definitions so each event type can
 // declare the actions that answer it - an event listing none leaves the model with only the
 // common actions and every USB-Serial action it returns is rejected as unknown.
+/// Optional connection selector shared by both wire actions.
+///
+/// It is optional on purpose. A virtual serial port normally has exactly one host attached, and
+/// asking a model to copy an id back is a reliable source of wrong answers. When exactly one
+/// port is attached the action needs no id; when several are, an omitted id is an error naming
+/// the candidates rather than a guess.
+#[cfg(feature = "usb-serial")]
+fn connection_id_parameter() -> Parameter {
+    Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "integer".to_string(),
+        description: "Which attached port to act on. Omit it when only one host is attached; \
+            required (copy it from the event) when there are several."
+            .to_string(),
+        required: false,
+    }
+}
+
 #[cfg(feature = "usb-serial")]
 fn send_data_action() -> ActionDefinition {
     ActionDefinition {
@@ -31,14 +47,17 @@ fn send_data_action() -> ActionDefinition {
         description: "Send data to the host over the virtual serial port, as if a device had \
             written it to the wire."
             .to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Text to send. Include an explicit \"\\n\" or \"\\r\\n\" if the host \
-                expects line-terminated output"
-                .to_string(),
-            required: true,
-        }],
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Text to send. Include an explicit \"\\n\" or \"\\r\\n\" if the host \
+                    expects line-terminated output"
+                    .to_string(),
+                required: true,
+            },
+            connection_id_parameter(),
+        ],
         example: json!({"type": "send_data", "data": "Hello\n"}),
         log_template: Some(
             LogTemplate::new()
@@ -80,6 +99,7 @@ fn set_line_coding_action() -> ActionDefinition {
                 description: "1, 1.5, or 2".to_string(),
                 required: false,
             },
+            connection_id_parameter(),
         ],
         example: json!({"type": "set_line_coding", "baud_rate": 9600}),
         log_template: Some(
@@ -177,22 +197,93 @@ pub static USB_SERIAL_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
     .with_alternative_example(json!({"type": "wait_for_more"}))
 });
 
+/// The per-connection CDC ACM handlers, keyed by connection.
+///
+/// A `std::sync::Mutex` rather than a tokio one because `usbip` requires
+/// `Arc<Mutex<Box<dyn UsbInterfaceHandler + Send>>>` from `std`, and because `execute_action`
+/// is synchronous. The guard is never held across an `.await`.
 #[cfg(feature = "usb-serial")]
-pub struct UsbSerialProtocol {
-    #[allow(dead_code)]
-    connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
-}
+type SharedHandler = Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>;
 
 #[cfg(feature = "usb-serial")]
-#[derive(Clone)]
-pub struct ConnectionData {}
+pub struct UsbSerialProtocol {
+    handlers: Arc<std::sync::Mutex<HashMap<ConnectionId, SharedHandler>>>,
+}
 
 #[cfg(feature = "usb-serial")]
 impl UsbSerialProtocol {
     pub fn new() -> Self {
         Self {
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            handlers: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Register the handler that drives one attached port.
+    pub fn set_handler(&self, connection_id: ConnectionId, handler: SharedHandler) {
+        if let Ok(mut handlers) = self.handlers.lock() {
+            handlers.insert(connection_id, handler);
+        }
+    }
+
+    /// Drop the handler for a port whose host has detached, so a later action cannot reach a
+    /// device that is gone.
+    pub fn remove_handler(&self, connection_id: ConnectionId) {
+        if let Ok(mut handlers) = self.handlers.lock() {
+            handlers.remove(&connection_id);
+        }
+    }
+
+    /// Resolve which port an action refers to.
+    ///
+    /// An explicit `connection_id` wins. Otherwise the single attached port is used — and if
+    /// there is not exactly one, this is an error rather than a guess: writing to the wrong
+    /// serial port is indistinguishable from writing to the right one from the model's side.
+    fn resolve_handler(&self, action: &serde_json::Value) -> Result<SharedHandler> {
+        let handlers = self
+            .handlers
+            .lock()
+            .map_err(|_| anyhow::anyhow!("USB serial handler registry poisoned"))?;
+
+        if let Some(id) = action["connection_id"].as_u64() {
+            let connection_id = ConnectionId::new(id as u32);
+            return handlers.get(&connection_id).cloned().ok_or_else(|| {
+                anyhow::anyhow!("No USB serial port attached on connection {}", connection_id)
+            });
+        }
+
+        match handlers.len() {
+            0 => Err(anyhow::anyhow!(
+                "No USB serial port is attached, so there is nothing to write to"
+            )),
+            1 => Ok(handlers.values().next().cloned().expect("len checked")),
+            _ => {
+                let mut ids: Vec<u32> = handlers.keys().map(|c| c.as_u32()).collect();
+                ids.sort_unstable();
+                Err(anyhow::anyhow!(
+                    "{} USB serial ports are attached ({:?}); the action must name one with \
+                     'connection_id'",
+                    ids.len(),
+                    ids
+                ))
+            }
+        }
+    }
+
+    /// Run `f` against the CDC ACM handler an action refers to.
+    fn with_serial_handler<T>(
+        &self,
+        action: &serde_json::Value,
+        f: impl FnOnce(&mut crate::server::usb::serial::handler::UsbCdcAcmSerialHandler) -> T,
+    ) -> Result<T> {
+        let handler = self.resolve_handler(action)?;
+        let mut guard = handler
+            .lock()
+            .map_err(|_| anyhow::anyhow!("USB serial handler mutex poisoned"))?;
+        let serial = guard
+            .as_any()
+            .downcast_mut::<crate::server::usb::serial::handler::UsbCdcAcmSerialHandler>()
+            .context("Handler is not a USB CDC ACM serial handler")?;
+        Ok(f(serial))
     }
 }
 
@@ -229,12 +320,34 @@ impl Protocol for UsbSerialProtocol {
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
-            .implementation("Virtual USB CDC ACM serial port using USB/IP protocol")
-            .llm_control("LLM controls serial data transmission and line parameters")
-            .e2e_testing("E2E tests using Linux usbip client and /dev/ttyACM0")
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
+            .implementation(
+                "Virtual USB CDC ACM serial port over USB/IP. usbip::handler runs on the \
+                 accepted socket, so the listen port is whatever the caller asks for. The CDC \
+                 interface handler is hand-written (src/server/usb/serial/handler.rs) because \
+                 usbip's own UsbCdcAcmHandler discards host writes and handles no class \
+                 requests; the CDC functional descriptors and endpoint layout still come from \
+                 the crate.",
+            )
+            .llm_control(
+                "send_data queues bytes for the host's next bulk IN transfer; set_line_coding \
+                 changes what GET_LINE_CODING reports. All three events are emitted: \
+                 usb_serial_attached on connect, usb_serial_data_received on every host write, \
+                 usb_serial_detached when the USB/IP session ends.",
+            )
+            .e2e_testing(
+                "E2E drives a real USB/IP client over TCP: OP_REQ_IMPORT, then bulk OUT and \
+                 bulk IN URBs, asserting the bytes the host would read. No usbip kernel module \
+                 or root is needed.",
+            )
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("NON-FUNCTIONAL, but no longer for the old reason. The tokio 0.3 reactor panic is fixed by the usbip 0.9 upgrade; what remains is that the connection handler body is still a single error! log reading 'placeholder - full USB/IP integration needed' and it never calls call_llm, so all three usb_serial_* events are unreachable. usbip 0.9 now ships UsbCdcAcmHandler in cdc.rs, so this is implementable -- it just has not been implemented.")
+            .notes(
+                "Attaching from a real Linux host still needs the vhci-hcd module and root on \
+                 the client side; that path is untested. SET_LINE_CODING from the host is \
+                 recorded but raises no event, so a handler cannot react to the host changing \
+                 the baud rate. There is no flow control and no serial-state notification on \
+                 the interrupt endpoint (break, DCD, framing errors are never reported).",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -318,17 +431,58 @@ impl Server for UsbSerialProtocol {
             .context("Action must have 'type' field")?;
         match action_type {
             "send_data" => {
-                let _data = action["data"]
+                let data = action["data"]
                     .as_str()
                     .context("send_data requires 'data' field")?;
-                // TODO: Implement serial data transmission via USB/IP
+                if data.is_empty() {
+                    return Err(anyhow::anyhow!("send_data requires non-empty 'data'"));
+                }
+                let bytes = data.as_bytes().to_vec();
+                self.with_serial_handler(&action, |serial| serial.queue_tx(&bytes))?;
                 Ok(ActionResult::NoAction)
             }
             "set_line_coding" => {
-                let _baud_rate = action["baud_rate"]
+                let baud_rate = action["baud_rate"]
                     .as_u64()
-                    .context("Requires 'baud_rate'")? as u32;
-                // TODO: Implement line coding configuration
+                    .context("set_line_coding requires 'baud_rate'")?
+                    as u32;
+                let data_bits = action["data_bits"].as_u64().unwrap_or(8) as u8;
+
+                // The wire encodes parity and stop bits as small integers (CDC PSTN 1.2,
+                // table 17); the model speaks names.
+                let parity = match action["parity"].as_str().unwrap_or("none") {
+                    "none" => 0,
+                    "odd" => 1,
+                    "even" => 2,
+                    "mark" => 3,
+                    "space" => 4,
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "set_line_coding: unknown parity '{}' (expected none, odd, even, \
+                             mark or space)",
+                            other
+                        ))
+                    }
+                };
+                let stop_bits = match action["stop_bits"].as_f64().unwrap_or(1.0) {
+                    v if (v - 1.0).abs() < f64::EPSILON => 0,
+                    v if (v - 1.5).abs() < f64::EPSILON => 1,
+                    v if (v - 2.0).abs() < f64::EPSILON => 2,
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "set_line_coding: unknown stop_bits {} (expected 1, 1.5 or 2)",
+                            other
+                        ))
+                    }
+                };
+
+                let line_coding = crate::server::usb::descriptors::LineCoding {
+                    baud_rate,
+                    stop_bits,
+                    parity,
+                    data_bits,
+                };
+                self.with_serial_handler(&action, |serial| serial.set_line_coding(line_coding))?;
                 Ok(ActionResult::NoAction)
             }
             "wait_for_more" => Ok(ActionResult::WaitForMore),

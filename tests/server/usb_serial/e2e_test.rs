@@ -1,216 +1,290 @@
-//! E2E tests for USB CDC ACM Serial server
+//! E2E tests for the USB CDC ACM Serial server.
 //!
-//! These tests verify the USB serial server by:
-//! 1. Starting the server with LLM integration (mocked)
-//! 2. Connecting a USB/IP client to trigger the device-attach event
-//! 3. Verifying LLM-driven serial communication
+//! These drive a real USB/IP client over TCP — `OP_REQ_IMPORT` followed by bulk OUT and bulk IN
+//! URBs — so a passing test means bytes actually crossed the virtual serial port, not merely
+//! that an event fired. That matters here: the previous version of this server registered the
+//! connection and then logged `"placeholder - full USB/IP integration needed"`, so a test that
+//! only checked "did an event happen" would have been the only thing standing between a stub
+//! and a green suite.
 //!
-//! PRODUCT GAP -- every test in this file is `#[ignore]`d, each with its own
-//! precise reason. `src/server/usb/serial/mod.rs` is a stub: its accept loop
-//! registers the connection and then spawns a task whose entire body is
-//! `error!("USB serial connection {} placeholder - full USB/IP integration
-//! needed")`. It never constructs an `Event`, never calls `call_llm`, and does
-//! not even take the `llm_client` it is handed (`_llm_client`). None of the
-//! three declared event types (`usb_serial_attached`, `usb_serial_detached`,
-//! `usb_serial_data_received`, `src/server/usb/serial/actions.rs:219-221`) can
-//! therefore ever reach the LLM. The tests below are otherwise complete and
-//! should be un-ignored as the corresponding events start being emitted.
+//! No `usbip` kernel module, no root, no `/dev/ttyACM0`: the USB/IP protocol is spoken directly
+//! over the loopback socket. Attaching from a real Linux host is the one path these tests
+//! cannot cover.
 
 #[cfg(all(test, feature = "usb-serial"))]
 mod usb_serial_e2e {
     use crate::helpers::*;
     use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
 
-    /// Log line the server would emit after the attach LLM call returns.
-    /// Not currently produced -- see the module-level PRODUCT GAP note.
-    #[allow(dead_code)]
-    const ATTACH_LOG: &str = "USB serial LLM call completed for connection";
+    /// Log line the server emits after each LLM call on a serial connection.
+    const LLM_CALL_LOG: &str = "USB serial LLM call completed for connection";
 
-    /// Connect a USB/IP client so the server emits `usb_serial_attached`.
-    ///
-    /// The returned stream must be kept alive for the duration of the test:
-    /// dropping it closes the connection.
-    #[allow(dead_code)]
-    async fn attach_usbip_client(port: u16) -> E2EResult<tokio::net::TcpStream> {
-        Ok(tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await?)
+    const USBIP_VERSION: u16 = 0x0111;
+    const OP_REQ_IMPORT: u16 = 0x8003;
+    const USBIP_CMD_SUBMIT: u32 = 0x0001;
+
+    /// USB/IP wire direction. Note this is *not* rusb's `Direction`, whose discriminants are
+    /// the other way round.
+    const DIR_OUT: u32 = 0;
+    const DIR_IN: u32 = 1;
+
+    /// The CDC ACM endpoint numbers, from `UsbCdcAcmHandler::endpoints()`: bulk IN is 0x82 and
+    /// bulk OUT is 0x02, i.e. endpoint 2 in both directions.
+    const BULK_EP: u32 = 2;
+    const BULK_MAX_PACKET: u32 = 512;
+
+    /// A minimal USB/IP client: enough of the protocol to import the device and push URBs.
+    struct UsbIpClient {
+        stream: TcpStream,
+        seqnum: u32,
     }
 
-    /// Test USB serial device startup and attach
-    /// LLM calls: 2 (startup, device attached)
+    impl UsbIpClient {
+        /// Connect and import the exported device (bus id `0-0-0`, as set by
+        /// `usbip::UsbDevice::new`).
+        async fn attach(port: u16) -> E2EResult<Self> {
+            let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+
+            let mut req = Vec::new();
+            req.extend_from_slice(&USBIP_VERSION.to_be_bytes());
+            req.extend_from_slice(&OP_REQ_IMPORT.to_be_bytes());
+            req.extend_from_slice(&0u32.to_be_bytes()); // status
+            let mut busid = [0u8; 32];
+            busid[..5].copy_from_slice(b"0-0-0");
+            req.extend_from_slice(&busid);
+            stream.write_all(&req).await?;
+            stream.flush().await?;
+
+            // OP_REP_IMPORT: 8-byte header + the 312-byte device struct.
+            let mut rep = [0u8; 320];
+            tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut rep))
+                .await
+                .map_err(|_| "timed out waiting for OP_REP_IMPORT")??;
+
+            let status = u32::from_be_bytes([rep[4], rep[5], rep[6], rep[7]]);
+            if status != 0 {
+                return Err(format!("OP_REP_IMPORT failed with status {}", status).into());
+            }
+
+            Ok(Self { stream, seqnum: 0 })
+        }
+
+        /// Submit one URB and return the transfer buffer the device answered with.
+        async fn submit(
+            &mut self,
+            ep: u32,
+            direction: u32,
+            transfer_buffer_length: u32,
+            setup: [u8; 8],
+            data: &[u8],
+        ) -> E2EResult<Vec<u8>> {
+            self.seqnum += 1;
+
+            let mut cmd = Vec::new();
+            cmd.extend_from_slice(&USBIP_CMD_SUBMIT.to_be_bytes());
+            cmd.extend_from_slice(&self.seqnum.to_be_bytes());
+            cmd.extend_from_slice(&0u32.to_be_bytes()); // devid
+            cmd.extend_from_slice(&direction.to_be_bytes());
+            cmd.extend_from_slice(&ep.to_be_bytes());
+            cmd.extend_from_slice(&0u32.to_be_bytes()); // transfer_flags
+            cmd.extend_from_slice(&transfer_buffer_length.to_be_bytes());
+            cmd.extend_from_slice(&0u32.to_be_bytes()); // start_frame
+            cmd.extend_from_slice(&0u32.to_be_bytes()); // number_of_packets
+            cmd.extend_from_slice(&0u32.to_be_bytes()); // interval
+            cmd.extend_from_slice(&setup);
+            if direction == DIR_OUT {
+                cmd.extend_from_slice(data);
+            }
+            self.stream.write_all(&cmd).await?;
+            self.stream.flush().await?;
+
+            // USBIP_RET_SUBMIT: 20-byte basic header + 28 bytes of fields and padding.
+            let mut hdr = [0u8; 48];
+            tokio::time::timeout(Duration::from_secs(5), self.stream.read_exact(&mut hdr))
+                .await
+                .map_err(|_| "timed out waiting for USBIP_RET_SUBMIT")??;
+
+            let status = i32::from_be_bytes([hdr[20], hdr[21], hdr[22], hdr[23]]);
+            if status != 0 {
+                return Err(format!("USBIP_RET_SUBMIT reported status {}", status).into());
+            }
+
+            let actual_length = u32::from_be_bytes([hdr[24], hdr[25], hdr[26], hdr[27]]) as usize;
+            if direction == DIR_OUT {
+                if actual_length != data.len() {
+                    return Err(format!(
+                        "device acknowledged {} of {} bytes written",
+                        actual_length,
+                        data.len()
+                    )
+                    .into());
+                }
+                return Ok(Vec::new());
+            }
+
+            let mut payload = vec![0u8; actual_length];
+            if !payload.is_empty() {
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.stream.read_exact(&mut payload),
+                )
+                .await
+                .map_err(|_| "timed out reading the URB transfer buffer")??;
+            }
+            Ok(payload)
+        }
+
+        /// Write bytes to the port, as a host would.
+        async fn write_serial(&mut self, data: &[u8]) -> E2EResult<()> {
+            self.submit(BULK_EP, DIR_OUT, data.len() as u32, [0u8; 8], data)
+                .await?;
+            Ok(())
+        }
+
+        /// Read whatever the device has queued right now (possibly nothing).
+        async fn read_serial(&mut self) -> E2EResult<Vec<u8>> {
+            self.submit(BULK_EP, DIR_IN, BULK_MAX_PACKET, [0u8; 8], &[])
+                .await
+        }
+
+        /// Poll the bulk IN endpoint until the device produces something, as a real host does.
+        async fn read_serial_until_data(&mut self, timeout: Duration) -> E2EResult<Vec<u8>> {
+            let deadline = std::time::Instant::now() + timeout;
+            loop {
+                let data = self.read_serial().await?;
+                if !data.is_empty() {
+                    return Ok(data);
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err("device sent nothing on the bulk IN endpoint".into());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+
+        /// CDC `GET_LINE_CODING`: device-to-host, class request, interface recipient.
+        async fn get_line_coding(&mut self) -> E2EResult<Vec<u8>> {
+            let setup = [0xA1, 0x21, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00];
+            self.submit(0, DIR_IN, 7, setup, &[]).await
+        }
+    }
+
+    /// Startup mock shared by every test: the model opens a USB serial server on a free port.
+    fn open_server_actions(instruction: &str) -> serde_json::Value {
+        serde_json::json!([
+            {
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "USB-Serial",
+                "instruction": instruction
+            }
+        ])
+    }
+
+    /// The port greets the host on attach, and the host reads the greeting.
+    ///
+    /// LLM calls: 2 (startup, attach)
     #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) is therefore never emitted."]
-    async fn test_usb_serial_startup_and_attach() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB serial port on port {AVAILABLE_PORT}. Echo back any data received."
+    async fn test_usb_serial_attach_and_send_data() -> E2EResult<()> {
+        let config = NetGetConfig::new(
+            "Create a USB serial port on port {AVAILABLE_PORT}. Send a banner when attached."
                 .to_string(),
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB serial")
+            mock.on_event("usb_serial_attached")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Serial",
-                        "instruction": "Echo back any data received"
-                    }
+                    { "type": "send_data", "data": "READY\r\n" }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Device attached
-                .on_event("usb_serial_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
+                .on_instruction_containing("USB serial")
+                .respond_with_actions(open_server_actions("Send a banner when attached"))
                 .expect_calls(1)
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
-
+        let mut server = start_netget_server(config).await?;
         assert!(server.is_running(), "USB serial server should be running");
 
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
+        let mut client = UsbIpClient::attach(server.port).await?;
+        server.wait_for_log(LLM_CALL_LOG, 10).await?;
 
-        println!("✅ USB serial server started and device attached");
+        let banner = client.read_serial_until_data(Duration::from_secs(5)).await?;
+        assert_eq!(
+            String::from_utf8_lossy(&banner),
+            "READY\r\n",
+            "the host must read exactly what send_data queued"
+        );
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test serial data echo
+    /// The host writes, the handler answers: `usb_serial_data_received` end to end.
+    ///
     /// LLM calls: 3 (startup, attach, data received)
     #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_data_received (actions.rs:221) are therefore never emitted."]
     async fn test_usb_serial_echo() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB serial port. Echo back any data received.".to_string())
+        let config =
+            NetGetConfig::new("Create a USB serial port. Answer PING with PONG.".to_string())
                 .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB serial")
+                    mock.on_event("usb_serial_data_received")
+                        .and_event_data_contains("data", "PING")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Serial",
-                                "instruction": "Echo back data"
-                            }
+                            { "type": "send_data", "data": "PONG\r\n" }
                         ]))
                         .expect_calls(1)
                         .and()
-                        // Mock 2: Device attached
                         .on_event("usb_serial_attached")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
+                            { "type": "wait_for_more" }
                         ]))
                         .expect_calls(1)
                         .and()
-                        // Mock 3: Data received, echo it back
-                        .on_event("usb_serial_data_received")
-                        .and_event_data_contains("data", "test")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "send_data",
-                                "data": "test"
-                            }
-                        ]))
+                        .on_instruction_containing("USB serial")
+                        .respond_with_actions(open_server_actions("Answer PING with PONG"))
                         .expect_calls(1)
                         .and()
                 });
 
-        let server = start_netget_server(server_config).await?;
+        let server = start_netget_server(config).await?;
 
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
+        let mut client = UsbIpClient::attach(server.port).await?;
+        server.wait_for_log(LLM_CALL_LOG, 10).await?;
 
-        println!("✅ USB serial echo test passed");
+        // Nothing queued yet: the attach handler chose wait_for_more.
+        assert!(
+            client.read_serial().await?.is_empty(),
+            "wait_for_more must not put anything on the wire"
+        );
 
-        server.verify_mocks().await?;
-        server.stop().await?;
+        client.write_serial(b"PING\n").await?;
 
-        Ok(())
-    }
-
-    /// Test sending data from device to host
-    /// LLM calls: 2 (startup, send on attach)
-    #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) is therefore never emitted."]
-    async fn test_usb_serial_send_data() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB serial port. Send 'Hello from USB!' when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB serial")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Serial",
-                        "instruction": "Send Hello from USB! when attached"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached, send data
-                .on_event("usb_serial_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_data",
-                        "data": "Hello from USB!\n"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB serial send data test passed");
+        let reply = client.read_serial_until_data(Duration::from_secs(5)).await?;
+        assert_eq!(
+            String::from_utf8_lossy(&reply),
+            "PONG\r\n",
+            "the host write must reach the handler and its answer must come back"
+        );
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test line coding configuration
-    /// LLM calls: 2 (startup, set line coding)
+    /// `set_line_coding` must change what the port reports to a host that asks.
+    ///
+    /// LLM calls: 2 (startup, attach)
     #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) is therefore never emitted."]
     async fn test_usb_serial_line_coding() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB serial port. Set baud rate to 9600 when attached.".to_string(),
+        let config = NetGetConfig::new(
+            "Create a USB serial port. Set the baud rate to 9600 when attached.".to_string(),
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB serial")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Serial",
-                        "instruction": "Set baud rate to 9600"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached, set line coding
-                .on_event("usb_serial_attached")
+            mock.on_event("usb_serial_attached")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "set_line_coding",
@@ -222,190 +296,73 @@ mod usb_serial_e2e {
                 ]))
                 .expect_calls(1)
                 .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB serial line coding test passed");
-
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test bidirectional communication
-    /// LLM calls: 3 (startup, attach, data received + response)
-    #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_data_received (actions.rs:221) are therefore never emitted."]
-    async fn test_usb_serial_bidirectional() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB serial port. Send 'Ready' when attached, then echo any data.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
                 .on_instruction_containing("USB serial")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Serial",
-                        "instruction": "Send Ready, then echo data"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached, send ready message
-                .on_event("usb_serial_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_data",
-                        "data": "Ready\n"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Data received, echo back
-                .on_event("usb_serial_data_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_data",
-                        "data": "Echo: received data"
-                    }
-                ]))
+                .respond_with_actions(open_server_actions("Set baud rate to 9600"))
                 .expect_calls(1)
                 .and()
         });
 
-        let server = start_netget_server(server_config).await?;
+        let server = start_netget_server(config).await?;
 
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
+        let mut client = UsbIpClient::attach(server.port).await?;
+        server.wait_for_log(LLM_CALL_LOG, 10).await?;
 
-        println!("✅ USB serial bidirectional test passed");
+        let coding = client.get_line_coding().await?;
+        assert_eq!(coding.len(), 7, "GET_LINE_CODING returns a 7-byte structure");
+
+        let baud = u32::from_le_bytes([coding[0], coding[1], coding[2], coding[3]]);
+        assert_eq!(baud, 9600, "the host must see the baud rate the handler set");
+        assert_eq!(coding[4], 0, "1 stop bit encodes as 0");
+        assert_eq!(coding[5], 0, "no parity encodes as 0");
+        assert_eq!(coding[6], 8, "8 data bits");
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test device detach event
+    /// Closing the USB/IP session must raise `usb_serial_detached`.
+    ///
     /// LLM calls: 3 (startup, attach, detach)
     #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_detached (actions.rs:220) are therefore never emitted; there is also no disconnect path at all."]
     async fn test_usb_serial_detach() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB serial port. Log when device is detached.".to_string())
+        let config =
+            NetGetConfig::new("Create a USB serial port. Log when the host detaches.".to_string())
                 .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB serial")
+                    mock.on_event("usb_serial_detached")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Serial",
-                                "instruction": "Log when detached"
-                            }
+                            { "type": "show_message", "message": "Serial port detached" }
                         ]))
                         .expect_calls(1)
                         .and()
-                        // Mock 2: Device attached
                         .on_event("usb_serial_attached")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
+                            { "type": "wait_for_more" }
                         ]))
                         .expect_calls(1)
                         .and()
-                        // Mock 3: Device detached
-                        .on_event("usb_serial_detached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "show_message",
-                                "message": "Serial port detached"
-                            }
-                        ]))
+                        .on_instruction_containing("USB serial")
+                        .respond_with_actions(open_server_actions("Log when detached"))
                         .expect_calls(1)
                         .and()
                 });
 
-        let server = start_netget_server(server_config).await?;
+        let server = start_netget_server(config).await?;
 
-        let device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
+        let client = UsbIpClient::attach(server.port).await?;
+        server.wait_for_log(LLM_CALL_LOG, 10).await?;
 
-        // Detach: close the USB/IP connection.
-        drop(device);
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Detach: drop the USB/IP session.
+        drop(client);
 
-        println!("✅ USB serial detach test passed");
-
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test multiple data packets
-    /// LLM calls: 4 (startup, attach, data received x2)
-    #[tokio::test]
-    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_data_received (actions.rs:221) are therefore never emitted."]
-    async fn test_usb_serial_multiple_packets() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB serial port. Echo back all data with a prefix.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB serial")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Serial",
-                        "instruction": "Echo with prefix"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached
-                .on_event("usb_serial_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3-4: Multiple data packets
-                .on_event("usb_serial_data_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_data",
-                        "data": "Echo: data"
-                    }
-                ]))
-                .expect_calls(2)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB serial multiple packets test passed");
+        // Two LLM calls on this connection: attach, then detach.
+        server.wait_for_log_count(LLM_CALL_LOG, 2, 10).await?;
+        server
+            .wait_for_log("USB serial host detached on connection", 10)
+            .await?;
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 }
