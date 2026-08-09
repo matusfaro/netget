@@ -37,13 +37,37 @@ Almost everything mechanical is done. What remains is mostly judgement, not typi
 
 ### Decisions that are the maintainer's
 
-- **`--llm-agent`** (`bdc11148`, 871 lines) built by an agent scoped to something narrower.
-  Works and is tested, but nobody chose it. `git revert -m 1 bdc11148` removes it cleanly.
-- **`http3` → `quic` rename** — reasoning in `src/server/http3/CLAUDE.md`.
-- **Item 54 — ARP/DataLink/IS-IS absent from the Linux `dist`.** Not a defect: `a38ffab9`
-  deliberately made pcap optional so the released Linux binary does not require libpcap at
-  runtime for users who never touch those three. macOS ships libpcap; Linux does not. Shipping
-  them means either that dependency for everyone or a second Linux artifact.
+- **`--llm-agent`: KEEP.** Decided 2026-08-09. It was built by an agent scoped to something
+  narrower, but it works, it is tested, and the maintainer has chosen to keep it. Do not revert
+  it; earlier revisions of this file recommended `git revert -m 1 bdc11148` and that advice is
+  now wrong.
+
+- **`http3` → `quic` rename.** This is a naming fix, not a capability change. Verified
+  2026-08-09:
+  - `src/server/http3/mod.rs` uses **only `quinn`** and never `h3::` — it is a raw QUIC stream
+    server. No HTTP/3 framing, no QPACK, no control stream, so `curl --http3` and browsers
+    cannot talk to it.
+  - `src/client/http3/mod.rs` uses `h3::client::new` over `h3_quinn` — it is a **real HTTP/3
+    client**.
+  - One feature flag, `http3`, gates both.
+
+  So the two halves are different protocols wearing one name, and NetGet's own http3 client
+  cannot talk to NetGet's own http3 server. Raw QUIC streams are a capability nothing else here
+  offers; the recommendation in `src/server/http3/CLAUDE.md` is to keep that and rename it,
+  **not** to implement RFC 9114 on top and lose it.
+
+  Cleanest end state is to split the flag: `quic` for the server, `http3` for the client, each
+  honestly named. Whether to *also* add a real HTTP/3 server is separate — model it on
+  `src/server/http2/h2_server.rs` and add it beside `quic` rather than replacing it.
+
+- **USB: do not revive; decide between deleting and leaving `Incomplete`.** Reviving is not a
+  small fix. `usbip 0.3.1` pins **tokio 0.3.7** (released October 2020), and calling it from
+  netget's tokio 1.x runtime panics on every attach — so it would mean forking or replacing the
+  crate, for seven protocols whose client side needs Linux plus `vhci-hcd` plus root. Leaving
+  them `Incomplete` costs nothing at runtime (hidden from the model). Deleting them would also
+  drop the `libusb` build dependency, which is one of the things that stops the tree building in
+  Claude Code for Web. Recommendation: leave `Incomplete` until someone names a concrete use
+  case, then delete.
 
 ### Patterns worth auditing for
 
