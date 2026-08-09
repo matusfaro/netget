@@ -2,31 +2,43 @@
 //!
 //! These tests verify the USB serial server by:
 //! 1. Starting the server with LLM integration (mocked)
-//! 2. Simulating device attach events
+//! 2. Connecting a USB/IP client to trigger the device-attach event
 //! 3. Verifying LLM-driven serial communication
 //!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
+//! PRODUCT GAP -- every test in this file is `#[ignore]`d, each with its own
+//! precise reason. `src/server/usb/serial/mod.rs` is a stub: its accept loop
+//! registers the connection and then spawns a task whose entire body is
+//! `error!("USB serial connection {} placeholder - full USB/IP integration
+//! needed")`. It never constructs an `Event`, never calls `call_llm`, and does
+//! not even take the `llm_client` it is handed (`_llm_client`). None of the
+//! three declared event types (`usb_serial_attached`, `usb_serial_detached`,
+//! `usb_serial_data_received`, `src/server/usb/serial/actions.rs:219-221`) can
+//! therefore ever reach the LLM. The tests below are otherwise complete and
+//! should be un-ignored as the corresponding events start being emitted.
 
 #[cfg(all(test, feature = "usb-serial"))]
 mod usb_serial_e2e {
     use crate::helpers::*;
     use std::time::Duration;
 
+    /// Log line the server would emit after the attach LLM call returns.
+    /// Not currently produced -- see the module-level PRODUCT GAP note.
+    #[allow(dead_code)]
+    const ATTACH_LOG: &str = "USB serial LLM call completed for connection";
+
+    /// Connect a USB/IP client so the server emits `usb_serial_attached`.
+    ///
+    /// The returned stream must be kept alive for the duration of the test:
+    /// dropping it closes the connection.
+    #[allow(dead_code)]
+    async fn attach_usbip_client(port: u16) -> E2EResult<tokio::net::TcpStream> {
+        Ok(tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await?)
+    }
+
     /// Test USB serial device startup and attach
     /// LLM calls: 2 (startup, device attached)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) is therefore never emitted."]
     async fn test_usb_serial_startup_and_attach() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB serial port on port {AVAILABLE_PORT}. Echo back any data received."
@@ -59,11 +71,12 @@ mod usb_serial_e2e {
 
         let mut server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
         assert!(server.is_running(), "USB serial server should be running");
 
-        println!("✅ USB serial server started and ready for attachment");
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
+
+        println!("✅ USB serial server started and device attached");
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -74,7 +87,7 @@ mod usb_serial_e2e {
     /// Test serial data echo
     /// LLM calls: 3 (startup, attach, data received)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_data_received (actions.rs:221) are therefore never emitted."]
     async fn test_usb_serial_echo() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB serial port. Echo back any data received.".to_string())
@@ -114,9 +127,10 @@ mod usb_serial_e2e {
                         .and()
                 });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB serial echo test passed");
 
@@ -129,7 +143,7 @@ mod usb_serial_e2e {
     /// Test sending data from device to host
     /// LLM calls: 2 (startup, send on attach)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) is therefore never emitted."]
     async fn test_usb_serial_send_data() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB serial port. Send 'Hello from USB!' when attached.".to_string(),
@@ -160,9 +174,10 @@ mod usb_serial_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB serial send data test passed");
 
@@ -175,7 +190,7 @@ mod usb_serial_e2e {
     /// Test line coding configuration
     /// LLM calls: 2 (startup, set line coding)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) is therefore never emitted."]
     async fn test_usb_serial_line_coding() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB serial port. Set baud rate to 9600 when attached.".to_string(),
@@ -209,9 +224,10 @@ mod usb_serial_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB serial line coding test passed");
 
@@ -224,7 +240,7 @@ mod usb_serial_e2e {
     /// Test bidirectional communication
     /// LLM calls: 3 (startup, attach, data received + response)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_data_received (actions.rs:221) are therefore never emitted."]
     async fn test_usb_serial_bidirectional() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB serial port. Send 'Ready' when attached, then echo any data.".to_string(),
@@ -265,9 +281,10 @@ mod usb_serial_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB serial bidirectional test passed");
 
@@ -280,7 +297,7 @@ mod usb_serial_e2e {
     /// Test device detach event
     /// LLM calls: 3 (startup, attach, detach)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_detached (actions.rs:220) are therefore never emitted; there is also no disconnect path at all."]
     async fn test_usb_serial_detach() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB serial port. Log when device is detached.".to_string())
@@ -319,8 +336,13 @@ mod usb_serial_e2e {
                         .and()
                 });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
+        let device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
+
+        // Detach: close the USB/IP connection.
+        drop(device);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         println!("✅ USB serial detach test passed");
@@ -334,7 +356,7 @@ mod usb_serial_e2e {
     /// Test multiple data packets
     /// LLM calls: 4 (startup, attach, data received x2)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: src/server/usb/serial/mod.rs is a stub -- its accept loop spawns a task whose whole body is error!(\"USB serial connection {} placeholder - full USB/IP integration needed\") (mod.rs:98-100) and it takes _llm_client, so it never constructs an Event and never calls call_llm. usb_serial_attached (actions.rs:219) and usb_serial_data_received (actions.rs:221) are therefore never emitted."]
     async fn test_usb_serial_multiple_packets() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB serial port. Echo back all data with a prefix.".to_string(),
@@ -374,9 +396,10 @@ mod usb_serial_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB serial multiple packets test passed");
 

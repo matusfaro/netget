@@ -2,31 +2,37 @@
 //!
 //! These tests verify the USB mouse server by:
 //! 1. Starting the server with LLM integration (mocked)
-//! 2. Simulating device attach events
+//! 2. Connecting a USB/IP client to trigger the device-attach event
 //! 3. Verifying LLM-driven mouse movements and clicks
 //!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
+//! Note: the `usb_mouse_attached` event is emitted when a TCP client connects to
+//! the USB/IP listening socket (`UsbMouseServer::handle_connection` ->
+//! `call_llm_on_attach`). Starting the server alone fires nothing, so every test
+//! that expects the attach event must actually connect.
 
 #[cfg(all(test, feature = "usb-mouse"))]
 mod usb_mouse_e2e {
     use crate::helpers::*;
     use std::time::Duration;
 
+    /// Log line emitted by the server *after* the attach LLM call returns.
+    ///
+    /// Must be the post-call line, not the "Calling LLM for ..." line that precedes
+    /// it: the pre-call line is printed before the HTTP request reaches the mock,
+    /// so waiting on it races `verify_mocks()` under parallel load.
+    const ATTACH_LOG: &str = "USB mouse LLM call completed for connection";
+
+    /// Connect a USB/IP client so the server emits `usb_mouse_attached`.
+    ///
+    /// The returned stream must be kept alive for the duration of the test:
+    /// dropping it closes the connection.
+    async fn attach_usbip_client(port: u16) -> E2EResult<tokio::net::TcpStream> {
+        Ok(tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await?)
+    }
+
     /// Test USB mouse device startup and attach
     /// LLM calls: 2 (startup, device attached)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_startup_and_attach() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mouse on port {AVAILABLE_PORT}. When attached, move cursor to (100, 100)."
@@ -61,11 +67,12 @@ mod usb_mouse_e2e {
 
         let mut server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
         assert!(server.is_running(), "USB mouse server should be running");
 
-        println!("✅ USB mouse server started and ready for attachment");
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
+
+        println!("✅ USB mouse server started and device attached");
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -76,7 +83,6 @@ mod usb_mouse_e2e {
     /// Test relative mouse movement
     /// LLM calls: 2 (startup, move relative)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_move_relative() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mouse. Move cursor 50 pixels right when attached.".to_string(),
@@ -108,9 +114,10 @@ mod usb_mouse_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB mouse relative movement test passed");
 
@@ -123,7 +130,6 @@ mod usb_mouse_e2e {
     /// Test mouse click
     /// LLM calls: 2 (startup, click)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_click() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB mouse. Left-click when attached.".to_string())
@@ -153,9 +159,10 @@ mod usb_mouse_e2e {
                         .and()
                 });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB mouse click test passed");
 
@@ -168,7 +175,6 @@ mod usb_mouse_e2e {
     /// Test mouse scroll
     /// LLM calls: 2 (startup, scroll)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_scroll() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mouse. Scroll down 3 clicks when attached.".to_string(),
@@ -199,9 +205,10 @@ mod usb_mouse_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB mouse scroll test passed");
 
@@ -214,7 +221,6 @@ mod usb_mouse_e2e {
     /// Test mouse drag
     /// LLM calls: 2 (startup, drag)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_drag() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mouse. Drag from (0,0) to (100,100) when attached.".to_string(),
@@ -248,9 +254,10 @@ mod usb_mouse_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB mouse drag test passed");
 
@@ -263,7 +270,6 @@ mod usb_mouse_e2e {
     /// Test multiple button clicks
     /// LLM calls: 2 (startup, multiple clicks)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_mouse_multiple_clicks() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mouse. Right-click then middle-click when attached.".to_string(),
@@ -298,9 +304,10 @@ mod usb_mouse_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB mouse multiple clicks test passed");
 
@@ -313,7 +320,7 @@ mod usb_mouse_e2e {
     /// Test device detach event
     /// LLM calls: 3 (startup, attach, detach)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: usb_mouse_detached is declared in get_event_types() (src/server/usb/mouse/actions.rs:149) but is never emitted -- src/server/usb/mouse/mod.rs::handle_connection parks on sleep(u64::MAX) after the attach call and has no disconnect path, so closing the USB/IP connection produces no event. Un-ignore once the server emits the event."]
     async fn test_usb_mouse_detach() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB mouse. Log when device is detached.".to_string())
@@ -352,8 +359,13 @@ mod usb_mouse_e2e {
                         .and()
                 });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
+        let device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
+
+        // Detach: close the USB/IP connection.
+        drop(device);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         println!("✅ USB mouse detach test passed");

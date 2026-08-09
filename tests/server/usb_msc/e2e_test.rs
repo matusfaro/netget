@@ -2,31 +2,37 @@
 //!
 //! These tests verify the USB MSC server by:
 //! 1. Starting the server with LLM integration (mocked)
-//! 2. Simulating device attach events
+//! 2. Connecting a USB/IP client to trigger the device-attach event
 //! 3. Verifying LLM-driven disk operations
 //!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
+//! Note: the `usb_msc_attached` event is emitted when a TCP client connects to
+//! the USB/IP listening socket (`UsbMscServer::handle_connection` ->
+//! `call_llm_on_attach`). Starting the server alone fires nothing, so every test
+//! that expects the attach event must actually connect.
 
 #[cfg(all(test, feature = "usb-msc"))]
 mod usb_msc_e2e {
     use crate::helpers::*;
     use std::time::Duration;
 
+    /// Log line emitted by the server *after* the attach LLM call returns.
+    ///
+    /// Must be the post-call line, not the "USB MSC device attached ..." line that
+    /// precedes it: the pre-call line is printed before the HTTP request reaches
+    /// the mock, so waiting on it races `verify_mocks()` under parallel load.
+    const ATTACH_LOG: &str = "USB MSC LLM call completed for connection";
+
+    /// Connect a USB/IP client so the server emits `usb_msc_attached`.
+    ///
+    /// The returned stream must be kept alive for the duration of the test:
+    /// dropping it closes the connection.
+    async fn attach_usbip_client(port: u16) -> E2EResult<tokio::net::TcpStream> {
+        Ok(tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await?)
+    }
+
     /// Test USB MSC device startup and attach
     /// LLM calls: 2 (startup, device attached)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_msc_startup_and_attach() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device (10MB) on port {AVAILABLE_PORT}.".to_string(),
@@ -58,11 +64,12 @@ mod usb_msc_e2e {
 
         let mut server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
         assert!(server.is_running(), "USB MSC server should be running");
 
-        println!("✅ USB MSC server started and ready for attachment");
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
+
+        println!("✅ USB MSC server started and device attached");
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -73,7 +80,7 @@ mod usb_msc_e2e {
     /// Test read operation event
     /// LLM calls: 3 (startup, attach, read)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: usb_msc_read is declared in get_event_types() (src/server/usb/msc/actions.rs:261) but is never emitted -- src/server/usb/msc/mod.rs only ever constructs USB_MSC_ATTACHED_EVENT, and the SCSI READ(10) path in src/server/usb/msc/handler.rs serves sectors without notifying the LLM. Un-ignore once the server emits the event."]
     async fn test_usb_msc_read_event() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device. Log when host reads sectors.".to_string(),
@@ -113,9 +120,10 @@ mod usb_msc_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB MSC read event test passed");
 
@@ -128,7 +136,7 @@ mod usb_msc_e2e {
     /// Test write operation event
     /// LLM calls: 3 (startup, attach, write)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: usb_msc_write is declared in get_event_types() (src/server/usb/msc/actions.rs:262) but is never emitted -- src/server/usb/msc/mod.rs only ever constructs USB_MSC_ATTACHED_EVENT, and the SCSI WRITE(10) path in src/server/usb/msc/handler.rs writes sectors without notifying the LLM. Un-ignore once the server emits the event."]
     async fn test_usb_msc_write_event() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device. Log when host writes sectors.".to_string(),
@@ -168,9 +176,10 @@ mod usb_msc_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB MSC write event test passed");
 
@@ -183,7 +192,6 @@ mod usb_msc_e2e {
     /// Test write protection
     /// LLM calls: 3 (startup, attach, set write protect)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_msc_write_protect() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device. Enable write protection when attached.".to_string(),
@@ -214,9 +222,10 @@ mod usb_msc_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB MSC write protect test passed");
 
@@ -229,7 +238,6 @@ mod usb_msc_e2e {
     /// Test mount disk action
     /// LLM calls: 2 (startup, mount)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_msc_mount_disk() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device. Mount a disk image when attached.".to_string(),
@@ -261,9 +269,10 @@ mod usb_msc_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB MSC mount disk test passed");
 
@@ -276,7 +285,6 @@ mod usb_msc_e2e {
     /// Test eject disk action
     /// LLM calls: 3 (startup, attach, eject)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_usb_msc_eject_disk() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device. Eject the disk after 1 second.".to_string(),
@@ -306,9 +314,10 @@ mod usb_msc_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let _device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
 
         println!("✅ USB MSC eject disk test passed");
 
@@ -321,7 +330,7 @@ mod usb_msc_e2e {
     /// Test device detach event
     /// LLM calls: 3 (startup, attach, detach)
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "PRODUCT GAP: usb_msc_detached is declared in get_event_types() (src/server/usb/msc/actions.rs:260) but is never emitted -- src/server/usb/msc/mod.rs::handle_connection parks on sleep(u64::MAX) after the attach call and has no disconnect path, so closing the USB/IP connection produces no event. Un-ignore once the server emits the event."]
     async fn test_usb_msc_detach() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
             "Create a USB mass storage device. Log when device is detached.".to_string(),
@@ -361,8 +370,13 @@ mod usb_msc_e2e {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
+        let device = attach_usbip_client(server.port).await?;
+        server.wait_for_log(ATTACH_LOG, 10).await?;
+
+        // Detach: close the USB/IP connection.
+        drop(device);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         println!("✅ USB MSC detach test passed");
