@@ -2,274 +2,64 @@
 
 ## Test Overview
 
-Tests WebDAV (Web Distributed Authoring and Versioning) file server using HTTP methods (PROPFIND, PUT, MKCOL) with
-reqwest client. Validates that NetGet can serve files over WebDAV protocol.
-
-**Protocol**: WebDAV (RFC 4918) over HTTP
-**Test Scope**: WebDAV methods, filesystem operations, server startup
-**Test Type**: Black-box, prompt-driven
+Four tests in `test.rs` exercising WebDAV (RFC 4918) over HTTP with `reqwest`. The protocol is served
+by the `dav-server` crate over an in-memory filesystem.
 
 ## Test Strategy
 
-### Consolidated Approach
+**Round-trip, don't status-check.** The suite used to assert only on the HTTP status code. That is
+why WebDAV could be rated Experimental for a server that never consults the model — a status code
+says the `dav-server` library answered, not that anything was stored or listed. Every test now proves
+the effect of the request through a second request that observes it.
 
-Tests organized by WebDAV operation type:
-
-1. **Server Start** - Verify server initialization
-2. **PROPFIND** - Directory listing
-3. **PUT File** - File upload
-4. **MKCOL** - Directory creation
-
-Each test:
-
-- Starts one server with specific behavior
-- Sends WebDAV HTTP request (custom method)
-- Validates HTTP status code (207 Multi-Status, 201 Created, etc.)
-
-**IMPORTANT**: Current implementation does NOT involve LLM - all operations handled by dav-server library.
+Two small helpers do the parsing: `count_multistatus_responses` counts `<response>` elements whatever
+namespace prefix the server chose, and `multistatus_lists` checks a specific href appears.
 
 ## LLM Call Budget
 
-**Total Budget**: **4 LLM calls** (4 server startups only)
+**Total: 4** — one startup per test, `expect_calls(1)` each.
 
-### Breakdown by Test
-
-1. **test_webdav_server_start**: 1 server startup = **1 LLM call**
-    - Prompt: Start WebDAV server
-    - No file operations (just verify startup)
-
-2. **test_webdav_propfind**: 1 server startup = **1 LLM call**
-    - Prompt: WebDAV server with directory listings
-    - Operation: PROPFIND / (handled by dav-server library)
-
-3. **test_webdav_put_file**: 1 server startup = **1 LLM call**
-    - Prompt: Accept PUT requests for file creation
-    - Operation: PUT /test.txt (handled by dav-server library)
-
-4. **test_webdav_mkcol**: 1 server startup = **1 LLM call**
-    - Prompt: Accept MKCOL requests for directory creation
-    - Operation: MKCOL /newdir/ (handled by dav-server library)
-
-**CRITICAL**: LLM only consulted at server startup. All WebDAV operations handled by dav-server library without LLM
-involvement.
-
-**LLM Usage**: Server startup parses prompt and initializes WebDAV stack, but all subsequent operations bypass LLM.
-
-## Scripting Usage
-
-**Scripting Mode**: ❌ **NOT APPLICABLE**
-
-WebDAV operations do NOT consult LLM:
-
-- All file operations handled by dav-server library
-- MemFs provides in-memory filesystem
-- No LLM calls after server startup
-
-**Why no LLM?** Current implementation is library-driven, not LLM-controlled.
-
-**Future Enhancement**: Implement LLM-controlled filesystem (like NFS) to enable:
-
-- LLM-generated file content
-- Dynamic directory listings
-- Scripting mode for fast responses
-
-## Client Library
-
-**HTTP Client**: `reqwest` v0.11
-
-- Used for custom HTTP methods (PROPFIND, MKCOL)
-- Supports WebDAV-specific headers (Depth, If-None-Match)
-- No dedicated WebDAV client library
-
-**Method Construction**:
-
-```rust
-let response = client
-    .request(reqwest::Method::from_bytes(b"PROPFIND")?, &url)
-    .header("Depth", "1")
-    .send()
-    .await?;
-```
-
-**Why reqwest?** Only Rust HTTP client supporting custom methods needed for WebDAV.
-
-## Expected Runtime
-
-**Model**: qwen3-coder:30b
-**Total Runtime**: ~40 seconds for full test suite
-
-### Per-Test Breakdown
-
-- **test_webdav_server_start**: ~10s (startup only, no operations)
-- **test_webdav_propfind**: ~10s (startup + PROPFIND, no LLM call for operation)
-- **test_webdav_put_file**: ~10s (startup + PUT, no LLM call for operation)
-- **test_webdav_mkcol**: ~10s (startup + MKCOL, no LLM call for operation)
-
-**Fast Operations**: WebDAV methods execute immediately (library-handled), no LLM latency.
-
-## Failure Rate
-
-**Failure Rate**: **Very Low** (<1%)
-
-### Why So Stable?
-
-- No LLM involvement after startup
-- dav-server library handles protocol correctly
-- MemFs filesystem is deterministic
-- No network dependencies
-
-### Rare Failure Modes
-
-1. **Server startup timeout** - Ollama slow or overloaded (~1% chance)
-2. **Port allocation conflict** - Rare race condition (<0.1%)
-
-### No Known Flaky Tests
-
-All tests are stable and deterministic.
+**The model is not consulted for any WebDAV operation.** PROPFIND, PUT, GET and MKCOL are handled
+entirely by `dav-server`; the LLM only interprets the startup prompt. That is a property of the
+implementation, not of the tests, and it is the main thing to fix before this protocol can claim
+LLM control — see the NFS server for the shape a model-driven filesystem takes.
 
 ## Test Cases
 
-### 1. Server Start
+### 1. `test_webdav_server_start`
 
-**Purpose**: Validate WebDAV server initialization
+Stack is `WebDAV`.
 
-**Test Flow**:
+### 2. `test_webdav_propfind`
 
-1. Start WebDAV server with basic prompt
-2. Verify server stack is "WebDAV"
-3. Stop server gracefully
+PUTs `/listed.txt` first, so the listing has something to list — without it the test could not
+distinguish a working PROPFIND from one returning an empty multistatus. Then `PROPFIND /` with
+`Depth: 1` must answer **207**, with an XML content type and a `multistatus` body containing exactly
+**two** `<response>` elements: the collection itself and its one member. Both `/` and `/listed.txt`
+must appear.
 
-**Expected Result**:
+### 3. `test_webdav_put_file`
 
-- Server starts successfully
-- Stack name is "WebDAV"
-- No crashes
+PUT `/test.txt` must answer **201 Created** (RFC 4918 §9.7.1); GET must return exactly
+`Hello WebDAV!`; a second PUT to the same URL must answer **204 No Content**, not another 201; and
+the overwrite must be visible to a subsequent GET.
 
-### 2. PROPFIND (Directory Listing)
+### 4. `test_webdav_mkcol`
 
-**Purpose**: Validate WebDAV PROPFIND method for directory browsing
+MKCOL `/newdir/` must answer **201**; a repeat MKCOL on the same path must answer **405 Method Not
+Allowed** (§9.3.1); a PUT into the new collection must succeed, which it cannot if MKCOL did nothing;
+and `PROPFIND /newdir/` with `Depth: 1` must list `/newdir/inside.txt`.
 
-**Test Flow**:
+## Client Library
 
-1. Start WebDAV server
-2. Send PROPFIND request to / with Depth: 1
-3. Validate response status (207 Multi-Status or 200 OK)
+`reqwest`, using `Method::from_bytes` for PROPFIND and MKCOL. There is no dedicated Rust WebDAV
+client library in use here.
 
-**Expected Result**:
+## Expected Runtime
 
-- HTTP 207 Multi-Status or 200 OK
-- Server responds to PROPFIND method
+~1s for the whole suite against the mock harness.
 
-**Note**: Response body (XML directory listing) not validated - only HTTP status.
+## Not Covered
 
-### 3. PUT File (File Upload)
-
-**Purpose**: Validate WebDAV PUT method for file creation
-
-**Test Flow**:
-
-1. Start WebDAV server
-2. Send PUT request to /test.txt with body "Hello WebDAV!"
-3. Validate response status (201 Created or 204 No Content)
-
-**Expected Result**:
-
-- HTTP 201 Created or 204 No Content
-- File stored in MemFs (in-memory)
-
-### 4. MKCOL (Directory Creation)
-
-**Purpose**: Validate WebDAV MKCOL method for creating directories
-
-**Test Flow**:
-
-1. Start WebDAV server
-2. Send MKCOL request to /newdir/
-3. Validate response status (201 Created)
-
-**Expected Result**:
-
-- HTTP 201 Created
-- Directory created in MemFs
-
-## Known Issues
-
-### No LLM Control
-
-- **LIMITATION**: Current implementation does NOT involve LLM in file operations
-- Tests validate library functionality, not LLM integration
-- LLM only parses server startup prompt
-
-**Impact**: These tests validate WebDAV protocol stack, but not LLM-controlled filesystem.
-
-**Future**: Implement custom filesystem (like NFS) to enable LLM control.
-
-### Limited Response Validation
-
-- Tests only check HTTP status codes
-- XML response bodies not parsed
-- File content not verified after upload
-
-**Workaround**: Sufficient for protocol validation, not filesystem correctness.
-
-### No Authentication Testing
-
-- WebDAV server accepts all requests (no auth)
-- No user/password validation
-- Suitable for testing, not production
-
-**Future**: Add authentication tests when auth implemented.
-
-## Running Tests
-
-```bash
-# Build release binary with all features
-./cargo-isolated.sh build --release --all-features
-
-# Run WebDAV E2E tests
-./cargo-isolated.sh test --features webdav --test server::webdav::test
-
-# Run specific test
-./cargo-isolated.sh test --features webdav --test server::webdav::test test_webdav_propfind
-```
-
-**IMPORTANT**: Always build release binary before running tests.
-
-## Future Enhancements
-
-### LLM-Controlled Filesystem
-
-- Implement custom filesystem trait (like NFS LlmNfsFileSystem)
-- Consult LLM for file read/write operations
-- Enable dynamic file generation
-
-### Extended Operations
-
-- Test COPY, MOVE, DELETE methods
-- Test locking (LOCK, UNLOCK)
-- Test property operations (PROPPATCH)
-
-### Response Validation
-
-- Parse XML PROPFIND responses
-- Verify file content after PUT/GET
-- Check directory structure after MKCOL
-
-### Authentication Tests
-
-- Test Basic authentication
-- Test Digest authentication
-- Test 401 Unauthorized responses
-
-### Real WebDAV Clients
-
-- Test with Windows Explorer WebDAV
-- Test with macOS Finder WebDAV mounting
-- Test with davfs2 (Linux)
-
-## References
-
-- [RFC 4918: WebDAV](https://tools.ietf.org/html/rfc4918)
-- [dav-server Rust crate](https://docs.rs/dav-server)
-- [reqwest HTTP client](https://docs.rs/reqwest)
-- [WebDAV Resources](http://www.webdav.org/)
+COPY, MOVE, DELETE, PROPPATCH, LOCK/UNLOCK; `Depth: infinity`; custom dead properties; authentication
+(the server accepts every request); and — most importantly — any LLM involvement in file operations.

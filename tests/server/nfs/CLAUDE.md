@@ -2,337 +2,80 @@
 
 ## Test Overview
 
-Tests NFSv3 server using TCP connection tests. Validates that NetGet can start NFS server and accept connections. Full
-NFS protocol tests are placeholders (marked #[ignore]).
-
-**Protocol**: NFSv3 (RFC 1813) over TCP
-**Test Scope**: Server startup, TCP connection handling, connection lifecycle
-**Test Type**: Black-box, prompt-driven
+Seven tests in `test.rs` covering NFSv3 (RFC 1813) over ONC RPC (RFC 5531) on TCP. The server side is
+`nfsserve`, which handles RPC/XDR framing and the MOUNT protocol; the LLM answers every filesystem
+operation through actions.
 
 ## Test Strategy
 
-### Basic Connectivity Tests
+**Decode the replies.** The suite used to assert only that a TCP connection was accepted. That is why
+`NFS_OPERATION_EVENT` could ship with a *comment* where its action list belonged — leaving every
+`nfs_*_response` invisible to the model, so no NFS operation could be answered at all — without a
+single test failing. Do not add a test whose only assertion is that `TcpStream::connect` succeeded;
+it cannot tell an NFS server from any other listener.
 
-Current tests focus on TCP-level validation:
+**Hand-rolled RPC client.** There is no Rust NFSv3 *server-side* test client, and `nfs3_client`'s
+builder cannot be pointed at a port. `test.rs` therefore contains a small ONC RPC/XDR client:
 
-1. **Server Start** - Verify NFS server initialization
-2. **TCP Connection** - Establish connection to NFS port
-3. **Multiple Connections** - Concurrent client connections
-4. **Connection Lifecycle** - Connect, hold, disconnect, reconnect
-5. **Port Configuration** - Verify custom port binding
-6. **Server Stop** - Graceful shutdown
+- `RpcClient::call` does TCP record marking (high bit marks the last fragment) and asserts the whole
+  reply envelope — REPLY, MSG_ACCEPTED, SUCCESS, an empty AUTH_NULL verifier, and the call's own xid
+  echoed back. A server getting any of that wrong is rejected by every real client.
+- `Xdr` is a sequential reader whose every accessor asserts it has the bytes it needs, so a truncated
+  or misencoded reply fails at the field that is wrong rather than producing a plausible value.
+- `read_fattr3` decodes a full NFSv3 `fattr3`.
 
-**IMPORTANT**: Tests do NOT send real NFS/RPC protocol messages. Only TCP connectivity validated.
-
-### Placeholder Tests
-
-Full NFS protocol tests exist but are marked `#[ignore]`:
-
-- `test_nfs_mount_export` - MOUNT protocol testing (requires RPC client)
-- `test_nfs_file_lookup` - NFS LOOKUP procedure (requires XDR encoding)
-- `test_nfs_read_write` - NFS READ/WRITE operations (requires filesystem client)
-
-**Why ignored?** No Rust NFS client library suitable for E2E testing.
+Only three procedures are needed: `NULL` (both programs), `MOUNTPROC3_MNT`, `NFSPROC3_GETATTR` and
+`NFSPROC3_LOOKUP`.
 
 ## LLM Call Budget
 
-**Total Budget**: **6 LLM calls** (6 server startups only)
+**Total: 9.**
 
-### Breakdown by Test
+Six lifecycle tests are 1 startup call each and perform no NFS operation.
+`test_nfs_mount_and_lookup` is 1 startup + `getattr` (`expect_at_least(1)`) + `lookup`
+(`expect_calls(1)`); `getattr` fires three times, once directly and twice more for LOOKUP's post-op
+attributes on the object and the directory.
 
-1. **test_nfs_server_start**: 1 server startup = **1 LLM call**
-    - Prompt: Start NFS server
-    - Validation: Server stack is "NFS"
-
-2. **test_nfs_tcp_connection**: 1 server startup = **1 LLM call**
-    - Prompt: Accept NFS client connections
-    - Validation: TCP connection succeeds
-
-3. **test_nfs_multiple_connections**: 1 server startup = **1 LLM call**
-    - Prompt: Support concurrent NFS clients
-    - Validation: 3 TCP connections succeed
-
-4. **test_nfs_connection_lifecycle**: 1 server startup = **1 LLM call**
-    - Prompt: Handle connection lifecycle events
-    - Validation: Connect, disconnect, reconnect
-
-5. **test_nfs_port_configuration**: 1 server startup = **1 LLM call**
-    - Prompt: NFS on custom port
-    - Validation: Server listens on requested port
-
-6. **test_nfs_server_stop**: 1 server startup = **1 LLM call**
-    - Prompt: Support clean shutdown
-    - Validation: Server stops gracefully
-
-**CRITICAL**: LLM only consulted at server startup. No NFS operations performed (no LLM calls after startup).
-
-**Future**: Add real NFS client tests requiring ~10+ LLM calls (MOUNT, LOOKUP, READ operations).
-
-## Scripting Usage
-
-**Scripting Mode**: ❌ **NOT APPLICABLE**
-
-Tests do NOT exercise NFS protocol operations:
-
-- Only TCP connection tests
-- No NFS LOOKUP, READ, WRITE calls
-- No LLM consultation after startup
-
-**Future**: When real NFS client tests added, scripting mode could optimize:
-
-- Script handles LOOKUP responses (deterministic file IDs)
-- Script handles READ responses (static file content)
-- Reduce LLM calls from ~15 to ~6 (startups + setup only)
-
-## Client Library
-
-**TCP Client**: `tokio::net::TcpStream`
-
-- Used for raw TCP connection testing
-- No NFS/RPC protocol encoding
-- Simple connect/disconnect validation
-
-**Why TcpStream?** No Rust NFSv3 client library exists for testing.
-
-**Missing Library**: Ideal test infrastructure would use:
-
-- `nfs-client` (doesn't exist in Rust)
-- RPC/XDR client for MOUNT and NFS procedures
-- File handle management
-
-**Current Limitation**: Tests validate server accepts connections, but not NFS protocol correctness.
-
-## Expected Runtime
-
-**Model**: qwen3-coder:30b
-**Total Runtime**: ~60 seconds for full test suite
-
-### Per-Test Breakdown
-
-- **test_nfs_server_start**: ~10s (startup + validation)
-- **test_nfs_tcp_connection**: ~10s (startup + 1 TCP connect)
-- **test_nfs_multiple_connections**: ~10s (startup + 3 TCP connects)
-- **test_nfs_connection_lifecycle**: ~10s (startup + connect/reconnect)
-- **test_nfs_port_configuration**: ~10s (startup + port check)
-- **test_nfs_server_stop**: ~10s (startup + graceful stop)
-
-**Fast Operations**: TCP connections complete in milliseconds. No NFS protocol overhead.
-
-## Failure Rate
-
-**Failure Rate**: **Very Low** (<1%)
-
-### Why So Stable?
-
-- Only TCP connectivity tested (simple)
-- No NFS protocol complexity
-- No LLM involvement after startup
-- Deterministic connection handling
-
-### Rare Failure Modes
-
-1. **Server startup timeout** - Ollama slow or overloaded (~1% chance)
-2. **Port allocation conflict** - Rare race condition (<0.1%)
-3. **Connection refused** - nfsserve binding failure (very rare)
-
-### No Known Flaky Tests
-
-All tests are stable and deterministic.
+`NULL` on either program reaches no LLM call at all, which is what makes it a clean isolation of the
+RPC layer.
 
 ## Test Cases
 
-### 1. Server Start
-
-**Purpose**: Validate NFS server initialization
-
-**Test Flow**:
-
-1. Start NFS server with basic prompt
-2. Verify server stack is "NFS"
-3. Verify server is running
-4. Stop server gracefully
-
-**Expected Result**:
-
-- Server starts successfully
-- Stack name is "NFS"
-
-### 2. TCP Connection
-
-**Purpose**: Validate NFS server accepts TCP connections
-
-**Test Flow**:
-
-1. Start NFS server
-2. Establish TCP connection to NFS port
-3. Verify connection succeeds (no immediate close)
-4. Try non-blocking read (should WouldBlock or succeed)
-
-**Expected Result**:
-
-- TCP connection established
-- Server keeps connection open
-
-**Note**: No NFS protocol messages sent - pure TCP test.
-
-### 3. Multiple Connections
-
-**Purpose**: Validate NFS server handles concurrent clients
-
-**Test Flow**:
-
-1. Start NFS server
-2. Open 3 TCP connections concurrently
-3. Verify all connections maintained
-4. Close all connections
-
-**Expected Result**:
-
-- All 3 connections succeed
-- No connection refused errors
-
-### 4. Connection Lifecycle
-
-**Purpose**: Validate connection management (connect, disconnect, reconnect)
-
-**Test Flow**:
-
-1. Start NFS server
-2. Connect → hold → close
-3. Reconnect to verify server still accepting
-
-**Expected Result**:
-
-- Graceful close without errors
-- Reconnection succeeds (server not broken)
-
-### 5. Port Configuration
-
-**Purpose**: Validate NFS server listens on custom port
-
-**Test Flow**:
-
-1. Request custom port in prompt
-2. Verify server binds to that port
-3. Connect to verify listening
-
-**Expected Result**:
-
-- Server listens on requested port (not standard 2049)
-
-### 6. Server Stop
-
-**Purpose**: Validate graceful shutdown
-
-**Test Flow**:
-
-1. Start NFS server
-2. Establish connection
-3. Stop server
-4. Verify port released (connection refused)
-
-**Expected Result**:
-
-- Server stops cleanly
-- Port no longer accepting connections
-
-## Known Issues
-
-### No Real NFS Protocol Testing
-
-**LIMITATION**: Tests do NOT exercise NFS/RPC protocol:
-
-- No MOUNT procedure calls
-- No NFS LOOKUP, READ, WRITE operations
-- No XDR encoding/decoding validation
-
-**Impact**: Tests validate TCP infrastructure, not NFS protocol correctness.
-
-**Why?** No Rust NFS client library exists for testing.
-
-**Workaround**: Placeholder tests marked `#[ignore]` for future implementation.
-
-### Ignored Tests
-
-Three tests exist but are not run:
-
-- `test_nfs_mount_export` - Requires RPC MOUNT client
-- `test_nfs_file_lookup` - Requires NFS LOOKUP client
-- `test_nfs_read_write` - Requires NFS READ/WRITE client
-
-These tests have skeleton implementations with TODOs.
-
-**Future**: Implement manual RPC/XDR client or wait for Rust NFS client library.
-
-### No Filesystem Validation
-
-- Cannot test LLM-generated file content
-- Cannot test directory listings
-- Cannot test file attributes (mode, size, timestamps)
-
-**Workaround**: Unit tests could validate action parsing in isolation.
-
-## Running Tests
-
-```bash
-# Build release binary with all features
-./cargo-isolated.sh build --release --all-features
-
-# Run NFS E2E tests (only connectivity tests, ignores NFS protocol tests)
-./cargo-isolated.sh test --features nfs --test server::nfs::test
-
-# Run specific test
-./cargo-isolated.sh test --features nfs --test server::nfs::test test_nfs_tcp_connection
-
-# Run ignored tests (will fail - not implemented)
-./cargo-isolated.sh test --features nfs --test server::nfs::test -- --ignored
-```
-
-**IMPORTANT**: Always build release binary before running tests.
-
-## Future Enhancements
-
-### Real NFS Client Implementation
-
-**Highest Priority**: Implement NFS/RPC client for protocol testing:
-
-- Manual RPC/XDR encoding (no library exists)
-- MOUNT procedure to get root file handle
-- NFS LOOKUP to resolve paths
-- NFS READ/WRITE to test file operations
-- NFS READDIR to test directory listings
-
-**Estimated Effort**: 2-3 days for basic RPC/XDR client.
-
-### LLM-Driven Filesystem Tests
-
-Once client exists, add tests for:
-
-- File content generation (LLM returns dynamic content)
-- Directory structure (LLM defines folders and files)
-- File attributes (LLM sets permissions, sizes, timestamps)
-- Error handling (LLM returns NFS3ERR_NOENT, NFS3ERR_ACCES)
-
-**Estimated LLM Calls**: ~15-20 for comprehensive NFS test suite.
-
-### Scripting Mode Optimization
-
-Enable scripting for NFS operations:
-
-- Script handles LOOKUP (deterministic file IDs)
-- Script handles READ (static file content)
-- Script handles READDIR (fixed directory listings)
-- Reduce LLM calls from ~20 to ~6 (startups only)
-
-### Performance Tests
-
-- Measure LLM call latency per NFS operation
-- Test concurrent file reads/writes
-- Stress test with many file handles
-
-## References
-
-- [RFC 1813: NFS Version 3 Protocol](https://tools.ietf.org/html/rfc1813)
-- [RFC 1831: RPC Version 2](https://tools.ietf.org/html/rfc1831)
-- [nfsserve Rust crate](https://docs.rs/nfsserve)
-- [Linux NFS utils](https://linux-nfs.org/)
+1. **`test_nfs_server_start`** — stack is `NFS`, server is running.
+2. **`test_nfs_tcp_connection`** — issues a real `NFSPROC3_NULL` and asserts the void reply, so only
+   something speaking ONC RPC for program 100003 can pass.
+3. **`test_nfs_multiple_connections`** — three concurrent TCP connections.
+4. **`test_nfs_connection_lifecycle`** — connect, close, reconnect.
+5. **`test_nfs_port_configuration`** — binds the requested port.
+6. **`test_nfs_server_stop`** — asserts the port stops accepting within 2s (retried; the listener
+   closes asynchronously). This used to print a warning and pass, the exact failure mode
+   `tests/server_stop_releases_port_test.rs` exists to catch.
+7. **`test_nfs_mount_and_lookup`** — the real protocol test. Replaces three `#[ignore]`d placeholders
+   whose entire bodies were `println!` plus `Ok(())`.
+
+### What `test_nfs_mount_and_lookup` asserts
+
+- `MOUNTPROC3_NULL` answers a well-formed RPC reply.
+- `MOUNTPROC3_MNT "/"` returns `MNT3_OK`, a non-empty root file handle, an auth flavor list
+  containing AUTH_NULL, and no trailing bytes.
+- `NFSPROC3_GETATTR` on that handle returns `NFS3_OK` and a `fattr3` carrying the handler's own
+  values: `file_type: "directory"` as `NF3DIR` (2), mode `0o755`, size 4096, uid/gid 1000,
+  mtime 1700000000. `nlink` is 1 and `fileid` is 1 — the root's fileid is fixed by the server, not
+  taken from the handler. This is the first operation that reaches the model, so it is what proves
+  the LLM integration answers at all.
+- `NFSPROC3_LOOKUP readme.txt` returns `NFS3_OK`, a file handle distinct from the directory's, and
+  post-op attributes for both object (`fileid` 42, the value the handler chose) and directory
+  (`fileid` 1), with no trailing bytes.
+
+## Client Library
+
+None for NFS — see above. `tokio::net::TcpStream` carries the hand-rolled RPC.
+
+## Expected Runtime
+
+~1s for the whole suite against the mock harness.
+
+## Not Covered
+
+READ, WRITE, READDIR, CREATE, REMOVE, SETATTR; error paths (`NFS3ERR_NOENT`, `NFS3ERR_ACCES`);
+AUTH_UNIX credentials; multi-fragment requests; UDP transport; script mode.

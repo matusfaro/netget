@@ -2,289 +2,139 @@
 
 ## Test Overview
 
-Tests NTP server implementation with basic time synchronization and stratum level handling. Uses rsntp client library
-for some tests and raw UDP for others. Validates server responses to NTP time requests.
+Three tests in `test.rs`, each starting its own NetGet NTP server against the mock Ollama harness and
+then speaking real NTP to it. Two use `rsntp` as an off-the-shelf SNTP client; the third decodes all
+48 bytes of the reply by hand.
 
 ## Test Strategy
 
-- **Isolated test servers**: Each test spawns separate NetGet instance with NTP configuration
-- **Dual client approach**:
-    - Uses rsntp library for high-level validation
-    - Falls back to raw UDP when rsntp fails (LLM implementation varies)
-- **Lenient validation**: Accepts any NTP response (rsntp is strict)
-- **No scripting**: Action-based LLM responses
+**Strict validation.** Every reply is decoded and compared field by field to what the mocked handler
+asked for. There is no fallback path and no "accepts any response" branch.
 
-**Challenge**: NTP protocol is strict about timestamp calculations, but LLM might not implement perfect NTP. Tests
-accommodate both valid and "good enough" responses.
+This is a deliberate reversal. The suite previously caught `rsntp`'s error, printed
+"this may be expected if LLM doesn't fully implement NTP", and fell back to a raw socket whose three
+outcomes — a response, an I/O error, and a timeout — were all printed and none asserted. The stratum
+test parsed byte 1 and printed it without comparing it to anything. The suite therefore passed
+whether the server answered correctly, answered garbage, or never answered at all. Do not reintroduce
+a lenient branch: if a reply is wrong, that is the finding.
+
+**`rsntp` must succeed.** Its checks are the interoperability-relevant ones (`src/core_logic.rs`):
+
+- the reply's originate timestamp must equal the request's transmit timestamp *verbatim*
+- mode must be 4 (server) or 5 (broadcast)
+- stratum must not be 0 (that is Kiss-o'-Death)
+- the transmit timestamp must be non-zero
+- the reply's version must be 4, the version `rsntp` sends
+
+A failure in any of those surfaces as a `SynchronizationError`, and the test fails with it.
+
+**Use `AsyncSntpClient`, never the blocking `SntpClient`.** The mock Ollama server runs in-process on
+the test's own tokio runtime, and `#[tokio::test]` is single-threaded by default. Blocking the
+runtime inside `SntpClient::synchronize` deadlocks the very LLM call the reply depends on, so the
+call always times out. That is almost certainly why the old fallback path existed.
 
 ## LLM Call Budget
 
-- `test_ntp_basic_query()`: 1 LLM call (basic time request)
-- `test_ntp_time_sync()`: 1 LLM call (time synchronization)
-- `test_ntp_stratum_levels()`: 1 LLM call (stratum 3 request)
-- **Total: 3 LLM calls** (well under 10 limit)
+- `test_ntp_basic_query`: 1 startup + 1 `ntp_request` = 2
+- `test_ntp_time_sync`: 1 startup + 1 `ntp_request` = 2
+- `test_ntp_stratum_levels`: 1 startup + 2 `ntp_request` = 3
+- **Total: 7** (limit 10)
 
-**Optimization Opportunity**: Could consolidate into single server handling all NTP features, reducing to 1 startup
-call + 3 request calls = 4 total.
+Every rule uses `expect_calls(1)`, so an extra or missing LLM round-trip fails `verify_mocks()`.
 
-## Scripting Usage
+## Mock Expectations
 
-❌ **Scripting Disabled** - Action-based responses only
+Unlike DNS, DHCP and the other UDP protocols, NTP does **not** need
+`respond_with_actions_from_event()`. The transaction-identifying value is the client's transmit
+timestamp, and the server copies it into the reply itself: `spawn_with_llm_actions` reads bytes 40-47
+and builds a per-request `NtpProtocol::for_request(origin, version)`. A static action list is
+therefore correct, and the mock must **not** set `origin_timestamp` — leaving it unset is what proves
+the server-side echo works.
 
-**Rationale**: Tests validate LLM's ability to generate NTP responses using `send_ntp_time_response` action. Scripting
-would bypass this validation. For production NTP servers, scripting is highly recommended (NTP is perfect for
-scripting).
+`test_ntp_stratum_levels` runs two different handlers on one server by discriminating on
+`and_event_data_contains("client_version", …)`: the v3 request gets a fully specified time response,
+the v4 request gets `ignore_request`. Rules are matched in declaration order, first match wins.
 
 ## Client Library
 
-- **rsntp v3.0** - Simple SNTP client library
-    - `SntpClient::synchronize()` - Performs NTP query and calculates clock offset
-    - Validates NTP packet structure strictly
-    - Calculates round-trip delay
-    - Returns clock offset from server
+**rsntp 4.1** (`AsyncSntpClient`), plus a hand-rolled 48-byte encoder/decoder in the test file.
 
-**Fallback**: Raw UDP socket with manual 48-byte NTP packet
+`rsntp` exposes only `stratum()`, `leap_indicator()`, `reference_identifier()`, `datetime()`,
+`clock_offset()` and `round_trip_delay()`. Poll, precision, root delay and root dispersion are not
+reachable through it, which is why the third test decodes the packet directly.
 
-**Why dual approach?**:
-
-1. rsntp validates protocol correctness (good for testing)
-2. LLM might not implement perfect NTP (e.g., wrong timestamps)
-3. Raw UDP approach accepts any response (tests basic functionality)
-4. Tests try rsntp first, fall back to raw UDP if it fails
-
-**Raw NTP Request**:
-
-```rust
-let mut request = vec![0u8; 48];
-request[0] = 0x1B; // LI=0, Version=3, Mode=3 (client)
-```
-
-## Expected Runtime
-
-- Model: qwen3-coder:30b
-- Runtime: ~30-40 seconds for full test suite (3 tests × ~10s each)
-- Each test includes: server startup (2-3s) + LLM response (5-8s) + NTP query (<1s)
-
-**Note**: NTP tests may timeout when using rsntp (strict validation), but succeed with raw UDP.
-
-## Failure Rate
-
-- **Moderate** (~5-10%) - Higher than DNS, lower than DHCP
-- Most common failure: rsntp rejects response due to timestamp issues
-- Timeout failures: ~2% - typically when LLM doesn't respond at all
-- Raw UDP fallback almost always succeeds
-
-**Why moderate failure rate?**:
-
-1. NTP timestamp calculations are complex (origin, receive, transmit)
-2. LLM might not correctly echo origin_timestamp from client request
-3. LLM might use wrong timestamp format (Unix vs NTP epoch)
-4. Server has auto-injection logic, but LLM might override it incorrectly
-
-**Mitigation**: Server auto-injects origin_timestamp if LLM doesn't provide it, reducing failures.
+One `rsntp` decoding quirk to know: the reference identifier is read as ASCII only when stratum is 0
+or 1. At stratum 2 and above the same four bytes become an IPv4 address. `test_ntp_time_sync` uses
+stratum 1 precisely so that the handler's `reference_id` is observable through a real client.
 
 ## Test Cases
 
-### 1. NTP Basic Query (`test_ntp_basic_query`)
+### 1. `test_ntp_basic_query`
 
-- **Prompt**: "listen on port {port} via ntp. Respond to NTP time requests with the current system time. Use stratum 2"
-- **Client**: rsntp SntpClient (tries full sync), fallback to raw UDP
-- **Expected**:
-    - Success: rsntp returns clock offset and round-trip delay
-    - Fallback: Raw UDP receives 48-byte response
-- **Purpose**: Tests basic NTP functionality
-- **Validation**: Lenient - accepts either rsntp success or any UDP response
+Stratum 2, poll 6. `rsntp` must synchronize. Asserts the stratum reaches the client, the leap
+indicator is `NoWarning`, the measured clock offset against our own clock is under 5s (the server
+answers from this machine's clock, so a constant or epoch-confused timestamp fails here even though
+the packet parsed), and the loopback round-trip delay is in range.
 
-### 2. NTP Time Synchronization (`test_ntp_time_sync`)
+### 2. `test_ntp_time_sync`
 
-- **Prompt**: "listen on port {port} via ntp. Act as a stratum 1 NTP server. Respond with accurate current time in NTP
-  format"
-- **Client**: rsntp SntpClient, fallback to raw UDP
-- **Expected**: Time synchronization successful
-- **Purpose**: Tests stratum 1 server (primary time source)
-- **LLM Challenge**: Must understand stratum levels and implications
-- **Validation**: Same as basic query (rsntp or raw UDP)
+Stratum 1 with `reference_id: "GPS."`. Asserts `stratum() == 1`, `reference_identifier() == "GPS."`,
+and that the server's reported time is within 5s of ours.
 
-### 3. NTP Stratum Levels (`test_ntp_stratum_levels`)
+### 3. `test_ntp_stratum_levels`
 
-- **Prompt**: "listen on port {port} via ntp. Act as a stratum 3 NTP server. Include reference identifier 'LOCL'"
-- **Client**: Raw UDP only (sends request, reads response)
-- **Expected**: 48-byte NTP response
-- **Purpose**: Tests custom stratum level and reference ID
-- **Validation**:
-    - Checks response is at least 48 bytes
-    - Optionally parses stratum from byte 1
-    - Very lenient (just tests server responds)
+Raw UDP, two requests on one server.
 
-## Known Issues
+The v3 request carries a transmit timestamp whose fraction is `0xDEADBEEF` — deliberately non-zero,
+so a server copying only the seconds would fail the echo assertion. The reply must be exactly 48
+bytes and must match, field for field:
 
-### 1. rsntp Strictness
+| Field | Bytes | Asserted |
+|---|---|---|
+| leap indicator | 0 bits 7-6 | 1 |
+| version | 0 bits 5-3 | 3 — echoed from the request, not hardcoded 4 |
+| mode | 0 bits 2-0 | 4 |
+| stratum | 1 | 3 |
+| poll | 2 | 10 |
+| precision | 3 | -18, read as **signed**; an unsigned round-trip reads 238 |
+| root delay | 4-7 | 0.5s as 16.16 fixed point = `0x00008000` |
+| root dispersion | 8-11 | 0.25s = `0x00004000` |
+| reference id | 12-15 | `LOCL` |
+| reference/receive/transmit | 16-23, 32-47 | decode to within 300s of now; receive ≤ transmit |
+| origin | 24-31 | the request's transmit timestamp, all 64 bits |
 
-rsntp library performs full NTP validation:
+The v4 request is answered with `ignore_request`, and the test asserts **nothing** arrives within
+5s. This is the fail-open check: a protocol that answered anyway when the model told it not to would
+be indistinguishable from one that works.
 
-- Checks that origin_timestamp in response matches client's transmit_timestamp
-- Validates timestamp ordering (receive before transmit)
-- Calculates clock offset using all four timestamps
-- Rejects responses that don't meet NTP specification
+Both halves were mutation-checked — changing `reference_id` in the mock, and replacing
+`ignore_request` with a time response, each fail the test.
 
-**Problem**: LLM might not implement perfect NTP timestamp handling.
+## Known Limitations of the Implementation
 
-**Solution**: Tests have fallback to raw UDP socket. If rsntp fails, test still passes if ANY response received.
+Findings, not test bugs:
 
-### 2. No Stratum Validation
+- **One-second resolution.** `NtpProtocol::get_current_ntp_time` builds timestamps from
+  `Duration::as_secs()` and leaves the 32-bit fraction zero, so every reference/receive/transmit
+  timestamp ends in `00000000`. Clients accept it; it costs accuracy, not compatibility. The test
+  checks only the seconds half and says so.
+- **Connections are never reaped.** Each datagram adds a `ConnectionState` to the server instance.
+- **Mode is not enforced.** `client_mode` is reported to the model but a mode 4 or 5 packet is
+  answered as if it were a client query.
 
-`test_ntp_stratum_levels` receives response but doesn't validate stratum value:
+## Not Covered
 
-- Parses byte 1 from response
-- Prints stratum value
-- Doesn't assert it equals 3
+Stratum 16 (unsynchronized), Kiss-o'-Death, NTPv1/v2 requests, extension fields and authentication
+MACs (`bytes_received > 48` is reported to the model but never exercised), the `send_ntp_response`
+raw-hex action, and script-mode handling.
 
-**Reason**: Adding assertions would increase failure rate. Tests prioritize "server responds" over "response is
-perfect".
+## Expected Runtime
 
-**Future Improvement**: Parse full NTP response and validate all fields once LLM responses are more consistent.
-
-### 3. No Timestamp Validation
-
-Tests don't validate that timestamps are reasonable:
-
-- Don't check timestamps are close to current time
-- Don't verify timestamp format (NTP vs Unix)
-- Don't check timestamp ordering
-
-**Reason**: LLM timestamp handling varies. Server has auto-injection, but might still get details wrong.
-
-### 4. No Reference ID Validation
-
-`test_ntp_stratum_levels` prompts for reference ID "LOCL" but doesn't verify it:
-
-- Would require parsing bytes 12-15 from response
-- Current test just checks for any response
-
-### 5. Single Test Per Stratum
-
-Only tests stratum 1, 2, and 3. Doesn't test:
-
-- Stratum 0 (invalid - should reject)
-- Stratum 16 (unsynchronized - special case)
-- Other stratum values 4-15
-
-## Performance Notes
-
-### Why rsntp?
-
-rsntp is lightweight SNTP (Simple NTP) client:
-
-- Single function call: `synchronize(address)`
-- Returns clock offset and delay
-- No dependencies on system NTP daemon
-- Perfect for testing
-
-### Fallback Strategy
-
-Tests use try/catch pattern:
-
-```rust
-match client.synchronize(&address) {
-    Ok(result) => {
-        // Full NTP validation succeeded
-    }
-    Err(e) => {
-        // Fall back to raw UDP
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
-        socket.send_to(&ntp_request, &address)?;
-        socket.recv_from(&mut buffer)?;
-        // Test passes if any response received
-    }
-}
-```
-
-This makes tests resilient to LLM variation.
-
-### NTP Protocol Characteristics
-
-NTP is very lightweight:
-
-- Fixed 48-byte packets
-- Single UDP exchange (request/response)
-- Minimal parsing required
-- Fast even with LLM overhead
-
-## Future Enhancements
-
-### Test Coverage Gaps
-
-1. **Full timestamp validation**: Parse and verify all four timestamps
-2. **Stratum 0 rejection**: Verify server doesn't claim stratum 0
-3. **Kiss-of-Death**: Test rate limiting (if implemented)
-4. **Version negotiation**: Test with NTPv1, v2, v3, v4 requests
-5. **Reference ID validation**: Parse and verify reference identifier
-6. **Precision validation**: Check precision field is reasonable
-7. **Root delay/dispersion**: Validate these fields for different strata
-8. **Leap indicator**: Test leap second warnings
-9. **Poll interval**: Verify poll field is set correctly
-
-### Better Validation
-
-Use manual NTP packet parsing instead of just checking for "any response":
-
-```rust
-// Parse NTP response
-assert_eq!(buffer.len(), 48, "Invalid NTP packet size");
-let stratum = buffer[1];
-assert_eq!(stratum, 3, "Wrong stratum level");
-
-let ref_id = std::str::from_utf8(&buffer[12..16]).unwrap();
-assert_eq!(ref_id, "LOCL", "Wrong reference identifier");
-
-// Parse timestamps (bytes 16-47)
-let reference_ts = u64::from_be_bytes(...);
-let origin_ts = u64::from_be_bytes(...);
-let receive_ts = u64::from_be_bytes(...);
-let transmit_ts = u64::from_be_bytes(...);
-
-// Validate timestamp ordering
-assert!(receive_ts <= transmit_ts, "Timestamps out of order");
-```
-
-### Consolidation Opportunity
-
-All three tests could share one server:
-
-```rust
-let prompt = format!(
-    "listen on port {} via ntp.
-    Act as a stratum 2 NTP server
-    Reference ID: 'LOCL'
-    Respond to all NTP requests with accurate current time",
-    port
-);
-```
-
-Then send three different queries to same server. Would reduce from 3 servers to 1, saving ~6-9 seconds.
-
-### Scripting Mode Test
-
-Add test with scripting enabled:
-
-- Verify script generates correct NTP responses
-- Test throughput (should be 10000+ QPS)
-- Ensure timestamp calculations are correct in script
-- Validate script doesn't call LLM for each request
-
-### Clock Offset Test
-
-Add test that validates clock offset calculation:
-
-- Set server to return time T
-- Calculate expected offset
-- Compare with rsntp result
-- Requires mocking system time or custom timestamps
+~6s for all three tests against the mock harness. With `--use-ollama`, add one model round-trip per
+LLM call (7 total).
 
 ## References
 
 - [RFC 5905: NTPv4](https://datatracker.ietf.org/doc/html/rfc5905)
 - [RFC 4330: SNTPv4](https://datatracker.ietf.org/doc/html/rfc4330)
-- [rsntp Documentation](https://docs.rs/rsntp/latest/rsntp/)
-- [NTP Packet Format](https://www.rfc-editor.org/rfc/rfc5905.html#section-7.3)
-- [NTP Best Practices](https://www.ntp.org/reflib/book/)
+- [rsntp](https://docs.rs/rsntp/latest/rsntp/)
