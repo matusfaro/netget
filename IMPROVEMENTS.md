@@ -11,66 +11,45 @@ Findings marked **[static]** come from code reading only.
 
 ## START HERE — what to do next
 
-State at the time of writing: **HEAD `2a48ccfb`, 222 signed commits**, working tree clean,
-`cargo check --all-features --tests` green, `cargo fmt --check` passing, `clippy -D correctness
--D suspicious` clean, test suite **388 passed / 0 failed / 29 ignored** on the CI feature set
-(`tcp,http,dns,udp,redis,mcp-stdio`). All 29 ignored are doctests or pre-existing `#[ignore]`s.
+This file is now four sections: **START HERE** (here), **Fixed** (an index of what landed and
+where the reasoning lives), **Open** (genuinely outstanding work), and **Archive** (full text of
+fixed items and recorded findings, kept because the reasoning is worth finding again).
 
-**No agents are running and no file is reserved** — every area is free to edit.
+It previously listed 48 open items. Fifteen of those were already fixed with no record, and
+seventeen were historical findings rather than work. That drift is why the counts below come
+with the commands that derive them — do not trust a number in a document over the tree.
 
-Items 56, 31, 10, 5 and 4 from the previous handoff are **done**; see the Fixed table. What
-remains, in order:
+**Open work is 16 sections**, and several are decisions rather than defects. In rough order of
+value:
 
-1. **Item 65 — the `{"type": "placeholder"}` response examples.** 215 of them across 92 files.
-   `EventType::effective_response_example()` (`src/protocol/event_type.rs`) now derives a real
-   example from the event's first attached action, so nothing reaches a model as a placeholder,
-   and `tests/placeholder_examples_test.rs` pins that property. **The literals are still in the
-   source** — sweeping them protocol-by-protocol is now safe and incremental, because the guard
-   test asserts the rendered property rather than the field. Note the derivation is only sound
-   because item 56 landed first: every event has real actions to borrow an example from.
+1. **Items 7 and 29/50** — event-handler action names are accepted at startup and silently do
+   nothing at runtime; `REQUIRE_DOCS_FOR_OPEN_ACTIONS` is dead config that looks live.
+2. **Item 9** — MCP `stop_server`/`stop_all` skip `cleanup_server_tasks()`, so scheduled tasks
+   outlive their server and keep firing.
+3. **Items 47 and 76** — tests that pass while the protocol is broken: NTP catches the client's
+   failure and asserts nothing; nfs/ipp/vnc/webdav assert only that a socket opened.
+4. **Item 16** — no circuit breaker on the LLM backend. With Ollama down, every request pays
+   the full retry/backoff. `is_available()` exists and nothing calls it.
+5. **Item 32** — several call sites pass the unfiltered action list to the validator while the
+   prompt builder filters it, so the validator accepts a superset of what the model was told.
+6. **Item 39** — the `open_server` documentation gate forces a second round-trip whose prompt
+   drops the original instruction, which is what makes mocked tests fragile.
+7. **Item 48** — auditing library panics reachable from the wire is a standing practice, not a
+   discrete fix. Eleven were found this way.
+8. **Item 23** — architectural ceilings (`AppState` as one `RwLock`). Long-term, not a defect.
 
-2. **Item 46 — add a CI job for single-feature builds**, using `cargo check --tests` (not
-   `cargo check`): `--all-features` is structurally unable to catch an under-declared feature,
-   and a test target that fails to compile contributes nothing rather than failing visibly.
-   Both classes were found this session.
+### The pattern worth auditing for
 
-3. **USB events are declared but never emitted.** Found while fixing item 56 and not yet
-   addressed. Only the `*_attached` event is ever raised for `usb-mouse`, `usb-keyboard` and
-   `usb-msc` (each `mod.rs` has a single `call_llm_on_attach`); `usb-serial` raises nothing at
-   all. So `usb_*_detached`, `usb_msc_read`, `usb_msc_write`, `usb_keyboard_led_status` and all
-   three `usb_serial_*` events are advertised to the model and can never fire. They now declare
-   correct actions, which is necessary but not sufficient — the emit sites are missing. Decide
-   per event whether to raise it or withdraw it.
+Three separate defects this session were the same shape: **a mechanism fully built and wired,
+with nothing flowing through it.** `get_dependencies()` was called from two places with every
+protocol inheriting an empty default; `PrivilegeRequirement::PacketCapture` was defined with a
+doc comment naming its three protocols and adopted by none of them; `EventType.actions` was
+rendered into every prompt with 22 events attaching nothing.
 
-4. **Placeholder examples have a sibling defect worth checking**: an `ActionDefinition.example`
-   can also be a placeholder. `effective_response_example()` guards against borrowing one, but
-   nothing audits action examples directly.
-
-5. Then the remaining numbered items below: **54** (ARP/DataLink still absent from the Linux
-   `dist` set), **20/20b** (the dependency system is plumbed but no protocol declares
-   dependencies, so adoption is cheap), **23** (architectural ceilings), **35** (the `easy`
-   layer), **40** remainder, **63**/**76** follow-ups.
-
-### Decisions that are the maintainer's, not an agent's
-
-- **`--llm-agent`** (`bdc11148`, 871 lines) was built and merged by an agent scoped to
-  something narrower. It works and is tested, but it is a product decision nobody made.
-  `git revert -m 1 bdc11148` removes it cleanly.
-- **`http3` → `quic` rename**, recommended with reasoning in `src/server/http3/CLAUDE.md`.
-  Touches `Cargo.toml`, both registries, `cli/server_startup.rs`, `src/server/mod.rs`, the
-  directory itself and `tests/server/http3/`.
-- **`ollama_model_test`** is now gated behind `NETGET_USE_OLLAMA=1`. Confirm that is the wanted
-  behavior rather than deleting the harness.
-
-### Working rules that were learned the hard way
-
-Read the "Multi-instance collaboration" section of `CLAUDE.md` before starting parallel work.
-In particular: **never `git add -A`, `.`, `-u`, or `commit -a`** — all three broke `master` or
-misattributed work this session — and verify HEAD in a throwaway worktree rather than trusting
-the working tree, which during parallel work is routinely mid-edit and whose failures belong to
-nobody.
-
----
+All three had passing tests, because the tests asserted the machinery worked in isolation and
+never asserted anyone used it — one names ARP in its failure message while never touching ARP.
+When adding a guard, assert **adoption**, not just mechanism. Searching for this shape directly
+found more real bugs than walking this list in order did.
 
 ## Fixed
 
@@ -79,6 +58,21 @@ Delete an entry once its context is no longer useful.
 
 | Item | Commit | What landed |
 |---|---|---|
+| 8 — verified fixed | (earlier) | ARP/DataLink/ICMP now await readiness via a oneshot and propagate bind failure, so a capture failure reports Error not Running |
+| 14 — verified fixed | (earlier) | `read_documentation` is in TOOL_ACTION_NAMES; is_tool() no longer misreports it |
+| 15 — verified fixed | (earlier) | `ConversationHandler::trim_history` exists and is called; history no longer grows unbounded |
+| 17 — verified fixed | (earlier) | git/mercurial no longer call generate_with_retry directly |
+| 18 — verified fixed | (earlier) | server_startup gates on `PrivilegeRequirement::is_met_by()` alone; the ANDed capability is gone |
+| 30 — verified fixed | (earlier) | `register_server_task` keeps a per-server `Vec` and prunes finished handles |
+| 34 — verified fixed | (earlier) | `src/server/vpn_util/` deleted along with the dead `packet` module |
+| 37 — verified fixed | (earlier) | `interpolate_actions` gives static handlers access to event data |
+| 40 — verified fixed | (earlier) | svn no longer declares an unreachable PrivilegedPort; ospf declares RawSockets rather than Root |
+| 41 — verified fixed | (earlier) | `ExecutionResult::failures` recordsper-action failure; executor logs at error! and continues |
+| 49 — verified fixed | (earlier) | DNS client drains iteratively; stack depth is constant regardless of round-trips |
+| 55 — verified fixed | (earlier) | `has_packet_capture_access` split from `has_raw_socket_access`, each probed separately |
+| 60 — verified fixed | (earlier) | `PrivilegeRequirement::DeviceAccess(DeviceClass)` added and adopted |
+| 63 — verified fixed | (earlier) | saml_idp and saml_sp both have e2e_test.rs, mod.rs and CLAUDE.md |
+| 69 — verified fixed | (earlier) | connection registered synchronously before any task is spawned, in all four protocols |
 | 65 — placeholder response examples | `3e5b5f7a` | `effective_response_example()` derives a real example from the event's first attached action; guard test pins the rendered property, so the 215 literals can be swept incrementally |
 | 46 — no single-feature CI | `5bed7583` | `single-feature` job runs `cargo check --tests` over 14 protocol features one at a time — the only way to catch an under-declared feature |
 | 20 — dependency system inert | `2a48ccfb` | `get_dependencies()` derives from `privilege_requirement` instead of 116 restatements. Also fixed `PromiscuousMode` reading the raw-socket flag instead of the capture flag |
@@ -167,7 +161,230 @@ tests had been passing straight through.
 
 ---
 
-## P0 — Correctness bugs reachable from untrusted input
+
+---
+
+## Open — actionable
+
+Everything below is genuinely outstanding. Items verified fixed have moved to the Fixed
+table, and historical findings to the Archive.
+
+### 7. Unknown action names fail silently at runtime **[verified]**
+
+A static `event_handler` naming a nonexistent action is accepted at startup and does nothing
+when the event fires: the peer gets no response, no error reaches the MCP caller, and
+`list_access_logs` records the action name as though it executed.
+
+Fix: validate handler action names against the protocol's action catalog at parse time in
+`EventHandler::parse_event_handlers` (`src/events/handler.rs:1682`), and record execution
+failures in the access log.
+
+### 9. Scheduled tasks leak when servers stop via MCP **[static]**
+
+`src/mcp_stdio/tools.rs:415,718` call `remove_server()` without `cleanup_server_tasks()`,
+unlike the TUI paths (`src/cli/rolling_tui.rs:2421,2466`). Orphaned server- and
+connection-scoped tasks keep firing every tick, each producing a failed LLM prompt. There is
+also no reaper under `--mcp` (`cleanup_old_servers` is only wired into the TUI loop), so
+LLM-initiated `CloseServer` leaves entries in `AppState` forever.
+
+### 16. No circuit breaker on the LLM backend **[static]**
+
+`is_available()` exists (`src/llm/ollama_client.rs:1315`) but nothing calls it. With Ollama
+down, every request independently waits the full 120s timeout, and with `max_concurrent: 1`
+(`src/llm/rate_limiter.rs:48`) N queued connections serialize into N×120s. On failure most
+protocols reset to Idle and write nothing (`src/server/tcp/mod.rs:580-589`), so peers hang
+until their own timeout rather than getting a protocol-appropriate error.
+
+### 20b. Startup still does not consult the dependency system **[static]**
+
+Item 20 is fixed (see the Fixed table): `Protocol::get_dependencies()` now derives from
+`metadata().privilege_requirement`, so all 116 protocols report correct data and
+`get_excluded_protocols()` is live in the TUI footer and the event handler.
+
+What remains is the *startup* half. Neither `start_server_by_id` nor `start_server_from_action`
+calls `is_protocol_available()` before `spawn()`. `server_startup.rs` does gate on
+`PrivilegeRequirement::is_met_by()`, so a privilege-derived dependency is in practice enforced
+there — but a protocol that *overrides* `get_dependencies()` to add a `SystemLibrary` or
+`ToolInPath` has no such gate, and would be excluded from the TUI list while a direct
+`start_server` still attempts it and fails with whatever raw error the underlying library
+produces. One call in the startup path closes that gap.
+
+Note the two mechanisms differ in force on purpose: `privilege_requirement` refuses startup,
+dependencies inform. Do not turn the informational one into a second hard gate without deciding
+what happens to a protocol whose dependency probe is merely unsure — `DeviceAccess` derives no
+dependency for exactly that reason.
+
+### 23. Architectural ceilings **[static]**
+
+- `AppState` is a single `RwLock` over servers, clients, connections, tasks, LLM config, and
+  access logs (`src/state/app_state.rs:261`). No deadlock (no `.await` under the guard), but
+  every per-connection stat update from every server serializes through one writer.
+- All 27 `mpsc` channels are unbounded; there is no backpressure anywhere. A stalled consumer
+  grows memory without bound.
+- `state/machine.rs` defines a generic `StateMachine<S>` that nothing instantiates; every
+  protocol hand-rolls Idle/Processing/Accumulating, so a fix in one does not propagate.
+- `all-protocols` pulls in `rdkafka` to gate the Kafka *client*, though the Kafka server
+  feature comment says it was removed for causing malloc crashes (`Cargo.toml:239,514`).
+
+---
+
+
+> The MCP `start_server` tool description actively steers callers toward `event_handlers` with
+> script handlers over the LLM path. This code is therefore on the hot path, not a corner case.
+
+### 29. `REQUIRE_DOCS_FOR_OPEN_ACTIONS` is dead configuration **[verified]**
+
+`src/events/handler.rs:20` is a hardcoded `const … = false`, so the "model must read the docs
+before it may open a server" gate never engages, while `is_server_docs_read()` /
+`is_client_docs_read()` state is still tracked to feed it. Either make it a real runtime
+setting or remove it and the state it depends on.
+
+---
+
+
+### 32. Validator accepts a superset of what the prompt advertises **[static]**
+
+Items 4 and the scheduled-task fix closed two cases where the advertised and validated action
+lists diverged outright. A milder version remains: several call sites pass the *unfiltered*
+list to the validator while the prompt builder applies `filter_actions_by_scripting_mode` to
+what it renders, so e.g. `update_script` is accepted with scripting Off. Permissive rather
+than broken, but it is the same drift. Clearest at `src/events/handler.rs:611-637` and
+`src/llm/action_helper.rs:143-167`.
+
+### 35. The `easy` layer is a parallel subsystem serving one protocol **[verified]**
+
+`src/easy/` contains exactly one protocol (HTTP, 378 LOC) but carries its own trait, registry
+(`src/protocol/easy_registry.rs`), startup path (`src/cli/easy_startup.rs`), prompt templates
+(`prompts/easy_request/`), and snapshot tests. In `src/llm/action_helper.rs:361-394` it is
+checked *before* `try_execute_event_handler` and returns early, so for an easy-managed server
+the deterministic script/static path would be bypassed in favour of an LLM call. Not currently
+reachable — `easy_startup.rs` accepts no `event_handlers` — but the ordering inverts the
+project's stated preference and is a trap if easy servers ever gain handler support.
+
+### 39. `open_server`'s documentation gate makes mocked tests fragile **[static]**
+
+`src/events/handler.rs:844` forces a `DocumentationRequired` retry on first use of
+`open_server`. Mock configurations that don't answer that retry never start their server, which
+is why all 4 `tests/server/dns/test.rs` tests and 7 in `tests/examples/` fail at HEAD while
+DoT/DoH/mDNS survive. Either the gate should be off by default (compare
+`REQUIRE_DOCS_FOR_OPEN_ACTIONS` at `:20`, which is a hardcoded `false` — see item 29) or the
+mock helper should answer it centrally so every protocol's tests don't have to.
+
+### 42. `http3` is the QUIC transport, not HTTP/3 — **awaiting a naming decision** **[verified]**
+
+Correction to the original item: I wrote that `h3`/`h3-quinn` could be dropped because only the
+client uses them. **They cannot.** `http3` is a single feature gate over both halves, and
+`src/client/http3/mod.rs:175-176` is built on those crates. There is no `Cargo.toml` dependency
+saving here, and anyone attempting the rename for that reason should stop — the dependency
+survives it.
+
+The reviewed recommendation is **rename the protocol to `quic`, and do not implement RFC 9114
+here**, on these grounds: what runs today is coherent and tested (multiplexed bidirectional QUIC
+streams under TLS 1.3 with the model owning every byte), and nothing else in NetGet offers a raw
+QUIC stream — converting deletes that and buys a third request/response HTTP server duplicating
+HTTP/2's surface. `h3` is also pre-1.0 with a server API that has moved repeatedly. And it would
+be a rewrite of `handle_stream_with_actions` plus a new event/action pair, breaking every prompt
+written against `http3_stream_opened`/`send_http3_data` — not a patch.
+
+Landed already: `keywords()` leads with `quic`, so a model asking for a QUIC server resolves to
+the protocol that is one. **Not landed, needs a decision** — the rename touches `Cargo.toml`,
+both registries, `cli/server_startup.rs`, `src/server/mod.rs`, the directory itself and
+`tests/server/http3/`, plus a call on whether the real HTTP/3 *client* keeps the `http3` name.
+The full table is in `src/server/http3/CLAUDE.md`.
+
+If HTTP/3 is wanted later, add it *beside* `quic`, modelled on `http2/h2_server.rs` — the `h3`
+server API mirrors `h2`'s — and reusing `http_common`.
+
+### 47. Several tests pass while the protocol is broken **[verified]**
+
+`tests/server/ntp/test.rs:63-96` catches the rsntp client's failure, prints a note and asserts
+nothing — so it passed for the entire life of the origin-timestamp bug, while every real NTP
+client rejected the server's replies. `tests/server/dot/e2e_test.rs` has the same shape for
+transaction ids (item 40).
+
+This is the same lesson as item 38 stated twice: a mocked test that only checks our own
+plumbing cannot substantiate a **Beta** rating, which this project defines as "works with real
+clients". Suggested rule: no protocol may be rated Beta without at least one test that fails
+when a real off-the-shelf client would reject the output — and that test must assert, not log.
+
+### 48. Library panics reachable from the wire need auditing per dependency **[static]**
+
+The dhcproto `chaddr()` panic was found in the DHCP server and then existed unfixed in the
+DHCP client. The general shape — a parsing crate that trusts a length field the wire controls
+— will recur. Worth a pass over the other binary-format decoders (`rasn-snmp`, `hickory-proto`,
+`kafka-protocol`, `cassandra-protocol`, `bson`, `pgwire`, `opensrv-mysql`) asking specifically
+which of their accessors panic on malformed input, since all of them run inside a socket task
+where a panic silently kills the server while its status still reads `Running`.
+
+### 50. Two overlapping documentation gates, one of them dead **[verified]**
+
+`REQUIRE_DOCS_FOR_OPEN_ACTIONS` (`src/events/handler.rs:20`) is a hardcoded `false` and only
+controls whether `open_server`/`open_client` appear in the action list. The gate that actually
+forces a `DocumentationRequired` retry is unconditional, at `src/events/handler.rs:807` and
+`:1223`. That retry costs a full extra model round-trip on the first `open_server` of every
+process, and it gives the model nothing: the handler already fetches the documentation itself
+and calls `mark_server_protocols_documented` before returning the error, so it could simply
+fall through and start the server.
+
+Gate both behind the existing flag. Note the flag is process-global — `is_server_docs_read()`
+returns `!documented_server_protocols.is_empty()` (`src/state/app_state.rs:728`) — so it fires
+once per process regardless of which protocol is being started.
+
+### 54. ARP and DataLink still cannot ship on Linux **[verified]**
+
+`748fccca` added `arp` to `dist-darwin` and `icmp` to `dist`, which fixed macOS. But `arp` and
+`datalink` remain absent from `dist` itself, so the Linux release binaries still cannot start
+them at all — the same "Unknown protocol" dead end, just on a different platform. They need
+libpcap at link time, which is the original reason for the exclusion; the options are bundling
+it, dynamically loading it, or documenting the gap in the release notes rather than leaving
+users to discover it.
+
+### 77. pgwire panics the PostgreSQL connection on a malformed simple query **[verified]**
+
+`pgwire` 0.35's `decode_packet` (`codec.rs:62-83`) bounds the declared message length only
+from *above*, then hands `decode_fn` the entire remaining buffer rather than a slice limited
+to `msg_len`. `get_cstring` (`codec.rs:26`) scans for a NUL, exits with `i == buf.remaining()`
+when there isn't one, and calls `split_to(i + 1)` — which panics.
+
+**Reproduced against a running NetGet PostgreSQL server**, and the repro corrects the
+audit's framing in one respect worth keeping straight:
+
+- The audit described it as unauthenticated and reachable with six bytes. Sending
+  `51 00 00 00 05 78` on a fresh connection does **nothing** — no panic, no reply.
+- It needs the startup handshake first. After a valid startup message, the same six bytes
+  panic inside `bytes-1.10.1/src/bytes_mut.rs:396`.
+
+Since NetGet's PostgreSQL server performs no authentication — the model answers everything —
+"unauthenticated" is fair *for NetGet*, but the precise repro is handshake-then-six-bytes, and
+anyone writing this up upstream needs that distinction.
+
+Severity, measured rather than assumed: the panic kills **that connection's task only**. The
+server stayed up and accepted a further connection. So this is not in the class of item 71's
+server-killers; it is a malformed message producing a panic instead of a clean protocol error.
+Still worth fixing, because a panicking connection is a silent one.
+
+The fix belongs upstream — `pgwire` owns the socket loop, so NetGet cannot bound the frame
+without wrapping the stream. Report it there. `opensrv-mysql`'s `params.rs` cluster (five
+malformed `COM_STMT_EXECUTE` shapes, including an explicit `panic!("bad column type")` on a
+client-chosen byte) and `kafka-protocol`'s unbounded element counts are the same shape and are
+documented in the panic audit.
+
+### 76. Test suites that assert only at the transport level **[verified]**
+
+`tests/server/{nfs,ipp,vnc,webdav}/test.rs` are declared and running, and assert only that a
+connection was accepted — none decodes a protocol payload. That is why NFS's empty action list
+and IPP's encoding bug both passed through green. Same shape as the NTP test in item 47 and the
+tracker/DHT tests: the suite proves the process started, not that the protocol works.
+
+Worth a rule alongside item 47: a protocol test must assert on decoded protocol output, not on
+transport success.
+
+---
+
+## Archive — fixed items and recorded findings
+
+Kept because the reasoning is worth finding again, not because anything is pending here.
+Each fixed item has a row in the Fixed table above.
 
 ### 56. Sixteen protocols never show the model their own actions **[verified]**
 
@@ -273,7 +490,6 @@ Fix: pass the same action list used to build the prompt.
 
 ---
 
-## P1 — Silent failures and lost coverage
 
 ### 5. 76 test directories are never compiled **[verified]**
 
@@ -296,16 +512,6 @@ dispatch and runs `cargo build` for the `dist*` sets. `cargo test` appears nowhe
 Fix: a PR workflow running `cargo clippy` plus a representative feature subset
 (`tcp,http,dns,udp,redis`) with `--test-threads=100`, and the orphan check from item 5.
 
-### 7. Unknown action names fail silently at runtime **[verified]**
-
-A static `event_handler` naming a nonexistent action is accepted at startup and does nothing
-when the event fires: the peer gets no response, no error reaches the MCP caller, and
-`list_access_logs` records the action name as though it executed.
-
-Fix: validate handler action names against the protocol's action catalog at parse time in
-`EventHandler::parse_event_handlers` (`src/events/handler.rs:1682`), and record execution
-failures in the access log.
-
 ### 8. Raw-socket protocols report `Running` when capture fails **[static]**
 
 `arp`, `datalink`, `icmp`, `isis` start their capture loop in a fire-and-forget
@@ -315,14 +521,6 @@ leaves status at `Running` with no supervision or restart.
 
 Fix: have `spawn()` await a readiness signal before returning `Ok`, and set
 `ServerStatus::Error` when the capture handle fails.
-
-### 9. Scheduled tasks leak when servers stop via MCP **[static]**
-
-`src/mcp_stdio/tools.rs:415,718` call `remove_server()` without `cleanup_server_tasks()`,
-unlike the TUI paths (`src/cli/rolling_tui.rs:2421,2466`). Orphaned server- and
-connection-scoped tasks keep firing every tick, each producing a failed LLM prompt. There is
-also no reaper under `--mcp` (`cleanup_old_servers` is only wired into the TUI loop), so
-LLM-initiated `CloseServer` leaves entries in `AppState` forever.
 
 ### 10. Client lifecycle is unfinished **[static]**
 
@@ -334,7 +532,6 @@ server tasks are likewise untracked, so `stop_server` does not cancel in-flight 
 
 ---
 
-## P2 — LLM tooling quality
 
 ### 11. `get_protocol_docs` documents the wrong API to MCP callers **[verified]**
 
@@ -381,14 +578,6 @@ unbounded `String` injected into every prompt (`src/llm/actions/executor.rs:174-
 full base-stack catalog is re-sent on every call once any server is running
 (`src/llm/prompt.rs:706-712`).
 
-### 16. No circuit breaker on the LLM backend **[static]**
-
-`is_available()` exists (`src/llm/ollama_client.rs:1315`) but nothing calls it. With Ollama
-down, every request independently waits the full 120s timeout, and with `max_concurrent: 1`
-(`src/llm/rate_limiter.rs:48`) N queued connections serialize into N×120s. On failure most
-protocols reset to Idle and write nothing (`src/server/tcp/mod.rs:580-589`), so peers hang
-until their own timeout rather than getting a protocol-appropriate error.
-
 ### 17. `git` and `mercurial` bypass the LLM infrastructure **[static]**
 
 Both call `llm_client.generate_with_retry` directly (`src/server/git/mod.rs:335-362`) instead
@@ -398,7 +587,6 @@ handlers are silently ignored for these two protocols and every request hits the
 
 ---
 
-## P3 — Consistency and hygiene
 
 ### 18. Privilege gate ANDs in the wrong capability **[verified]**
 
@@ -422,25 +610,6 @@ indication the protocol exists but was compiled out.
 
 Fix: add `arp` to `dist-darwin` and `icmp` to `dist`; make the registry distinguish "no such
 protocol" from "compiled out of this build" in its error.
-
-### 20b. Startup still does not consult the dependency system **[static]**
-
-Item 20 is fixed (see the Fixed table): `Protocol::get_dependencies()` now derives from
-`metadata().privilege_requirement`, so all 116 protocols report correct data and
-`get_excluded_protocols()` is live in the TUI footer and the event handler.
-
-What remains is the *startup* half. Neither `start_server_by_id` nor `start_server_from_action`
-calls `is_protocol_available()` before `spawn()`. `server_startup.rs` does gate on
-`PrivilegeRequirement::is_met_by()`, so a privilege-derived dependency is in practice enforced
-there — but a protocol that *overrides* `get_dependencies()` to add a `SystemLibrary` or
-`ToolInPath` has no such gate, and would be excluded from the TUI list while a direct
-`start_server` still attempts it and fails with whatever raw error the underlying library
-produces. One call in the startup path closes that gap.
-
-Note the two mechanisms differ in force on purpose: `privilege_requirement` refuses startup,
-dependencies inform. Do not turn the informational one into a second hard gate without deciding
-what happens to a protocol whose dependency probe is merely unsure — `DeviceAccess` derives no
-dependency for exactly that reason.
 
 ### 21. Five protocols expose zero actions — and the grep that found them was misleading **[verified]**
 
@@ -494,25 +663,6 @@ delegate like `doh`/`dot`, implement, or mark `Incomplete` so `is_available_to_l
   the old CLAUDE.md referenced (`TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`)
   do not exist.
 
-### 23. Architectural ceilings **[static]**
-
-- `AppState` is a single `RwLock` over servers, clients, connections, tasks, LLM config, and
-  access logs (`src/state/app_state.rs:261`). No deadlock (no `.await` under the guard), but
-  every per-connection stat update from every server serializes through one writer.
-- All 27 `mpsc` channels are unbounded; there is no backpressure anywhere. A stalled consumer
-  grows memory without bound.
-- `state/machine.rs` defines a generic `StateMachine<S>` that nothing instantiates; every
-  protocol hand-rolls Idle/Processing/Accumulating, so a fix in one does not propagate.
-- `all-protocols` pulls in `rdkafka` to gate the Kafka *client*, though the Kafka server
-  feature comment says it was removed for causing malloc crashes (`Cargo.toml:239,514`).
-
----
-
-## P1b — Scripting subsystem (the recommended deterministic path)
-
-The MCP `start_server` tool description actively steers callers toward `event_handlers` with
-script handlers over the LLM path. This code is therefore on the hot path, not a corner case.
-
 ### 24. Script execution parks a tokio worker thread for up to 30s **[verified]**
 
 `src/scripting/executor.rs::execute_script` is synchronous and is called directly from
@@ -548,7 +698,6 @@ trust boundary explicitly; decide separately whether a sandbox is wanted.
 
 ---
 
-## P2b — Client half is substantially less finished than the server half
 
 ### 27. A client can only be started by an LLM call **[verified]**
 
@@ -569,17 +718,6 @@ every local user to read via `ps`. The env-var path (`NETGET_API_KEY` / `OPENAI_
 already supported and should be the documented default; consider warning when the flag form
 is used.
 
-### 29. `REQUIRE_DOCS_FOR_OPEN_ACTIONS` is dead configuration **[verified]**
-
-`src/events/handler.rs:20` is a hardcoded `const … = false`, so the "model must read the docs
-before it may open a server" gate never engages, while `is_server_docs_read()` /
-`is_client_docs_read()` state is still tracked to feed it. Either make it a real runtime
-setting or remove it and the state it depends on.
-
----
-
-## P2c — Found during the fix pass
-
 ### 30. `register_server_task()` stores only one handle per server **[static]**
 
 `src/state/app_state.rs:487-493` overwrites any previously registered `JoinHandle`, so a
@@ -597,15 +735,6 @@ return `NoAction`. Several protocols advertised such actions to the model; the V
 dead advertisements were removed, but the general fix needs a server-instance registry reachable
 from `src/llm/actions/protocol_trait.rs`.
 
-### 32. Validator accepts a superset of what the prompt advertises **[static]**
-
-Items 4 and the scheduled-task fix closed two cases where the advertised and validated action
-lists diverged outright. A milder version remains: several call sites pass the *unfiltered*
-list to the validator while the prompt builder applies `filter_actions_by_scripting_mode` to
-what it renders, so e.g. `update_script` is accepted with scripting Off. Permissive rather
-than broken, but it is the same drift. Clearest at `src/events/handler.rs:611-637` and
-`src/llm/action_helper.rs:143-167`.
-
 ### 33. Development builds default to TRACE, which writes full payloads to disk **[verified]**
 
 `src/cli/args.rs` defaults dev builds to `trace`; per CLAUDE.md, TRACE logs full payloads.
@@ -618,16 +747,6 @@ when payload-level detail is genuinely wanted.
 `TunManager` is declared at `src/server/mod.rs:511` and used by nothing — WireGuard uses
 defguard, OpenVPN uses the `tun` crate directly. It keeps a `tokio_tun` dependency alive for
 no consumer.
-
-### 35. The `easy` layer is a parallel subsystem serving one protocol **[verified]**
-
-`src/easy/` contains exactly one protocol (HTTP, 378 LOC) but carries its own trait, registry
-(`src/protocol/easy_registry.rs`), startup path (`src/cli/easy_startup.rs`), prompt templates
-(`prompts/easy_request/`), and snapshot tests. In `src/llm/action_helper.rs:361-394` it is
-checked *before* `try_execute_event_handler` and returns early, so for an easy-managed server
-the deterministic script/static path would be bypassed in favour of an LLM call. Not currently
-reachable — `easy_startup.rs` accepts no `event_handlers` — but the ordering inverts the
-project's stated preference and is a trap if easy servers ever gain handler support.
 
 ### 36. Registry `resolve()` needs adopting in the startup path **[static]**
 
@@ -661,15 +780,6 @@ clients, and its tests passed because they used a lenient client. Worth treating
 canonical argument for validating Beta claims against a real off-the-shelf client rather than
 against our own test harness.
 
-### 39. `open_server`'s documentation gate makes mocked tests fragile **[static]**
-
-`src/events/handler.rs:844` forces a `DocumentationRequired` retry on first use of
-`open_server`. Mock configurations that don't answer that retry never start their server, which
-is why all 4 `tests/server/dns/test.rs` tests and 7 in `tests/examples/` fail at HEAD while
-DoT/DoH/mDNS survive. Either the gate should be off by default (compare
-`REQUIRE_DOCS_FOR_OPEN_ACTIONS` at `:20`, which is a hardcoded `false` — see item 29) or the
-mock helper should answer it centrally so every protocol's tests don't have to.
-
 ### 40. Smaller protocol-level defects found in review **[static]**
 
 - `src/server/svn/actions.rs:56` declares `PrivilegedPort(3690)`; 3690 > 1024, so the check can
@@ -690,31 +800,6 @@ at all for TCP — and neither the MCP caller nor the access log learns the acti
 log records it as though it ran. This is why the HTTP executor was deliberately made lenient
 rather than strict, and it is the same root cause as item 7. Fixing it properly means
 propagating action errors into the access log and the tool result.
-
-### 42. `http3` is the QUIC transport, not HTTP/3 — **awaiting a naming decision** **[verified]**
-
-Correction to the original item: I wrote that `h3`/`h3-quinn` could be dropped because only the
-client uses them. **They cannot.** `http3` is a single feature gate over both halves, and
-`src/client/http3/mod.rs:175-176` is built on those crates. There is no `Cargo.toml` dependency
-saving here, and anyone attempting the rename for that reason should stop — the dependency
-survives it.
-
-The reviewed recommendation is **rename the protocol to `quic`, and do not implement RFC 9114
-here**, on these grounds: what runs today is coherent and tested (multiplexed bidirectional QUIC
-streams under TLS 1.3 with the model owning every byte), and nothing else in NetGet offers a raw
-QUIC stream — converting deletes that and buys a third request/response HTTP server duplicating
-HTTP/2's surface. `h3` is also pre-1.0 with a server API that has moved repeatedly. And it would
-be a rewrite of `handle_stream_with_actions` plus a new event/action pair, breaking every prompt
-written against `http3_stream_opened`/`send_http3_data` — not a patch.
-
-Landed already: `keywords()` leads with `quic`, so a model asking for a QUIC server resolves to
-the protocol that is one. **Not landed, needs a decision** — the rename touches `Cargo.toml`,
-both registries, `cli/server_startup.rs`, `src/server/mod.rs`, the directory itself and
-`tests/server/http3/`, plus a call on whether the real HTTP/3 *client* keeps the `http3` name.
-The full table is in `src/server/http3/CLAUDE.md`.
-
-If HTTP/3 is wanted later, add it *beside* `quic`, modelled on `http2/h2_server.rs` — the `h3`
-server API mirrors `h2`'s — and reusing `http_common`.
 
 ### 45. The mock harness misroutes the pre-`open_server` documentation step **[verified]**
 
@@ -753,27 +838,6 @@ compile does not report failures, it simply contributes nothing, exactly like th
 directories in item 5. So the sweep should be `cargo check --tests`, not `cargo check`, or the
 next silent gap will be a whole target rather than a directory.
 
-### 47. Several tests pass while the protocol is broken **[verified]**
-
-`tests/server/ntp/test.rs:63-96` catches the rsntp client's failure, prints a note and asserts
-nothing — so it passed for the entire life of the origin-timestamp bug, while every real NTP
-client rejected the server's replies. `tests/server/dot/e2e_test.rs` has the same shape for
-transaction ids (item 40).
-
-This is the same lesson as item 38 stated twice: a mocked test that only checks our own
-plumbing cannot substantiate a **Beta** rating, which this project defines as "works with real
-clients". Suggested rule: no protocol may be rated Beta without at least one test that fails
-when a real off-the-shelf client would reject the output — and that test must assert, not log.
-
-### 48. Library panics reachable from the wire need auditing per dependency **[static]**
-
-The dhcproto `chaddr()` panic was found in the DHCP server and then existed unfixed in the
-DHCP client. The general shape — a parsing crate that trusts a length field the wire controls
-— will recur. Worth a pass over the other binary-format decoders (`rasn-snmp`, `hickory-proto`,
-`kafka-protocol`, `cassandra-protocol`, `bson`, `pgwire`, `opensrv-mysql`) asking specifically
-which of their accessors panic on malformed input, since all of them run inside a socket task
-where a panic silently kills the server while its status still reads `Running`.
-
 ### 49. The DNS client loops until the process overflows its stack **[verified]**
 
 `tests/client/dns/e2e_test.rs::test_dns_client_multiple_queries` drives the DNS **client**
@@ -786,20 +850,6 @@ terminating, and the absence of any ceiling on LLM calls per client session. Ser
 per-connection Idle/Processing/Accumulating machine to prevent re-entrancy; clients hand-roll
 their own (item 7 in spirit), and evidently one of them does not converge. A hard cap with a
 clear error beats an unbounded loop regardless of the root cause.
-
-### 50. Two overlapping documentation gates, one of them dead **[verified]**
-
-`REQUIRE_DOCS_FOR_OPEN_ACTIONS` (`src/events/handler.rs:20`) is a hardcoded `false` and only
-controls whether `open_server`/`open_client` appear in the action list. The gate that actually
-forces a `DocumentationRequired` retry is unconditional, at `src/events/handler.rs:807` and
-`:1223`. That retry costs a full extra model round-trip on the first `open_server` of every
-process, and it gives the model nothing: the handler already fetches the documentation itself
-and calls `mark_server_protocols_documented` before returning the error, so it could simply
-fall through and start the server.
-
-Gate both behind the existing flag. Note the flag is process-global — `is_server_docs_read()`
-returns `!documented_server_protocols.is_empty()` (`src/state/app_state.rs:728`) — so it fires
-once per process regardless of which protocol is being started.
 
 ### 51. Remaining test failures after the mock fix **[verified]**
 
@@ -850,15 +900,6 @@ Remaining failures, all attributed:
   CPAN module (`perl -e 'use JSON'` fails standalone). Environmental, not a code defect, but the
   test should detect and skip rather than fail.
 - **`client`: 5 of 21.** Includes the DNS client runaway (item 49), being fixed separately.
-
-### 54. ARP and DataLink still cannot ship on Linux **[verified]**
-
-`748fccca` added `arp` to `dist-darwin` and `icmp` to `dist`, which fixed macOS. But `arp` and
-`datalink` remain absent from `dist` itself, so the Linux release binaries still cannot start
-them at all — the same "Unknown protocol" dead end, just on a different platform. They need
-libpcap at link time, which is the original reason for the exclusion; the options are bundling
-it, dynamically loading it, or documenting the gap in the release notes rather than leaving
-users to discover it.
 
 ### 55. `SystemCapabilities` conflates two capabilities **[static]**
 
@@ -1070,36 +1111,6 @@ early data could be processed against a missing entry. Fixed there; the same sha
 - `src/server/openvpn/actions.rs:194` still shows `{"type": "no_action"}` in a startup example;
   `no_action` exists nowhere in NetGet.
 
-### 77. pgwire panics the PostgreSQL connection on a malformed simple query **[verified]**
-
-`pgwire` 0.35's `decode_packet` (`codec.rs:62-83`) bounds the declared message length only
-from *above*, then hands `decode_fn` the entire remaining buffer rather than a slice limited
-to `msg_len`. `get_cstring` (`codec.rs:26`) scans for a NUL, exits with `i == buf.remaining()`
-when there isn't one, and calls `split_to(i + 1)` — which panics.
-
-**Reproduced against a running NetGet PostgreSQL server**, and the repro corrects the
-audit's framing in one respect worth keeping straight:
-
-- The audit described it as unauthenticated and reachable with six bytes. Sending
-  `51 00 00 00 05 78` on a fresh connection does **nothing** — no panic, no reply.
-- It needs the startup handshake first. After a valid startup message, the same six bytes
-  panic inside `bytes-1.10.1/src/bytes_mut.rs:396`.
-
-Since NetGet's PostgreSQL server performs no authentication — the model answers everything —
-"unauthenticated" is fair *for NetGet*, but the precise repro is handshake-then-six-bytes, and
-anyone writing this up upstream needs that distinction.
-
-Severity, measured rather than assumed: the panic kills **that connection's task only**. The
-server stayed up and accepted a further connection. So this is not in the class of item 71's
-server-killers; it is a malformed message producing a panic instead of a clean protocol error.
-Still worth fixing, because a panicking connection is a silent one.
-
-The fix belongs upstream — `pgwire` owns the socket loop, so NetGet cannot bound the frame
-without wrapping the stream. Report it there. `opensrv-mysql`'s `params.rs` cluster (five
-malformed `COM_STMT_EXECUTE` shapes, including an explicit `panic!("bad column type")` on a
-client-chosen byte) and `kafka-protocol`'s unbounded element counts are the same shape and are
-documented in the panic audit.
-
 ### 71. Running tally of remotely-reachable crashes **[verified]**
 
 Ten found and fixed this session, all in socket tasks where a panic is silent while the server
@@ -1215,23 +1226,3 @@ is valuable, but a connection-task panic is the quietest possible way to be loud
 be to assert once at server startup, where the failure is visible and attributable, and leave
 the per-event path to the ERROR log plus fallback.
 
-### 76. Test suites that assert only at the transport level **[verified]**
-
-`tests/server/{nfs,ipp,vnc,webdav}/test.rs` are declared and running, and assert only that a
-connection was accepted — none decodes a protocol payload. That is why NFS's empty action list
-and IPP's encoding bug both passed through green. Same shape as the NTP test in item 47 and the
-tracker/DHT tests: the suite proves the process started, not that the protocol works.
-
-Worth a rule alongside item 47: a protocol test must assert on decoded protocol output, not on
-transport success.
-
----
-
-## Suggested order
-
-1. Items 1-4 — remotely-reachable panics and the broken feedback loop.
-2. Items 5-6 — turn the dormant test suite on and gate it in CI; everything else is easier
-   to land safely afterwards.
-3. Items 11-12 — make the MCP surface self-describing and give it client parity.
-4. Items 7-10, 18-19 — silent failures and the privilege/packaging gaps.
-5. Items 13-17, 20-23 — LLM tooling quality and consistency.
