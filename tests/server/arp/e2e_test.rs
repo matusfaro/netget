@@ -3,22 +3,15 @@
 //! These tests verify ARP server functionality by starting NetGet with ARP prompts
 //! and using pnet to send real ARP requests.
 //!
-//! **REQUIRES ROOT/ADMIN**: ARP requires CAP_NET_RAW or root privileges for raw socket access.
+//! **REQUIRES ROOT/ADMIN**: ARP requires CAP_NET_RAW, root, or BPF device access
+//! for layer-2 packet capture, so the test is `#[ignore]`d; run it under `sudo`
+//! (or after ChmodBPF / `setcap cap_net_raw+ep`) to exercise it.
 //!
-//! BLOCKED (out of test-owner scope): the test below is `#[ignore]`d for an
-//! additional reason beyond privileges. The mandatory "read documentation
-//! before open_server" retry (`src/events/handler.rs:809`
-//! `is_server_docs_read()` gate; retry prompt in `src/events/errors.rs:201-218`)
-//! forces a second LLM round-trip whose synthetic prompt ("...you must first
-//! read the documentation... provide the action again...") no longer contains
-//! the original instruction text, so the mock harness's
-//! `on_instruction_containing(...)` rule never matches and the call fails
-//! with "NO RULE MATCHED" before the privileged pcap logic is even reached.
-//! This is a repo-wide regression, not specific to this protocol: it
-//! reproduces deterministically on the untouched, previously-stable
-//! `tests/server/tcp/test.rs::test_simple_echo`. Fixing it needs changes to
-//! `src/events/handler.rs` and/or `tests/helpers/mock_builder.rs`/
-//! `mock_matcher.rs`, both out of scope here.
+//! Note that the `Device::list().is_err()` guard below does **not** detect the
+//! missing privilege: on macOS any unprivileged user can enumerate capture
+//! devices, and it is opening one that fails. NetGet's own capability probe
+//! (`src/privilege.rs`) opens a handle for exactly this reason. Until the guard
+//! is rewritten to match, the `#[ignore]` is what keeps this test honest.
 
 #![cfg(feature = "arp")]
 
@@ -76,7 +69,7 @@ fn build_arp_request(sender_mac: MacAddr, sender_ip: Ipv4Addr, target_ip: Ipv4Ad
 }
 
 #[tokio::test]
-#[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+#[ignore = "Requires layer-2 packet capture privileges (root, CAP_NET_RAW, or BPF device access): without them server_startup refuses ARP with \"Cannot start ARP server: Layer-2 packet capture\", netget starts no server, and the harness fails with \"No servers or clients started\". Run under sudo to exercise. The in-test Device::list() guard does not catch this - enumerating capture devices succeeds unprivileged."]
 async fn test_arp_responder() -> E2EResult<()> {
     // Check if we can access pcap (requires privileges)
     if Device::list().is_err() {

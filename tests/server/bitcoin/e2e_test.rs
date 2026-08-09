@@ -2,21 +2,6 @@
 //!
 //! These tests spawn the NetGet binary and test Bitcoin P2P operations
 //! using raw TCP clients to send/receive Bitcoin P2P messages.
-//!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d
-//! (including `test_bitcoin_testnet`, which passed in one run but failed in
-//! another with the identical mock config — the underlying bug is racy). The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
 
 #[cfg(all(test, feature = "bitcoin"))]
 mod e2e_bitcoin {
@@ -90,8 +75,32 @@ mod e2e_bitcoin {
         Ok(msg)
     }
 
+    /// Wait until every mock expectation is satisfied, or give up after `limit`.
+    ///
+    /// Used where the last thing a test does is send a message that the server
+    /// answers with no bytes: the mock call is recorded asynchronously, so a
+    /// bare `verify_mocks()` would sample the counters too early. On timeout
+    /// this returns the real verification error, so a genuinely missing call
+    /// still fails the test.
+    async fn wait_for_mocks(
+        server: &crate::helpers::server::NetGetServer,
+        limit: Duration,
+    ) -> E2EResult<()> {
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            match server.verify_mocks().await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_bitcoin_version_verack_handshake() -> E2EResult<()> {
         println!("\n=== Test: Bitcoin Version/Verack Handshake ===");
 
@@ -218,6 +227,13 @@ mod e2e_bitcoin {
 
         println!("  [TEST] ✓ Bitcoin P2P handshake completed successfully");
 
+        // The peer's verack produces no reply on the wire (the mock answers it
+        // with an empty action list), so there is nothing to read that proves
+        // the server got that far. Poll the mock accounting instead of racing
+        // it — verifying immediately after write_all() checks the expectation
+        // before the server has even read the bytes.
+        wait_for_mocks(&server, Duration::from_secs(15)).await?;
+
         // Verify mock expectations
         server.verify_mocks().await?;
 
@@ -228,7 +244,6 @@ mod e2e_bitcoin {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_bitcoin_ping_pong() -> E2EResult<()> {
         println!("\n=== Test: Bitcoin Ping/Pong ===");
 
@@ -367,7 +382,6 @@ mod e2e_bitcoin {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_bitcoin_getaddr() -> E2EResult<()> {
         println!("\n=== Test: Bitcoin getaddr ===");
 
@@ -460,10 +474,13 @@ mod e2e_bitcoin {
         client.write_all(&getaddr_bytes).await?;
         client.flush().await?;
 
-        // Read response (should be addr message or timeout is acceptable)
+        // Read response (should be addr message or timeout is acceptable).
+        // The mocked getaddr rule answers with no actions, so the expected
+        // outcome here is the timeout; a 120s window would just be two minutes
+        // of dead wall-clock. Everything else in this test resolves in
+        // milliseconds against the mock, so 15s is a generous ceiling.
         println!("  [TEST] Waiting for addr response (or timeout)");
-        let read_result =
-            timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await;
+        let read_result = timeout(Duration::from_secs(15), read_bitcoin_message(&mut client)).await;
 
         match read_result {
             Ok(Ok(response)) => match response.payload() {
@@ -495,7 +512,6 @@ mod e2e_bitcoin {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_bitcoin_testnet() -> E2EResult<()> {
         println!("\n=== Test: Bitcoin Testnet Network ===");
 

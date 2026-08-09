@@ -3,18 +3,18 @@
 //! These tests spawn the NetGet binary and test IGMP protocol operations
 //! by manually constructing IGMP packets and verifying responses.
 //!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
+//! **REQUIRES ROOT / CAP_NET_RAW.** The IGMP *server* opens a raw IP socket
+//! (IPPROTO_IGMP), so `server_startup` refuses to spawn it on an unprivileged
+//! process even though the test *client* below only needs a UDP socket. Every
+//! test here is therefore `#[ignore]`d; run them under `sudo` to exercise them.
+//!
+//! Known issue for whoever un-ignores these: the client uses the blocking
+//! `std::net::UdpSocket`, and `#[tokio::test]` runs each test on a
+//! *current-thread* runtime. The mocked Ollama server is a task on that same
+//! runtime, so a blocking `recv_from` parks the only worker, the mock cannot
+//! answer NetGet's LLM request, and the read times out for a reason that has
+//! nothing to do with IGMP. Port these to `tokio::net::UdpSocket` (as
+//! `tests/server/sip/e2e_test.rs` now does) before expecting them to pass.
 
 #[cfg(all(test, feature = "igmp"))]
 mod e2e_igmp {
@@ -109,7 +109,7 @@ mod e2e_igmp {
 
     /// Test IGMP general membership query and response
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "Requires raw IP socket privileges (root or CAP_NET_RAW): without them server_startup refuses IGMP with \"Cannot start IGMP server: Raw IP socket access\", netget starts no server, and the harness fails with \"No servers or clients started\". Run under sudo to exercise. See the file header for a second issue (blocking UdpSocket starves the in-process mock) that must be fixed before these can pass."]
     async fn test_igmp_general_query_response() -> E2EResult<()> {
         println!("\n=== Test: IGMP General Query Response ===");
 
@@ -206,7 +206,7 @@ membership report for 239.255.255.250."#;
 
     /// Test IGMP group-specific query
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "Requires raw IP socket privileges (root or CAP_NET_RAW): without them server_startup refuses IGMP with \"Cannot start IGMP server: Raw IP socket access\", netget starts no server, and the harness fails with \"No servers or clients started\". Run under sudo to exercise. See the file header for a second issue (blocking UdpSocket starves the in-process mock) that must be fixed before these can pass."]
     async fn test_igmp_group_specific_query() -> E2EResult<()> {
         println!("\n=== Test: IGMP Group-Specific Query ===");
 
@@ -312,7 +312,7 @@ a membership report for that group. Ignore queries for groups you haven't joined
 
     /// Test IGMP report suppression
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "Requires raw IP socket privileges (root or CAP_NET_RAW): without them server_startup refuses IGMP with \"Cannot start IGMP server: Raw IP socket access\", netget starts no server, and the harness fails with \"No servers or clients started\". Run under sudo to exercise. See the file header for a second issue (blocking UdpSocket starves the in-process mock) that must be fixed before these can pass."]
     async fn test_igmp_report_from_peer() -> E2EResult<()> {
         println!("\n=== Test: IGMP Report from Peer ===");
 
@@ -380,7 +380,7 @@ you can suppress your own report (this is optional per IGMP spec)."#;
 
     /// Test comprehensive IGMP scenario with multiple groups
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
+    #[ignore = "Requires raw IP socket privileges (root or CAP_NET_RAW): without them server_startup refuses IGMP with \"Cannot start IGMP server: Raw IP socket access\", netget starts no server, and the harness fails with \"No servers or clients started\". Run under sudo to exercise. See the file header for a second issue (blocking UdpSocket starves the in-process mock) that must be fixed before these can pass."]
     async fn test_igmp_multiple_groups() -> E2EResult<()> {
         println!("\n=== Test: IGMP Multiple Groups ===");
 

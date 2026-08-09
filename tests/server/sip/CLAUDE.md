@@ -24,7 +24,7 @@ text-based protocol compliance using raw UDP sockets and manual SIP message cons
 **Black-Box Protocol Testing**: Tests validate only external behavior (request → response), not internal LLM prompts or
 implementation details.
 
-**Comprehensive Single-Server Approach**: One server handles all test cases with scripting for maximum efficiency.
+**Comprehensive Single-Server Approach**: One server handles all test cases.
 
 ## LLM Call Budget
 
@@ -32,9 +32,21 @@ implementation details.
 
 **Single Comprehensive Test** (`test_sip_comprehensive`):
 
-- 1 server startup (with comprehensive scripting instructions) = **1-2 LLM calls**
-- 8 SIP requests (all handled by script) = **0 LLM calls**
-- **Total: 1-2 LLM calls** ✅ **Target met: < 10 calls**
+- 1 server startup = **1 LLM call**
+- 8 SIP requests, one mocked LLM answer each = **8 LLM calls**
+- **Total: 9 LLM calls** ✅ **Target met: < 10 calls**
+
+**Correction (previously wrong here and in the test):** the test used to claim
+0 calls per request by passing `"scripting": true` in the `open_server` action.
+No such `open_server` parameter exists — the field was silently dropped, every
+request went to the LLM, and with no matching mock rule the mock answered HTTP
+500 and the server sent nothing back. Deterministic handling is configured
+through `event_handlers` (script/static handlers), not a boolean. If this suite
+is ever moved to real script handlers, the budget drops back to 1 call.
+
+Note also that mock rules are matched in declaration order with first-match-wins
+and no per-rule exhaustion tracking, so each rule must discriminate on event data
+(here, the `from` header) rather than relying on `expect_calls`.
 
 ### Test Breakdown
 
@@ -49,11 +61,12 @@ The single test validates:
 7. INVITE bob→alice → 486 Busy Here (rejection)
 8. INVITE charlie→bob → 403 Forbidden (rejection)
 
-**All handled by scripting after initial server setup.**
+**Each answered by one mocked LLM response after initial server setup.**
 
 ## Scripting Usage
 
-**Scripting HEAVILY Used** ✅: SIP is PERFECT for scripting because:
+**Not currently used** — see the correction above; the suite mocks one LLM
+answer per request. SIP would nonetheless be a good fit for scripting because:
 
 - **Deterministic**: Request method + From/To headers → predictable response
 - **Stateless server**: No complex session tracking required

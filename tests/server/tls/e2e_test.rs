@@ -2,19 +2,6 @@
 //!
 //! This test spawns a single NetGet TLS server with a Python script
 //! and validates encrypted communication with custom application protocol.
-//!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
 
 #![cfg(feature = "tls")]
 
@@ -102,16 +89,37 @@ async fn tls_exchange(port: u16, send_data: &str) -> E2EResult<String> {
     tls_stream.write_all(send_data.as_bytes()).await?;
     tls_stream.flush().await?;
 
-    // Read response (with timeout)
+    // Read the response. The server may write several independent TLS records
+    // (e.g. the connection banner, then the reply to our data), each produced by
+    // a separate LLM round-trip, so a single read() would only return the first
+    // one. Accumulate until the stream goes idle or closes.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut buffer = vec![0u8; 4096];
-    let n = tokio::time::timeout(Duration::from_secs(5), tls_stream.read(&mut buffer)).await??;
+    let mut response = String::new();
 
-    let response = String::from_utf8_lossy(&buffer[..n]).to_string();
+    loop {
+        let idle = Duration::from_millis(if response.is_empty() { 5_000 } else { 1_000 });
+        let wait = idle.min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+        if wait.is_zero() {
+            break;
+        }
+
+        match tokio::time::timeout(wait, tls_stream.read(&mut buffer)).await {
+            // Idle window elapsed: assume the server has said everything it will say.
+            Err(_) => break,
+            // Clean EOF.
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => response.push_str(&String::from_utf8_lossy(&buffer[..n])),
+            // First read must succeed; later I/O errors just end the exchange.
+            Ok(Err(e)) if response.is_empty() => return Err(e.into()),
+            Ok(Err(_)) => break,
+        }
+    }
+
     Ok(response)
 }
 
 #[tokio::test]
-#[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
 async fn test_tls_echo_server() -> E2EResult<()> {
     println!("\n=== E2E Test: TLS Echo Server with Script ===");
 
@@ -148,8 +156,13 @@ async fn test_tls_echo_server() -> E2EResult<()> {
                 ]))
                 .expect_calls(3)
                 .and()
-                // Mock 5-6: Echo received data (2 connections send data)
+                // Mock 5-6: Echo received data (2 connections send data).
+                // Rules are matched first-to-last with no "already satisfied"
+                // bookkeeping, so this one must filter on its own payload —
+                // an unfiltered tls_data_received rule would also swallow the
+                // "Testing" event below.
                 .on_event("tls_data_received")
+                .and_event_data_contains("data", "Hello, TLS!")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_tls_data",
@@ -226,7 +239,6 @@ async fn test_tls_echo_server() -> E2EResult<()> {
 }
 
 #[tokio::test]
-#[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
 async fn test_tls_http_like_server() -> E2EResult<()> {
     println!("\n=== E2E Test: TLS HTTP-like Server with Script ===");
 
@@ -255,9 +267,11 @@ async fn test_tls_http_like_server() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: GET / request
+                // Mock 2: GET / request. Matched on "GET / HTTP" rather than
+                // "GET /" because rules are tried in order and a bare "GET /"
+                // substring also matches "GET /api" and "GET /unknown".
                 .on_event("tls_data_received")
-                .and_event_data_contains("data", "GET /")
+                .and_event_data_contains("data", "GET / HTTP")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_tls_data",

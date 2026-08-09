@@ -2,30 +2,41 @@
 //!
 //! These tests verify SIP server functionality by starting NetGet with SIP prompts
 //! and using raw UDP sockets to send SIP messages.
-//!
-//! BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-//! mandatory "read documentation before open_server" retry
-//! (`src/events/handler.rs:809` `is_server_docs_read()` gate; retry prompt in
-//! `src/events/errors.rs:201-218`) forces a second LLM round-trip whose
-//! synthetic prompt ("...you must first read the documentation... provide the
-//! action again...") no longer contains the original instruction text, so the
-//! mock harness's `on_instruction_containing(...)` rule never matches and the
-//! call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-//! specific to this protocol: it reproduces deterministically on the
-//! untouched, previously-stable `tests/server/tcp/test.rs::test_simple_echo`.
-//! Fixing it needs changes to `src/events/handler.rs` and/or
-//! `tests/helpers/mock_builder.rs`/`mock_matcher.rs`, both out of scope here.
 
 #![cfg(feature = "sip")]
 
 use crate::server::helpers::*;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::net::UdpSocket;
+
+/// Send a SIP request and return the response.
+///
+/// This deliberately uses `tokio::net::UdpSocket` rather than the blocking
+/// `std::net::UdpSocket`: the mock Ollama server runs as a task on this test's
+/// runtime, and `#[tokio::test]` gives each test a *current-thread* runtime. A
+/// blocking `recv_from` therefore parks the only worker thread, the mocked LLM
+/// can no longer answer NetGet's request, and the server never produces a
+/// response — the read then "times out" for a reason that has nothing to do
+/// with SIP.
+async fn sip_exchange(
+    client: &UdpSocket,
+    server_addr: SocketAddr,
+    request: &str,
+) -> E2EResult<String> {
+    client.send_to(request.as_bytes(), server_addr).await?;
+
+    let mut buf = vec![0u8; 65535];
+    let (len, _) = tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut buf))
+        .await
+        .map_err(|_| "Timed out waiting for SIP response")??;
+
+    Ok(String::from_utf8_lossy(&buf[..len]).to_string())
+}
 
 #[tokio::test]
-#[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
 async fn test_sip_comprehensive() -> E2EResult<()> {
-    // Single comprehensive server with scripting for all test cases
+    // Single comprehensive server covering every SIP method the test exercises.
     let prompt = r#"listen on port 0 via sip
 
 You are a SIP (Session Initiation Protocol) server implementing RFC 3261.
@@ -56,26 +67,107 @@ CAPABILITY QUERY (OPTIONS method):
 
 ACKNOWLEDGMENT (ACK method):
 - No response needed (ACK is not a request that requires response)
-
-Use scripting mode to handle all requests without LLM calls after initial setup.
 "#;
 
+    // The SDP the server answers an accepted INVITE with.
+    let sdp = "v=0\r\no=- 12345 12345 IN IP4 127.0.0.1\r\ns=Test Call\r\nc=IN IP4 127.0.0.1\r\n\
+               t=0 0\r\nm=audio 8000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n";
+
+    // One mock rule per SIP transaction: 1 startup + 8 requests = 9 LLM calls,
+    // inside the suite's 10-call budget.
+    //
+    // This used to be a single startup rule whose open_server action carried
+    // `"scripting": true`, on the assumption that the server would then answer
+    // every request from a generated script with no further LLM calls. There is
+    // no such open_server parameter — the field was silently dropped, every
+    // request went to the LLM, and with no matching rule the mock answered 500
+    // and the server sent nothing back. (Deterministic handling is configured
+    // through `event_handlers`, not a boolean.)
+    //
+    // Rules are matched in declaration order and the first match wins, so each
+    // rule below discriminates on the `from` header rather than relying on
+    // per-rule call counts.
     let config = NetGetConfig::new(prompt)
         .with_log_level("off")
         .with_mock(|mock| {
             mock
-                // Mock: Server startup with scripting
+                // Mock 1: Server startup
                 .on_instruction_containing("listen on port")
                 .and_instruction_containing("SIP")
-                .and_instruction_containing("scripting")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "SIP",
-                        "instruction": prompt,
-                        "scripting": true
+                        "instruction": prompt
                     }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: REGISTER alice -> accepted, 1 hour binding
+                .on_event("sip_register")
+                .and_event_data_contains("from", "alice")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_register", "status_code": 200, "reason_phrase": "OK", "expires": 3600}
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: REGISTER bob -> accepted, 30 minute binding
+                .on_event("sip_register")
+                .and_event_data_contains("from", "bob")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_register", "status_code": 200, "reason_phrase": "OK", "expires": 1800}
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: REGISTER charlie -> refused
+                .on_event("sip_register")
+                .and_event_data_contains("from", "charlie")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_register", "status_code": 403, "reason_phrase": "Forbidden"}
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: OPTIONS -> advertise supported methods
+                .on_event("sip_options")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "sip_options",
+                        "status_code": 200,
+                        "reason_phrase": "OK",
+                        "allow_methods": ["INVITE", "ACK", "BYE", "REGISTER", "OPTIONS"]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 6: INVITE alice->bob -> accepted with an SDP answer
+                .on_event("sip_invite")
+                .and_event_data_contains("from", "alice")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_invite", "status_code": 200, "reason_phrase": "OK", "sdp": sdp}
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 7: INVITE bob->alice -> busy
+                .on_event("sip_invite")
+                .and_event_data_contains("from", "bob")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_invite", "status_code": 486, "reason_phrase": "Busy Here"}
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 8: INVITE from an unregistered user -> refused
+                .on_event("sip_invite")
+                .and_event_data_contains("from", "charlie")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_invite", "status_code": 403, "reason_phrase": "Forbidden"}
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 9: BYE -> acknowledge teardown
+                .on_event("sip_bye")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "sip_bye", "status_code": 200, "reason_phrase": "OK"}
                 ]))
                 .expect_calls(1)
                 .and()
@@ -91,25 +183,16 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
         .expect("Failed to parse server address");
 
     // Create UDP client socket
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind client socket");
 
     println!("✓ SIP server started on {}", server_addr);
 
     // Test 1: REGISTER alice (should succeed)
     println!("\n[Test 1] REGISTER alice@localhost");
     let register_alice = build_sip_register("alice@localhost", "alice", &server_addr);
-    client
-        .send_to(register_alice.as_bytes(), server_addr)
-        .expect("Failed to send REGISTER");
-
-    let mut buf = vec![0u8; 65535];
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive REGISTER response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &register_alice).await?;
     println!("Response:\n{}", response);
     assert!(
         response.contains("SIP/2.0 200"),
@@ -121,14 +204,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 2: REGISTER bob (should succeed)
     println!("\n[Test 2] REGISTER bob@localhost");
     let register_bob = build_sip_register("bob@localhost", "bob", &server_addr);
-    client
-        .send_to(register_bob.as_bytes(), server_addr)
-        .expect("Failed to send REGISTER");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive REGISTER response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &register_bob).await?;
     println!("Response:\n{}", response);
     assert!(response.contains("SIP/2.0 200"), "Expected 200 OK for bob");
     println!("✓ bob registered successfully");
@@ -136,14 +212,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 3: REGISTER unknown user (should be rejected)
     println!("\n[Test 3] REGISTER charlie@localhost (should be rejected)");
     let register_charlie = build_sip_register("charlie@localhost", "charlie", &server_addr);
-    client
-        .send_to(register_charlie.as_bytes(), server_addr)
-        .expect("Failed to send REGISTER");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive REGISTER response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &register_charlie).await?;
     println!("Response:\n{}", response);
     assert!(
         response.contains("SIP/2.0 403"),
@@ -154,14 +223,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 4: OPTIONS query
     println!("\n[Test 4] OPTIONS query");
     let options = build_sip_options(&server_addr);
-    client
-        .send_to(options.as_bytes(), server_addr)
-        .expect("Failed to send OPTIONS");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive OPTIONS response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &options).await?;
     println!("Response:\n{}", response);
     assert!(
         response.contains("SIP/2.0 200"),
@@ -176,14 +238,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 5: INVITE alice→bob (should accept)
     println!("\n[Test 5] INVITE from alice to bob (should accept)");
     let invite_alice_to_bob = build_sip_invite("alice", "bob", &server_addr, "call-123");
-    client
-        .send_to(invite_alice_to_bob.as_bytes(), server_addr)
-        .expect("Failed to send INVITE");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive INVITE response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &invite_alice_to_bob).await?;
     println!("Response:\n{}", response);
     assert!(
         response.contains("SIP/2.0 200"),
@@ -202,14 +257,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 6: BYE to terminate call
     println!("\n[Test 6] BYE to terminate call");
     let bye = build_sip_bye("alice", "bob", &server_addr, "call-123");
-    client
-        .send_to(bye.as_bytes(), server_addr)
-        .expect("Failed to send BYE");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive BYE response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &bye).await?;
     println!("Response:\n{}", response);
     assert!(response.contains("SIP/2.0 200"), "Expected 200 OK for BYE");
     println!("✓ BYE call termination successful");
@@ -217,14 +265,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 7: INVITE bob→alice (should reject with Busy)
     println!("\n[Test 7] INVITE from bob to alice (should reject)");
     let invite_bob_to_alice = build_sip_invite("bob", "alice", &server_addr, "call-456");
-    client
-        .send_to(invite_bob_to_alice.as_bytes(), server_addr)
-        .expect("Failed to send INVITE");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive INVITE response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &invite_bob_to_alice).await?;
     println!("Response:\n{}", response);
     assert!(
         response.contains("SIP/2.0 486") || response.contains("Busy"),
@@ -235,14 +276,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 8: INVITE from unknown user (should reject)
     println!("\n[Test 8] INVITE from charlie to bob (should reject)");
     let invite_charlie_to_bob = build_sip_invite("charlie", "bob", &server_addr, "call-789");
-    client
-        .send_to(invite_charlie_to_bob.as_bytes(), server_addr)
-        .expect("Failed to send INVITE");
-
-    let (len, _) = client
-        .recv_from(&mut buf)
-        .expect("Failed to receive INVITE response");
-    let response = String::from_utf8_lossy(&buf[..len]);
+    let response = sip_exchange(&client, server_addr, &invite_charlie_to_bob).await?;
     println!("Response:\n{}", response);
     assert!(
         response.contains("SIP/2.0 403"),
