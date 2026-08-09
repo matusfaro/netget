@@ -111,6 +111,24 @@ The LLM has full control over the BLE GATT server:
 }
 ```
 
+> **macOS caveat — `initial_value` on a non-read-only characteristic is ignored.**
+> The example above is the common case and it is *not* portable as written. CoreBluetooth's
+> `-[CBMutableCharacteristic initWithType:properties:value:permissions:]` raises
+> `NSInvalidArgumentException` when a cached value is combined with anything beyond read-only
+> properties and permissions — and that Objective-C exception crosses the FFI boundary, where Rust
+> cannot catch it, and **aborts the whole process** ("fatal runtime error: Rust cannot catch
+> foreign exceptions"). `ble-peripheral-rust` notes the same constraint in its CoreBluetooth
+> backend (`peripheral_manager.rs:205`) but does not enforce it.
+>
+> `execute_add_service` therefore drops the cached value on Apple targets when the characteristic
+> is not strictly read-only, and logs a WARN. Nothing is lost: reads are answered through the
+> `bluetooth_read_request` → `respond_to_read` path, never from that cache. Linux/BlueZ and
+> Windows/WinRT are unaffected (the guard is `#[cfg(target_vendor = "apple")]`).
+>
+> To carry an initial value on macOS, declare the characteristic read-only
+> (`"properties": ["read"]`, `"permissions": ["readable"]`); otherwise supply the value via
+> `respond_to_read` or `send_notification`.
+
 #### 2. Service Management (Async Actions)
 
 - **add_service**: Create new GATT service with characteristics
@@ -354,9 +372,16 @@ Full specifications: https://www.bluetooth.com/specifications/assigned-numbers/
 
 **macOS**:
 
+- Verified working on macOS 26 / Apple Silicon: adapter powers on, services register, advertising
+  starts, and all three `tests/server/bluetooth_ble` e2e tests pass. See `MACOS_SUPPORT.md` at the
+  repo root for the commands and evidence.
+- The `libdbus` dependency in the root `CLAUDE.md` table is Linux-only — macOS links
+  `CoreBluetooth.framework` and needs no installed package.
+- A cached `initial_value` is only legal on a read-only characteristic; see the caveat above.
 - Production apps require .app bundle with Info.plist
 - Development may need manual permission grants
-- CoreBluetooth restrictions apply
+- Note `tests/server/bluetooth_ble/e2e_test.rs` is gated on **both** `bluetooth-ble` and
+  `bluetooth-ble-client`; building with only the former silently runs zero tests.
 
 **Linux**:
 
@@ -396,6 +421,12 @@ Full specifications: https://www.bluetooth.com/specifications/assigned-numbers/
 - Basic advertising only (device name, service UUIDs)
 - No manufacturer data customization
 - No beacon protocols (iBeacon, Eddystone) in v0.2
+
+`start_advertising(name, uuids)` takes a local name and a service-UUID list and nothing else, so
+iBeacon (manufacturer data) and Eddystone (service data) are both inexpressible. **0.2.0 is the
+newest release** — only 0.1.0 and 0.2.0 have ever been published, the latest on 2024-12-28 — so
+this is an upstream limit, not a version lag, and `bluetooth_ble_beacon` stays `Incomplete` until
+the crate gains an advertising-payload API or is replaced.
 
 ## Error Handling
 

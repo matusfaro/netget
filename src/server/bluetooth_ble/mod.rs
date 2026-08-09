@@ -341,15 +341,53 @@ impl BluetoothBle {
                 },
             );
 
+            // `mut` is only used by the Apple-specific guard below.
+            #[allow(unused_mut)]
+            let mut cached_value = if initial_value.is_empty() {
+                None
+            } else {
+                Some(initial_value)
+            };
+
+            // CoreBluetooth (macOS/iOS) raises NSInvalidArgumentException from
+            // -[CBMutableCharacteristic initWithType:properties:value:permissions:] when a
+            // cached value is combined with anything other than read-only properties and
+            // permissions. That Objective-C exception crosses the FFI boundary and aborts the
+            // whole process ("fatal runtime error: Rust cannot catch foreign exceptions"), so it
+            // cannot be caught or reported - it must be avoided. ble-peripheral-rust documents
+            // the same constraint in its CoreBluetooth backend (peripheral_manager.rs:205).
+            //
+            // Dropping the cached value costs nothing: reads are served through the
+            // bluetooth_read_request -> respond_to_read event path, never from this cache.
+            #[cfg(target_vendor = "apple")]
+            if cached_value.is_some() {
+                let read_only = properties
+                    .iter()
+                    .all(|p| matches!(p, CharacteristicProperty::Read))
+                    && permissions
+                        .iter()
+                        .all(|p| matches!(p, AttributePermission::Readable));
+                if !read_only {
+                    warn!(
+                        "CoreBluetooth: ignoring initial_value on characteristic {} - a cached \
+                         value is only legal on a read-only characteristic. Reads are answered \
+                         via bluetooth_read_request instead.",
+                        char_uuid_str
+                    );
+                    let _ = status_tx.send(format!(
+                        "[WARN] BLE {}: initial_value ignored (macOS allows a cached value only \
+                         on read-only characteristics); reads are answered by the LLM",
+                        char_uuid_str
+                    ));
+                    cached_value = None;
+                }
+            }
+
             characteristics.push(Characteristic {
                 uuid: char_uuid,
                 properties,
                 permissions,
-                value: if initial_value.is_empty() {
-                    None
-                } else {
-                    Some(initial_value)
-                },
+                value: cached_value,
                 descriptors: Vec::new(), // TODO: support descriptors if needed
             });
         }
