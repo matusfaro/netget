@@ -198,11 +198,27 @@ impl Fido2HidHandler {
 }
 
 #[cfg(feature = "usb-fido2")]
+/// Opaque on purpose.
+///
+/// `usbip::UsbInterfaceHandler` requires `Debug` as of 0.9. Deriving it would pull the CTAPHID,
+/// U2F and CTAP2 handlers into the output, and those hold credential and key material for a
+/// security key -- exactly the thing that must not reach a log line. The type name alone
+/// satisfies the bound and says nothing it should not.
+#[cfg(feature = "usb-fido2")]
+impl std::fmt::Debug for Fido2HidHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Fido2HidHandler { .. }")
+    }
+}
+
 impl usbip::UsbInterfaceHandler for Fido2HidHandler {
     fn handle_urb(
         &mut self,
         _interface: &usbip::UsbInterface,
         endpoint: usbip::UsbEndpoint,
+        // usbip 0.9 passes the host's declared transfer length. CTAPHID frames are a fixed
+        // 64 bytes, so this handler derives its lengths from the frame and not from here.
+        _transfer_buffer_length: u32,
         setup: usbip::SetupPacket,
         data: &[u8],
     ) -> std::result::Result<Vec<u8>, std::io::Error> {
@@ -389,7 +405,7 @@ impl UsbFido2Server {
                 0x03, // HID class
                 0x00, // No subclass
                 0x00, // No protocol
-                "NetGet FIDO2 Security Key",
+                Some("NetGet FIDO2 Security Key"),
                 vec![
                     usbip::UsbEndpoint {
                         address: 0x81,       // EP1 IN (interrupt)
@@ -418,7 +434,8 @@ impl UsbFido2Server {
 
         // Spawn USB/IP protocol server (creates its own TCP listener)
         tokio::spawn(async move {
-            usbip::server(listen_addr, server).await;
+            // usbip 0.9 takes the server by Arc so it can be shared across connections.
+            usbip::server(listen_addr, std::sync::Arc::new(server)).await;
             debug!("USB/IP server task completed for FIDO2");
         });
 

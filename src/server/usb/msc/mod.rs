@@ -263,7 +263,7 @@ impl UsbMscServer {
                 0x08, // Mass Storage Class
                 0x06, // SCSI Transparent Command Set
                 0x50, // Bulk-Only Transport
-                "NetGet Virtual Disk",
+                Some("NetGet Virtual Disk"),
                 vec![
                     usbip::UsbEndpoint {
                         address: 0x81,        // EP1 IN (Bulk)
@@ -287,7 +287,8 @@ impl UsbMscServer {
         // Create and spawn USB/IP server (not wrapped in Arc - usbip::server takes ownership)
         let server = usbip::UsbIpServer::new_simulated(vec![device]);
         tokio::spawn(async move {
-            usbip::server(usbip_addr, server).await;
+            // usbip 0.9 takes the server by Arc so it can be shared across connections.
+            usbip::server(usbip_addr, std::sync::Arc::new(server)).await;
             debug!("USB/IP server task completed for MSC connection");
         });
 

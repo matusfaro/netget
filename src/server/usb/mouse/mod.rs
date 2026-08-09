@@ -6,6 +6,9 @@
 
 pub mod actions;
 
+#[cfg(feature = "usb-mouse")]
+pub mod handler;
+
 // Re-export protocol struct for registration
 #[cfg(feature = "usb-mouse")]
 pub use actions::UsbMouseProtocol;

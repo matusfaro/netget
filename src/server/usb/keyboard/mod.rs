@@ -34,7 +34,7 @@ use crate::server::connection::ConnectionId;
 #[cfg(feature = "usb-keyboard")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-keyboard")]
-use actions::USB_KEYBOARD_ATTACHED_EVENT;
+use actions::{USB_KEYBOARD_ATTACHED_EVENT, USB_KEYBOARD_DETACHED_EVENT};
 
 /// Connection state for LLM processing
 #[cfg(feature = "usb-keyboard")]
@@ -164,7 +164,7 @@ impl UsbKeyboardServer {
     /// The server handles USB/IP protocol operations and integrates with LLM actions.
     #[allow(clippy::too_many_arguments)]
     async fn handle_connection(
-        _stream: tokio::net::TcpStream,
+        mut stream: tokio::net::TcpStream,
         connection_id: ConnectionId,
         remote_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -178,6 +178,8 @@ impl UsbKeyboardServer {
             "USB keyboard connection {} from {} - device ready for USB/IP import",
             connection_id, remote_addr
         );
+
+        let local_addr = stream.local_addr().unwrap_or(remote_addr);
 
         // Initialize connection data
         connections.lock().await.insert(
@@ -196,14 +198,14 @@ impl UsbKeyboardServer {
             as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
         // Store handler in protocol for action execution
-        protocol.set_handler(connection_id, handler.clone()).await;
+        protocol.set_handler(connection_id, handler.clone());
 
         // Create USB device with HID keyboard interface
         let device = usbip::UsbDevice::new(0).with_interface(
             usbip::ClassCode::HID as u8,
             0x00, // Subclass: no subclass
             0x00, // Protocol: none
-            "NetGet Virtual Keyboard",
+            Some("NetGet Virtual Keyboard"),
             vec![usbip::UsbEndpoint {
                 address: 0x81,         // EP1 IN (interrupt)
                 attributes: 0x03,      // Interrupt transfer
@@ -213,43 +215,37 @@ impl UsbKeyboardServer {
             handler.clone(),
         );
 
-        // Create USB/IP server (not wrapped in Arc - usbip::server takes ownership)
-        let server = usbip::UsbIpServer::new_simulated(vec![device]);
-
-        // Get a unique address for this USB/IP device server
-        // We bind to port 3240 (standard USB/IP port) on the remote address
-        let usbip_addr = SocketAddr::new(remote_addr.ip(), 3240);
+        let usbip_server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
 
         info!(
-            "Starting USB/IP server for keyboard on {} (connection {})",
-            usbip_addr, connection_id
+            "USB keyboard device ready for connection {} from {}",
+            connection_id, remote_addr
         );
         let _ = status_tx.send(format!(
-            "USB keyboard device starting on {} - will be ready for: sudo usbip attach -r {} -b 1-1",
-            usbip_addr, usbip_addr
+            "USB keyboard ready on {} - run: sudo usbip attach -r {} -b 0-0-0",
+            local_addr,
+            local_addr.ip()
         ));
 
-        // Spawn USB/IP protocol server
-        let connection_id_clone = connection_id;
-        tokio::spawn(async move {
-            usbip::server(usbip_addr, server).await;
-            debug!(
-                "USB/IP server task completed for keyboard connection {}",
-                connection_id_clone
-            );
+        // Drive the USB/IP protocol on the socket we already accepted.
+        //
+        // This deliberately does not call `usbip::server()`: that binds a *second*
+        // listener, which forced a hardcoded port (3240) and limited the protocol to one
+        // instance per host. `usbip::handler` speaks the same protocol over an existing
+        // socket, so the netget listener is the USB/IP listener and the port is whatever
+        // the caller asked for.
+        let usbip_task = tokio::spawn(async move {
+            match usbip::handler(&mut stream, usbip_server).await {
+                Ok(()) => debug!(
+                    "USB/IP session ended for keyboard connection {}",
+                    connection_id
+                ),
+                Err(e) => debug!(
+                    "USB/IP session for keyboard connection {} ended with error: {}",
+                    connection_id, e
+                ),
+            }
         });
-
-        // Wait a moment for server to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        info!(
-            "USB keyboard device ready on {} (connection {})",
-            usbip_addr, connection_id
-        );
-        let _ = status_tx.send(format!(
-            "USB keyboard ready - run: sudo usbip list -r {} && sudo usbip attach -r {} -b 1-1",
-            usbip_addr, usbip_addr
-        ));
 
         // Call LLM on device attach
         if let Err(e) = Self::call_llm_on_attach(
@@ -269,9 +265,92 @@ impl UsbKeyboardServer {
             );
         }
 
-        // Keep connection alive - the USB/IP protocol runs independently
-        // The handler will process URBs from the client
-        tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;
+        // Block until the USB/IP session ends (host detached, or socket closed).
+        let _ = usbip_task.await;
+
+        info!(
+            "USB keyboard host detached on connection {} from {}",
+            connection_id, remote_addr
+        );
+
+        // Call LLM on device detach
+        if let Err(e) = Self::call_llm_on_detach(
+            connection_id,
+            &llm_client,
+            &app_state,
+            &connections,
+            &protocol,
+            server_id,
+        )
+        .await
+        {
+            error!(
+                "Failed to call LLM on keyboard detach for connection {}: {}",
+                connection_id, e
+            );
+        }
+
+        // The USB/IP session owned this handler; drop it so a later connection with the
+        // same id cannot reach a dead device.
+        protocol.remove_handler(connection_id);
+        connections.lock().await.remove(&connection_id);
+
+        Ok(())
+    }
+
+    /// Call LLM when the USB/IP host detaches.
+    ///
+    /// `usb_keyboard_detached` is declared `with_no_actions()`, so the model's vocabulary
+    /// here is the common action set (`show_message`, memory operations); there is no
+    /// wire left to write to.
+    async fn call_llm_on_detach(
+        connection_id: ConnectionId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        protocol: &Arc<crate::server::usb::keyboard::UsbKeyboardProtocol>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        {
+            let mut conns = connections.lock().await;
+            if let Some(conn_data) = conns.get_mut(&connection_id) {
+                conn_data.state = ConnectionState::Processing;
+            }
+        }
+
+        let event = Event::new(
+            &USB_KEYBOARD_DETACHED_EVENT,
+            serde_json::json!({
+                "connection_id": connection_id.to_string(),
+            }),
+        );
+
+        let result = call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await;
+
+        if let Err(e) = &result {
+            error!(
+                "LLM call failed for USB keyboard detach on connection {}: {}",
+                connection_id, e
+            );
+        } else {
+            info!(
+                "USB keyboard detach LLM call completed for connection {}",
+                connection_id
+            );
+        }
+
+        let mut conns = connections.lock().await;
+        if let Some(conn_data) = conns.get_mut(&connection_id) {
+            conn_data.state = ConnectionState::Idle;
+        }
 
         Ok(())
     }

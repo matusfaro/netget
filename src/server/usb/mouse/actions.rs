@@ -160,12 +160,12 @@ impl Protocol for UsbMouseProtocol {
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
             .implementation("Virtual USB HID mouse device using USB/IP protocol")
             .llm_control("LLM controls mouse movement, clicks, and scrolling")
             .e2e_testing("E2E tests using Linux usbip client")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("NON-FUNCTIONAL. The connection handler is a stub: its own log says it is not yet functional, waiting for usbip crate mouse support, because usbip 0.3.1 has no UsbHidMouseHandler. No USB/IP device is ever served.")
+            .notes("Virtual USB HID mouse over USB/IP. A hand-written UsbInterfaceHandler (handler.rs) supplies the HID report descriptor and 4-byte reports, because usbip 0.9 still ships no UsbHidMouseHandler. The tokio 0.3 reactor panic that made this unusable is gone since the usbip 0.9 upgrade (verified: zero 'no reactor running' panics). Not yet exercised against a real Linux usbip client.")
             .build()
     }
 

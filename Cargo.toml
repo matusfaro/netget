@@ -893,7 +893,7 @@ ndef-rs = { version = "0.2", optional = true }
 nusb = { version = "0.1", optional = true }
 
 # USB/IP protocol for virtual USB device creation
-usbip = { version = "0.3", optional = true }
+usbip = { version = "0.9", optional = true }
 
 # Memory-mapped file I/O for USB MSC disk images
 memmap2 = { version = "0.9", optional = true }

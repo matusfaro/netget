@@ -124,8 +124,13 @@ pub struct UsbKeyboardProtocol {
     #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP keyboard handlers for each connection
+    ///
+    /// A `std::sync::Mutex`, deliberately: `execute_action` is a *sync* trait method that is
+    /// called from inside the tokio runtime, and `tokio::sync::Mutex::blocking_lock` panics
+    /// with "Cannot block the current thread from within a runtime" when it is. The guard is
+    /// only ever held across a `HashMap` lookup, never across an `.await`.
     handlers: Arc<
-        Mutex<
+        std::sync::Mutex<
             HashMap<
                 ConnectionId,
                 Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
@@ -146,26 +151,61 @@ impl UsbKeyboardProtocol {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
-            handlers: Arc::new(Mutex::new(HashMap::new())),
+            handlers: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
     /// Store the USB/IP keyboard handler for a connection
-    pub async fn set_handler(
+    pub fn set_handler(
         &self,
         connection_id: ConnectionId,
         handler: Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
     ) {
-        self.handlers.lock().await.insert(connection_id, handler);
+        if let Ok(mut handlers) = self.handlers.lock() {
+            handlers.insert(connection_id, handler);
+        }
+    }
+
+    /// Drop the USB/IP keyboard handler for a connection that has detached
+    pub fn remove_handler(&self, connection_id: ConnectionId) {
+        if let Ok(mut handlers) = self.handlers.lock() {
+            handlers.remove(&connection_id);
+        }
     }
 
     /// Get the USB/IP keyboard handler for a connection
-    #[allow(dead_code)]
-    async fn get_handler(
+    fn get_handler(
         &self,
         connection_id: ConnectionId,
     ) -> Option<Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>> {
-        self.handlers.lock().await.get(&connection_id).cloned()
+        self.handlers
+            .lock()
+            .ok()
+            .and_then(|handlers| handlers.get(&connection_id).cloned())
+    }
+
+    /// Queue a HID report on the connection's keyboard handler.
+    ///
+    /// Returns an error if the connection has no live USB/IP session.
+    fn queue_reports(
+        &self,
+        connection_id: ConnectionId,
+        reports: Vec<usbip::hid::UsbHidKeyboardReport>,
+    ) -> Result<()> {
+        let handler = self
+            .get_handler(connection_id)
+            .context("No USB keyboard handler found for connection")?;
+        let mut handler_guard = handler
+            .lock()
+            .map_err(|_| anyhow::anyhow!("USB keyboard handler mutex poisoned"))?;
+        let hid = handler_guard
+            .as_any()
+            .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
+            .context("Handler is not a USB HID keyboard handler")?;
+        for report in reports {
+            hid.pending_key_events.push_back(report);
+        }
+        Ok(())
     }
 }
 
@@ -212,12 +252,12 @@ impl Protocol for UsbKeyboardProtocol {
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
             .implementation("Virtual USB HID keyboard device using USB/IP protocol")
             .llm_control("LLM controls keyboard input (typing, key presses, combinations)")
-            .e2e_testing("E2E tests using Linux usbip client")
+            .e2e_testing("Mocked E2E over the USB/IP socket; real HID typing needs a Linux usbip client")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("NON-FUNCTIONAL. usbip 0.3.1 depends on tokio 0.3, so usbip::server() calls the tokio 0.3 TcpListener::bind from the tokio 1.x runtime netget runs on, and panics with 'there is no reactor running' on every attach. The task is detached, so the panic is swallowed and the server still reports Running. Verified 2026-08-09. Also hardcodes USB/IP port 3240, so only one instance can exist per host.")
+            .notes("USB/IP runs on the accepted socket via usbip::handler (usbip 0.9, tokio 1.x), so the listen port is whatever the caller asks for and multiple instances can coexist. usb_keyboard_attached and usb_keyboard_detached are both emitted. press_key_combo is accepted but is a no-op, and press_key/type_text only cover ASCII that usbip's UsbHidKeyboardReport::from_ascii maps (a-z, A-Z, 0-9, space, enter) -- anything else is silently dropped or panics in the crate. usb_keyboard_led_status is declared but never emitted: the crate's UsbHidKeyboardHandler discards HID output reports.")
             .build()
     }
 
@@ -305,126 +345,319 @@ impl Server for UsbKeyboardProtocol {
             .as_str()
             .context("Action must have 'type' field")?;
 
+        if action_type == "wait_for_more" {
+            return Ok(ActionResult::WaitForMore);
+        }
+
         // Extract connection_id from action JSON
         let connection_id = action["connection_id"]
             .as_u64()
             .map(|id| ConnectionId::new(id as u32))
             .context("USB keyboard actions require connection_id field in action")?;
 
-        // Get handler (need to use blocking approach since execute_action is sync)
-        let handler = {
-            let handlers = self.handlers.blocking_lock();
-            handlers
-                .get(&connection_id)
-                .cloned()
-                .context("No USB keyboard handler found for connection")?
-        };
-
         match action_type {
             "type_text" => {
                 let text = action["text"]
                     .as_str()
                     .context("type_text requires 'text' field")?;
-                let typing_speed_ms = action["typing_speed_ms"].as_u64().unwrap_or(50);
 
-                // Queue keyboard events for each character
-                let mut handler_guard = handler.lock().unwrap();
-                if let Some(hid) = handler_guard
-                    .as_any()
-                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
-                {
-                    for ch in text.chars() {
-                        if ch.is_ascii() {
-                            let report = usbip::hid::UsbHidKeyboardReport::from_ascii(ch as u8);
-                            hid.pending_key_events.push_back(report);
-                            // Sleep between characters for natural typing
-                            if typing_speed_ms > 0 {
-                                std::thread::sleep(std::time::Duration::from_millis(
-                                    typing_speed_ms,
-                                ));
-                            }
-                        }
+                let mut reports = Vec::with_capacity(text.len());
+                let mut unsupported: Vec<char> = Vec::new();
+                for ch in text.chars() {
+                    match ascii_to_hid(ch) {
+                        Some((modifier, key)) => reports.push(usbip::hid::UsbHidKeyboardReport {
+                            modifier,
+                            keys: [key, 0, 0, 0, 0, 0],
+                        }),
+                        None => unsupported.push(ch),
                     }
-                    tracing::info!(
-                        "Queued {} keyboard events for connection {}",
-                        text.len(),
-                        connection_id
-                    );
-                    Ok(ActionResult::NoAction)
-                } else {
-                    Err(anyhow::anyhow!("Handler is not a USB HID keyboard handler"))
                 }
+
+                if !unsupported.is_empty() {
+                    // Refuse rather than silently type a different string. The model asked
+                    // for characters this HID report layout (US, unshifted+shift only)
+                    // cannot produce, and a partial send is indistinguishable from success.
+                    return Err(anyhow::anyhow!(
+                        "type_text cannot produce these characters on a US HID keyboard: {:?}",
+                        unsupported
+                    ));
+                }
+
+                let count = reports.len();
+                let typing_speed_ms = action["typing_speed_ms"].as_u64().unwrap_or(0);
+
+                if count == 0 {
+                    return Err(anyhow::anyhow!("type_text requires non-empty 'text'"));
+                }
+
+                if typing_speed_ms == 0 {
+                    self.queue_reports(connection_id, reports)?;
+                } else {
+                    // Pace the reports on a task rather than sleeping here: `execute_action`
+                    // is sync and runs on a runtime worker, so a `thread::sleep` (what this
+                    // used to do) blocks that worker for text.len() * typing_speed_ms.
+                    // Queue the first report synchronously so a missing handler is still
+                    // reported as an error to the model.
+                    let mut rest = reports;
+                    let first = rest.remove(0);
+                    self.queue_reports(connection_id, vec![first])?;
+
+                    let handlers = self.handlers.clone();
+                    tokio::runtime::Handle::current().spawn(async move {
+                        for report in rest {
+                            tokio::time::sleep(std::time::Duration::from_millis(typing_speed_ms))
+                                .await;
+                            let handler = handlers
+                                .lock()
+                                .ok()
+                                .and_then(|h| h.get(&connection_id).cloned());
+                            let Some(handler) = handler else {
+                                tracing::debug!(
+                                    "USB keyboard connection {} detached mid-type_text",
+                                    connection_id
+                                );
+                                return;
+                            };
+                            if let Ok(mut guard) = handler.lock() {
+                                if let Some(hid) = guard
+                                    .as_any()
+                                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
+                                {
+                                    hid.pending_key_events.push_back(report);
+                                }
+                            };
+                        }
+                    });
+                }
+
+                tracing::info!(
+                    "Queued {} keyboard reports for connection {} (speed {}ms)",
+                    count,
+                    connection_id,
+                    typing_speed_ms
+                );
+                Ok(ActionResult::NoAction)
             }
             "press_key" => {
                 let key = action["key"]
                     .as_str()
                     .context("press_key requires 'key' field")?;
-                let _modifiers: Vec<String> = action["modifiers"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
 
-                // Convert key to ASCII and send
-                let mut handler_guard = handler.lock().unwrap();
-                if let Some(hid) = handler_guard
-                    .as_any()
-                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
-                {
-                    if key.len() == 1 && key.is_ascii() {
-                        let report =
-                            usbip::hid::UsbHidKeyboardReport::from_ascii(key.as_bytes()[0]);
-                        hid.pending_key_events.push_back(report);
-                        tracing::info!(
-                            "Queued key press '{}' for connection {}",
-                            key,
-                            connection_id
-                        );
-                        Ok(ActionResult::NoAction)
-                    } else {
-                        Err(anyhow::anyhow!("Unsupported key: {}", key))
+                let (mut modifier, keycode) =
+                    key_name_to_hid(key).with_context(|| format!("Unsupported key: {}", key))?;
+
+                if let Some(arr) = action["modifiers"].as_array() {
+                    for m in arr.iter().filter_map(|v| v.as_str()) {
+                        modifier |= modifier_name_to_bit(m)
+                            .with_context(|| format!("Unsupported modifier: {}", m))?;
                     }
-                } else {
-                    Err(anyhow::anyhow!("Handler is not a USB HID keyboard handler"))
                 }
+
+                self.queue_reports(
+                    connection_id,
+                    vec![usbip::hid::UsbHidKeyboardReport {
+                        modifier,
+                        keys: [keycode, 0, 0, 0, 0, 0],
+                    }],
+                )?;
+                tracing::info!(
+                    "Queued key press '{}' (modifier={:#04x}) for connection {}",
+                    key,
+                    modifier,
+                    connection_id
+                );
+                Ok(ActionResult::NoAction)
             }
             "press_key_combo" => {
-                let _keys = action["keys"]
+                let names = action["keys"]
                     .as_array()
                     .context("press_key_combo requires 'keys' array")?
                     .iter()
                     .filter_map(|v| v.as_str())
-                    .map(|s| s.to_string())
                     .collect::<Vec<_>>();
-                // TODO: Implement key combination via USB/IP
-                // This requires building a custom HID report with multiple keys pressed
-                tracing::warn!("press_key_combo not yet implemented for USB keyboard");
+
+                // Split the list into modifiers (folded into the report's modifier byte) and
+                // ordinary keys (up to the 6 slots a boot-protocol report carries).
+                let mut modifier = 0u8;
+                let mut keys = [0u8; 6];
+                let mut n = 0usize;
+                for name in &names {
+                    if let Some(bit) = modifier_name_to_bit(name) {
+                        modifier |= bit;
+                        continue;
+                    }
+                    let (extra_mod, keycode) = key_name_to_hid(name)
+                        .with_context(|| format!("Unsupported key in combo: {}", name))?;
+                    if n >= keys.len() {
+                        return Err(anyhow::anyhow!(
+                            "press_key_combo supports at most {} non-modifier keys, got {}",
+                            keys.len(),
+                            names.len()
+                        ));
+                    }
+                    modifier |= extra_mod;
+                    keys[n] = keycode;
+                    n += 1;
+                }
+
+                if modifier == 0 && n == 0 {
+                    return Err(anyhow::anyhow!("press_key_combo requires at least one key"));
+                }
+
+                self.queue_reports(
+                    connection_id,
+                    vec![usbip::hid::UsbHidKeyboardReport { modifier, keys }],
+                )?;
+                tracing::info!(
+                    "Queued key combo {:?} (modifier={:#04x}) for connection {}",
+                    names,
+                    modifier,
+                    connection_id
+                );
                 Ok(ActionResult::NoAction)
             }
             "release_all_keys" => {
-                // Send empty report (all keys released)
-                let mut handler_guard = handler.lock().unwrap();
-                if let Some(hid) = handler_guard
-                    .as_any()
-                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
-                {
-                    // Create empty report (all zeros)
-                    let empty_report = usbip::hid::UsbHidKeyboardReport::from_ascii(0);
-                    hid.pending_key_events.push_back(empty_report);
-                    tracing::info!("Released all keys for connection {}", connection_id);
-                    Ok(ActionResult::NoAction)
-                } else {
-                    Err(anyhow::anyhow!("Handler is not a USB HID keyboard handler"))
-                }
+                // An all-zero report is the HID "nothing is pressed" state.
+                self.queue_reports(
+                    connection_id,
+                    vec![usbip::hid::UsbHidKeyboardReport {
+                        modifier: 0,
+                        keys: [0; 6],
+                    }],
+                )?;
+                tracing::info!("Released all keys for connection {}", connection_id);
+                Ok(ActionResult::NoAction)
             }
-            "wait_for_more" => Ok(ActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
         }
     }
+}
+
+// HID keycode mapping (USB HID Usage Tables 1.12, Keyboard/Keypad page 0x07)
+//
+// This deliberately does not use `usbip::hid::UsbHidKeyboardReport::from_ascii`: that helper
+// calls `unimplemented!()` for any character outside a-z/A-Z/0-9/space/newline, so a single
+// '!' in `type_text` -- or `release_all_keys`, which used to pass 0 -- panicked the action
+// executor.
+
+/// Modifier bits in byte 0 of a boot-protocol keyboard report.
+#[cfg(feature = "usb-keyboard")]
+mod modifier_bit {
+    pub const LEFT_CTRL: u8 = 0x01;
+    pub const LEFT_SHIFT: u8 = 0x02;
+    pub const LEFT_ALT: u8 = 0x04;
+    pub const LEFT_GUI: u8 = 0x08;
+}
+
+/// Map a modifier name the LLM may use to its report bit.
+#[cfg(feature = "usb-keyboard")]
+fn modifier_name_to_bit(name: &str) -> Option<u8> {
+    match name.to_ascii_lowercase().as_str() {
+        "ctrl" | "control" => Some(modifier_bit::LEFT_CTRL),
+        "shift" => Some(modifier_bit::LEFT_SHIFT),
+        "alt" | "option" => Some(modifier_bit::LEFT_ALT),
+        "gui" | "meta" | "super" | "win" | "windows" | "cmd" | "command" => {
+            Some(modifier_bit::LEFT_GUI)
+        }
+        _ => None,
+    }
+}
+
+/// Map a printable ASCII character to `(modifier, keycode)`.
+#[cfg(feature = "usb-keyboard")]
+fn ascii_to_hid(c: char) -> Option<(u8, u8)> {
+    const SHIFT: u8 = modifier_bit::LEFT_SHIFT;
+    Some(match c {
+        'a'..='z' => (0, c as u8 - b'a' + 0x04),
+        'A'..='Z' => (SHIFT, c as u8 - b'A' + 0x04),
+        '1'..='9' => (0, c as u8 - b'1' + 0x1E),
+        '0' => (0, 0x27),
+        '\n' | '\r' => (0, 0x28),
+        '\t' => (0, 0x2B),
+        ' ' => (0, 0x2C),
+        '-' => (0, 0x2D),
+        '=' => (0, 0x2E),
+        '[' => (0, 0x2F),
+        ']' => (0, 0x30),
+        '\\' => (0, 0x31),
+        ';' => (0, 0x33),
+        '\'' => (0, 0x34),
+        '`' => (0, 0x35),
+        ',' => (0, 0x36),
+        '.' => (0, 0x37),
+        '/' => (0, 0x38),
+        '!' => (SHIFT, 0x1E),
+        '@' => (SHIFT, 0x1F),
+        '#' => (SHIFT, 0x20),
+        '$' => (SHIFT, 0x21),
+        '%' => (SHIFT, 0x22),
+        '^' => (SHIFT, 0x23),
+        '&' => (SHIFT, 0x24),
+        '*' => (SHIFT, 0x25),
+        '(' => (SHIFT, 0x26),
+        ')' => (SHIFT, 0x27),
+        '_' => (SHIFT, 0x2D),
+        '+' => (SHIFT, 0x2E),
+        '{' => (SHIFT, 0x2F),
+        '}' => (SHIFT, 0x30),
+        '|' => (SHIFT, 0x31),
+        ':' => (SHIFT, 0x33),
+        '"' => (SHIFT, 0x34),
+        '~' => (SHIFT, 0x35),
+        '<' => (SHIFT, 0x36),
+        '>' => (SHIFT, 0x37),
+        '?' => (SHIFT, 0x38),
+        _ => return None,
+    })
+}
+
+/// Map a key name (a single character, or a named key like `enter` / `f5` / `up`) to
+/// `(modifier, keycode)`.
+#[cfg(feature = "usb-keyboard")]
+fn key_name_to_hid(name: &str) -> Option<(u8, u8)> {
+    let mut chars = name.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        if let Some(mapped) = ascii_to_hid(c) {
+            return Some(mapped);
+        }
+    }
+
+    let keycode = match name.to_ascii_lowercase().as_str() {
+        "enter" | "return" => 0x28,
+        "esc" | "escape" => 0x29,
+        "backspace" => 0x2A,
+        "tab" => 0x2B,
+        "space" | "spacebar" => 0x2C,
+        "capslock" | "caps_lock" => 0x39,
+        "f1" => 0x3A,
+        "f2" => 0x3B,
+        "f3" => 0x3C,
+        "f4" => 0x3D,
+        "f5" => 0x3E,
+        "f6" => 0x3F,
+        "f7" => 0x40,
+        "f8" => 0x41,
+        "f9" => 0x42,
+        "f10" => 0x43,
+        "f11" => 0x44,
+        "f12" => 0x45,
+        "printscreen" | "print_screen" => 0x46,
+        "scrolllock" | "scroll_lock" => 0x47,
+        "pause" => 0x48,
+        "insert" => 0x49,
+        "home" => 0x4A,
+        "pageup" | "page_up" => 0x4B,
+        "delete" | "del" => 0x4C,
+        "end" => 0x4D,
+        "pagedown" | "page_down" => 0x4E,
+        "right" | "rightarrow" | "arrow_right" => 0x4F,
+        "left" | "leftarrow" | "arrow_left" => 0x50,
+        "down" | "downarrow" | "arrow_down" => 0x51,
+        "up" | "uparrow" | "arrow_up" => 0x52,
+        "numlock" | "num_lock" => 0x53,
+        _ => return None,
+    };
+    Some((0, keycode))
 }
 
 // Action definitions
@@ -444,7 +677,9 @@ fn type_text_action() -> ActionDefinition {
             Parameter {
                 name: "typing_speed_ms".to_string(),
                 type_hint: "number".to_string(),
-                description: "Delay between keypresses in milliseconds (default: 50ms)".to_string(),
+                description: "Delay between keypresses in milliseconds (default: 0, meaning all \
+                              keystrokes are queued at once)"
+                    .to_string(),
                 required: false,
             },
         ],

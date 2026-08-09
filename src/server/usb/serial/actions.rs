@@ -234,7 +234,7 @@ impl Protocol for UsbSerialProtocol {
             .llm_control("LLM controls serial data transmission and line parameters")
             .e2e_testing("E2E tests using Linux usbip client and /dev/ttyACM0")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("NON-FUNCTIONAL. The connection handler body is a single error! log reading 'placeholder - full USB/IP integration needed'. It never calls call_llm, so all three of its events are unreachable.")
+            .notes("NON-FUNCTIONAL, but no longer for the old reason. The tokio 0.3 reactor panic is fixed by the usbip 0.9 upgrade; what remains is that the connection handler body is still a single error! log reading 'placeholder - full USB/IP integration needed' and it never calls call_llm, so all three usb_serial_* events are unreachable. usbip 0.9 now ships UsbCdcAcmHandler in cdc.rs, so this is implementable -- it just has not been implemented.")
             .build()
     }
     fn description(&self) -> &'static str {

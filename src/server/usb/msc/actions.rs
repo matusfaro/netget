@@ -273,12 +273,12 @@ impl Protocol for UsbMscProtocol {
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         crate::protocol::metadata::ProtocolMetadataV2::builder()
-            .state(crate::protocol::metadata::DevelopmentState::Incomplete)
+            .state(crate::protocol::metadata::DevelopmentState::Experimental)
             .implementation("Virtual USB Mass Storage device using USB/IP protocol")
             .llm_control("LLM controls virtual disk (mount, eject, write-protect)")
             .e2e_testing("E2E tests pending full SCSI implementation")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("NON-FUNCTIONAL. Same tokio 0.3 versus tokio 1.x reactor panic as usb-keyboard: the usbip 0.3.1 server panics on every attach and the detached task hides it. It also binds the client ephemeral address rather than a listening one.")
+            .notes("Virtual USB mass storage over USB/IP, BOT plus a SCSI-2 subset served from a disk image. The tokio 0.3 reactor panic is gone since the usbip 0.9 upgrade (verified: zero 'no reactor running' panics). Storage is a disk image file on the host, which sits awkwardly with the no-storage rule; an LLM-driven file mode is the intended direction. Not yet exercised against a real Linux usbip client.")
             .build()
     }
 

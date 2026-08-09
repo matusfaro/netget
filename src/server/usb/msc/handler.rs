@@ -19,7 +19,12 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
 
 /// USB Mass Storage Class handler implementing BOT protocol
+///
+/// `Debug` is required by `usbip::UsbInterfaceHandler` as of 0.9. Derived rather than
+/// hand-written: none of the fields is a secret, and the disk image behind the `RwLock`
+/// prints as a handle, not as its contents.
 #[cfg(feature = "usb-msc")]
+#[derive(Debug)]
 pub struct UsbMscHandler {
     /// Virtual disk image backend
     disk_image: Arc<RwLock<DiskImage>>,
@@ -381,6 +386,9 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
         &mut self,
         _interface: &usbip::UsbInterface,
         endpoint: usbip::UsbEndpoint,
+        // usbip 0.9 passes the host's declared transfer length. The BOT state machine
+        // derives its own lengths from the CBW, so this is informational here.
+        _transfer_buffer_length: u32,
         setup: usbip::SetupPacket,
         data: &[u8],
     ) -> std::result::Result<Vec<u8>, std::io::Error> {

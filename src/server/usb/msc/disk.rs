@@ -16,6 +16,7 @@ use tracing::{debug, info, trace};
 
 /// Virtual disk image with memory-mapped I/O
 #[cfg(feature = "usb-msc")]
+#[derive(Debug)]
 pub struct DiskImage {
     /// Memory-mapped file for fast sector access
     mmap: MmapMut,
