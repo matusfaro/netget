@@ -109,7 +109,12 @@ async fn start_server_with_task(
     )
     .await;
     let text = text_of(&started);
-    assert_ne!(started.is_error, Some(true), "start_server errored: {}", text);
+    assert_ne!(
+        started.is_error,
+        Some(true),
+        "start_server errored: {}",
+        text
+    );
 
     ServerId::new(parse_number_after(&text, "Server #") as u32)
 }

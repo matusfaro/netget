@@ -1020,14 +1020,7 @@ impl EventHandler {
                                 "feedback_instructions": feedback_instructions_clone,
                             });
 
-                            // Extract parameter name from error message if possible
-                            let parameter_name = if error_msg.contains("instruction") {
-                                "event_handlers[].handler.instruction"
-                            } else if error_msg.contains("event_handlers") {
-                                "event_handlers"
-                            } else {
-                                "unknown"
-                            };
+                            let parameter_name = event_handler_parameter_name(&error_msg);
 
                             return Err(ActionExecutionError::InvalidActionParameters {
                                 action_type: "open_server".to_string(),
@@ -1369,6 +1362,50 @@ impl EventHandler {
                 let feedback_instructions_clone = feedback_instructions.clone();
                 let initial_memory_clone = initial_memory.clone();
 
+                // Parse the event-handler configuration *before* the client is registered.
+                //
+                // Parsing rejects unknown action names, unknown handler types and malformed
+                // `{{event.…}}` references — all of them things the model gets wrong — so this
+                // is a routinely reachable failure, not a theoretical one. It used to run
+                // after `add_client`, which meant every rejection left an orphan client row
+                // behind in `Connecting`, exactly the way undeclared startup parameters used
+                // to leave an orphan server. Validate first, register nothing on failure.
+                let parsed_event_handlers = match event_handlers {
+                    Some(handlers_json) => match Self::parse_event_handlers(handlers_json) {
+                        Ok(config) => Some(config),
+                        Err(e) => {
+                            // Build the original action JSON for reference
+                            let original_action = serde_json::json!({
+                                "type": "open_client",
+                                "protocol": protocol,
+                                "remote_addr": remote_addr,
+                                "instruction": instruction,
+                                "startup_params": startup_params,
+                                "initial_memory": initial_memory_clone,
+                                "event_handlers": event_handlers_clone,
+                                "scheduled_tasks": scheduled_tasks,
+                                "feedback_instructions": feedback_instructions_clone,
+                            });
+
+                            let error_msg = e.to_string();
+
+                            // Return error instead of just warning - invalid config should fail
+                            let _ = status_tx.send(format!(
+                                "[ERROR] Invalid event handler configuration: {}",
+                                error_msg
+                            ));
+                            return Err(ActionExecutionError::InvalidActionParameters {
+                                action_type: "open_client".to_string(),
+                                parameter_name: event_handler_parameter_name(&error_msg)
+                                    .to_string(),
+                                error_message: error_msg,
+                                original_action,
+                            });
+                        }
+                    },
+                    None => None,
+                };
+
                 // Create client instance with temporary ID (add_client will assign real ID)
                 let mut client = ClientInstance::new(
                     crate::state::ClientId::new(0),
@@ -1387,55 +1424,14 @@ impl EventHandler {
                 // Add client to state (this allocates the real client ID)
                 let client_id = self.state.add_client(client).await;
 
-                // Parse event handlers if provided
-                if let Some(handlers_json) = event_handlers {
-                    match Self::parse_event_handlers(handlers_json) {
-                        Ok(config) => {
-                            self.state
-                                .set_client_event_handler_config(client_id, Some(config))
-                                .await;
-                            let _ = status_tx.send(
-                                "[INFO] Event handler configuration applied to client".to_string(),
-                            );
-                        }
-                        Err(e) => {
-                            // Build the original action JSON for reference
-                            let original_action = serde_json::json!({
-                                "type": "open_client",
-                                "protocol": protocol,
-                                "remote_addr": remote_addr,
-                                "instruction": instruction,
-                                "startup_params": startup_params,
-                                "initial_memory": initial_memory_clone,
-                                "event_handlers": event_handlers_clone,
-                                "scheduled_tasks": scheduled_tasks,
-                                "feedback_instructions": feedback_instructions_clone,
-                            });
-
-                            let error_msg = e.to_string();
-
-                            // Extract parameter name from error message
-                            let parameter_name = if error_msg.contains("instruction") {
-                                "event_handlers[].handler.instruction"
-                            } else if error_msg.contains("event_handlers") {
-                                "event_handlers"
-                            } else {
-                                "unknown"
-                            };
-
-                            // Return error instead of just warning - invalid config should fail
-                            let _ = status_tx.send(format!(
-                                "[ERROR] Invalid event handler configuration: {}",
-                                error_msg
-                            ));
-                            return Err(ActionExecutionError::InvalidActionParameters {
-                                action_type: "open_client".to_string(),
-                                parameter_name: parameter_name.to_string(),
-                                error_message: error_msg,
-                                original_action,
-                            });
-                        }
-                    }
+                // Apply the configuration parsed above. Parsing already happened, before
+                // `add_client`, so a rejected configuration cannot leave an orphan client.
+                if let Some(config) = parsed_event_handlers {
+                    self.state
+                        .set_client_event_handler_config(client_id, Some(config))
+                        .await;
+                    let _ = status_tx
+                        .send("[INFO] Event handler configuration applied to client".to_string());
                 }
 
                 let _ = status_tx.send(format!(
@@ -2677,6 +2673,22 @@ where
 /// Protocols are matched by the events they declare: a pattern of `tcp_data_received`
 /// resolves to TCP alone and yields TCP's catalog; a wildcard pattern matches every
 /// protocol and yields the union. Both server and client registries are consulted because
+/// Name the `open_server` / `open_client` parameter an event-handler parse error refers to.
+///
+/// The error surfaces to the model inside `InvalidActionParameters`, whose whole value is
+/// telling it *which* field to correct. This mapping was written out inline at both call
+/// sites; identical logic in two places drifts, and the two paths must name the same field
+/// for the same failure or the model is taught that the two actions differ when they do not.
+fn event_handler_parameter_name(error_msg: &str) -> &'static str {
+    if error_msg.contains("instruction") {
+        "event_handlers[].handler.instruction"
+    } else if error_msg.contains("event_handlers") {
+        "event_handlers"
+    } else {
+        "unknown"
+    }
+}
+
 /// `parse_event_handlers` serves `start_server` and `start_client` alike.
 ///
 /// If no compiled protocol declares a matching event (an event id we do not know about),
