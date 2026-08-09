@@ -40,7 +40,6 @@ mod whois_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_whois_basic_query() -> E2EResult<()> {
         let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via whois")
             .with_log_level("info")
@@ -100,7 +99,6 @@ mod whois_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_whois_error_response() -> E2EResult<()> {
         let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via whois")
             .with_log_level("info")
@@ -154,7 +152,6 @@ mod whois_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_whois_multiple_queries() -> E2EResult<()> {
         let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via whois")
             .with_log_level("info")
@@ -240,7 +237,6 @@ mod whois_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_whois_connection_stats() -> E2EResult<()> {
         // Verifies connection tracking indirectly via the server's debug log,
         // since AppState connection introspection is not part of the black-box

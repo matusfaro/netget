@@ -1,20 +1,14 @@
-// BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-// mandatory "read documentation before open_server" retry
-// (src/events/handler.rs:809 is_server_docs_read() gate; retry prompt in
-// src/events/errors.rs:201-218) forces a second LLM round-trip whose
-// synthetic prompt ("...you must first read the documentation... provide the
-// action again...") no longer contains the original instruction text, so the
-// mock harness's on_instruction_containing(...) rule never matches and the
-// call fails with "NO RULE MATCHED" (or, once that round is worked around
-// with an extra mock rule as attempted below, a related bug surfaces where a
-// legitimate protocol-specific sync action like send_svn_greeting is
-// rejected as "unknown action" on the post-doc-read turn). This is a
-// repo-wide regression, not specific to this protocol: the doc-read-retry
-// failure reproduces deterministically on the untouched, previously-stable
-// tests/server/tcp/test.rs::test_simple_echo. Fixing it needs changes to
-// src/events/handler.rs and/or src/llm/conversation.rs (action-list scoping
-// after a forced retry) and/or tests/helpers/mock_builder.rs / mock_matcher.rs,
-// all out of scope here.
+// These were all `#[ignore]`d for a documentation-read retry that no longer happens.
+//
+// `REQUIRE_DOCS_FOR_OPEN_ACTIONS` (src/events/handler.rs) is a compile-time `false`, and every
+// `DocumentationRequired` path is behind it, so the forced second round-trip whose synthetic
+// prompt dropped the original instruction — the thing that made these unmockable — is gone.
+// Four of the five passed unchanged once the ignore was lifted; the fifth failed only because
+// it still carried a mock rule for the retry, which now never matches.
+//
+// Lesson worth keeping: an `#[ignore]` citing a defect elsewhere goes stale silently when that
+// defect is fixed, and nothing re-checks it. Re-run ignored tests with `--include-ignored`
+// after landing an infrastructure fix.
 #[cfg(all(test, feature = "svn"))]
 mod svn_e2e_test {
     use crate::helpers::{E2EResult, NetGetConfig};
@@ -55,7 +49,6 @@ mod svn_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_svn_greeting() -> E2EResult<()> {
         println!("\n=== E2E Test: SVN Greeting with Mocks ===");
 
@@ -66,20 +59,6 @@ mod svn_e2e_test {
                     // Mock 1: Server startup
                     .on_instruction_containing("Listen on port")
                     .and_instruction_containing("SVN")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SVN",
-                            "instruction": "SVN server with protocol greeting"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 1b: mandatory documentation-read retry (see src/events/handler.rs
-                    // is_server_docs_read gate). The framework forces a second LLM round-trip
-                    // confirming the same action after injecting protocol docs.
-                    .on_instruction_containing("provide the action again")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -144,7 +123,6 @@ mod svn_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_svn_get_latest_rev() -> E2EResult<()> {
         println!("\n=== E2E Test: SVN Get Latest Revision with Mocks ===");
 
@@ -221,7 +199,6 @@ mod svn_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_svn_get_dir() -> E2EResult<()> {
         println!("\n=== E2E Test: SVN Get Directory Listing with Mocks ===");
 
@@ -293,7 +270,6 @@ mod svn_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_svn_error_response() -> E2EResult<()> {
         println!("\n=== E2E Test: SVN Error Response with Mocks ===");
 
@@ -363,7 +339,6 @@ mod svn_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "BLOCKED: repo-wide LLM mock-harness regression in the open_server doc-read retry flow, reproduces even on tests/server/tcp (untouched, unrelated protocol) -- see file header comment"]
     async fn test_svn_connection_stats() -> E2EResult<()> {
         // Verifies connection tracking indirectly via the server's debug log,
         // since AppState connection introspection is not part of the black-box
