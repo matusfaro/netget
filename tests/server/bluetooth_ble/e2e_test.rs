@@ -74,7 +74,23 @@ async fn find_peripheral_by_name(
 }
 
 #[tokio::test]
-#[ignore = "Crashes on some platforms due to ble-peripheral-rust v0.2 native library issues. Run manually with --ignored if you have a working BLE adapter."]
+// Ignored by default because these claim the machine's single Bluetooth adapter, not because
+// they are broken. Under the project's standard --test-threads=100 all three contend for the
+// adapter and every one times out at the 120s startup limit; serialised they pass in ~37s:
+//
+//   cargo test --no-default-features --features bluetooth-ble,bluetooth-ble-client \
+//       --test server -- --test-threads=1 --include-ignored bluetooth
+//
+// Verified passing that way on macOS (CoreBluetooth), twice. Note a std::sync::Mutex guard is
+// NOT a substitute for --test-threads=1 here -- it serialises them and they still time out.
+//
+// The previous reason -- "crashes on some platforms due to ble-peripheral-rust v0.2 native
+// library issues" -- described a real process abort that is now FIXED (8ca1ad8b). CoreBluetooth
+// raised NSInvalidArgumentException when a characteristic carried a cached value alongside
+// non-read-only properties; that Objective-C exception crossed the FFI boundary and killed the
+// process, and it was reachable from the protocol's own documented example. Confirmed fixed by
+// reverting the fix and watching the abort return.
+#[ignore = "Claims the single BLE adapter: run with --test-threads=1 --include-ignored. Not broken."]
 async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Heart Rate Server ===");
     println!("NOTE: This test requires a real Bluetooth adapter");
@@ -253,7 +269,23 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
 }
 
 #[tokio::test]
-#[ignore = "Crashes on some platforms due to ble-peripheral-rust v0.2 native library issues. Run manually with --ignored if you have a working BLE adapter."]
+// Ignored by default because these claim the machine's single Bluetooth adapter, not because
+// they are broken. Under the project's standard --test-threads=100 all three contend for the
+// adapter and every one times out at the 120s startup limit; serialised they pass in ~37s:
+//
+//   cargo test --no-default-features --features bluetooth-ble,bluetooth-ble-client \
+//       --test server -- --test-threads=1 --include-ignored bluetooth
+//
+// Verified passing that way on macOS (CoreBluetooth), twice. Note a std::sync::Mutex guard is
+// NOT a substitute for --test-threads=1 here -- it serialises them and they still time out.
+//
+// The previous reason -- "crashes on some platforms due to ble-peripheral-rust v0.2 native
+// library issues" -- described a real process abort that is now FIXED (8ca1ad8b). CoreBluetooth
+// raised NSInvalidArgumentException when a characteristic carried a cached value alongside
+// non-read-only properties; that Objective-C exception crossed the FFI boundary and killed the
+// process, and it was reachable from the protocol's own documented example. Confirmed fixed by
+// reverting the fix and watching the abort return.
+#[ignore = "Claims the single BLE adapter: run with --test-threads=1 --include-ignored. Not broken."]
 async fn test_bluetooth_battery_service() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Battery Service ===");
 
