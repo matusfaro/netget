@@ -674,6 +674,14 @@ impl EventHandler {
         available_actions.extend(get_all_tool_actions(web_search_mode));
         available_actions.extend(protocol_async_actions);
 
+        // Narrow to what the prompt actually advertises before this list is used as the native
+        // tool schema and as the retry-correction catalogue. The prompt builder applies
+        // filter_actions_by_scripting_mode to what it renders; handing the unfiltered list to
+        // with_native_tools offered the model script parameters the prose told it do not exist,
+        // and validated its reply against a superset of what it was shown.
+        let available_actions =
+            PromptBuilder::advertised_user_input_actions(&self.state, available_actions).await;
+
         // Get or create persistent conversation state
         let conversation_state = self.state.get_or_create_user_conversation_state().await;
 

@@ -959,6 +959,27 @@ Understand what the user wants and respond with the appropriate actions to make 
         Self::filter_actions_by_scripting_mode(all_actions, has_scripting)
     }
 
+    /// The exact list of actions a **user-input** prompt advertises, given the assembled list.
+    ///
+    /// The sibling of [`Self::advertised_network_event_actions`], and it exists for the same
+    /// reason: `build_user_input_system_prompt_with_docs` renders
+    /// [`Self::filter_actions_by_scripting_mode`]'s output, so a caller that hands its own
+    /// pre-filter list to `with_native_tools` — or validates the model's reply against it —
+    /// offers and accepts actions the prompt never showed. With scripting Off that means
+    /// advertising `open_server`'s script parameters in the tool schema while the prose says
+    /// they do not exist.
+    ///
+    /// Permissive rather than broken, but it is the same divergence that made the feedback
+    /// loop unable to succeed, so it is worth closing at the source instead of per call site.
+    pub async fn advertised_user_input_actions(
+        state: &AppState,
+        all_actions: Vec<ActionDefinition>,
+    ) -> Vec<ActionDefinition> {
+        let selected_mode = state.get_selected_scripting_mode().await;
+        let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Off;
+        Self::filter_actions_by_scripting_mode(all_actions, has_scripting)
+    }
+
     /// Build a network-event system prompt and return the actions it advertises.
     ///
     /// The second element is what the caller must validate the model's response against and
