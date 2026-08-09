@@ -11,45 +11,61 @@ Findings marked **[static]** come from code reading only.
 
 ## START HERE — what to do next
 
-This file is now four sections: **START HERE** (here), **Fixed** (an index of what landed and
-where the reasoning lives), **Open** (genuinely outstanding work), and **Archive** (full text of
-fixed items and recorded findings, kept because the reasoning is worth finding again).
+Four sections: **START HERE** (here), **Fixed** (index of what landed and where the reasoning
+lives), **Open** (genuinely outstanding), **Archive** (full text of fixed items and recorded
+findings, kept because the reasoning is worth finding again).
 
-It previously listed 48 open items. Fifteen of those were already fixed with no record, and
-seventeen were historical findings rather than work. That drift is why the counts below come
-with the commands that derive them — do not trust a number in a document over the tree.
+Do not trust a count in this file over the tree; derive it. This document once listed 48 open
+items when fifteen were already fixed and seventeen were findings rather than work.
 
-**Open work is 16 sections**, and several are decisions rather than defects. In rough order of
-value:
+### Still open
 
-1. **Items 7 and 29/50** — event-handler action names are accepted at startup and silently do
-   nothing at runtime; `REQUIRE_DOCS_FOR_OPEN_ACTIONS` is dead config that looks live.
-2. **Item 9** — MCP `stop_server`/`stop_all` skip `cleanup_server_tasks()`, so scheduled tasks
-   outlive their server and keep firing.
-3. **Items 47 and 76** — tests that pass while the protocol is broken: NTP catches the client's
-   failure and asserts nothing; nfs/ipp/vnc/webdav assert only that a socket opened.
-4. **Item 16** — no circuit breaker on the LLM backend. With Ollama down, every request pays
-   the full retry/backoff. `is_available()` exists and nothing calls it.
-5. **Item 32** — several call sites pass the unfiltered action list to the validator while the
-   prompt builder filters it, so the validator accepts a superset of what the model was told.
-6. **Item 39** — the `open_server` documentation gate forces a second round-trip whose prompt
-   drops the original instruction, which is what makes mocked tests fragile.
-7. **Item 48** — auditing library panics reachable from the wire is a standing practice, not a
-   discrete fix. Eleven were found this way.
-8. **Item 23** — architectural ceilings (`AppState` as one `RwLock`). Long-term, not a defect.
+Almost everything mechanical is done. What remains is mostly judgement, not typing:
 
-### The pattern worth auditing for
+1. **Item 16 — no circuit breaker on the LLM backend.** With Ollama down, every request pays
+   the full retry/backoff independently, so N connections burn N retry budgets against a
+   backend already known to be down. `is_available()` exists and nothing calls it.
+2. **Item 48 — auditing library panics reachable from the wire** is a standing practice, not a
+   discrete fix. Eleven were found this way; `pgwire` (item 77) is the open one and is upstream.
+3. **Item 23 — architectural ceilings.** `AppState` is one `RwLock` over everything. A
+   throughput ceiling, not a defect.
+4. **Item 35 — the `easy` layer** is a parallel subsystem serving one protocol. A design
+   question: finish it or delete it.
+5. **USB emit sites.** Five USB protocols are now `Incomplete` because `usbip 0.3.1` needs
+   tokio 0.3 and its server panics on every attach. Reviving them means replacing or forking
+   that crate — worth deciding before anyone writes more USB code.
 
-Three separate defects this session were the same shape: **a mechanism fully built and wired,
-with nothing flowing through it.** `get_dependencies()` was called from two places with every
-protocol inheriting an empty default; `PrivilegeRequirement::PacketCapture` was defined with a
-doc comment naming its three protocols and adopted by none of them; `EventType.actions` was
-rendered into every prompt with 22 events attaching nothing.
+### Decisions that are the maintainer's
 
-All three had passing tests, because the tests asserted the machinery worked in isolation and
-never asserted anyone used it — one names ARP in its failure message while never touching ARP.
-When adding a guard, assert **adoption**, not just mechanism. Searching for this shape directly
-found more real bugs than walking this list in order did.
+- **`--llm-agent`** (`bdc11148`, 871 lines) built by an agent scoped to something narrower.
+  Works and is tested, but nobody chose it. `git revert -m 1 bdc11148` removes it cleanly.
+- **`http3` → `quic` rename** — reasoning in `src/server/http3/CLAUDE.md`.
+- **Item 54 — ARP/DataLink/IS-IS absent from the Linux `dist`.** Not a defect: `a38ffab9`
+  deliberately made pcap optional so the released Linux binary does not require libpcap at
+  runtime for users who never touch those three. macOS ships libpcap; Linux does not. Shipping
+  them means either that dependency for everyone or a second Linux artifact.
+
+### Patterns worth auditing for
+
+**A mechanism fully built and wired, with nothing flowing through it.** Three bugs this session:
+`get_dependencies()` called from two places with every protocol inheriting an empty default;
+`PrivilegeRequirement::PacketCapture` defined with a doc comment naming its three protocols and
+adopted by none; `EventType.actions` rendered into every prompt with 22 events attaching
+nothing. All three had passing tests that checked the machinery and never checked adoption —
+one names ARP in its failure message while never touching ARP. **Assert adoption, not
+mechanism.**
+
+**A test that cannot fail.** An assertion-free body, a swallowed error, a capability check that
+returns `Ok(())` when the capability is missing, an async call without `.await`. These count as
+passing coverage, which is worse than no coverage because it is counted.
+
+**An `#[ignore]` citing a defect elsewhere.** It goes stale silently when that defect is fixed
+and nothing re-checks it. 43 tests were parked on one such reason. Run `--include-ignored`
+after landing an infrastructure fix.
+
+**Measurement under load.** The suite has a 120s server-startup timeout and the first run for a
+feature set rebuilds `target/debug/netget`, so a loaded machine produces false failures. One run
+here reported 31 failures where the same commit idle reported 0. Never conclude from one run.
 
 ## Fixed
 
@@ -58,6 +74,19 @@ Delete an entry once its context is no longer useful.
 
 | Item | Commit | What landed |
 |---|---|---|
+| 7 — unknown action names silent | (earlier) | `validate_static_action_names` rejects a bogus action at startup |
+| 9 — MCP scheduled-task leak | `82034d3d` | `remove_server()` owns teardown; MCP-surface coverage added so a rewrite cannot silently drop it |
+| 29/50 — dead documentation gate | (earlier) | One gate remains, behind a documented compile-time `false`; the second is gone |
+| 32 — validator accepted a superset | `272acbc0` | `advertised_user_input_actions()` narrows to what the prompt rendered, mirroring the network-event path |
+| 39 — doc gate broke mocked tests | (earlier) | The retry no longer fires; 35 tests recovered from the `#[ignore]` it caused |
+| 47 — tests passing while broken | `1b7f26e5`, `180c01ac`, `f0c7e42c` | NTP now requires the client to succeed; three assertion-free tests no longer count as coverage; the FIDO2 test awaits the future it was only constructing |
+| 76 — transport-level-only asserts | `1e989ba5` | nfs/ipp/vnc/webdav decode and assert real protocol output |
+| — 43 stale blanket `#[ignore]`s | `025ff3f5`, `2e3c8fbc`, `8009299b` | svn/whois/USB/bitcoin/sip/tls running; arp/igmp ignored for the real privilege reason |
+| — USB family non-functional | `2eed8ed9` | usbip 0.3.1 needs tokio 0.3; its server panics on every attach. Five protocols demoted to Incomplete |
+| — DNS client tests flaky | `8f670500` | Ran against 8.8.8.8; now a local server. Three identical runs had given 1, 2 and 3 passes |
+| — live-internet test ungated | `7dc810cc` | web_search gated behind `NETGET_USE_NETWORK` |
+| — src/ test-policy violation | `9f1aade0` | 32 unit tests moved to `tests/`; `grep -rln '#\[cfg(test)\]' src/` is now empty |
+| 20b — startup ignored dependencies | `353a03fd` | Non-privilege deps enforced at startup; gRPC declares its runtime `protoc` so the gate is not decorative |
 | 8 — verified fixed | (earlier) | ARP/DataLink/ICMP now await readiness via a oneshot and propagate bind failure, so a capture failure reports Error not Running |
 | 14 — verified fixed | (earlier) | `read_documentation` is in TOOL_ACTION_NAMES; is_tool() no longer misreports it |
 | 15 — verified fixed | (earlier) | `ConversationHandler::trim_history` exists and is called; history no longer grows unbounded |
