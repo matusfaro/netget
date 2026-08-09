@@ -1,20 +1,39 @@
 //! ZooKeeper server implementation.
 //!
-//! # INCOMPLETE — read before using
+//! # Session lifecycle
 //!
-//! This server is marked [`DevelopmentState::Incomplete`] and is hidden from the LLM. It
-//! parses the ZooKeeper request header and hands the fields to a handler, but it does not
-//! implement the session handshake: a client's opening `ConnectRequest` (protocol version,
-//! last zxid seen, timeout, session id, password) has no xid and no opcode, so it is misread
-//! here as an ordinary request, and the `ConnectResponse` a client waits for is never sent.
-//! No real ZooKeeper client can get a session out of it.
+//! A ZooKeeper connection starts with a `ConnectRequest`, which carries **neither an xid nor
+//! an opcode**:
 //!
-//! The reply body is also left to the model as hand-encoded Jute hex, which violates the
-//! project's no-bytes rule and which no model does reliably.
+//! ```text
+//! [4 len][4 protocolVersion][8 lastZxidSeen][4 timeOut][8 sessionId][4 len][16 passwd][1 readOnly?]
+//! ```
 //!
-//! See `src/server/zookeeper/CLAUDE.md` for the route back to `Experimental`.
+//! It is therefore parsed separately from every later frame, and answered with a
+//! `ConnectResponse` (`protocolVersion, timeOut, sessionId, passwd[, readOnly]`). Until that
+//! reply lands, a real client blocks and never issues a request — which is exactly why every
+//! opcode below used to be dead code.
 //!
-//! [`DevelopmentState::Incomplete`]: crate::protocol::metadata::DevelopmentState::Incomplete
+//! The handshake is **answered in Rust and deliberately does not call the LLM**. It carries no
+//! content decision (it is timeout negotiation and an opaque session id), and routing it
+//! through the model would mean a model outage or a refusal could not be told apart from a
+//! successful session — the fail-open shape this project treats as its most dangerous pattern.
+//! Pings (opcode 11) and `closeSession` (opcode -11) are answered in Rust for the same reason:
+//! a real ZooKeeper answers them itself, and an idle session must not burn one LLM call per
+//! ping interval to stay alive.
+//!
+//! Everything a *handler* can decide — the reply body for `getData`, `getChildren`, `exists`,
+//! `create`, and the error code for any of them — still goes through `call_llm` and the
+//! protocol's actions.
+//!
+//! # No session state
+//!
+//! The server keeps no session table (see the no-storage rule in the root `CLAUDE.md`). A
+//! client that presents a non-zero `sessionId` is taken at its word and that id is echoed back
+//! along with the password it presented, so a reconnect resumes rather than being reported as
+//! expired. Nothing is ever expired, because nothing is ever tracked.
+//!
+//! See `src/server/zookeeper/CLAUDE.md` for the remaining limitations.
 
 pub mod actions;
 
@@ -77,15 +96,6 @@ impl ZookeeperServer {
             "[INFO] ZooKeeper server listening on {}",
             actual_addr
         ));
-        warn!(
-            "ZooKeeper server is INCOMPLETE: no session handshake is implemented, so a real \
-             ZooKeeper client cannot establish a session. See src/server/zookeeper/CLAUDE.md."
-        );
-        let _ = status_tx.send(
-            "[WARN] ZooKeeper is INCOMPLETE: no session handshake, no real client can connect"
-                .to_string(),
-        );
-
         let server = Arc::new(ZookeeperServer::new(
             llm_client,
             app_state.clone(),
@@ -216,6 +226,10 @@ impl ZookeeperServer {
 
         debug!("ZooKeeper connection {} established", connection_id);
 
+        // A session exists only after the ConnectRequest/ConnectResponse exchange. Until then
+        // the next frame is *not* a request header and must not be parsed as one.
+        let mut session: Option<ZookeeperSession> = None;
+
         loop {
             // Read ZooKeeper request header (4 bytes length + payload)
             let mut len_buf = [0u8; 4];
@@ -254,8 +268,69 @@ impl ZookeeperServer {
                 len
             );
 
+            // The first frame on a connection is the session handshake, not a request.
+            if session.is_none() {
+                let connect = match Self::parse_connect_request(&payload) {
+                    Ok(connect) => connect,
+                    Err(e) => {
+                        // Refuse rather than guess. Treating an unrecognised opening frame as a
+                        // request header is precisely the bug this replaced: it turned every
+                        // connect into `operation: "unknown"` and left the client waiting for a
+                        // ConnectResponse that never came.
+                        warn!(
+                            "ZooKeeper connection {}: first frame is not a ConnectRequest ({}); \
+                             closing",
+                            connection_id, e
+                        );
+                        return Err(e);
+                    }
+                };
+
+                let established = ZookeeperSession::negotiate(&connect, connection_id);
+                Self::write_frame(&mut write_half, &established.connect_response()).await?;
+
+                info!(
+                    "ZooKeeper connection {} session established: id={:#018x} timeout={}ms \
+                     (client asked {}ms) read_only={}",
+                    connection_id,
+                    established.session_id,
+                    established.timeout_ms,
+                    connect.timeout_ms,
+                    established.read_only,
+                );
+                session = Some(established);
+                continue;
+            }
+
             // Parse request (simplified - just extract op type)
             let request_info = Self::parse_request(&payload)?;
+
+            // Protocol mechanics the server owns; see the module docs for why these do not
+            // reach the LLM.
+            match request_info.op_code {
+                OP_PING => {
+                    trace!("ZooKeeper connection {} ping", connection_id);
+                    Self::write_frame(
+                        &mut write_half,
+                        &Self::reply(request_info.xid, 0, 0, &[]),
+                    )
+                    .await?;
+                    continue;
+                }
+                OP_CLOSE_SESSION => {
+                    debug!(
+                        "ZooKeeper connection {} closed its session on request",
+                        connection_id
+                    );
+                    Self::write_frame(
+                        &mut write_half,
+                        &Self::reply(request_info.xid, 0, 0, &[]),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
 
             // Call LLM with request event. The xid must be in the event data: it is the only
             // thing a client uses to match a reply to its request, and without it neither the
@@ -310,16 +385,8 @@ impl ZookeeperServer {
                                     .unwrap_or_default()
                                     .unwrap_or_default();
 
-                                // Reply header: xid (4) + zxid (8) + error_code (4) + body
-                                let mut response = Vec::with_capacity(16 + body.len());
-                                response.extend_from_slice(&xid.to_be_bytes());
-                                response.extend_from_slice(&zxid.to_be_bytes());
-                                response.extend_from_slice(&error_code.to_be_bytes());
-                                response.extend_from_slice(&body);
-
-                                let len_bytes = (response.len() as i32).to_be_bytes();
-                                write_half.write_all(&len_bytes).await?;
-                                write_half.write_all(&response).await?;
+                                let response = Self::reply(xid, zxid, error_code, &body);
+                                Self::write_frame(&mut write_half, &response).await?;
 
                                 trace!(
                                     "ZooKeeper sent {} bytes to connection {} (xid={})",
@@ -345,11 +412,114 @@ impl ZookeeperServer {
         Ok(())
     }
 
+    /// Write one length-prefixed ZooKeeper frame.
+    async fn write_frame<W: AsyncWriteExt + Unpin>(write_half: &mut W, body: &[u8]) -> Result<()> {
+        write_half
+            .write_all(&(body.len() as i32).to_be_bytes())
+            .await?;
+        write_half.write_all(body).await?;
+        write_half.flush().await?;
+        Ok(())
+    }
+
+    /// Build a reply body: `xid (4) + zxid (8) + error code (4) + operation-specific body`.
+    fn reply(xid: i32, zxid: i64, error_code: i32, body: &[u8]) -> Vec<u8> {
+        let mut response = Vec::with_capacity(16 + body.len());
+        response.extend_from_slice(&xid.to_be_bytes());
+        response.extend_from_slice(&zxid.to_be_bytes());
+        response.extend_from_slice(&error_code.to_be_bytes());
+        response.extend_from_slice(body);
+        response
+    }
+
+    /// Parse the opening `ConnectRequest`.
+    ///
+    /// ```text
+    /// protocolVersion i32 | lastZxidSeen i64 | timeOut i32 | sessionId i64
+    /// passwd  (i32 length, always 16, followed by that many bytes)
+    /// readOnly u8   (optional — pre-3.4 clients omit it)
+    /// ```
+    ///
+    /// Validation is deliberately strict. The shape is distinctive (`protocolVersion` is 0 and
+    /// the password buffer is exactly 16 bytes), so a frame that fails these checks is not a
+    /// ZooKeeper client and gets a closed connection rather than a reply it cannot use.
+    fn parse_connect_request(payload: &[u8]) -> Result<ZookeeperConnectRequest> {
+        if payload.len() < CONNECT_REQUEST_LEN {
+            return Err(anyhow::anyhow!(
+                "ConnectRequest too short: {} bytes (expected at least {})",
+                payload.len(),
+                CONNECT_REQUEST_LEN
+            ));
+        }
+        if payload.len() > CONNECT_REQUEST_LEN + 1 {
+            return Err(anyhow::anyhow!(
+                "ConnectRequest too long: {} bytes (expected {} or {})",
+                payload.len(),
+                CONNECT_REQUEST_LEN,
+                CONNECT_REQUEST_LEN + 1
+            ));
+        }
+
+        let protocol_version = i32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        if protocol_version != 0 {
+            return Err(anyhow::anyhow!(
+                "unsupported ZooKeeper protocol version {}",
+                protocol_version
+            ));
+        }
+
+        let last_zxid_seen = i64::from_be_bytes([
+            payload[4],
+            payload[5],
+            payload[6],
+            payload[7],
+            payload[8],
+            payload[9],
+            payload[10],
+            payload[11],
+        ]);
+        let timeout_ms = i32::from_be_bytes([payload[12], payload[13], payload[14], payload[15]]);
+        let session_id = i64::from_be_bytes([
+            payload[16],
+            payload[17],
+            payload[18],
+            payload[19],
+            payload[20],
+            payload[21],
+            payload[22],
+            payload[23],
+        ]);
+
+        let passwd_len = i32::from_be_bytes([payload[24], payload[25], payload[26], payload[27]]);
+        if passwd_len != SESSION_PASSWD_LEN as i32 {
+            return Err(anyhow::anyhow!(
+                "ConnectRequest password length is {} (expected {})",
+                passwd_len,
+                SESSION_PASSWD_LEN
+            ));
+        }
+        let passwd = payload[28..CONNECT_REQUEST_LEN].to_vec();
+
+        // Pre-3.4 clients stop here; newer ones append a readOnly flag. Which of the two it
+        // was decides whether the reply carries the flag, so it is remembered rather than
+        // defaulted.
+        let read_only = payload.get(CONNECT_REQUEST_LEN).map(|b| *b != 0);
+
+        Ok(ZookeeperConnectRequest {
+            last_zxid_seen,
+            timeout_ms,
+            session_id,
+            passwd,
+            read_only,
+        })
+    }
+
     /// Parse the ZooKeeper request header.
     ///
     /// Only the header (xid, opcode) and the leading path string are read; the rest of the
-    /// Jute-encoded body is not decoded. A `ConnectRequest` has neither an xid nor an opcode,
-    /// so it lands here as `operation: "unknown"` — see the module docs.
+    /// Jute-encoded body is not decoded. This is called only *after* the session handshake —
+    /// a `ConnectRequest` has neither an xid nor an opcode and is handled by
+    /// [`Self::parse_connect_request`].
     fn parse_request(payload: &[u8]) -> Result<ZookeeperRequest> {
         if payload.len() < 8 {
             return Ok(ZookeeperRequest {
@@ -367,6 +537,7 @@ impl ZookeeperServer {
         let op_type = i32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
 
         let operation = match op_type {
+            OP_CLOSE_SESSION => "closeSession",
             1 => "create",
             2 => "delete",
             3 => "exists",
@@ -414,9 +585,118 @@ const MIN_REQUEST_BYTES: i32 = 8;
 /// Matches ZooKeeper's own `jute.maxbuffer` default of 1 MiB.
 const MAX_REQUEST_BYTES: i32 = 1024 * 1024;
 
+/// Opcodes the server answers itself rather than handing to a handler.
+const OP_PING: i32 = 11;
+const OP_CLOSE_SESSION: i32 = -11;
+
+/// `ConnectRequest` length without the optional trailing `readOnly` byte.
+const CONNECT_REQUEST_LEN: usize = 44;
+/// ZooKeeper session passwords are always 16 bytes.
+const SESSION_PASSWD_LEN: usize = 16;
+
+/// ZooKeeper's own defaults: `minSessionTimeout = 2 * tickTime`,
+/// `maxSessionTimeout = 20 * tickTime`, with the default `tickTime` of 2000 ms.
+const MIN_SESSION_TIMEOUT_MS: i32 = 4_000;
+const MAX_SESSION_TIMEOUT_MS: i32 = 40_000;
+
 struct ZookeeperRequest {
     xid: i32,
     op_code: i32,
     operation: String,
     path: String,
+}
+
+/// The opening `ConnectRequest`, as sent by the client.
+struct ZookeeperConnectRequest {
+    #[allow(dead_code)]
+    last_zxid_seen: i64,
+    timeout_ms: i32,
+    session_id: i64,
+    passwd: Vec<u8>,
+    /// `None` when the client omitted the field (pre-3.4 wire format).
+    read_only: Option<bool>,
+}
+
+/// A negotiated session. Held for the life of the connection; nothing is stored beyond it.
+struct ZookeeperSession {
+    session_id: i64,
+    timeout_ms: i32,
+    passwd: Vec<u8>,
+    read_only: bool,
+    /// Whether the client's `ConnectRequest` carried a `readOnly` field. The reply mirrors it:
+    /// appending the byte for a client that did not send one is harmless for most clients but
+    /// is not what a real server does.
+    echo_read_only: bool,
+}
+
+impl ZookeeperSession {
+    fn negotiate(req: &ZookeeperConnectRequest, connection_id: ConnectionId) -> Self {
+        // ZooKeeper clamps the requested timeout into the server's configured range rather
+        // than rejecting it; a non-positive request gets the minimum.
+        let timeout_ms = if req.timeout_ms <= 0 {
+            MIN_SESSION_TIMEOUT_MS
+        } else {
+            req.timeout_ms.clamp(MIN_SESSION_TIMEOUT_MS, MAX_SESSION_TIMEOUT_MS)
+        };
+
+        // A client presenting a session id is resuming. There is no session table to check it
+        // against (see the module docs), so it is honoured as-is together with its password —
+        // the alternative, answering with timeout 0, tells the client its session expired,
+        // which would be a lie about state we never kept.
+        let (session_id, passwd) = if req.session_id != 0 {
+            (req.session_id, req.passwd.clone())
+        } else {
+            let id = Self::mint_session_id(connection_id);
+            (id, Self::derive_passwd(id))
+        };
+
+        Self {
+            session_id,
+            timeout_ms,
+            passwd,
+            // Read-only mode means "serve stale reads while partitioned from the quorum".
+            // There is no quorum here, so the session is always read-write.
+            read_only: false,
+            echo_read_only: req.read_only.is_some(),
+        }
+    }
+
+    /// A session id that is unique per connection and never zero (zero means "no session").
+    fn mint_session_id(connection_id: ConnectionId) -> i64 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let id = ((nanos << 16) ^ u64::from(connection_id.as_u32())) & 0x7fff_ffff_ffff_ffff;
+        if id == 0 {
+            1
+        } else {
+            id as i64
+        }
+    }
+
+    /// The 16-byte session password. Real ZooKeeper derives it from the session id with a
+    /// digest so a client cannot forge one; there is no session table here to protect, so this
+    /// only has to be stable for the session and the right length.
+    fn derive_passwd(session_id: i64) -> Vec<u8> {
+        let base = session_id.to_be_bytes();
+        let mut passwd = Vec::with_capacity(SESSION_PASSWD_LEN);
+        passwd.extend_from_slice(&base);
+        passwd.extend(base.iter().map(|b| b ^ 0x5a));
+        passwd
+    }
+
+    /// Encode the `ConnectResponse` body (the caller adds the length prefix).
+    fn connect_response(&self) -> Vec<u8> {
+        let mut body = Vec::with_capacity(4 + 4 + 8 + 4 + SESSION_PASSWD_LEN + 1);
+        body.extend_from_slice(&0i32.to_be_bytes()); // protocolVersion
+        body.extend_from_slice(&self.timeout_ms.to_be_bytes());
+        body.extend_from_slice(&self.session_id.to_be_bytes());
+        body.extend_from_slice(&(self.passwd.len() as i32).to_be_bytes());
+        body.extend_from_slice(&self.passwd);
+        if self.echo_read_only {
+            body.push(self.read_only as u8);
+        }
+        body
+    }
 }
