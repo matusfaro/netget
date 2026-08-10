@@ -12,108 +12,58 @@ Findings marked **[static]** come from code reading only.
 ## START HERE — what to do next
 
 Four sections: **START HERE** (here), **Fixed** (index of what landed and where the reasoning
-lives), **Open** (genuinely outstanding), **Archive** (full text of fixed items and recorded
-findings, kept because the reasoning is worth finding again).
+lives), **Open** (genuinely outstanding), **Archive**.
 
 Do not trust a count in this file over the tree; derive it. This document once listed 48 open
 items when fifteen were already fixed and seventeen were findings rather than work.
 
+### State
+
+`DevelopmentState::Incomplete` is down from twelve to **one**, and that one is a platform limit,
+not unfinished work — see the maturity section of `CLAUDE.md`. Test suite is **393 passed / 0
+failed / 29 ignored** on the CI feature set, clippy clean, `cargo fmt --check` clean.
+
 ### Still open
 
-Almost everything mechanical is done. What remains is mostly judgement, not typing:
-
-1. **Item 16 — no circuit breaker on the LLM backend.** With Ollama down, every request pays
-   the full retry/backoff independently, so N connections burn N retry budgets against a
-   backend already known to be down. `is_available()` exists and nothing calls it.
-2. **Item 48 — auditing library panics reachable from the wire** is a standing practice, not a
-   discrete fix. Eleven were found this way; `pgwire` (item 77) is the open one and is upstream.
-3. **Item 23 — architectural ceilings.** `AppState` is one `RwLock` over everything. A
-   throughput ceiling, not a defect.
-4. **Item 35 — the `easy` layer** is a parallel subsystem serving one protocol. A design
-   question: finish it or delete it.
-5. **USB emit sites.** Five USB protocols are now `Incomplete` because `usbip 0.3.1` needs
-   tokio 0.3 and its server panics on every attach. Reviving them means replacing or forking
-   that crate — worth deciding before anyone writes more USB code.
-
-### Decisions that are the maintainer's
-
-- **`--llm-agent`: KEEP.** Decided 2026-08-09. It was built by an agent scoped to something
-  narrower, but it works, it is tested, and the maintainer has chosen to keep it. Do not revert
-  it; earlier revisions of this file recommended `git revert -m 1 bdc11148` and that advice is
-  now wrong.
-
-- **`http3` → `quic` rename.** This is a naming fix, not a capability change. Verified
-  2026-08-09:
-  - `src/server/http3/mod.rs` uses **only `quinn`** and never `h3::` — it is a raw QUIC stream
-    server. No HTTP/3 framing, no QPACK, no control stream, so `curl --http3` and browsers
-    cannot talk to it.
-  - `src/client/http3/mod.rs` uses `h3::client::new` over `h3_quinn` — it is a **real HTTP/3
-    client**.
-  - One feature flag, `http3`, gates both.
-
-  So the two halves are different protocols wearing one name, and NetGet's own http3 client
-  cannot talk to NetGet's own http3 server. Raw QUIC streams are a capability nothing else here
-  offers; the recommendation in `src/server/http3/CLAUDE.md` is to keep that and rename it,
-  **not** to implement RFC 9114 on top and lose it.
-
-  Cleanest end state is to split the flag: `quic` for the server, `http3` for the client, each
-  honestly named. Whether to *also* add a real HTTP/3 server is separate — model it on
-  `src/server/http2/h2_server.rs` and add it beside `quic` rather than replacing it.
-
-- **USB: do not revive; decide between deleting and leaving `Incomplete`.** Reviving is not a
-  small fix. `usbip 0.3.1` pins **tokio 0.3.7** (released October 2020), and calling it from
-  netget's tokio 1.x runtime panics on every attach — so it would mean forking or replacing the
-  crate, for seven protocols whose client side needs Linux plus `vhci-hcd` plus root. Leaving
-  them `Incomplete` costs nothing at runtime (hidden from the model). Deleting them would also
-  drop the `libusb` build dependency, which is one of the things that stops the tree building in
-  Claude Code for Web. Recommendation: leave `Incomplete` until someone names a concrete use
-  case, then delete.
-
-### Declared dependencies that are never used
-
-Measured 2026-08-10 across the Incomplete protocols. A feature pulls in a library, the library
-is exactly the thing the protocol is failing to do, and `grep` finds no call to it:
-
-| Protocol | Declared dep | Uses in `src/` | What the library would have solved |
-|---|---|---|---|
-| `turn` | `webrtc-turn` | **0** | It ships `allocation/`, `relay/` and `server/`. TURN's stated defect is "no relay socket is ever bound" |
-| `bgp` | `netgauze-bgp-pkt` | **0** | A maintained RFC 4271 codec, while BGP hand-rolls its wire format |
-| `amqp` | `lapin` | 1 (a doc string) | `lapin` is a *client* library, so it could never have implemented a broker — the wrong dependency, not an unused one |
-
-Contrast with the ones that are genuinely wired: `kafka`/`kafka-protocol` (13), `webrtc`/`webrtc`
-(31), `webdav`/`dav-server` (7).
-
-The check is cheap and worth repeating whenever a protocol underdelivers:
-
-```bash
-grep -rn "<crate_name>" src/server/<protocol>/ | grep -v CLAUDE.md | wc -l
-```
-
-Related: `amqp` declares **zero actions and zero events**, so the model cannot participate in it
-at all — a socket that calls `call_llm` once with nothing to say. `kafka` declares four events
-and emits none of them.
+1. **`bluetooth_ble_beacon` as a Linux-only path.** BlueZ can set `ManufacturerData`; macOS
+   cannot, by Apple's design. Needs a decision about whether a protocol that cannot run on the
+   maintainer's own machine is worth carrying.
+2. **The Kafka *client* is dead code.** `src/client/mod.rs` gates it on `cfg(all(feature="kafka",
+   feature="rdkafka"))` and nothing enables `rdkafka` — Cargo.toml marks it optional with
+   "rdkafka removed - causes malloc crashes". Its four tests are `#[ignore]`d with precise
+   reasons. Either re-enable and fix the crashes, or delete `src/client/kafka/` and its registry
+   entry; right now it tells users to rebuild with a feature they already have.
+3. **BGP client has no hold-timer enforcement.** It sends keepalives at the negotiated cadence
+   but only notices a silent peer when TCP does. Needs a shutdown `Notify` so the ticker can
+   interrupt a blocked `read_exact`, as the server has.
+4. **Item 48** — auditing library panics reachable from the wire is standing practice, not a
+   discrete fix. `pgwire` (item 77) is the open one and is upstream.
+5. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
+6. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
 
 ### Patterns worth auditing for
 
-**A mechanism fully built and wired, with nothing flowing through it.** Three bugs this session:
-`get_dependencies()` called from two places with every protocol inheriting an empty default;
-`PrivilegeRequirement::PacketCapture` defined with a doc comment naming its three protocols and
-adopted by none; `EventType.actions` rendered into every prompt with 22 events attaching
-nothing. All three had passing tests that checked the machinery and never checked adoption —
-one names ARP in its failure message while never touching ARP. **Assert adoption, not
-mechanism.**
+**A mechanism fully built and wired, with nothing flowing through it.** Found repeatedly:
+`get_dependencies()` with every protocol inheriting an empty default; `PacketCapture` defined
+with zero adopters; `EventType.actions` rendered with 22 events attaching nothing; `netgauze`,
+`webrtc-turn` and `lapin` declared as the only dependency of the protocol they were supposed to
+implement and never called. **Assert adoption, not mechanism** — a test that checks the
+machinery works while nothing uses it is the thing that let all of these survive.
 
 **A test that cannot fail.** An assertion-free body, a swallowed error, a capability check that
-returns `Ok(())` when the capability is missing, an async call without `.await`. These count as
-passing coverage, which is worse than no coverage because it is counted.
+returns `Ok(())` when the capability is missing, an async call without `.await`, a mock rule that
+matches nothing (`on_event("*")` was compared literally), a suite that starts a server and never
+connects a client. These count as passing coverage, which is worse than none because it is
+counted.
 
-**An `#[ignore]` citing a defect elsewhere.** It goes stale silently when that defect is fixed
-and nothing re-checks it. 43 tests were parked on one such reason. Run `--include-ignored`
-after landing an infrastructure fix.
+**An `#[ignore]` citing a defect elsewhere.** It goes stale silently when that defect is fixed.
+43 tests were parked on one such reason.
 
-**Measurement under load.** The suite has a 120s server-startup timeout and the first run for a
-feature set rebuilds `target/debug/netget`, so a loaded machine produces false failures. One run
-here reported 31 failures where the same commit idle reported 0. Never conclude from one run.
+**Measurement under load.** The suite has a 120s server-startup timeout, `target/debug/netget` is
+shared so a concurrent build silently breaks another run, and the first run after a source edit
+relinks that binary. All three produce failures indistinguishable from real ones. Use a private
+`CARGO_TARGET_DIR`, run twice, and never conclude from a single run — a mutation test nearly
+recorded a false negative this way.
 
 ## Fixed
 
