@@ -79,13 +79,9 @@ impl Protocol for BluetoothBleRemoteProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec![
-            "bluetooth",
-            "ble",
-            "remote",
-            "media",
-            "bluetooth_ble_remote",
-        ]
+        // No bare "remote" or "media": both are too generic to own, and
+        // "bluetooth"/"ble" are shared by 18 BLE profiles and identify none of them.
+        vec!["ble remote", "ble media control", "bluetooth_ble_remote"]
     }
 
     /// HID-over-GATT caveat: a host will only treat this as an input device once

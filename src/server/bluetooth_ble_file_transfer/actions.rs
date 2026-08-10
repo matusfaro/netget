@@ -80,7 +80,11 @@ impl Protocol for BluetoothBleFileTransferProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "file", "transfer", "ota"]
+        // Deliberately no bare single words: bare "file" and "transfer" swallowed FTP's "file transfer" and NFS's "file server". A keyword is matched with
+        // word boundaries against the whole prompt, so a generic one silently wins
+        // requests meant for another protocol. "bluetooth"/"ble" are dropped too --
+        // they are shared by 18 BLE profiles and identify none of them.
+        vec!["ble file transfer", "ble ota", "ota update"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
