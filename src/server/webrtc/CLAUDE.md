@@ -1,304 +1,199 @@
 # WebRTC Server Implementation
 
-> **Status: Incomplete — this is NOT a working WebRTC server.**
+> **Status: `Experimental` — it works.** A real `RTCPeerConnection` is established with a
+> real peer, a data channel opens, and messages cross it in both directions. This is
+> asserted end to end in `tests/server/webrtc/e2e_test.rs`, which uses webrtc-rs itself as
+> the peer.
 >
-> `WebRtcServer::spawn_with_llm_actions` binds nothing, spawns nothing and registers no
-> task. The only function that could create a peer connection is
-> `WebRtcServerData::accept_offer`, and **nothing calls it**: there is no code path
-> anywhere in NetGet that delivers an SDP offer to this protocol. No `RTCPeerConnection`
-> is ever constructed, no data channel ever opens, and not one byte can be sent or
-> received. `DevelopmentState` is `Incomplete`, so the protocol is hidden from LLM prompts
-> unless `--include-disabled-protocols` is passed.
->
-> The E2E suite (`tests/server/webrtc/e2e_test.rs`) does not contradict this: none of its
-> five tests calls `verify_mocks()`, so the mocks for `webrtc_offer_received`,
-> `webrtc_peer_connected`, `webrtc_message_received` and `webrtc_peer_disconnected` — none
-> of which can fire — are never checked. Every test asserts only that the process started.
->
-> **What was removed and why**
->
-> - `accept_offer`, `send_to_peer`, `close_peer`, `list_peers`: four async actions that
->   each built an `ActionResult::Custom` and returned it. Protocols that use `Custom`
->   (postgresql, s3, grpc, couchdb) match on it in their own server loop; this protocol has
->   no loop, so the result was constructed and dropped. Invoking any of them reported
->   success and did nothing.
-> - `WEBRTC_OFFER_RECEIVED_EVENT`, `WEBRTC_PEER_DISCONNECTED_EVENT`: neither could fire.
->   The disconnect event's response example was `{"type": "no_action"}` — an action that
->   exists nowhere in NetGet. Response examples are rendered verbatim into the prompt, so
->   it taught the model a call it could only be rejected for making.
-> - `get_event_types()` built four *fresh* `EventType`s with `{"type": "placeholder"}`
->   response examples, unrelated to the `LazyLock` statics the (unreachable) code fires. It
->   now returns the real statics, which now declare their actions and parameters.
-> - The `server_data_ptr` field: `spawn` stored `Arc::into_raw(server_data) as usize` in a
->   JSON field "for action execution". Nothing anywhere read that field, so every WebRTC
->   server start leaked the whole `WebRtcServerData` — webrtc-rs API object and interceptor
->   registry included — with no way to recover it.
->
-> **What it would take to make this real**: a signaling transport that feeds offers in
-> (the sibling `webrtc_signaling` server, or a startup parameter carrying an SDP offer); a
-> spawned task that owns `WebRtcServerData` and is registered via
-> `AppState::register_server_task` so `stop_server` can cancel it; and an async-action path
-> that can reach that task. The `accept_offer` / data-channel code below is retained as a
-> starting point — it is plausible-looking but has never executed.
+> It was `Incomplete` until this pass, and the banner that used to be here was accurate:
+> `spawn` bound nothing, `accept_offer` had no caller, and no byte could move. What changed
+> is that the protocol now owns a signalling transport, so an offer has somewhere to arrive.
 
-## Overview
+## Scope
 
-WebRTC (Web Real-Time Communication) server implementation for NetGet. This implementation focuses on **data channels only** (no audio/video media), which is well-suited for LLM control. The server enables peer-to-peer text/binary messaging with multiple concurrent peers over WebRTC's reliable data channel transport.
+**Data channels only.** No audio, no video, no media tracks. A media `m=` line in an offer
+is reported to the model (`media_kinds`) but never served — the answer carries the data
+channel and nothing else. This is a deliberate scope choice: data channels are a complete,
+useful protocol on their own, and media would need a whole track/codec pipeline the LLM has
+no useful role in.
 
-## Architecture
+## Signalling: WebSocket, built in
 
-### Core Components
+WebRTC cannot bootstrap itself; SDP has to travel over something else. This server binds a
+`TcpListener` on its configured port and speaks a small JSON protocol over WebSocket
+(`tokio-tungstenite`, which the `webrtc` feature already declares — no new dependency).
 
-1. **Peer Connection Management**: Manages multiple `RTCPeerConnection` instances (one per peer)
-2. **Data Channels**: `RTCDataChannel` provides reliable message transport per peer
-3. **ICE/STUN**: Uses Google STUN server for NAT traversal (configurable)
-4. **Signaling**: Manual SDP exchange (user pastes offers, server generates answers)
-
-### Protocol Stack
-
-```
-Application (LLM-controlled peer messages)
-    ↓
-DataChannel (SCTP)
-    ↓
-DTLS (encryption)
-    ↓
-ICE/STUN (NAT traversal)
-    ↓
-UDP
+```text
+peer   -> {"type":"offer","peer_id":"alice","sdp":{"type":"offer","sdp":"v=0\r\n..."}}
+netget -> {"type":"answer","peer_id":"alice","sdp":{"type":"answer","sdp":"v=0\r\n..."}}
+netget -> {"type":"rejected","peer_id":"alice","reason":"..."}   # the model declined
+netget -> {"type":"error","message":"..."}                       # unusable input
 ```
 
-## Library Choices
+`sdp` may also be a bare SDP string.
 
-### webrtc-rs (v0.11)
+**Why this and not the sibling `webrtc_signaling` server**: that protocol is a *relay* — it
+forwards SDP between two external peers and is itself neither end of the connection. Making
+`webrtc` depend on a separately started relay would mean a peer cannot connect unless the
+user happened to start two servers, and NetGet has no dependency mechanism that is actually
+wired up (`get_dependencies()` is overridden by no protocol). A self-contained endpoint is
+startable on its own, testable on its own, and is what a browser peer needs anyway. The two
+protocols stay independent; `webrtc_signaling` is not touched or referenced.
 
-**Rationale**: Pure Rust implementation of WebRTC stack
+**Why not trickle ICE**: the offerer gathers all candidates before sending the offer, and
+this server gathers all of its own before answering. That removes the ICE-candidate relay
+entirely, which is what lets one WebSocket frame each way be sufficient. It costs some setup
+latency (a full gather instead of an incremental one) and it means a peer that trickles will
+not interoperate. Browsers can produce a fully-gathered offer by waiting for
+`icegatheringstate === "complete"` before posting it.
 
-**Pros**:
-- Complete WebRTC implementation (rewrite of Pion in Rust)
-- Data channel support without media complexity
-- Good API for creating/managing peer connections
-- Active development
+**One peer per signalling WebSocket.** A second offer on the same socket is refused. The
+peer connection's lifetime is tied to the socket: closing the WebSocket closes the
+`RTCPeerConnection`. That gives deterministic cleanup for a transport that is otherwise
+invisible to the process, and it means an abandoned peer cannot outlive its signalling
+channel.
 
-**Cons**:
-- Relatively complex setup (MediaEngine, InterceptorRegistry)
-- Manual SDP exchange required (no built-in signaling server)
-- Still in early development (v0.11)
+## Division of labour
 
-**Alternative Considered**: `datachannel-rs` (libdatachannel C++ wrapper) - rejected due to FFI complexity and external dependency
+Rust owns the transport (webrtc-rs: ICE, DTLS, SCTP). The LLM decides content:
 
-## LLM Integration
+| Event | What the model decides | Actions |
+|---|---|---|
+| `webrtc_offer_received` | whether to admit this peer | `accept_offer`, `reject_offer` |
+| `webrtc_peer_connected` | what to say first | `send_message`, `disconnect`, `wait_for_more` |
+| `webrtc_message_received` | how to reply | `send_message`, `disconnect`, `wait_for_more` |
 
-### Events
+No action carries SDP, ICE candidates, base64 or hex. The model sees a *summary* of the
+offer — `peer_id`, `remote_addr`, `requests_data_channel`, `media_kinds` — and answers with
+a decision. The SDP never leaves Rust.
 
-Two are declared. **Neither can fire** — both are reached only from the data-channel
-callbacks inside `accept_offer`, which has no caller.
+### The admission path is fail-closed
 
-1. **`webrtc_peer_connected`** — peer_id, channel_label
-2. **`webrtc_message_received`** — peer_id, message, is_binary
+`decide_offer` (in `mod.rs`) accepts **only** on an explicit `accept_offer`. An LLM error, a
+timeout, an empty reply, or a reply containing other actions but no decision all reject, and
+the reason string says which. `reject_offer` carries the model's own reason, so a refusal and
+a silence are distinguishable in the frame the peer receives — the structural distinction the
+OAuth2 defect lacked. `tests/server/webrtc/e2e_test.rs::test_webrtc_offer_without_decision_is_refused`
+pins this.
 
-`webrtc_offer_received` and `webrtc_peer_disconnected` were removed; see the banner.
+The SDP is also parsed (`RTCSessionDescription::offer`, which unmarshals) *before* the model
+is consulted, so an offer webrtc-rs cannot read costs no LLM round-trip and never reaches a
+decision.
 
-### Actions
+### `get_async_actions` is empty, on purpose
 
-#### User-Triggered (Async)
+Server-side async actions are read by nothing in the LLM prompt path — only
+`call_llm_for_client` consumes them, and that is the `Client` trait. Declaring
+`list_peers`/`send_to_peer` here would advertise a capability the model cannot invoke.
+`WebRtcServerData::list_peers` and `send_to_peer` exist as Rust API for a caller that holds
+the live server data; if server async actions ever become reachable, wire them through
+`execute_action_with_state` + `AppState::register_server_handle`.
 
-None. See the removal note at the top of this file.
+## Startup parameters
 
-#### Event-Triggered (Sync)
+| Parameter | Default | Effect |
+|---|---|---|
+| `ice_servers` | `[]` | STUN/TURN URLs. **Empty by default**: host candidates only, which works on localhost and LAN and contacts no third party. The old code hardcoded Google STUN, which meant every start reached out to Google and every test would have too. |
+| `max_peers` | 32 | Offers past this limit are refused with a `rejected` frame. |
 
-Declared, and now advertised on both event types via `.with_actions(...)` — but no event
-can fire, so none of them is reachable.
+Both are read. Neither is decorative.
 
-- **`send_message`** - Send reply message
-- **`disconnect`** - Close current peer connection
-- **`wait_for_more`** - Don't respond yet
+## Per-peer state machine
 
-### Connection Flow
+Idle → Processing → Accumulating → Idle, one machine per peer, in `PeerCtx::handle_peer_event`:
 
-1. User opens WebRTC server
-2. Server displays: "Ready to accept peer connections (paste SDP offers)"
-3. User receives SDP offer from peer (via external channel)
-4. User pastes SDP offer → `webrtc_offer_received` event fires
-5. LLM responds with `accept_offer` action
-6. Server generates SDP answer and displays to user
-7. User sends SDP answer to peer
-8. Connection established, data channel opens
-9. `webrtc_peer_connected` event fires
-10. Messages exchanged via `send_message` / `send_to_peer` actions
-11. `webrtc_message_received` events fire for incoming messages
+- The first event claims the machine and processes it.
+- Events arriving during an LLM call are queued (state `Accumulating`) and drained by the
+  task that owns the machine, in order.
+- Only one LLM call per peer is ever in flight, so two replies cannot race on one data
+  channel. Different peers never block each other.
 
-## State Management
+The peer table lock is never held across an `.await` that does I/O or calls the LLM: every
+handler takes the lock, copies what it needs, drops it in an inner scope, then awaits.
 
-### Peer Tracking
+## Peers, and their teardown
 
-Each peer is tracked with:
-- **peer_id**: Unique identifier (user-defined or auto-generated)
-- **peer_connection**: Arc<RTCPeerConnection>
-- **data_channel**: Arc<RTCDataChannel>
-- **connection_id**: ConnectionId for NetGet tracking
-- **memory**: Per-peer LLM memory string
-- **state**: Connection state machine (Idle/Processing/Accumulating)
-- **queued_messages**: Messages queued during LLM processing
+Each peer holds an `RTCPeerConnection`, its data channel once open, and a `ConnectionId`
+registered with the `ServerInstance` (so it appears in the TUI and the access log).
+`PeerCtx::teardown` is idempotent and removes the peer, closes the peer connection and drops
+the connection record. It is called from three places, whichever gets there first winning:
+the peer-connection state callback (`Failed`/`Closed`/`Disconnected`), the signalling
+socket's cleanup, and the `disconnect` action.
 
-### Connection States
+`spawn` registers the accept loop via `AppState::register_server_task`, so `stop_server`
+releases the socket. Per-connection tasks are untracked — the codebase-wide limitation, not
+specific to this protocol.
 
-- **Idle**: No LLM processing in progress
-- **Processing**: LLM call active for current message
-- **Accumulating**: Messages queued while LLM processes
+## Peer-controlled input
 
-### Stored Data (protocol_data)
+Everything a peer can send is validated before use, and nothing on this path panics:
 
-None. `server_data_ptr` was removed; see the removal note at the top of this file.
+- non-JSON, or JSON that is not a known frame → `error` frame, connection continues
+- a frame that is not an `offer` → `error` frame
+- `peer_id` empty, whitespace-only, or over 128 characters → `error` frame
+- `peer_id` already connected → `error` frame
+- SDP that does not unmarshal, or whose type is not `offer` → `error` frame
+- more peers than `max_peers` → `rejected` frame
+- binary or ping/pong frames → refused or ignored, never parsed as signalling
 
-## Multi-Peer Support
+`test_webrtc_malformed_signalling_is_rejected_without_panic` exercises these and asserts the
+server did not panic.
 
-The server can handle **multiple concurrent peers**:
-- Each peer has independent peer_connection and data_channel
-- Each peer has separate LLM memory (per-peer context)
-- Each peer has independent state machine (no cross-peer blocking)
-- LLM sees peer_id in events to distinguish messages
+## Messages
 
-**Example Multi-Peer Scenario**:
-```
-Peer A connects → peer_id "alice"
-Peer B connects → peer_id "bob"
+Inbound: text frames arrive as `message` with `is_binary: false`. Binary frames arrive with
+`is_binary: true` and their bytes rendered as **lossy UTF-8** in `message` — the model never
+sees raw bytes or hex, and it cannot reconstruct arbitrary binary from what it is shown.
+Outbound `send_message` always sends text (`RTCDataChannel::send_text`).
 
-[EVENT] webrtc_message_received from "alice": "Hello"
-[ACTION] send_message to "alice": "Hi Alice!"
+This is honest asymmetry, not a round trip: a binary-heavy peer protocol is out of scope.
 
-[EVENT] webrtc_message_received from "bob": "Hi"
-[ACTION] send_message to "bob": "Hello Bob!"
-```
+## Library
 
-## Signaling Strategy
+**webrtc-rs 0.11** — pure Rust, full stack, data channels without the media machinery.
+`datachannel-rs` (libdatachannel bindings) was rejected for FFI and system-library cost.
+`MediaEngine::default()` is used with no codecs registered, which is all a data-channel-only
+peer needs. mDNS is left at webrtc-rs's default (`QueryOnly`): remote `.local` candidates are
+accepted, local host candidates use real IPs, and a failure to open the mDNS socket is
+non-fatal.
 
-**Current**: Manual SDP exchange
-
-1. Peer generates SDP offer
-2. User pastes offer to NetGet server
-3. Server generates SDP answer
-4. User copies answer and sends to peer
-5. Peer applies answer, connection established
-
-**Future Enhancements**:
-- WebSocket-based signaling server (automatic SDP relay)
-- Integration with WebRTC Signaling Server protocol (separate implementation)
-- Support for custom signaling backends
+Note webrtc-ice excludes loopback addresses from host candidates, so a host with *no*
+non-loopback interface cannot complete ICE at all. That is a property of the crate, not of
+this code.
 
 ## Limitations
 
-0. **It does not run.** See the status banner. Everything below describes code that has
-   never executed.
+1. **No media.** Data channels only.
+2. **No trickle ICE.** The peer must gather before offering.
+3. **No renegotiation / ICE restart.** Parameters are fixed at offer/answer time.
+4. **One peer per signalling socket**, and the peer dies with the socket.
+5. **One data channel per peer** is tracked; a peer opening a second channel replaces the
+   tracked one for outbound messages.
+6. **Binary is lossy** in both directions (see Messages).
+7. **No peer authentication beyond the model's decision.** `peer_id` is self-asserted; the
+   model is the only gate.
+8. **The server's local IPs appear in the SDP answer** — inherent to ICE.
 
-1. **No Media**: Audio/video not supported (data channels only)
-2. **Manual Signaling**: Requires user to exchange SDP manually (UX friction)
-3. **Text Focus**: Binary data sent as text (UTF-8), hex encoding for true binary
-4. **No Renegotiation**: Connection parameters fixed at offer/answer time
-5. **Basic ICE**: Only Google STUN by default, no custom TURN servers yet
-6. **No Trickle ICE**: ICE candidates gathered before SDP answer (simpler but slower)
+## Example
 
-## Security Considerations
+```text
+> open_server webrtc port 9000 "Admit peers whose id starts with guest; echo their messages"
 
-- **DTLS Encryption**: All data encrypted by default (WebRTC requirement)
-- **Peer Authentication**: No built-in peer verification (trust SDP source)
-- **ICE Candidate Privacy**: Server's local IP addresses exposed in SDP answer
-- **STUN Server**: Trusts Google STUN (can be configured to use custom servers)
-- **DoS Risk**: Malicious peers can send many offers (rate limiting recommended)
+[EVENT] webrtc_offer_received {peer_id: "guest-7", remote_addr: "127.0.0.1:51234",
+                               requests_data_channel: true, media_kinds: []}
+[ACTION] accept_offer
+         -> answer frame sent, ICE + DTLS + SCTP complete
 
-## Testing Strategy
+[EVENT] webrtc_peer_connected {peer_id: "guest-7", channel_label: "netget"}
+[ACTION] send_message {message: "Welcome to NetGet"}
 
-See `tests/server/webrtc/CLAUDE.md` for testing details.
-
-Key challenges:
-- Requires two peers (NetGet client + browser or two NetGet instances)
-- Manual SDP exchange for E2E tests (automated in test framework)
-- Mock mode simulates peer connections without real WebRTC
-
-## Performance Considerations
-
-- **Memory**: Each peer consumes ~1-2 MB (RTCPeerConnection overhead)
-- **CPU**: DTLS handshake is CPU-intensive (once per peer connection)
-- **Connections**: Recommended limit: 50-100 concurrent peers
-- **Bandwidth**: Data channels are reliable (SCTP), similar to TCP
-
-## Future Enhancements
-
-1. **Automatic Signaling**: WebSocket-based signaling server integration
-2. **Multiple Channels**: Support multiple data channels per peer
-3. **Binary Protocol**: Efficient binary message encoding (Protobuf, MessagePack)
-4. **Custom TURN**: Add custom TURN servers for relay
-5. **ICE Restart**: Support connection renegotiation
-6. **Connection Stats**: Expose RTCStats for monitoring (bandwidth, RTT, packet loss)
-7. **Peer Groups**: Group peers by topic/channel for broadcast messaging
-8. **Authentication**: Token-based peer authentication before accepting offers
-
-## Example Usage
-
-```bash
-# Open WebRTC server
-> open_server webrtc 0.0.0.0:0 "WebRTC peer server accepting connections"
-
-# Server displays: "Ready to accept peer connections (paste SDP offers)"
-
-# User receives SDP offer from peer and pastes it
-# (Imagine user typed: paste_offer peer-alice <SDP JSON>)
-
-# LLM detects offer event
-> [EVENT] webrtc_offer_received (peer_id: "peer-alice", sdp_offer: "{...}")
-
-# LLM responds with accept_offer action
-> [ACTION] accept_offer (peer_id: "peer-alice")
-
-# Server generates SDP answer and displays
-> SDP Answer (send to peer-alice):
-> {
->   "type": "answer",
->   "sdp": "v=0\r\no=- ... [full SDP]"
-> }
-
-# User sends answer to peer, connection established
-> [EVENT] webrtc_peer_connected (peer_id: "peer-alice", channel_label: "netget")
-
-# Peer sends message
-> [EVENT] webrtc_message_received (peer_id: "peer-alice", message: "Hello server!")
-
-# LLM responds
-> [ACTION] send_message (message: "Hello peer-alice! Welcome to NetGet.")
-
-# Another peer connects
-> [EVENT] webrtc_offer_received (peer_id: "peer-bob", sdp_offer: "{...}")
-> [ACTION] accept_offer (peer_id: "peer-bob")
-> [EVENT] webrtc_peer_connected (peer_id: "peer-bob")
-
-# LLM can send to specific peer
-> [ACTION] send_to_peer (peer_id: "peer-alice", message: "Bob just connected!")
-
-# List all peers
-> [ACTION] list_peers
-> Active WebRTC peers: ["peer-alice", "peer-bob"]
+[EVENT] webrtc_message_received {peer_id: "guest-7", message: "hello", is_binary: false}
+[ACTION] send_message {message: "hello back"}
 ```
-
-## Integration with WebRTC Signaling Server
-
-Once the WebRTC Signaling Server protocol is implemented, the server can operate in two modes:
-
-**Manual Mode** (default):
-- User pastes SDP offers
-- Server displays SDP answers
-- User manually relays signaling messages
-
-**Automatic Mode** (with signaling server):
-- Server registers with signaling server
-- Signaling server forwards offers automatically
-- Server sends answers to signaling server
-- Server receives answers from signaling server
-- No user intervention needed
 
 ## References
 
-- [webrtc-rs Documentation](https://docs.rs/webrtc/latest/webrtc/)
-- [webrtc-rs GitHub](https://github.com/webrtc-rs/webrtc)
-- [WebRTC Data Channels MDN](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Using_data_channels)
-- [WebRTC Signaling MDN](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Signaling_and_video_calling)
-- [WebRTC Security](https://webrtc-security.github.io/)
+- [webrtc-rs](https://docs.rs/webrtc/latest/webrtc/)
+- [WebRTC Data Channels (MDN)](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Using_data_channels)
+- [Signalling and video calling (MDN)](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Signaling_and_video_calling)
+- Tests and their rationale: `tests/server/webrtc/CLAUDE.md`

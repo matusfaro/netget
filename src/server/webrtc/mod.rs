@@ -1,12 +1,53 @@
-//! WebRTC server implementation (data channels only, no media)
+//! WebRTC server: real peer connections carrying **data channels only** (no media).
+//!
+//! # Signalling
+//!
+//! WebRTC needs an out-of-band channel to exchange SDP. This server embeds one: it binds a
+//! TCP listener on its configured port and speaks a tiny JSON protocol over WebSocket
+//! (`tokio-tungstenite`, already declared by the `webrtc` feature). One WebSocket
+//! connection carries exactly one peer:
+//!
+//! ```text
+//! peer  -> {"type":"offer","peer_id":"alice","sdp":{"type":"offer","sdp":"v=0\r\n..."}}
+//! netget-> {"type":"answer","peer_id":"alice","sdp":{"type":"answer","sdp":"v=0\r\n..."}}
+//! netget-> {"type":"rejected","peer_id":"alice","reason":"..."}        (LLM said no)
+//! netget-> {"type":"error","message":"..."}                            (malformed input)
+//! ```
+//!
+//! ICE is **not** trickled: the offerer must gather its candidates before sending the offer,
+//! and this server gathers all of its own before it answers. That removes the ICE-candidate
+//! relay entirely, which is what makes a self-contained single-socket signalling channel
+//! sufficient.
+//!
+//! The peer connection's lifetime is tied to its signalling WebSocket: when the socket
+//! closes, the `RTCPeerConnection` is closed too. That is deliberate — it gives deterministic
+//! cleanup for a protocol whose transport is otherwise invisible to the process.
+//!
+//! # Division of labour
+//!
+//! Rust owns the transport (webrtc-rs does ICE/DTLS/SCTP). The LLM decides *content*:
+//! whether to accept an offer at all (`webrtc_offer_received` -> `accept_offer` /
+//! `reject_offer`) and what to say on the data channel (`webrtc_peer_connected` and
+//! `webrtc_message_received` -> `send_message` / `disconnect` / `wait_for_more`). No raw
+//! SDP is ever handed to the model: it sees a structured summary of the offer and answers
+//! with a decision, and this file keeps the SDP.
+//!
+//! The offer path is **fail-closed**. An LLM error, or a reply with no decision action in
+//! it, rejects the offer; only an explicit `accept_offer` accepts. A model's explicit
+//! `reject_offer` carries its own reason, so refusal and silence are distinguishable in the
+//! signalling frame the peer receives.
+
 pub mod actions;
 
 use anyhow::{Context, Result};
+use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, trace, warn};
+use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tracing::{debug, error, info, trace, warn};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -16,6 +57,7 @@ use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
@@ -26,25 +68,67 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use actions::{WEBRTC_MESSAGE_RECEIVED_EVENT, WEBRTC_PEER_CONNECTED_EVENT};
+use actions::{
+    WEBRTC_MESSAGE_RECEIVED_EVENT, WEBRTC_OFFER_RECEIVED_EVENT, WEBRTC_PEER_CONNECTED_EVENT,
+};
 
 /// Unique identifier for a WebRTC peer
 pub type PeerId = String;
 
-/// Connection state for LLM processing
-#[derive(Debug, Clone, PartialEq)]
+/// Longest peer identifier accepted from the wire.
+const MAX_PEER_ID_LEN: usize = 128;
+
+/// Name used for the `ActionResult::Custom` carrying the model's offer decision.
+pub(crate) const OFFER_DECISION_RESULT: &str = "webrtc_offer_decision";
+
+/// Signalling frames exchanged over the WebSocket.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum WebRtcSignal {
+    /// Peer -> server: an SDP offer with all ICE candidates already gathered.
+    #[serde(rename = "offer")]
+    Offer {
+        peer_id: String,
+        /// Either `{"type":"offer","sdp":"..."}` or the raw SDP string.
+        sdp: serde_json::Value,
+    },
+
+    /// Server -> peer: the SDP answer, ICE candidates included.
+    #[serde(rename = "answer")]
+    Answer {
+        peer_id: String,
+        sdp: serde_json::Value,
+    },
+
+    /// Server -> peer: the LLM declined this offer.
+    #[serde(rename = "rejected")]
+    Rejected { peer_id: String, reason: String },
+
+    /// Server -> peer: the frame could not be processed at all.
+    #[serde(rename = "error")]
+    Error { message: String },
+}
+
+/// Connection state for LLM processing (one machine per peer)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionState {
     Idle,
     Processing,
     Accumulating,
 }
 
-/// Per-peer data for LLM handling
+/// One data-channel event awaiting the LLM.
+#[derive(Debug, Clone)]
+enum PeerEvent {
+    Connected { channel_label: String },
+    Message { text: String, is_binary: bool },
+}
+
+/// Per-peer data
 struct PeerData {
     state: ConnectionState,
-    queued_messages: Vec<String>,
-    #[allow(dead_code)]
-    memory: String,
+    /// Messages that arrived while an LLM call for this peer was in flight.
+    queued: Vec<PeerEvent>,
     peer_connection: Arc<RTCPeerConnection>,
     data_channel: Option<Arc<RTCDataChannel>>,
     connection_id: ConnectionId,
@@ -56,338 +140,82 @@ pub struct WebRtcServerData {
     peers: Arc<Mutex<HashMap<PeerId, PeerData>>>,
     /// WebRTC API for creating peer connections
     api: Arc<webrtc::api::API>,
-    /// ICE server configuration
+    /// ICE server configuration (empty means host candidates only)
     ice_servers: Vec<RTCIceServer>,
+    /// Refuse offers once this many peers are connected
+    max_peers: usize,
 }
 
 impl WebRtcServerData {
-    pub fn new() -> Result<Self> {
-        // Create a MediaEngine
+    /// Build the webrtc-rs API object and peer table.
+    ///
+    /// `ice_server_urls` is empty by default: with no STUN/TURN configured the server offers
+    /// host candidates only, which is what works on localhost and a LAN, and — importantly —
+    /// contacts no external endpoint. A caller that needs NAT traversal passes STUN/TURN URLs
+    /// through the `ice_servers` startup parameter.
+    pub fn new(ice_server_urls: Vec<String>, max_peers: usize) -> Result<Self> {
         let mut m = MediaEngine::default();
-
-        // Create an InterceptorRegistry and register default interceptors
         let registry = Registry::new();
         let registry = register_default_interceptors(registry, &mut m)?;
 
-        // Create the API object with the MediaEngine
         let api = APIBuilder::new()
             .with_media_engine(m)
             .with_interceptor_registry(registry)
             .build();
 
-        // Default ICE servers (Google STUN)
-        let ice_servers = vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }];
+        let ice_servers = ice_server_urls
+            .into_iter()
+            .map(|url| RTCIceServer {
+                urls: vec![url],
+                ..Default::default()
+            })
+            .collect();
 
         Ok(Self {
             peers: Arc::new(Mutex::new(HashMap::new())),
             api: Arc::new(api),
             ice_servers,
+            max_peers,
         })
     }
 
-    /// Accept an SDP offer from a peer and create an answer
-    pub async fn accept_offer(
-        &self,
+    /// Accept an SDP offer from a peer and produce the answer.
+    ///
+    /// The peer is inserted into the peer table *before* the remote description is applied,
+    /// because `on_data_channel` can fire as soon as SCTP comes up and must find it there.
+    #[allow(clippy::too_many_arguments)]
+    async fn accept_offer(
+        self: &Arc<Self>,
         peer_id: PeerId,
-        offer_sdp: String,
+        offer: RTCSessionDescription,
+        connection_id: ConnectionId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
-    ) -> Result<String> {
+    ) -> Result<serde_json::Value> {
         info!("WebRTC server accepting offer from peer {}", peer_id);
 
-        // Parse offer
-        let offer: RTCSessionDescription =
-            serde_json::from_str(&offer_sdp).context("Failed to parse SDP offer JSON")?;
-
-        // Configure ICE servers
         let config = RTCConfiguration {
             ice_servers: self.ice_servers.clone(),
             ..Default::default()
         };
 
-        // Create peer connection
-        let peer_connection = Arc::new(self.api.new_peer_connection(config).await?);
-        info!("WebRTC server created peer connection for {}", peer_id);
+        let peer_connection = Arc::new(
+            self.api
+                .new_peer_connection(config)
+                .await
+                .context("Failed to create RTCPeerConnection")?,
+        );
 
-        // Set remote description (the offer)
-        peer_connection.set_remote_description(offer).await?;
-
-        // Create a ConnectionId for tracking
-        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-
-        // Clone for callbacks
-        let peer_connection_cb = Arc::clone(&peer_connection);
-        let app_state_cb = Arc::clone(&app_state);
-        let status_tx_cb = status_tx.clone();
-        let llm_client_cb = llm_client.clone();
-        let peers_cb = Arc::clone(&self.peers);
-        let peer_id_cb = peer_id.clone();
-
-        // Handle incoming data channel
-        peer_connection.on_data_channel(Box::new(move |data_channel: Arc<RTCDataChannel>| {
-            let app_state = Arc::clone(&app_state_cb);
-            let status_tx = status_tx_cb.clone();
-            let llm_client = llm_client_cb.clone();
-            let peers = Arc::clone(&peers_cb);
-            let peer_id = peer_id_cb.clone();
-            let _pc = Arc::clone(&peer_connection_cb);
-
-            Box::pin(async move {
-                let label = data_channel.label().to_string();
-                info!(
-                    "WebRTC server received data channel '{}' from peer {}",
-                    label, peer_id
-                );
-
-                // Store data channel in peer data
-                {
-                    let mut peers_lock = peers.lock().await;
-                    if let Some(peer_data) = peers_lock.get_mut(&peer_id) {
-                        peer_data.data_channel = Some(Arc::clone(&data_channel));
-                    }
-                }
-
-                // Set up data channel callbacks
-                let dc_clone = Arc::clone(&data_channel);
-                let app_state_on_open = Arc::clone(&app_state);
-                let status_tx_on_open = status_tx.clone();
-                let peers_on_open = Arc::clone(&peers);
-                let peer_id_on_open = peer_id.clone();
-                let llm_on_open = llm_client.clone();
-
-                data_channel.on_open(Box::new(move || {
-                    let app_state = Arc::clone(&app_state_on_open);
-                    let status_tx = status_tx_on_open.clone();
-                    let _peers = Arc::clone(&peers_on_open);
-                    let peer_id = peer_id_on_open.clone();
-                    let llm_client = llm_on_open.clone();
-
-                    Box::pin(async move {
-                        info!("WebRTC server data channel opened for peer {}", peer_id);
-                        let _ = status_tx.send(format!(
-                            "[SERVER] WebRTC peer {} connected",
-                            peer_id
-                        ));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
-
-                        // Call LLM with connected event
-                        let protocol = Arc::new(crate::server::WebRtcProtocol::new());
-                        let event = Event::new(
-                            &WEBRTC_PEER_CONNECTED_EVENT,
-                            serde_json::json!({
-                                "peer_id": peer_id,
-                                "channel_label": label,
-                            }),
-                        );
-
-                        match call_llm(
-                            &llm_client,
-                            &app_state,
-                            server_id,
-                            None, // connection_id
-                            &event,
-                            protocol.as_ref(),
-                        )
-                        .await
-                        {
-                            Ok(_result) => {
-                                // ExecutionResult doesn't have memory_updates
-                                // Memory is handled via actions
-                            }
-                            Err(e) => {
-                                error!("LLM error for WebRTC peer {} on open: {}", peer_id, e);
-                            }
-                        }
-                    })
-                }));
-
-                // Handle incoming messages
-                let app_state_on_msg = Arc::clone(&app_state);
-                let status_tx_on_msg = status_tx.clone();
-                let peers_on_msg = Arc::clone(&peers);
-                let peer_id_on_msg = peer_id.clone();
-                let llm_on_msg = llm_client.clone();
-                let dc_on_msg = Arc::clone(&dc_clone);
-
-                data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
-                    let app_state = Arc::clone(&app_state_on_msg);
-                    let _status_tx = status_tx_on_msg.clone();
-                    let peers = Arc::clone(&peers_on_msg);
-                    let peer_id = peer_id_on_msg.clone();
-                    let llm_client = llm_on_msg.clone();
-                    let dc = Arc::clone(&dc_on_msg);
-
-                    Box::pin(async move {
-                        let message_text = String::from_utf8_lossy(&msg.data).to_string();
-                        trace!(
-                            "WebRTC server received message from peer {}: {}",
-                            peer_id,
-                            message_text
-                        );
-
-                        // Handle data with LLM
-                        let mut peers_lock = peers.lock().await;
-                        let peer_data = match peers_lock.get_mut(&peer_id) {
-                            Some(data) => data,
-                            None => {
-                                error!("Peer {} not found in peers map", peer_id);
-                                return;
-                            }
-                        };
-
-                        match peer_data.state {
-                            ConnectionState::Idle => {
-                                // Process immediately
-                                peer_data.state = ConnectionState::Processing;
-                                drop(peers_lock);
-
-                                // Call LLM
-                                let protocol = Arc::new(crate::server::WebRtcProtocol::new());
-                                let event = Event::new(
-                                    &WEBRTC_MESSAGE_RECEIVED_EVENT,
-                                    serde_json::json!({
-                                        "peer_id": peer_id,
-                                        "message": message_text,
-                                        "is_binary": !message_text.is_ascii(),
-                                    }),
-                                );
-
-                                match call_llm(
-                                    &llm_client,
-                                    &app_state,
-                                    server_id,
-                                    None, // connection_id
-                                    &event,
-                                    protocol.as_ref(),
-                                )
-                                .await
-                                {
-                                    Ok(result) => {
-                                        // Execute protocol results
-                                        for action_result in result.protocol_results {
-                                            match action_result {
-                                                ActionResult::Output(bytes) => {
-                                                    match dc.send_text(String::from_utf8_lossy(&bytes).to_string()).await {
-                                                        Ok(_) => {
-                                                            trace!("WebRTC server sent message to peer {}", peer_id);
-                                                        }
-                                                        Err(e) => {
-                                                            error!("WebRTC server failed to send to peer {}: {}", peer_id, e);
-                                                        }
-                                                    }
-                                                }
-                                                ActionResult::CloseConnection => {
-                                                    info!("WebRTC server closing connection to peer {}", peer_id);
-                                                    let _ = dc.close().await;
-                                                }
-                                                ActionResult::WaitForMore => {
-                                                    trace!("WebRTC server waiting for more data from peer {}", peer_id);
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("LLM error for WebRTC peer {}: {}", peer_id, e);
-                                    }
-                                }
-
-                                // Reset state and process queued messages
-                                let mut peers_lock = peers.lock().await;
-                                if let Some(peer_data) = peers_lock.get_mut(&peer_id) {
-                                    if !peer_data.queued_messages.is_empty() {
-                                        peer_data.state = ConnectionState::Accumulating;
-                                    } else {
-                                        peer_data.state = ConnectionState::Idle;
-                                    }
-                                }
-                            }
-                            ConnectionState::Processing => {
-                                // Queue the message
-                                peer_data.queued_messages.push(message_text);
-                                trace!("WebRTC server queued message from peer {} (already processing)", peer_id);
-                            }
-                            ConnectionState::Accumulating => {
-                                // Add to queue
-                                peer_data.queued_messages.push(message_text);
-                            }
-                        }
-                    })
-                }));
-            })
-        }));
-
-        // Handle connection state changes
-        let status_tx_state = status_tx.clone();
-        let peer_id_state = peer_id.clone();
-        let peers_state = Arc::clone(&self.peers);
-        let app_state_state = Arc::clone(&app_state);
-
-        peer_connection.on_peer_connection_state_change(Box::new(
-            move |state: RTCPeerConnectionState| {
-                let status_tx = status_tx_state.clone();
-                let peer_id = peer_id_state.clone();
-                let peers = Arc::clone(&peers_state);
-                let app_state = Arc::clone(&app_state_state);
-
-                Box::pin(async move {
-                    info!(
-                        "WebRTC server peer {} connection state: {:?}",
-                        peer_id, state
-                    );
-                    match state {
-                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                            let _ = status_tx
-                                .send(format!("[SERVER] WebRTC peer {} disconnected", peer_id));
-                            let _ = status_tx.send("__UPDATE_UI__".to_string());
-
-                            // Remove peer from map
-                            let connection_id = {
-                                let mut peers_lock = peers.lock().await;
-                                peers_lock.remove(&peer_id).map(|p| p.connection_id)
-                            };
-
-                            // Remove connection from server
-                            if let Some(conn_id) = connection_id {
-                                app_state
-                                    .remove_connection_from_server(server_id, conn_id)
-                                    .await;
-                            }
-                        }
-                        _ => {}
-                    }
-                })
-            },
-        ));
-
-        // Create answer
-        let answer = peer_connection.create_answer(None).await?;
-        peer_connection.set_local_description(answer).await?;
-
-        // Wait for ICE gathering to complete
-        let mut gather_complete = peer_connection.gathering_complete_promise().await;
-        let _ = gather_complete.recv().await;
-
-        // Get the local description with ICE candidates
-        let local_desc = peer_connection
-            .local_description()
-            .await
-            .context("No local description available")?;
-
-        // Store peer data
+        // Register the peer before anything can fire a callback that looks for it.
         {
-            let mut peers_lock = self.peers.lock().await;
-            peers_lock.insert(
+            let mut peers = self.peers.lock().await;
+            peers.insert(
                 peer_id.clone(),
                 PeerData {
                     state: ConnectionState::Idle,
-                    queued_messages: Vec::new(),
-                    memory: String::new(),
+                    queued: Vec::new(),
                     peer_connection: Arc::clone(&peer_connection),
                     data_channel: None,
                     connection_id,
@@ -395,15 +223,114 @@ impl WebRtcServerData {
             );
         }
 
-        // Add connection to ServerInstance
+        let ctx = PeerCtx {
+            server_data: Arc::clone(self),
+            peer_id: peer_id.clone(),
+            connection_id,
+            server_id,
+            app_state: Arc::clone(&app_state),
+            llm_client,
+            status_tx: status_tx.clone(),
+        };
+
+        // Incoming data channel (the offerer creates it; we only ever accept one).
+        let dc_ctx = ctx.clone();
+        peer_connection.on_data_channel(Box::new(move |data_channel: Arc<RTCDataChannel>| {
+            let ctx = dc_ctx.clone();
+            Box::pin(async move {
+                let label = data_channel.label().to_string();
+                info!(
+                    "WebRTC server received data channel '{}' from peer {}",
+                    label, ctx.peer_id
+                );
+
+                {
+                    let mut peers = ctx.server_data.peers.lock().await;
+                    if let Some(peer) = peers.get_mut(&ctx.peer_id) {
+                        peer.data_channel = Some(Arc::clone(&data_channel));
+                    }
+                }
+
+                let open_ctx = ctx.clone();
+                let open_label = label.clone();
+                data_channel.on_open(Box::new(move || {
+                    let ctx = open_ctx.clone();
+                    let channel_label = open_label.clone();
+                    Box::pin(async move {
+                        info!(
+                            "WebRTC data channel '{}' open for peer {}",
+                            channel_label, ctx.peer_id
+                        );
+                        let _ = ctx
+                            .status_tx
+                            .send(format!("[SERVER] WebRTC peer {} connected", ctx.peer_id));
+                        let _ = ctx.status_tx.send("__UPDATE_UI__".to_string());
+                        ctx.handle_peer_event(PeerEvent::Connected { channel_label })
+                            .await;
+                    })
+                }));
+
+                let msg_ctx = ctx.clone();
+                data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
+                    let ctx = msg_ctx.clone();
+                    Box::pin(async move {
+                        let text = String::from_utf8_lossy(&msg.data).to_string();
+                        trace!(
+                            "WebRTC server received {} bytes from peer {}",
+                            msg.data.len(),
+                            ctx.peer_id
+                        );
+                        ctx.handle_peer_event(PeerEvent::Message {
+                            text,
+                            is_binary: !msg.is_string,
+                        })
+                        .await;
+                    })
+                }));
+            })
+        }));
+
+        // Connection teardown.
+        let state_ctx = ctx.clone();
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |state: RTCPeerConnectionState| {
+                let ctx = state_ctx.clone();
+                Box::pin(async move {
+                    debug!("WebRTC peer {} connection state: {:?}", ctx.peer_id, state);
+                    if matches!(
+                        state,
+                        RTCPeerConnectionState::Failed
+                            | RTCPeerConnectionState::Closed
+                            | RTCPeerConnectionState::Disconnected
+                    ) {
+                        ctx.teardown(&format!("connection state {:?}", state)).await;
+                    }
+                })
+            },
+        ));
+
+        // Offer -> answer. Anything that fails from here on must not leave a half-registered
+        // peer behind, so each error path unregisters before returning.
+        let answer = match Self::negotiate(&peer_connection, offer).await {
+            Ok(answer) => answer,
+            Err(e) => {
+                ctx.teardown("negotiation failed").await;
+                return Err(e);
+            }
+        };
+
+        // Register the connection with the server instance for the TUI / access log.
         use crate::state::server::{
             ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
         };
         let now = std::time::Instant::now();
+        let unspecified = SocketAddr::from(([0, 0, 0, 0], 0));
         let conn_state = ServerConnectionState {
             id: connection_id,
-            remote_addr: "0.0.0.0:0".parse().unwrap(), // WebRTC is P2P, no direct remote addr
-            local_addr: "0.0.0.0:0".parse().unwrap(),
+            // WebRTC is peer-to-peer over ICE; there is no single stable remote address, so
+            // the signalling peer's address is recorded by the caller instead.
+            remote_addr: unspecified,
+            local_addr: unspecified,
             bytes_sent: 0,
             bytes_received: 0,
             packets_sent: 0,
@@ -413,92 +340,748 @@ impl WebRtcServerData {
             status_changed_at: now,
             protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
                 "peer_id": peer_id,
-                "state": "Idle"
+                "state": "Idle",
             })),
         };
         app_state
             .add_connection_to_server(server_id, conn_state)
             .await;
 
-        // Return the answer as JSON
-        let answer_json = serde_json::to_string_pretty(&local_desc)?;
         info!("WebRTC server generated SDP answer for peer {}", peer_id);
-
-        Ok(answer_json)
+        serde_json::to_value(&answer).context("Failed to serialise SDP answer")
     }
 
-    /// Send a message to a specific peer
-    pub async fn send_to_peer(&self, peer_id: &str, message: String) -> Result<()> {
-        let peers_lock = self.peers.lock().await;
-        let peer_data = peers_lock.get(peer_id).context("Peer not found")?;
+    /// Apply the offer, create the answer and wait for ICE gathering to finish.
+    async fn negotiate(
+        peer_connection: &Arc<RTCPeerConnection>,
+        offer: RTCSessionDescription,
+    ) -> Result<RTCSessionDescription> {
+        peer_connection
+            .set_remote_description(offer)
+            .await
+            .context("Peer's SDP offer was rejected by the WebRTC stack")?;
 
-        if let Some(dc) = &peer_data.data_channel {
-            dc.send_text(message).await?;
-            Ok(())
-        } else {
-            anyhow::bail!("Data channel not available for peer {}", peer_id);
-        }
+        let answer = peer_connection
+            .create_answer(None)
+            .await
+            .context("Failed to create SDP answer")?;
+
+        // `gathering_complete_promise` must be taken before the local description is set,
+        // otherwise gathering can finish before anyone is listening and the promise never
+        // resolves.
+        let mut gather_complete = peer_connection.gathering_complete_promise().await;
+        peer_connection
+            .set_local_description(answer)
+            .await
+            .context("Failed to set local description")?;
+        let _ = gather_complete.recv().await;
+
+        peer_connection
+            .local_description()
+            .await
+            .context("No local description after ICE gathering")
     }
 
-    /// Close connection to a specific peer
-    pub async fn close_peer(&self, peer_id: &str) -> Result<()> {
-        let mut peers_lock = self.peers.lock().await;
-        if let Some(peer_data) = peers_lock.remove(peer_id) {
-            let _ = peer_data.peer_connection.close().await;
-            info!("WebRTC server closed connection to peer {}", peer_id);
-            Ok(())
-        } else {
-            anyhow::bail!("Peer {} not found", peer_id);
-        }
+    /// Number of peers currently registered.
+    pub async fn peer_count(&self) -> usize {
+        self.peers.lock().await.len()
+    }
+
+    /// Whether a peer id is already taken.
+    pub async fn has_peer(&self, peer_id: &str) -> bool {
+        self.peers.lock().await.contains_key(peer_id)
     }
 
     /// List all active peer IDs
     pub async fn list_peers(&self) -> Vec<String> {
         self.peers.lock().await.keys().cloned().collect()
     }
+
+    /// Send a text message to a specific peer over its data channel.
+    pub async fn send_to_peer(&self, peer_id: &str, message: String) -> Result<()> {
+        let channel = {
+            let peers = self.peers.lock().await;
+            let peer = peers
+                .get(peer_id)
+                .with_context(|| format!("Peer {} not found", peer_id))?;
+            peer.data_channel.clone()
+        };
+        let channel =
+            channel.with_context(|| format!("Data channel not open for peer {}", peer_id))?;
+        channel
+            .send_text(message)
+            .await
+            .with_context(|| format!("Failed to send to peer {}", peer_id))?;
+        Ok(())
+    }
 }
 
-/// WebRTC server that accepts incoming peer connections
+/// Everything a peer callback needs, in one cheaply cloned bundle.
+///
+/// Callbacks are `FnMut` boxes that must own their captures, so without this every callback
+/// body would begin with eight `Arc::clone` lines.
+#[derive(Clone)]
+struct PeerCtx {
+    server_data: Arc<WebRtcServerData>,
+    peer_id: PeerId,
+    connection_id: ConnectionId,
+    server_id: ServerId,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+}
+
+impl PeerCtx {
+    /// Per-peer state machine: Idle -> Processing -> (Accumulating) -> Idle.
+    ///
+    /// Only one LLM call per peer is ever in flight. Events that arrive during a call are
+    /// queued and drained by the task that owns the machine, so nothing is dropped and no
+    /// two calls race on the same data channel.
+    async fn handle_peer_event(&self, event: PeerEvent) {
+        // Claim the machine, or queue and return.
+        let claimed = {
+            let mut peers = self.server_data.peers.lock().await;
+            match peers.get_mut(&self.peer_id) {
+                Some(peer) => match peer.state {
+                    ConnectionState::Idle => {
+                        peer.state = ConnectionState::Processing;
+                        true
+                    }
+                    ConnectionState::Processing | ConnectionState::Accumulating => {
+                        peer.state = ConnectionState::Accumulating;
+                        peer.queued.push(event.clone());
+                        false
+                    }
+                },
+                None => {
+                    warn!("WebRTC event for unknown peer {} — dropping", self.peer_id);
+                    false
+                }
+            }
+        };
+        if !claimed {
+            return;
+        }
+
+        let mut current = event;
+        loop {
+            self.process_event(current).await;
+
+            let next = {
+                let mut peers = self.server_data.peers.lock().await;
+                match peers.get_mut(&self.peer_id) {
+                    Some(peer) if !peer.queued.is_empty() => {
+                        peer.state = ConnectionState::Processing;
+                        Some(peer.queued.remove(0))
+                    }
+                    Some(peer) => {
+                        peer.state = ConnectionState::Idle;
+                        None
+                    }
+                    None => None,
+                }
+            };
+            match next {
+                Some(event) => current = event,
+                None => break,
+            }
+        }
+    }
+
+    /// One LLM round-trip for one data-channel event, and the actions it produced.
+    async fn process_event(&self, event: PeerEvent) {
+        let netget_event = match &event {
+            PeerEvent::Connected { channel_label } => Event::new(
+                &WEBRTC_PEER_CONNECTED_EVENT,
+                serde_json::json!({
+                    "peer_id": self.peer_id,
+                    "channel_label": channel_label,
+                }),
+            ),
+            PeerEvent::Message { text, is_binary } => Event::new(
+                &WEBRTC_MESSAGE_RECEIVED_EVENT,
+                serde_json::json!({
+                    "peer_id": self.peer_id,
+                    "message": text,
+                    "is_binary": is_binary,
+                }),
+            ),
+        };
+
+        let protocol = crate::server::WebRtcProtocol::new();
+        let result = match call_llm(
+            &self.llm_client,
+            &self.app_state,
+            self.server_id,
+            Some(self.connection_id),
+            &netget_event,
+            &protocol,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!(
+                    "WebRTC LLM call failed for peer {} ({}): {}",
+                    self.peer_id,
+                    netget_event.id(),
+                    e
+                );
+                let _ = self.status_tx.send(format!(
+                    "[ERROR] WebRTC peer {}: no response generated ({})",
+                    self.peer_id, e
+                ));
+                return;
+            }
+        };
+
+        let mut outputs: Vec<Vec<u8>> = Vec::new();
+        let mut close = false;
+        for action_result in &result.protocol_results {
+            collect_result(action_result, &mut outputs, &mut close);
+        }
+
+        if !outputs.is_empty() {
+            let channel = {
+                let peers = self.server_data.peers.lock().await;
+                peers
+                    .get(&self.peer_id)
+                    .and_then(|peer| peer.data_channel.clone())
+            };
+            match channel {
+                Some(channel) => {
+                    for bytes in outputs {
+                        let text = String::from_utf8_lossy(&bytes).to_string();
+                        match channel.send_text(text).await {
+                            Ok(n) => trace!("WebRTC sent {} bytes to peer {}", n, self.peer_id),
+                            Err(e) => {
+                                error!("WebRTC failed to send to peer {}: {}", self.peer_id, e)
+                            }
+                        }
+                    }
+                }
+                None => warn!(
+                    "WebRTC has no open data channel for peer {}; response dropped",
+                    self.peer_id
+                ),
+            }
+        }
+
+        if close {
+            info!("WebRTC closing peer {} on model request", self.peer_id);
+            self.teardown("closed by model").await;
+        }
+    }
+
+    /// Remove the peer, close its `RTCPeerConnection` and drop its connection record.
+    ///
+    /// Idempotent: the peer connection state callback and the signalling socket's cleanup
+    /// both call it, and whichever loses removes nothing.
+    async fn teardown(&self, reason: &str) {
+        let peer = {
+            let mut peers = self.server_data.peers.lock().await;
+            peers.remove(&self.peer_id)
+        };
+        let Some(peer) = peer else {
+            return;
+        };
+
+        info!("WebRTC peer {} torn down: {}", self.peer_id, reason);
+        let _ = peer.peer_connection.close().await;
+        self.app_state
+            .remove_connection_from_server(self.server_id, peer.connection_id)
+            .await;
+        let _ = self.status_tx.send(format!(
+            "[SERVER] WebRTC peer {} disconnected",
+            self.peer_id
+        ));
+        let _ = self.status_tx.send("__UPDATE_UI__".to_string());
+    }
+}
+
+/// Flatten an `ActionResult` (which may nest via `Multiple`) into outputs and a close flag.
+fn collect_result(result: &ActionResult, outputs: &mut Vec<Vec<u8>>, close: &mut bool) {
+    match result {
+        ActionResult::Output(bytes) => outputs.push(bytes.clone()),
+        ActionResult::CloseConnection => *close = true,
+        ActionResult::Multiple(inner) => {
+            for r in inner {
+                collect_result(r, outputs, close);
+            }
+        }
+        ActionResult::WaitForMore | ActionResult::NoAction | ActionResult::Custom { .. } => {}
+    }
+}
+
+/// The model's verdict on an incoming offer.
+enum OfferDecision {
+    Accept,
+    Reject(String),
+}
+
+/// WebRTC server: WebSocket signalling in front of webrtc-rs peer connections.
 pub struct WebRtcServer;
 
 impl WebRtcServer {
-    /// Spawn the WebRTC server with integrated LLM actions
+    /// Bind the signalling listener and start accepting peers.
     ///
-    /// Note: WebRTC is peer-to-peer, so there's no traditional "listen" address.
-    /// The server accepts SDP offers via LLM actions and creates answers.
+    /// Returns only once the socket is bound, so a bind failure surfaces as
+    /// `ServerStatus::Error` rather than a server that reports Running and listens to
+    /// nothing.
     pub async fn spawn_with_llm_actions(
-        _listen_addr: SocketAddr,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: ServerId,
+        server_id: ServerId,
+        ice_server_urls: Vec<String>,
+        max_peers: usize,
     ) -> Result<SocketAddr> {
-        info!("WebRTC server (action-based) initializing");
+        let listener = TcpListener::bind(listen_addr)
+            .await
+            .with_context(|| format!("WebRTC signalling failed to bind {}", listen_addr))?;
+        let local_addr = listener
+            .local_addr()
+            .context("WebRTC signalling socket has no local address")?;
 
-        // This constructor is the only part of the protocol that runs. It validates that
-        // the webrtc-rs API can be built and nothing more: there is no listener, no task,
-        // and no way for an SDP offer to reach `WebRtcServerData::accept_offer`, so no
-        // peer connection is ever created. See the header of `actions.rs`.
-        //
-        // The previous version stored `Arc::into_raw(server_data) as usize` in a JSON
-        // field named `server_data_ptr` "for action execution". Nothing ever read that
-        // field — the only two writers are this protocol and webrtc_signaling, and there
-        // are no readers anywhere in the tree — so every WebRTC server start leaked the
-        // whole `WebRtcServerData`, including the webrtc-rs API object and its
-        // interceptor registry, with no way to recover it.
-        let _server_data = WebRtcServerData::new()?;
+        let server_data = Arc::new(WebRtcServerData::new(ice_server_urls, max_peers)?);
 
-        let _ = status_tx.send(
-            "[WARN] WebRTC server is INCOMPLETE: no signaling path exists, so no peer can \
-             connect and no message can be exchanged"
+        info!("WebRTC signalling listening on {}", local_addr);
+        let _ = status_tx.send(format!(
+            "[INFO] WebRTC data-channel server, WebSocket SDP signalling, listening on {}",
+            local_addr
+        ));
+
+        let accept_state = Arc::clone(&app_state);
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, remote_addr)) => {
+                        let server_data = Arc::clone(&server_data);
+                        let app_state = Arc::clone(&app_state);
+                        let status_tx = status_tx.clone();
+                        let llm_client = llm_client.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = Self::handle_signalling(
+                                stream,
+                                remote_addr,
+                                server_data,
+                                app_state,
+                                status_tx,
+                                llm_client,
+                                server_id,
+                            )
+                            .await
+                            {
+                                debug!(
+                                    "WebRTC signalling connection from {} ended: {}",
+                                    remote_addr, e
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("WebRTC signalling accept failed: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        });
+
+        accept_state
+            .register_server_task(server_id, accept_handle)
+            .await;
+
+        Ok(local_addr)
+    }
+
+    /// One signalling WebSocket = one peer.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_signalling(
+        stream: TcpStream,
+        remote_addr: SocketAddr,
+        server_data: Arc<WebRtcServerData>,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+        server_id: ServerId,
+    ) -> Result<()> {
+        let ws = accept_async(stream)
+            .await
+            .context("WebSocket handshake failed")?;
+        debug!(
+            "WebRTC signalling connection established with {}",
+            remote_addr
+        );
+
+        let (mut ws_tx, mut ws_rx) = ws.split();
+
+        // A writer task owns the sink so the read loop never blocks on a slow peer.
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+        let writer = tokio::spawn(async move {
+            while let Some(msg) = out_rx.recv().await {
+                if ws_tx.send(msg).await.is_err() {
+                    break;
+                }
+            }
+            let _ = ws_tx.close().await;
+        });
+
+        let mut peer_ctx: Option<PeerCtx> = None;
+
+        while let Some(frame) = ws_rx.next().await {
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(e) => {
+                    debug!("WebRTC signalling read error from {}: {}", remote_addr, e);
+                    break;
+                }
+            };
+
+            let text = match frame {
+                Message::Text(text) => text,
+                Message::Close(_) => break,
+                Message::Binary(_) => {
+                    send_signal(
+                        &out_tx,
+                        &WebRtcSignal::Error {
+                            message: "signalling frames must be JSON text".to_string(),
+                        },
+                    );
+                    continue;
+                }
+                Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+            };
+
+            let signal: WebRtcSignal = match serde_json::from_str(&text) {
+                Ok(signal) => signal,
+                Err(e) => {
+                    send_signal(
+                        &out_tx,
+                        &WebRtcSignal::Error {
+                            message: format!("malformed signalling frame: {}", e),
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            let (peer_id, sdp) = match signal {
+                WebRtcSignal::Offer { peer_id, sdp } => (peer_id, sdp),
+                other => {
+                    send_signal(
+                        &out_tx,
+                        &WebRtcSignal::Error {
+                            message: format!(
+                                "only 'offer' frames are accepted by this server, got '{}'",
+                                signal_name(&other)
+                            ),
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            if peer_ctx.is_some() {
+                send_signal(
+                    &out_tx,
+                    &WebRtcSignal::Error {
+                        message: "this signalling connection already carries a peer; open a new \
+                                  WebSocket for another peer"
+                            .to_string(),
+                    },
+                );
+                continue;
+            }
+
+            let peer_id = peer_id.trim().to_string();
+            if peer_id.is_empty() || peer_id.chars().count() > MAX_PEER_ID_LEN {
+                send_signal(
+                    &out_tx,
+                    &WebRtcSignal::Error {
+                        message: format!("peer_id must be 1..={} characters", MAX_PEER_ID_LEN),
+                    },
+                );
+                continue;
+            }
+
+            if server_data.has_peer(&peer_id).await {
+                send_signal(
+                    &out_tx,
+                    &WebRtcSignal::Error {
+                        message: format!("peer_id '{}' is already connected", peer_id),
+                    },
+                );
+                continue;
+            }
+
+            if server_data.peer_count().await >= server_data.max_peers {
+                send_signal(
+                    &out_tx,
+                    &WebRtcSignal::Rejected {
+                        peer_id: peer_id.clone(),
+                        reason: format!(
+                            "server is at its max_peers limit of {}",
+                            server_data.max_peers
+                        ),
+                    },
+                );
+                continue;
+            }
+
+            let offer = match parse_offer(&sdp) {
+                Ok(offer) => offer,
+                Err(e) => {
+                    send_signal(
+                        &out_tx,
+                        &WebRtcSignal::Error {
+                            message: format!("unusable SDP offer: {}", e),
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+
+            let decision = Self::decide_offer(
+                &peer_id,
+                remote_addr,
+                &offer,
+                connection_id,
+                &llm_client,
+                &app_state,
+                server_id,
+            )
+            .await;
+
+            match decision {
+                OfferDecision::Reject(reason) => {
+                    info!("WebRTC offer from {} rejected: {}", peer_id, reason);
+                    let _ = status_tx.send(format!(
+                        "[SERVER] WebRTC offer from {} rejected: {}",
+                        peer_id, reason
+                    ));
+                    send_signal(
+                        &out_tx,
+                        &WebRtcSignal::Rejected {
+                            peer_id: peer_id.clone(),
+                            reason,
+                        },
+                    );
+                }
+                OfferDecision::Accept => {
+                    match server_data
+                        .accept_offer(
+                            peer_id.clone(),
+                            offer,
+                            connection_id,
+                            llm_client.clone(),
+                            Arc::clone(&app_state),
+                            status_tx.clone(),
+                            server_id,
+                        )
+                        .await
+                    {
+                        Ok(answer) => {
+                            peer_ctx = Some(PeerCtx {
+                                server_data: Arc::clone(&server_data),
+                                peer_id: peer_id.clone(),
+                                connection_id,
+                                server_id,
+                                app_state: Arc::clone(&app_state),
+                                llm_client: llm_client.clone(),
+                                status_tx: status_tx.clone(),
+                            });
+                            send_signal(
+                                &out_tx,
+                                &WebRtcSignal::Answer {
+                                    peer_id: peer_id.clone(),
+                                    sdp: answer,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            error!("WebRTC failed to answer peer {}: {}", peer_id, e);
+                            send_signal(
+                                &out_tx,
+                                &WebRtcSignal::Error {
+                                    message: format!("failed to establish peer connection: {}", e),
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // The peer connection's lifetime is the signalling socket's lifetime.
+        if let Some(ctx) = peer_ctx {
+            ctx.teardown("signalling connection closed").await;
+        }
+        drop(out_tx);
+        let _ = writer.await;
+        Ok(())
+    }
+
+    /// Ask the LLM whether to accept this offer. Anything other than an explicit
+    /// `accept_offer` is a refusal.
+    #[allow(clippy::too_many_arguments)]
+    async fn decide_offer(
+        peer_id: &str,
+        remote_addr: SocketAddr,
+        offer: &RTCSessionDescription,
+        connection_id: ConnectionId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        server_id: ServerId,
+    ) -> OfferDecision {
+        let summary = summarise_offer(&offer.sdp);
+        let event = Event::new(
+            &WEBRTC_OFFER_RECEIVED_EVENT,
+            serde_json::json!({
+                "peer_id": peer_id,
+                "remote_addr": remote_addr.to_string(),
+                "requests_data_channel": summary.data_channel,
+                "media_kinds": summary.media_kinds,
+            }),
+        );
+
+        let protocol = crate::server::WebRtcProtocol::new();
+        let result = match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            &protocol,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                error!("WebRTC offer decision failed for peer {}: {}", peer_id, e);
+                return OfferDecision::Reject(format!(
+                    "no decision could be obtained from the model: {}",
+                    e
+                ));
+            }
+        };
+
+        for action_result in &result.protocol_results {
+            if let Some(decision) = offer_decision(action_result) {
+                return decision;
+            }
+        }
+
+        OfferDecision::Reject(
+            "the model returned no accept_offer or reject_offer action; refusing by default"
                 .to_string(),
-        );
-        warn!(
-            "WebRTC server started but is non-functional: DevelopmentState::Incomplete, no \
-             signaling transport"
-        );
+        )
+    }
+}
 
-        // Return dummy address (WebRTC is P2P, no traditional listen address)
-        Ok("0.0.0.0:0".parse().unwrap())
+/// Extract an offer decision from an action result, descending into `Multiple`.
+fn offer_decision(result: &ActionResult) -> Option<OfferDecision> {
+    match result {
+        ActionResult::Custom { name, data } if name == OFFER_DECISION_RESULT => {
+            if data
+                .get("accept")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                Some(OfferDecision::Accept)
+            } else {
+                Some(OfferDecision::Reject(
+                    data.get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("the model rejected this offer")
+                        .to_string(),
+                ))
+            }
+        }
+        ActionResult::Multiple(inner) => inner.iter().find_map(offer_decision),
+        _ => None,
+    }
+}
+
+/// Frame name for error messages.
+fn signal_name(signal: &WebRtcSignal) -> &'static str {
+    match signal {
+        WebRtcSignal::Offer { .. } => "offer",
+        WebRtcSignal::Answer { .. } => "answer",
+        WebRtcSignal::Rejected { .. } => "rejected",
+        WebRtcSignal::Error { .. } => "error",
+    }
+}
+
+/// Queue a signalling frame for the writer task.
+fn send_signal(out_tx: &mpsc::UnboundedSender<Message>, signal: &WebRtcSignal) {
+    match serde_json::to_string(signal) {
+        Ok(json) => {
+            let _ = out_tx.send(Message::Text(json));
+        }
+        Err(e) => error!("WebRTC failed to serialise signalling frame: {}", e),
+    }
+}
+
+/// Accept either `{"type":"offer","sdp":"..."}` or a bare SDP string.
+///
+/// The SDP body is parsed here, before the model is consulted: an offer webrtc-rs cannot
+/// read is not worth an LLM round-trip, and `set_remote_description` would only reject it
+/// afterwards — with the peer already counted as a decision the model made.
+fn parse_offer(sdp: &serde_json::Value) -> Result<RTCSessionDescription> {
+    let raw = match sdp.as_str() {
+        Some(raw) => raw.to_string(),
+        None => {
+            let description: RTCSessionDescription = serde_json::from_value(sdp.clone())
+                .context("expected {\"type\":\"offer\",\"sdp\":\"...\"} or an SDP string")?;
+            if description.sdp_type != RTCSdpType::Offer {
+                anyhow::bail!(
+                    "expected an SDP of type 'offer', got '{}'",
+                    description.sdp_type
+                );
+            }
+            description.sdp
+        }
+    };
+
+    RTCSessionDescription::offer(raw).context("SDP could not be parsed as an offer")
+}
+
+/// Structured, model-facing view of an SDP offer.
+struct OfferSummary {
+    data_channel: bool,
+    media_kinds: Vec<String>,
+}
+
+/// Summarise an SDP offer for the model.
+///
+/// The model never sees the SDP itself — it is long, it is not something a model can
+/// usefully edit, and an action parameter carrying it would violate the structured-fields
+/// rule. It sees only what it needs to decide: whether a data channel is requested and what
+/// media, if any, the peer wants (this server supports none).
+fn summarise_offer(sdp: &str) -> OfferSummary {
+    let mut data_channel = false;
+    let mut media_kinds = Vec::new();
+    for line in sdp.lines() {
+        let Some(media) = line.trim().strip_prefix("m=") else {
+            continue;
+        };
+        let kind = media.split_whitespace().next().unwrap_or("");
+        match kind {
+            "application" => data_channel = true,
+            "" => {}
+            other => {
+                let other = other.to_string();
+                if !media_kinds.contains(&other) {
+                    media_kinds.push(other);
+                }
+            }
+        }
+    }
+    OfferSummary {
+        data_channel,
+        media_kinds,
     }
 }

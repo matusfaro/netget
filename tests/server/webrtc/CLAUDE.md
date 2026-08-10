@@ -1,218 +1,115 @@
 # WebRTC Server E2E Tests
 
-## Overview
+## What these tests prove
 
-End-to-end tests for the WebRTC server protocol implementation. These tests verify server functionality using mocks to simulate LLM responses.
+The previous suite here asserted that the NetGet process started. It could not have failed
+for any WebRTC reason, and it did not call `verify_mocks()`, so its four mocked event rules
+were never checked — for events that could not fire in the first place.
 
-## Test Strategy
+This suite establishes a **real peer connection**. The peer is webrtc-rs itself
+(`RTCPeerConnection` + `RTCDataChannel`), not a mock: it creates a data channel, produces a
+fully-gathered SDP offer, exchanges SDP with NetGet over the server's built-in WebSocket
+signalling endpoint, completes ICE, DTLS and SCTP, and then a message is asserted to have
+**arrived** on the other side. That last assertion is the whole point of the file.
 
-**Approach**: Black-box testing with subprocess execution + LLM mocks
+**LLM budget: 9 mocked calls across 4 tests.** No Ollama required. Every test finishes with
+`server.verify_mocks().await?`.
 
-**LLM Call Budget**: < 10 calls total across all tests
+Runtime: ~1s for the file (measured, mock mode).
 
-**Runtime**: ~5-10 seconds (with mocks, no actual WebRTC connections)
+## Tests
 
-**Test Mode**: Mock-only (no real Ollama required)
+### 1. `test_webrtc_data_channel_message_round_trip` — the load-bearing one
+**LLM calls: 4** (startup, offer decision, peer connected, message received)
 
-## Test Coverage
+1. Peer builds an `RTCPeerConnection`, creates the data channel `netget`, and gathers.
+2. Peer opens a WebSocket to the server's port and sends `{"type":"offer", ...}`.
+3. Mock LLM answers the `webrtc_offer_received` event with `accept_offer`.
+4. Server returns an `answer` frame; the test asserts it is a real answer carrying
+   `m=application`, and applies it to the peer.
+5. Data channel opens on both sides. The peer sends `"ping from peer"` from its `on_open`.
+6. Mock LLM answers `webrtc_peer_connected` with `send_message "welcome e2e-peer"` and
+   `webrtc_message_received` with `send_message "pong from netget"`.
+7. **The assertion:** the peer's `on_message` receives exactly `["pong from netget",
+   "welcome e2e-peer"]`. Receiving the pong also proves the server received the peer's
+   "ping from peer", since nothing else could have produced it.
 
-### Test 1: Server Startup
-**File**: `e2e_test.rs::test_webrtc_server_startup_with_mocks`
-**LLM Calls**: 1 (server startup)
-**Duration**: ~0.5s
+If the transport does not come up, no message arrives and the test fails on a 30s timeout
+with a message saying so. There is no path through this test that passes without bytes
+crossing the data channel.
 
-**Purpose**: Verify WebRTC server can start in manual signaling mode
+### 2. `test_webrtc_offer_rejected_by_model`
+**LLM calls: 2.** The model answers `reject_offer` with a reason; the peer must receive
+`{"type":"rejected", "peer_id":"stranger", "reason": "...guest list..."}` and no answer.
 
-**Mock Flow**:
-1. User command → Server startup action (mock open_server with WebRTC base_stack)
+### 3. `test_webrtc_offer_without_decision_is_refused` — fail-closed
+**LLM calls: 2.** The model returns a well-formed reply containing `append_to_log` and no
+admission decision. The offer must still be **refused**, with a reason naming the missing
+decision. This is the OAuth2-shaped defect guarded against: model silence must never read as
+approval.
 
-**Verification**:
-- Server starts without errors
-- Manual signaling mode configured
-- ICE servers configured (Google STUN)
+### 4. `test_webrtc_malformed_signalling_is_rejected_without_panic`
+**LLM calls: 1** (startup only — none of these frames reaches the model, which is itself part
+of the point). Sends, over one socket: non-JSON text, an `answer` frame from the peer, an
+offer whose SDP does not parse, and an offer with a whitespace-only `peer_id`. Each must
+produce an `error` frame; the socket must stay usable throughout; the server must not log a
+panic.
 
----
+## Mock pattern
 
-### Test 2: Accept Offer
-**File**: `e2e_test.rs::test_webrtc_accept_offer_with_mocks`
-**LLM Calls**: 2 (server startup + offer received event)
-**Duration**: ~1s
-
-**Purpose**: Verify server can accept SDP offers and generate answers
-
-**Mock Flow**:
-1. User command → Server startup action
-2. webrtc_offer_received event → accept_offer action (with peer_id and sdp_offer)
-
-**Verification**:
-- Server receives offer event with peer_id
-- LLM generates accept_offer action with correct parameters
-- SDP answer would be generated (mocked)
-
----
-
-### Test 3: Send Message
-**File**: `e2e_test.rs::test_webrtc_send_message_with_mocks`
-**LLM Calls**: 3 (server startup + peer connected + message received)
-**Duration**: ~1s
-
-**Purpose**: Verify server can send messages to peers
-
-**Mock Flow**:
-1. User command → Server startup action
-2. webrtc_peer_connected event → send_to_peer action (welcome message)
-3. webrtc_message_received event → send_message action (echo response)
-
-**Verification**:
-- Server detects peer connection
-- LLM sends welcome message
-- LLM echoes received message back
-
----
-
-### Test 4: Multi-Peer Support
-**File**: `e2e_test.rs::test_webrtc_multi_peer_with_mocks`
-**LLM Calls**: 3 (server startup + 2 peer connections)
-**Duration**: ~1s
-
-**Purpose**: Verify server can handle multiple peers simultaneously
-
-**Mock Flow**:
-1. User command → Server startup action
-2. webrtc_peer_connected (alice) → send_to_peer action
-3. webrtc_peer_connected (bob) → list_peers action
-
-**Verification**:
-- Server tracks multiple peers independently
-- LLM can send messages to specific peers
-- LLM can list all connected peers
-
----
-
-### Test 5: Peer Disconnection
-**File**: `e2e_test.rs::test_webrtc_peer_disconnect_with_mocks`
-**LLM Calls**: 3 (server startup + peer connected + peer disconnected)
-**Duration**: ~1s
-
-**Purpose**: Verify server handles peer disconnections gracefully
-
-**Mock Flow**:
-1. User command → Server startup action
-2. webrtc_peer_connected event → send_to_peer action
-3. webrtc_peer_disconnected event → wait_for_more action
-
-**Verification**:
-- Server detects peer connection
-- Server detects peer disconnection
-- Peer state cleaned up properly
-
----
-
-## Event Types Tested
-
-1. **webrtc_offer_received** - Triggered when peer sends SDP offer (manual mode)
-   - Parameters: peer_id, sdp_offer
-
-2. **webrtc_peer_connected** - Triggered when data channel opens
-   - Parameters: peer_id, channel_label
-
-3. **webrtc_message_received** - Triggered when message received from peer
-   - Parameters: peer_id, message, is_binary
-
-4. **webrtc_peer_disconnected** - Triggered when peer connection closes
-   - Parameters: peer_id, reason (optional)
-
-## Actions Tested
-
-1. **open_server** - Start WebRTC server
-   - Parameters: base_stack=WebRTC, startup_params (ice_servers, signaling_mode)
-
-2. **accept_offer** - Accept SDP offer from peer
-   - Parameters: peer_id, sdp_offer
-
-3. **send_to_peer** - Send message to specific peer
-   - Parameters: peer_id, message
-
-4. **send_message** - Send message in event response (sync action)
-   - Parameters: message
-
-5. **list_peers** - List all connected peers
-   - Parameters: none
-
-6. **close_peer** - Disconnect specific peer
-   - Parameters: peer_id
-
-7. **wait_for_more** - No action taken (sync)
-   - Parameters: none
-
-## Mock Pattern
-
-All tests use `.with_mock()` to configure LLM responses:
+Startup is matched with `.on_instruction_containing("webrtc")` rather than `.on_any()`, so
+the startup rule cannot swallow an event call and mask a missing event rule.
 
 ```rust
-.with_mock(|mock| {
-    mock
-        // Initial user command
-        .on_any()
-        .respond_with_actions(serde_json::json!([...]))
-        .expect_calls(1)
-        .and()
-        // Event response
-        .on_event("webrtc_peer_connected")
-        .and_event_data_contains("peer_id", "alice")
-        .respond_with_actions(serde_json::json!([...]))
-        .expect_calls(1)
-        .and()
-})
+mock.on_instruction_containing("webrtc")
+    .respond_with_actions(json!([{ "type": "open_server", "port": 0, "base_stack": "webrtc", ... }]))
+    .expect_calls(1)
+    .and()
+    .on_event("webrtc_offer_received")
+    .and_event_data_contains("peer_id", "e2e-peer")
+    .respond_with_actions(json!([{ "type": "accept_offer" }]))
+    .expect_calls(1)
+    .and()
 ```
 
-## Running Tests
+`"port": 0` is deliberate: the harness learns the real port from the server's
+`... listening on 127.0.0.1:PORT` status line. Do not reformat that line without checking
+`tests/helpers/netget.rs::parse_server_startup` and its "listening on" fallback — the port
+is scraped from it.
+
+## Environment prerequisites
+
+- **A non-loopback network interface must exist.** webrtc-ice omits loopback from host
+  candidates and 0.11 has no option to include it, so a host with only `lo` cannot complete
+  ICE. This is a crate property, not a bug in the server.
+- **No external endpoints are contacted.** The server is started with no `ice_servers`, so
+  there is no STUN/TURN traffic; ICE connectivity checks go only to the peer's own local
+  addresses, and signalling is `127.0.0.1`.
+- mDNS is at webrtc-rs's default (`QueryOnly`). Failure to open the mDNS socket is
+  non-fatal in the crate, so a sandbox that blocks multicast does not break the tests.
+
+## Running
 
 ```bash
-# Run all WebRTC server tests (mock mode)
-./test-e2e.sh webrtc
+./cargo-isolated.sh test --no-default-features --features webrtc \
+    --test server -- --test-threads=100 server::webrtc::e2e_test
 
-# Run specific test
-./test-e2e.sh webrtc --test test_webrtc_server_startup_with_mocks
-
-# Run with real Ollama (if needed for debugging)
-./test-e2e.sh --use-ollama webrtc
+# see the SDP and the data-channel traffic
+... -- --nocapture --test-threads=100 server::webrtc::e2e_test
 ```
 
-**Note**: Tests are designed for mock mode. Real Ollama mode would require actual WebRTC peer connections which is complex to automate.
+Filtering on plain `webrtc` also pulls in `server::webrtc_signaling`, which is a different
+protocol with its own (currently failing, unrelated) suite. Use `server::webrtc::` to scope
+to this one.
 
-## Known Issues
+## What is not covered
 
-None currently.
-
-## Limitations
-
-1. **No Real WebRTC Connections**: Tests use mocks, don't establish actual peer connections
-2. **No SDP Parsing**: SDP offer/answer strings are placeholder values
-3. **No ICE Gathering**: Simulated, not real STUN/TURN server interaction
-4. **No Data Channel I/O**: Message sending/receiving is mocked
-
-These limitations are acceptable for mock-based testing. Real WebRTC functionality is verified manually or in integration tests with actual peers.
-
-## Future Enhancements
-
-1. **Integration Tests**: Two NetGet instances connecting via WebRTC
-2. **Browser Tests**: WebRTC client (browser) → NetGet server
-3. **Signaling Server Integration**: Test automatic signaling with signaling server
-4. **Binary Data**: Test hex-encoded binary message transfer
-5. **Performance**: Stress test with many peers (100+)
-6. **Edge Cases**: Network failures, malformed SDP, ICE failures
-
-## Test Efficiency
-
-**Total LLM Calls**: 9 (across 5 tests)
-**Total Runtime**: ~5 seconds (mock mode)
-**Coverage**: 85% of server functionality
-
-**Efficiency Score**: ⭐⭐⭐⭐⭐ (< 10 calls, < 10s runtime, good coverage)
-
-## References
-
-- Main implementation: `src/server/webrtc/CLAUDE.md`
-- Test helpers: `tests/helpers.rs`
-- Mock framework: `src/llm/mock.rs`
+- Media tracks (out of scope for the protocol; see `src/server/webrtc/CLAUDE.md`).
+- Trickle ICE, renegotiation, ICE restart (unsupported).
+- Multiple simultaneous peers. The server supports them (one WebSocket each, independent
+  state machines) but no test asserts it; adding one costs 3 more LLM calls.
+- `max_peers` enforcement.
+- Real STUN/TURN traversal — untestable without an external endpoint, which tests must not
+  contact.
+- Browser interoperability, which is the main thing a human should check by hand before this
+  protocol is promoted past `Experimental`.

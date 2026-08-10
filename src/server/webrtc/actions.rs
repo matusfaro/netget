@@ -1,26 +1,24 @@
-//! WebRTC server protocol actions implementation
+//! WebRTC server protocol actions.
 //!
-//! # Status: Incomplete — this server cannot carry a byte
+//! Three events, all reachable (see `mod.rs` for the signalling transport that makes them
+//! so):
 //!
-//! `WebRtcServer::spawn_with_llm_actions` binds nothing, spawns nothing and registers no
-//! task. The only entry point that could create a peer connection is
-//! [`crate::server::webrtc::WebRtcServerData::accept_offer`], and **nothing calls it**:
-//! there is no code path anywhere in NetGet that delivers an SDP offer to this protocol.
-//! `webrtc_offer_received` therefore never fires, no `RTCPeerConnection` is ever created,
-//! no data channel ever opens, and `webrtc_peer_connected` / `webrtc_message_received`
-//! are unreachable for the same reason.
+//! - `webrtc_offer_received` — a peer sent an SDP offer over the signalling WebSocket. The
+//!   model answers `accept_offer` or `reject_offer`. This path is fail-closed: `mod.rs`
+//!   treats anything else, including an LLM error, as a refusal.
+//! - `webrtc_peer_connected` — the data channel opened.
+//! - `webrtc_message_received` — the peer sent a data-channel message.
 //!
-//! Four async actions (`accept_offer`, `send_to_peer`, `close_peer`, `list_peers`) used to
-//! be advertised here. Each returned `ActionResult::Custom`, and — unlike postgresql, s3,
-//! grpc or couchdb, which match on `Custom` in their own server loop — this protocol has
-//! no loop to match on it, so the result was constructed and dropped. They have been
-//! removed rather than left advertising a capability that never existed.
+//! The last two accept `send_message` / `disconnect` / `wait_for_more`.
 //!
-//! `DevelopmentState` is `Incomplete`, so the protocol is hidden from LLM prompts unless
-//! `--include-disabled-protocols` is passed. Making it real needs, at minimum: a signaling
-//! transport that feeds offers in (the sibling `webrtc_signaling` server, or a startup
-//! parameter), a spawned task that owns `WebRtcServerData` and is registered via
-//! `AppState::register_server_task`, and an async-action path that can reach that task.
+//! No action carries SDP, ICE candidates or raw bytes. The model decides *whether* to admit
+//! a peer and *what to say* on the channel; the SDP never leaves Rust.
+//!
+//! `get_async_actions` is deliberately empty: server-side async actions are advertised
+//! nowhere in the LLM prompt path (only `call_llm_for_client` reads them, and that is the
+//! client trait), so declaring `list_peers`/`send_to_peer` here would advertise a capability
+//! the model has no way to invoke. `WebRtcServerData::list_peers` / `send_to_peer` exist for
+//! callers that hold the live server data.
 
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
@@ -33,10 +31,61 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+use super::OFFER_DECISION_RESULT;
+
+/// Default cap on simultaneous peers, overridable with the `max_peers` startup parameter.
+pub const DEFAULT_MAX_PEERS: usize = 32;
+
+/// A peer offered a WebRTC connection over the signalling WebSocket.
+pub static WEBRTC_OFFER_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "webrtc_offer_received",
+        "A peer sent a WebRTC SDP offer. Decide whether to admit it. Answering with anything \
+         other than accept_offer refuses the peer.",
+        json!({
+            "type": "accept_offer"
+        }),
+    )
+    .with_actions(offer_actions())
+    .with_parameters(vec![
+        Parameter {
+            name: "peer_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Identifier the peer chose for itself".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "remote_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Address the signalling connection came from".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "requests_data_channel".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether the offer contains a data channel (this server supports \
+                          nothing else)"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "media_kinds".to_string(),
+            type_hint: "array".to_string(),
+            description: "Media the peer asked for, e.g. [\"audio\"]. This server carries no \
+                          media, so a non-empty list means part of the offer cannot be served."
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("WebRTC offer from {peer_id} ({remote_addr})")
+            .with_debug("WebRTC offer peer_id={peer_id} data_channel={requests_data_channel}")
+            .with_trace("WebRTC offer: {json_pretty(.)}"),
+    )
+});
+
 /// WebRTC peer connected event (data channel opened)
-///
-/// Unreachable: see the module header. Kept because the (also unreachable) data-channel
-/// callback in `mod.rs` references it.
 pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_peer_connected",
@@ -57,7 +106,7 @@ pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "channel_label".to_string(),
             type_hint: "string".to_string(),
-            description: "Data channel label".to_string(),
+            description: "Data channel label chosen by the peer".to_string(),
             required: true,
         },
     ])
@@ -70,12 +119,10 @@ pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// WebRTC message received event
-///
-/// Unreachable: see the module header.
 pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_message_received",
-        "Message received from WebRTC peer",
+        "Message received from WebRTC peer over the data channel",
         json!({
             "type": "send_message",
             "message": "Message received"
@@ -98,7 +145,9 @@ pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
         Parameter {
             name: "is_binary".to_string(),
             type_hint: "boolean".to_string(),
-            description: "Whether message is binary".to_string(),
+            description: "True if the peer sent a binary frame; its bytes are rendered as \
+                          lossy UTF-8 in 'message'"
+                .to_string(),
             required: true,
         },
     ])
@@ -110,20 +159,52 @@ pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     )
 });
 
-// `WEBRTC_OFFER_RECEIVED_EVENT` and `WEBRTC_PEER_DISCONNECTED_EVENT` used to live here.
-// Neither could ever fire: no code path delivers an SDP offer, and the
-// `on_peer_connection_state_change` handler cleans up without calling the LLM. The
-// disconnect event's response example was `{"type": "no_action"}`, an action that exists
-// nowhere in NetGet — response examples are rendered verbatim into the prompt, so it was
-// teaching the model a call it could only be rejected for making.
-//
-// The actions a reachable data-channel event could use. Declared once so
-// `get_sync_actions` and every event's `with_actions` cannot drift apart.
+/// Actions available while deciding on an incoming offer.
+fn offer_actions() -> Vec<ActionDefinition> {
+    vec![
+        ActionDefinition {
+            name: "accept_offer".to_string(),
+            description: "Admit this peer: answer its SDP offer and open the data channel"
+                .to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "accept_offer"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC accept offer")
+                    .with_debug("WebRTC accept_offer"),
+            ),
+        },
+        ActionDefinition {
+            name: "reject_offer".to_string(),
+            description: "Refuse this peer. The reason is sent back in the signalling response."
+                .to_string(),
+            parameters: vec![Parameter {
+                name: "reason".to_string(),
+                type_hint: "string".to_string(),
+                description: "Why the peer is being refused".to_string(),
+                required: true,
+            }],
+            example: json!({
+                "type": "reject_offer",
+                "reason": "unknown peer"
+            }),
+            log_template: Some(
+                LogTemplate::new()
+                    .with_info("-> WebRTC reject offer: {reason}")
+                    .with_debug("WebRTC reject_offer reason={reason}"),
+            ),
+        },
+    ]
+}
+
+/// Actions available on an open data channel.
 fn sync_actions() -> Vec<ActionDefinition> {
     vec![
         ActionDefinition {
             name: "send_message".to_string(),
-            description: "Send a message in response to received data".to_string(),
+            description: "Send a text message on this peer's data channel".to_string(),
             parameters: vec![Parameter {
                 name: "message".to_string(),
                 type_hint: "string".to_string(),
@@ -190,31 +271,36 @@ impl Protocol for WebRtcProtocol {
         vec![
             ParameterDefinition {
                 name: "ice_servers".to_string(),
-                description: "STUN/TURN servers for ICE (default: Google STUN)".to_string(),
+                description: "STUN/TURN server URLs for ICE. Default is none, which uses host \
+                              candidates only — correct for localhost and LAN peers, and it \
+                              contacts no third party. Add a STUN server for NAT traversal."
+                    .to_string(),
                 type_hint: "array".to_string(),
                 required: false,
-                example: json!(["stun:stun.l.google.com:19302", "turn:turn.example.com:3478"]),
+                example: json!(["stun:stun.l.google.com:19302"]),
             },
             ParameterDefinition {
-                name: "signaling_mode".to_string(),
-                description: "Signaling mode: 'manual' (default) or 'websocket'".to_string(),
-                type_hint: "string".to_string(),
+                name: "max_peers".to_string(),
+                description: format!(
+                    "Refuse offers once this many peers are connected (default {})",
+                    DEFAULT_MAX_PEERS
+                ),
+                type_hint: "integer".to_string(),
                 required: false,
-                example: json!("manual"),
+                example: json!(32),
             },
         ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        // Deliberately empty. accept_offer, send_to_peer, close_peer and list_peers were
-        // advertised here; each built an `ActionResult::Custom` that no code in this
-        // protocol ever consumed, so invoking one did precisely nothing while reporting
-        // success. See the module header.
+        // Deliberately empty; see the module header.
         Vec::new()
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        sync_actions()
+        let mut actions = offer_actions();
+        actions.extend(sync_actions());
+        actions
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -222,10 +308,8 @@ impl Protocol for WebRtcProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        // This used to build four *fresh* EventTypes with `{"type": "placeholder"}`
-        // response examples, entirely disconnected from the LazyLock statics the server
-        // actually fires. Both copies were wrong in different ways; return the real ones.
         vec![
+            WEBRTC_OFFER_RECEIVED_EVENT.clone(),
             WEBRTC_PEER_CONNECTED_EVENT.clone(),
             WEBRTC_MESSAGE_RECEIVED_EVENT.clone(),
         ]
@@ -249,27 +333,37 @@ impl Protocol for WebRtcProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Incomplete)
+            .state(DevelopmentState::Experimental)
             .implementation(
-                "webrtc-rs data-channel scaffolding that is never started: spawn() binds \
-                 nothing and no code path delivers an SDP offer",
+                "webrtc-rs 0.11 peer connections with built-in WebSocket signalling \
+                 (tokio-tungstenite): the server binds its port, answers SDP offers and runs \
+                 data channels over DTLS/SCTP",
             )
-            .llm_control("None reachable - no event can fire")
-            .e2e_testing("None - the E2E suite only asserts that the process starts")
+            .llm_control(
+                "Admission (accept_offer / reject_offer, fail-closed) and data-channel content \
+                 (send_message / disconnect / wait_for_more). SDP and ICE stay in Rust.",
+            )
+            .e2e_testing(
+                "webrtc-rs used as the peer: real offer/answer, real ICE, data-channel message \
+                 asserted on both sides",
+            )
             .notes(
-                "Not a working WebRTC server. WebRtcServerData::accept_offer has no \
-                 caller, so no peer connection or data channel is ever created and no \
-                 message can be sent or received.",
+                "Data channels only — no audio or video, and a media m-line in an offer is \
+                 reported to the model but never served. ICE is not trickled: the peer must \
+                 gather candidates before sending its offer. One peer per signalling \
+                 WebSocket, and closing that socket closes the peer connection. Binary \
+                 data-channel frames are surfaced to the model as lossy UTF-8; replies are \
+                 always text.",
             )
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "WebRTC data-channel scaffolding (INCOMPLETE - no signaling path, cannot connect)"
+        "WebRTC data-channel server with built-in WebSocket signalling (no media)"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Open WebRTC server accepting peer connections (manual SDP exchange)"
+        "Open a WebRTC server on port 9000 that accepts peers and echoes data channel messages"
     }
 
     fn group_name(&self) -> &'static str {
@@ -283,14 +377,14 @@ impl Protocol for WebRtcProtocol {
             // LLM mode
             json!({
                 "type": "open_server",
-                "port": 0,
+                "port": 9000,
                 "base_stack": "webrtc",
-                "instruction": "WebRTC data channel server. Accept peer connections via manual SDP exchange. Echo messages back to connected peers."
+                "instruction": "WebRTC data channel server. Accept offers from peers whose peer_id starts with 'guest', and echo every message back."
             }),
             // Script mode
             json!({
                 "type": "open_server",
-                "port": 0,
+                "port": 9000,
                 "base_stack": "webrtc",
                 "event_handlers": [{
                     "event_pattern": "webrtc_message_received",
@@ -304,18 +398,27 @@ impl Protocol for WebRtcProtocol {
             // Static mode
             json!({
                 "type": "open_server",
-                "port": 0,
+                "port": 9000,
                 "base_stack": "webrtc",
-                "event_handlers": [{
-                    "event_pattern": "webrtc_peer_connected",
-                    "handler": {
-                        "type": "static",
-                        "actions": [{
-                            "type": "send_message",
-                            "message": "Welcome to NetGet WebRTC server!"
-                        }]
+                "event_handlers": [
+                    {
+                        "event_pattern": "webrtc_offer_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{"type": "accept_offer"}]
+                        }
+                    },
+                    {
+                        "event_pattern": "webrtc_peer_connected",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_message",
+                                "message": "Welcome to NetGet WebRTC server!"
+                            }]
+                        }
                     }
-                }]
+                ]
             }),
         )
     }
@@ -331,12 +434,43 @@ impl Server for WebRtcProtocol {
     > {
         Box::pin(async move {
             use crate::server::webrtc::WebRtcServer;
+
+            let mut ice_servers: Vec<String> = Vec::new();
+            let mut max_peers = DEFAULT_MAX_PEERS;
+
+            if let Some(params) = &ctx.startup_params {
+                if let Some(urls) = params.get_optional_array("ice_servers")? {
+                    for url in urls {
+                        match url.as_str() {
+                            Some(url) => ice_servers.push(url.to_string()),
+                            None => anyhow::bail!(
+                                "Invalid startup parameter 'ice_servers': every entry must be a \
+                                 STUN/TURN URL string, got {}",
+                                url
+                            ),
+                        }
+                    }
+                }
+                if let Some(limit) = params.get_optional_u64("max_peers")? {
+                    if limit == 0 {
+                        anyhow::bail!("Invalid startup parameter 'max_peers': must be at least 1");
+                    }
+                    max_peers = limit.min(u16::MAX as u64) as usize;
+                }
+            }
+
+            let listen_addr = ctx
+                .socket_addr()
+                .unwrap_or_else(|| ctx.legacy_listen_addr());
+
             WebRtcServer::spawn_with_llm_actions(
-                ctx.legacy_listen_addr(),
+                listen_addr,
                 ctx.llm_client,
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                ice_servers,
+                max_peers,
             )
             .await
         })
@@ -349,10 +483,24 @@ impl Server for WebRtcProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            // accept_offer / send_to_peer / close_peer / list_peers used to be handled
-            // here, each returning an ActionResult::Custom that nothing consumed.
+            // The admission decision is carried back to the signalling task as a Custom
+            // result; `webrtc::WebRtcServer::decide_offer` is the consumer.
+            "accept_offer" => Ok(ActionResult::Custom {
+                name: OFFER_DECISION_RESULT.to_string(),
+                data: json!({ "accept": true }),
+            }),
+            "reject_offer" => {
+                let reason = action
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("the model rejected this offer")
+                    .to_string();
+                Ok(ActionResult::Custom {
+                    name: OFFER_DECISION_RESULT.to_string(),
+                    data: json!({ "accept": false, "reason": reason }),
+                })
+            }
             "send_message" => {
-                // This is a sync action for connection context
                 let message = action
                     .get("message")
                     .and_then(|v| v.as_str())
