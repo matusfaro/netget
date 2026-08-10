@@ -30,16 +30,19 @@ pub struct DiskImage {
 impl DiskImage {
     /// Open existing disk image or create new one
     ///
+    /// An image that already exists keeps its own size: `default_size_mb` only decides how
+    /// large a *newly created* image is. Resizing to a fixed default would silently truncate
+    /// or pad a filesystem image the caller supplied, which is exactly the case that matters
+    /// (`startup_params.disk_image` pointing at a prepared FAT volume).
+    ///
     /// # Arguments
     /// * `path` - Path to disk image file
-    /// * `size_mb` - Size in megabytes (only used if creating new)
+    /// * `default_size_mb` - Size in megabytes, used only when creating a new image
     ///
     /// # Returns
     /// DiskImage instance with memory-mapped file
-    pub fn open_or_create(path: &Path, size_mb: u32) -> Result<Self> {
-        let bytes_per_sector = 512;
-        let size_bytes = (size_mb as u64) * 1024 * 1024;
-        let total_sectors = (size_bytes / bytes_per_sector as u64) as u32;
+    pub fn open_or_create(path: &Path, default_size_mb: u32) -> Result<Self> {
+        let bytes_per_sector: u32 = 512;
 
         // Open or create file
         let file = OpenOptions::new()
@@ -53,23 +56,40 @@ impl DiskImage {
             .open(path)
             .context("Failed to open/create disk image file")?;
 
-        // Ensure file is the correct size
         let current_size = file.metadata()?.len();
-        if current_size != size_bytes {
+        let size_bytes = if current_size == 0 {
+            // Brand-new (or empty) image: use the requested default size.
+            let size_bytes = (default_size_mb as u64) * 1024 * 1024;
             file.set_len(size_bytes)
                 .context("Failed to set disk image size")?;
             info!(
-                "Created disk image {} ({} MB, {} sectors)",
+                "Created disk image {} ({} MB)",
                 path.display(),
-                size_mb,
-                total_sectors
+                default_size_mb
             );
+            size_bytes
         } else {
+            // Existing image: keep its contents, but round the mapping up to a whole
+            // sector so a partial trailing sector cannot make read_sectors slice past
+            // the end of the mapping.
+            let rounded = current_size.div_ceil(bytes_per_sector as u64) * bytes_per_sector as u64;
+            if rounded != current_size {
+                file.set_len(rounded)
+                    .context("Failed to pad disk image to a sector boundary")?;
+            }
             debug!(
-                "Opened existing disk image {} ({} MB, {} sectors)",
+                "Opened existing disk image {} ({} bytes)",
                 path.display(),
-                size_mb,
-                total_sectors
+                rounded
+            );
+            rounded
+        };
+
+        let total_sectors = (size_bytes / bytes_per_sector as u64) as u32;
+        if total_sectors == 0 {
+            anyhow::bail!(
+                "Disk image {} is smaller than one 512-byte sector",
+                path.display()
             );
         }
 
@@ -103,7 +123,12 @@ impl DiskImage {
     /// # Returns
     /// Vector containing sector data
     pub fn read_sectors(&self, lba: u32, count: u32) -> Result<Vec<u8>> {
-        if lba + count > self.total_sectors {
+        // `lba + count` is host-controlled, so it must not be allowed to wrap: a wrapped sum
+        // would compare small and then slice out of bounds.
+        let end = lba
+            .checked_add(count)
+            .context("Read beyond disk bounds: LBA + count overflows")?;
+        if end > self.total_sectors {
             anyhow::bail!(
                 "Read beyond disk bounds: LBA {} + {} > {}",
                 lba,
@@ -135,9 +160,13 @@ impl DiskImage {
     /// # Returns
     /// Number of sectors written
     pub fn write_sectors(&mut self, lba: u32, data: &[u8]) -> Result<u32> {
-        let count = ((data.len() as u32) + self.bytes_per_sector - 1) / self.bytes_per_sector;
+        let count = u32::try_from(data.len().div_ceil(self.bytes_per_sector as usize))
+            .context("Write payload is too large to address in sectors")?;
 
-        if lba + count > self.total_sectors {
+        let end = lba
+            .checked_add(count)
+            .context("Write beyond disk bounds: LBA + count overflows")?;
+        if end > self.total_sectors {
             anyhow::bail!(
                 "Write beyond disk bounds: LBA {} + {} > {}",
                 lba,
@@ -172,7 +201,10 @@ impl DiskImage {
     /// * `count` - Number of sectors to zero
     #[allow(dead_code)]
     pub fn zero_sectors(&mut self, lba: u32, count: u32) -> Result<()> {
-        if lba + count > self.total_sectors {
+        let end = lba
+            .checked_add(count)
+            .context("Zero beyond disk bounds: LBA + count overflows")?;
+        if end > self.total_sectors {
             anyhow::bail!(
                 "Zero beyond disk bounds: LBA {} + {} > {}",
                 lba,

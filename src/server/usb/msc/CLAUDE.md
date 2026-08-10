@@ -2,513 +2,166 @@
 
 ## Overview
 
-The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or hard disk using the USB/IP protocol. This
-allows an LLM to control a virtual disk device that appears as a real storage device to the host operating system.
+A virtual USB flash drive exported over USB/IP. The device presents a Mass Storage interface
+(class 0x08, subclass 0x06 SCSI transparent, protocol 0x50 Bulk-Only Transport) backed by a
+memory-mapped disk image, and answers a SCSI-2 subset. A Linux host that imports it sees
+`/dev/sdX`; anything that speaks USB/IP over TCP can read and write sectors with no kernel
+module.
 
-## Architecture
+**State: Experimental**, but now actually exercised — see Testing.
 
-### USB/IP + MSC Protocol Stack
+## Layout
 
-```
-┌─────────────────┐                    ┌──────────────────┐
-│  NetGet Server  │                    │  Linux Client    │
-│  (USB/IP MSC)   │ ◄────── TCP ─────► │  (vhci-hcd)      │
-│  Port: 3240     │                    │  usbip attach    │
-└─────────────────┘                    └──────────────────┘
-         │                                      │
-         │ Creates virtual                     │ Sees as
-         │ USB mass storage                    │ /dev/sdX
-         ▼                                     ▼
-    [MSC Descriptors]                     [Block Device]
-    [BOT Protocol]                        [Mountable Disk]
-    [SCSI Commands]
-    [Disk Image File]
-```
+| File | What it does |
+|---|---|
+| `mod.rs` | Accept loop, USB/IP session, the four events, connection state machine |
+| `handler.rs` | `UsbMscHandler` — the `usbip::UsbInterfaceHandler`, BOT state machine, SCSI |
+| `disk.rs` | `DiskImage` — memory-mapped sector I/O |
+| `actions.rs` | Action/event definitions, per-connection handler registry, `execute_action` |
 
-### Protocol Layers
+## Three things that were broken and are worth remembering
 
-1. **USB Layer**: USB/IP protocol for device virtualization
-2. **MSC Layer**: Mass Storage Class (device class 0x08)
-3. **BOT Layer**: Bulk-Only Transport (protocol 0x50)
-4. **SCSI Layer**: SCSI transparent command set (subclass 0x06)
-5. **Disk Layer**: Virtual disk image file (raw or FAT32)
+**1. The device was never reachable.** `handle_connection` dropped the accepted socket and
+called `usbip::server(remote_addr, …)`, which tries to *bind* a fresh listener on the client's
+own address. It now runs `usbip::handler(&mut stream, server)` on the socket netget already
+accepted, exactly as `src/server/usb/serial/mod.rs` does.
 
-## Current Status: **Experimental (Full Implementation Complete)**
+**2. Every SCSI command would have panicked.** `usbip` calls the synchronous
+`UsbInterfaceHandler::handle_urb` from inside an async fn on a tokio worker, and the handler
+used `tokio::runtime::Handle::current().block_on(...)` for each command — "Cannot block the
+current thread from within a runtime". The whole SCSI path is now synchronous and the disk sits
+behind a `std::sync::Mutex`. The same applied to `execute_action`, whose handler registry was a
+tokio `Mutex` reached through `block_on`; it is a `std::sync::Mutex` now, and no guard is held
+across an `.await`.
 
-### What's Implemented
+**3. Control requests went to the bulk IN path.** The dispatch tested `endpoint.address == 0`,
+but the crate's control **IN** endpoint is `0x80`. `Get Max LUN` was answered with whatever the
+BOT state machine happened to have queued. Use `endpoint.is_ep0()` and `endpoint.direction()`.
 
-#### Phase 1: USB/IP Device Handler ✅ COMPLETE
+Endpoints are bulk IN `0x81` and bulk OUT `0x01` — endpoint 1 in both directions, as a real BOT
+device presents itself. (It used to be `0x81`/`0x02`, which forced a host to use different
+endpoint numbers per direction.)
 
-- ✅ Custom `UsbInterfaceHandler` trait implementation for MSC (`handler.rs`)
-- ✅ Bulk OUT endpoint handler (receive CBW + data)
-- ✅ Bulk IN endpoint handler (send data + CSW)
-- ✅ BOT state machine (CBW → Data → CSW)
-- ✅ Class-specific control requests (Mass Storage Reset, Get Max LUN)
+## BOT state machine
 
-#### Phase 2: SCSI Command Implementation ✅ COMPLETE
+`handle_urb` on bulk OUT decides by *phase*, not by length:
 
-- ✅ **INQUIRY** (0x12): Return device information
-- ✅ **TEST_UNIT_READY** (0x00): Check device readiness
-- ✅ **READ_CAPACITY(10)** (0x25): Return total sectors and block size
-- ✅ **READ(10)** (0x28): Read sectors from disk image
-- ✅ **WRITE(10)** (0x2A): Write sectors to disk image
-- ✅ **REQUEST_SENSE** (0x03): Return sense data for errors
-- ✅ **MODE_SENSE(6)** (0x1A): Return device parameters
-- ✅ **PREVENT_ALLOW_MEDIUM_REMOVAL** (0x1E): Acknowledge media lock
-- ✅ **READ_FORMAT_CAPACITIES** (0x23): Return disk format info
-- ✅ SCSI sense data management (error reporting)
+1. `pending_write` set → this is the data phase of a WRITE(10).
+2. `csw_pending` set → the command already failed and the host is still pushing the data it
+   promised in the CBW. A real device stalls here; USB/IP has no stall, so the bytes are
+   discarded and the CSW reports them as residue.
+3. Otherwise → parse a CBW.
 
-#### Phase 3: Disk Image Management ✅ COMPLETE
+Deciding by `data.len() == 31` misreads a 31-byte data payload as a command, and made a
+write-protected WRITE(10) fail the *transport* rather than the command.
 
-- ✅ Disk image file creation and validation (`disk.rs`)
-- ✅ Sector read/write operations (512-byte blocks)
-- ✅ Memory-mapped I/O for performance (using memmap2)
-- ✅ Write-protect flag management
-- ✅ Zero-sector operations
-- ✅ Unit tests for disk I/O
+Bulk IN hands out `pending_data` capped at the URB's `transfer_buffer_length`, then the CSW.
+The CSW carries a real residue (`expected_transfer - transferred`) and the status the SCSI layer
+decided, not a status re-derived from whatever sense happens to be set.
 
-#### Phase 4: LLM Integration ✅ COMPLETE
+## SCSI commands
 
-- ✅ USB/IP server spawning with device export
-- ✅ Event generation (usb_msc_attached, read, write)
-- ✅ Connection state tracking
-- ✅ Handler storage per connection
-- ✅ LLM actions fully implemented:
-  - **mount_disk**: Mount a new disk image file at runtime
-  - **eject_disk**: Simulate media ejection (device reports "not ready")
-  - **set_write_protect**: Enable/disable write protection dynamically
+INQUIRY, TEST UNIT READY, READ CAPACITY(10), READ(10), WRITE(10), REQUEST SENSE, MODE SENSE(6),
+PREVENT/ALLOW MEDIUM REMOVAL, READ FORMAT CAPACITIES. Anything else gets ILLEGAL REQUEST /
+INVALID COMMAND OPERATION CODE.
 
-#### Phase 5: Testing ⚠️ NOT YET TESTED
+Every CDB is length-checked before its fields are read; a short CDB is INVALID FIELD IN CDB, not
+a panic. `DiskImage` bounds-checks with `checked_add` so a host-supplied `lba + count` cannot
+wrap and slice out of the mapping.
 
-- ❌ E2E tests with real usbip client (requires manual testing)
-- ❌ Disk mounting verification
-- ❌ File read/write tests
-- ❌ Performance benchmarking
+**Eject is a state, not a sense code.** `eject_disk` used to only `set_sense(NOT_READY)`, which
+the next command cleared — an "ejected" device kept serving sectors. There is now a
+`medium_present` flag; every command that needs the medium fails NOT READY / MEDIUM NOT PRESENT
+while it is clear, and REQUEST SENSE re-arms the condition after reporting it. INQUIRY still
+answers, because that is how a host learns the device exists.
 
-### Known Limitations
+## Disk images
 
-#### Not Yet Implemented
+`DiskImage::open_or_create(path, default_size_mb)` **keeps the size of an image that already
+exists**; `default_size_mb` (10) applies only when creating one. It used to `set_len` to 10 MB
+unconditionally, which silently truncated or padded a prepared filesystem image — the exact case
+`startup_params.disk_image` is for. A partial trailing sector is rounded up so the mapping is a
+whole number of sectors.
 
-- **E2E Testing**: No automated E2E tests exist (see `tests/server/usb_msc/CLAUDE.md`)
-- **Multiple LUNs**: Only single LUN (logical unit) supported
+Storage in a protocol sits awkwardly with the project's no-storage rule. The image is host state
+the model *names*, not a database the protocol implements, but an LLM-supplied file mode would
+be the cleaner shape.
 
-#### Implementation Notes
+## LLM Actions
 
-- **Write Protection**: Defaults to `true` for safety, preventing accidental writes until explicitly disabled
-- **Disk Size**: Defaults to 10MB, currently not configurable via startup parameters
-- **SCSI Compliance**: Implements minimal SCSI-2 command set for basic storage operations
-- **Blocking in async**: Uses `tokio::runtime::Handle::current().block_on()` in UsbInterfaceHandler methods (required
-  because trait is sync)
+**mount_disk** — swap the image. An existing image is served at its own size; a missing one is
+created (`size_mb`, default 10). `write_protect` defaults to **true**, matching how the device
+starts up; a model that wants writes must say so.
 
-## Implementation Guide
-
-### Step 1: Create UsbInterfaceHandler for MSC
-
-```rust
-use usbip::{UsbInterfaceHandler, SetupPacket};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-pub struct UsbMscHandler {
-    // Disk image backend
-    disk_image: Arc<RwLock<DiskImage>>,
-
-    // BOT protocol state
-    current_cbw: Option<CommandBlockWrapper>,
-    pending_data: Vec<u8>,
-    last_tag: u32,
-
-    // SCSI state
-    sense_key: u8,
-    sense_asc: u8,
-    sense_ascq: u8,
-
-    // Device info
-    total_sectors: u32,
-    bytes_per_sector: u32,
-    write_protect: bool,
-}
-
-impl UsbInterfaceHandler for UsbMscHandler {
-    fn handle_urb(&mut self, setup: &SetupPacket) -> Result<Vec<u8>> {
-        // Handle class-specific control requests
-        match (setup.bmRequestType, setup.bRequest) {
-            // Bulk-Only Mass Storage Reset (0x21, 0xFF)
-            (0x21, 0xFF) => {
-                self.reset_bot_state();
-                Ok(vec![])
-            }
-
-            // Get Max LUN (0xA1, 0xFE)
-            (0xA1, 0xFE) => {
-                Ok(vec![0x00]) // Single LUN device
-            }
-
-            _ => Err(anyhow!("Unsupported control request"))
-        }
-    }
-
-    fn handle_bulk_out(&mut self, data: &[u8]) -> Result<()> {
-        if data.len() == 31 {
-            // Parse CBW
-            let cbw = CommandBlockWrapper::parse(data)?;
-            self.current_cbw = Some(cbw.clone());
-            self.last_tag = cbw.tag;
-
-            // Dispatch SCSI command
-            self.handle_scsi_command(cbw.scsi_command())?;
-        } else {
-            // Data OUT for WRITE command
-            self.handle_write_data(data)?;
-        }
-        Ok(())
-    }
-
-    fn handle_bulk_in(&mut self) -> Result<Vec<u8>> {
-        if !self.pending_data.is_empty() {
-            // Return pending data
-            Ok(std::mem::take(&mut self.pending_data))
-        } else {
-            // Return CSW
-            let csw = CommandStatusWrapper::new(
-                self.last_tag,
-                0, // data_residue
-                CommandStatusWrapper::STATUS_PASSED,
-            );
-            Ok(csw.to_bytes().to_vec())
-        }
-    }
-}
+```json
+{"type": "mount_disk", "disk_image": "/path/to/disk.img", "write_protect": false}
 ```
 
-### Step 2: Implement SCSI Commands
+**eject_disk** — take the medium away. **set_write_protect** — toggle DATA PROTECT on WRITE(10).
+**wait_for_more** — do nothing.
 
-```rust
-impl UsbMscHandler {
-    fn handle_scsi_command(&mut self, cmd: &[u8]) -> Result<()> {
-        let opcode = cmd[0];
+### `connection_id` is optional
 
-        match opcode {
-            scsi_opcode::INQUIRY => self.scsi_inquiry(cmd),
-            scsi_opcode::TEST_UNIT_READY => self.scsi_test_unit_ready(),
-            scsi_opcode::READ_CAPACITY_10 => self.scsi_read_capacity(),
-            scsi_opcode::READ_10 => self.scsi_read10(cmd),
-            scsi_opcode::WRITE_10 => self.scsi_write10(cmd),
-            scsi_opcode::REQUEST_SENSE => self.scsi_request_sense(),
-            scsi_opcode::MODE_SENSE_6 => self.scsi_mode_sense(cmd),
-            _ => {
-                self.set_sense(scsi_sense_key::ILLEGAL_REQUEST, 0x20, 0x00);
-                Ok(())
-            }
-        }
-    }
+Every action takes an optional `connection_id`. With exactly one host attached it is inferred;
+with several, omitting it is an error naming the candidates. It used to be required *and*
+string-typed, so a model that emitted a number got "Invalid connection_id format"; both forms
+are accepted now.
 
-    fn scsi_inquiry(&mut self, cmd: &[u8]) -> Result<()> {
-        let alloc_len = cmd[4] as usize;
+## LLM Events
 
-        let response = vec![
-            0x00, // Direct access block device
-            0x80, // Removable
-            0x05, // SPC-3
-            0x02, // Response format
-            0x1F, // Additional length
-            0x00, 0x00, 0x00,
-            b'N', b'e', b't', b'G', b'e', b't', b' ', b' ', // Vendor (8 bytes)
-            b'V', b'i', b'r', b't', b'u', b'a', b'l', b' ',
-            b'D', b'i', b's', b'k', b' ', b' ', b' ', b' ', // Product (16 bytes)
-            b'1', b'.', b'0', b' ', // Version (4 bytes)
-        ];
+- `usb_msc_attached` — a host connected. Fields: `connection_id`, `remote_addr`,
+  `total_sectors`, `capacity_mb`.
+- `usb_msc_read` — the host read sectors. Fields: `connection_id`, `lba`, `sector_count`,
+  `bytes_read`.
+- `usb_msc_write` — the host wrote sectors. Same shape, `bytes_written`.
+- `usb_msc_detached` — the USB/IP session ended. Declared `with_no_actions()`.
 
-        self.pending_data = response[..alloc_len.min(response.len())].to_vec();
-        Ok(())
-    }
+Read and write events are **notifications**: the transfer is already served from the image, and
+the data path never waits on the LLM. `handle_urb` is synchronous, so the handler reports
+transfers on a channel and the connection task raises the events — the same seam the serial
+port uses.
 
-    fn scsi_read_capacity(&mut self) -> Result<()> {
-        let last_lba = self.total_sectors - 1;
+The connection task selects over that channel and the USB/IP session's `JoinHandle`; when the
+session ends it raises `usb_msc_detached`, drops the handler from the registry and closes the
+connection in `AppState`. It used to park on `sleep(u64::MAX)` after the attach call, which is
+why three of the four events could never fire.
 
-        let mut response = Vec::new();
-        response.extend_from_slice(&last_lba.to_be_bytes());
-        response.extend_from_slice(&self.bytes_per_sector.to_be_bytes());
+**Coalescing matters here.** A host mounting a filesystem issues hundreds of READ(10)s. Whatever
+is queued when the task wakes is folded into one read event and one write event; while an LLM
+call is in flight the task is not draining the channel, so a burst does not become a burst of
+round-trips.
 
-        self.pending_data = response;
-        Ok(())
-    }
+## Known limitations
 
-    async fn scsi_read10(&mut self, cmd: &[u8]) -> Result<()> {
-        let lba = u32::from_be_bytes([cmd[2], cmd[3], cmd[4], cmd[5]]);
-        let transfer_len = u16::from_be_bytes([cmd[7], cmd[8]]) as u32;
+- **Real host attach is untested.** `sudo usbip attach -r <host> -b 0-0-0` needs `vhci-hcd` and
+  root on the client; macOS has no USB/IP client at all. The E2E tests speak USB/IP directly.
+- **Single LUN.** `Get Max LUN` answers 0 and the CBW's LUN field is ignored.
+- **No hot-swap notification.** `mount_disk` resets BOT state but raises no UNIT ATTENTION, so a
+  host that already probed capacity will not re-read it.
+- **Write data is not length-checked against the CBW.** A host that sends fewer bytes than
+  WRITE(10) asked for has them written and the command completes.
 
-        let data = self.disk_image.read().await
-            .read_sectors(lba, transfer_len)?;
-
-        self.pending_data = data;
-        Ok(())
-    }
-
-    async fn scsi_write10(&mut self, cmd: &[u8]) -> Result<()> {
-        if self.write_protect {
-            self.set_sense(scsi_sense_key::DATA_PROTECT, 0x27, 0x00);
-            return Ok(());
-        }
-
-        let lba = u32::from_be_bytes([cmd[2], cmd[3], cmd[4], cmd[5]]);
-        let transfer_len = u16::from_be_bytes([cmd[7], cmd[8]]) as u32;
-
-        // Store for when data arrives
-        self.pending_write = Some((lba, transfer_len));
-        Ok(())
-    }
-}
-```
-
-### Step 3: Disk Image Implementation
-
-```rust
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, Seek, SeekFrom};
-use memmap2::MmapMut;
-
-pub struct DiskImage {
-    file: File,
-    mmap: Option<MmapMut>,
-    total_sectors: u32,
-    bytes_per_sector: u32,
-}
-
-impl DiskImage {
-    pub fn open_or_create(path: &Path, size_mb: u32) -> Result<Self> {
-        let size_bytes = size_mb * 1024 * 1024;
-        let bytes_per_sector = 512;
-        let total_sectors = size_bytes / bytes_per_sector;
-
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(path)?;
-
-        file.set_len(size_bytes as u64)?;
-
-        let mmap = unsafe { MmapMut::map_mut(&file)? };
-
-        Ok(Self {
-            file,
-            mmap: Some(mmap),
-            total_sectors,
-            bytes_per_sector,
-        })
-    }
-
-    pub fn read_sectors(&self, lba: u32, count: u32) -> Result<Vec<u8>> {
-        if lba + count > self.total_sectors {
-            return Err(anyhow!("Read beyond disk bounds"));
-        }
-
-        let offset = (lba * self.bytes_per_sector) as usize;
-        let length = (count * self.bytes_per_sector) as usize;
-
-        if let Some(ref mmap) = self.mmap {
-            Ok(mmap[offset..offset + length].to_vec())
-        } else {
-            Err(anyhow!("Disk not mapped"))
-        }
-    }
-
-    pub fn write_sectors(&mut self, lba: u32, data: &[u8]) -> Result<()> {
-        let count = (data.len() as u32 + self.bytes_per_sector - 1) / self.bytes_per_sector;
-
-        if lba + count > self.total_sectors {
-            return Err(anyhow!("Write beyond disk bounds"));
-        }
-
-        let offset = (lba * self.bytes_per_sector) as usize;
-
-        if let Some(ref mut mmap) = self.mmap {
-            mmap[offset..offset + data.len()].copy_from_slice(data);
-            mmap.flush()?;
-            Ok(())
-        } else {
-            Err(anyhow!("Disk not mapped"))
-        }
-    }
-}
-```
-
-## Build Requirements
-
-### System Dependencies
-
-Same as other USB protocols:
+## Build
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get install libusb-1.0-0-dev pkg-config
-
-# Fedora/RHEL
-sudo dnf install libusb1-devel pkgconfig
-
-# macOS
-brew install libusb pkg-config
+./cargo-isolated.sh build --no-default-features --features usb-msc
 ```
 
-### Additional Crates (Recommended)
+Needs `libusb-1.0` (the `usbip` crate links it): `brew install libusb pkg-config` on macOS,
+`apt-get install libusb-1.0-0-dev pkg-config` on Debian. Not available in Claude Code for Web.
 
-```toml
-[dependencies]
-memmap2 = "0.9"  # Memory-mapped file I/O for disk images
-fatfs = { version = "0.3", optional = true }  # FAT32 filesystem support
+## Testing
+
+```bash
+./cargo-isolated.sh test --no-default-features --features usb-msc \
+    --test server -- --test-threads=100 usb_msc
 ```
 
-## Library Choices
-
-### Primary: usbip crate (v0.3)
-
-**Status**: ⚠️ **No built-in MSC support**
-
-The usbip crate provides the USB/IP server framework but does **NOT** include Mass Storage Class handlers. You must
-implement:
-
-- Custom `UsbInterfaceHandler` for MSC
-- BOT protocol (CBW/CSW parsing and generation)
-- SCSI command dispatcher
-- Disk I/O backend
-
-### Disk Image: memmap2 crate (v0.9)
-
-**Why chosen**:
-
-- Fast sector-based random access
-- Kernel manages page cache
-- Zero-copy reads
-- Simple API
-
-**Limitations**:
-
-- Requires 32-bit or 64-bit virtual address space
-- May cause page faults on first access
-- File size limited by available virtual memory
-
-### Filesystem (Optional): fatfs crate (v0.3)
-
-**Why useful**:
-
-- Create FAT32 filesystems
-- Add/modify files from Rust
-- No need for external mkfs.vfat
-- Pure Rust implementation
-
-**Not required for basic MSC**: Host OS can format the disk.
-
-## Limitations
-
-### Server Side (Implementation)
-
-- **No Built-in Support**: usbip crate lacks MSC handlers
-- **Complex Implementation**: BOT + SCSI requires ~1000+ lines of code
-- **Binary Protocol**: LLM cannot construct SCSI commands directly
-- **Performance**: Memory-mapped I/O limited to files < 4GB (32-bit systems)
-
-### Client Side (Same as other USB protocols)
-
-- **Linux Only**: Requires vhci-hcd kernel module (Linux 3.17+)
-- **Root Access**: Client must run `sudo usbip attach`
-- **Manual Import**: User must run attach command
-- **No Windows/macOS Client**: Limited to Linux hosts
-
-### Protocol
-
-- **Boot Only**: SCSI-2 subset, no advanced features
-- **Single LUN**: One logical unit per device
-- **No Hot-Swap**: Requires remount after disk change
-- **512-byte Sectors**: Standard sector size only
-
-## Testing Strategy
-
-### Manual Testing (Without E2E)
-
-1. **Compile** (after implementation):
-   ```bash
-   ./cargo-isolated.sh build --no-default-features --features usb-msc
-   ```
-
-2. **Start Server**:
-   ```bash
-   ./target-claude/*/debug/netget --protocol usb-msc --listen 0.0.0.0:3240
-   ```
-
-3. **Create Disk Image** (on server):
-   ```bash
-   dd if=/dev/zero of=./disk.img bs=1M count=100
-   mkfs.vfat -F 32 ./disk.img
-   ```
-
-4. **Attach from Linux Client**:
-   ```bash
-   sudo modprobe vhci-hcd
-   sudo usbip list -r <server_ip>
-   sudo usbip attach -r <server_ip>:3240 -b 1-1
-   ```
-
-5. **Verify Device**:
-   ```bash
-   lsblk
-   sudo fdisk -l /dev/sdX
-   sudo mount /dev/sdX /mnt
-   ls /mnt
-   ```
-
-### E2E Tests (Deferred)
-
-**Not yet implemented** due to SCSI complexity. Future E2E tests should:
-
-- Create minimal disk image (1MB)
-- Verify device attachment
-- Test read operations
-- Test write operations (if not write-protected)
-- Verify file integrity
-- **Budget**: < 10 LLM calls
-
-## Implementation Estimate
-
-Based on complexity analysis:
-
-- **Phase 1** (USB/IP handler): 2-3 days
-- **Phase 2** (SCSI commands): 2-3 days
-- **Phase 3** (Disk I/O): 1-2 days
-- **Phase 4** (LLM integration): 1-2 days
-- **Phase 5** (Testing): 1-2 days
-
-**Total**: 7-12 days for full implementation
-
-## Future Enhancements
-
-### Phase 2: Advanced Features
-
-- Multi-LUN support (multiple disks)
-- Hot-swap disk images
-- Read-only media emulation (CD-ROM)
-- Disk image formats (VHD, QCOW2)
-
-### Phase 3: Performance
-
-- Async disk I/O
-- Write-back caching
-- Sector buffering
-- Zero-copy transfers
-
-### Phase 4: LLM Features
-
-- File listing (without mounting)
-- Direct file injection
-- Filesystem analysis
-- Partition table modification
+See `tests/server/usb_msc/CLAUDE.md`.
 
 ## References
 
-- **Official USB MSC Spec**: https://www.usb.org/sites/default/files/usbmassbulk_10.pdf
-- **USB MSC Overview**: https://www.usb.org/sites/default/files/Mass_Storage_Specification_Overview_v1.4_2-19-2010.pdf
+- **USB MSC Bulk-Only Transport**: https://www.usb.org/sites/default/files/usbmassbulk_10.pdf
 - **SCSI Commands Reference**: https://www.t10.org/ftp/t10/document.05/05-344r0.pdf
 - **USB/IP Protocol**: https://docs.kernel.org/usb/usbip_protocol.html
 - **jiegec/usbip crate**: https://github.com/jiegec/usbip
-- **memmap2 crate**: https://docs.rs/memmap2/
-- **fatfs crate**: https://docs.rs/fatfs/

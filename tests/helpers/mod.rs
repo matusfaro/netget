@@ -13,6 +13,7 @@ pub mod mock_ollama;
 pub mod netget;
 pub mod ollama_test_builder;
 pub mod server;
+pub mod usbip_client;
 
 // Re-export commonly used types and functions for convenience
 pub use self::netget::NetGetConfig;

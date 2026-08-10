@@ -1,130 +1,100 @@
 # USB Mass Storage Class (MSC) E2E Tests
 
-## Test Strategy
+## What these prove, and what they do not
 
-**Status**: ⚠️ **Deferred until full SCSI implementation**
+The tests answer one concrete question: *pretend to be a USB drive and serve a single file
+`hello.txt` containing `world`* — does that work?
 
-The USB MSC E2E tests are currently deferred because the protocol requires full SCSI command implementation, which is
-not yet complete. The framework exists but functional testing requires:
+They drive a **real USB/IP client over TCP** (`tests/helpers/usbip_client.rs`): `OP_REQ_DEVLIST`
+and `OP_REQ_IMPORT`, then Bulk-Only Transport CBW/CSW pairs carrying real SCSI commands. A FAT16
+volume is built in-process (`fat16.rs`), handed to the server as `startup_params.disk_image`, and
+read back sector by sector with `READ(10)`. The assertions are on the bytes the host receives.
 
-1. Complete UsbInterfaceHandler implementation with BOT protocol
-2. SCSI command dispatcher for all required commands
-3. Disk image management with sector I/O
-4. Full USB/IP server integration
+**This is the device side only.** There is no `vhci-hcd`, no `/dev/sdX`, no kernel filesystem
+driver — macOS has no USB/IP client, which is why the protocol is spoken directly. A passing run
+means netget puts the right bytes on the wire for the right SCSI commands, and that those bytes
+are a valid FAT16 volume containing `hello.txt` -> `world`. It does **not** mean Linux mounts the
+volume and `cat /mnt/hello.txt` prints `world`. That still needs a real machine with the kernel
+module and root, and remains untested.
 
-## Testing Approach (Future)
+The tests this replaced connected a bare `TcpStream` and checked that an event fired. That could
+not have caught any of what was actually broken — the device was exported on a second listener
+bound to the client's address, every SCSI command would have panicked on `block_on`, control
+requests were routed to the bulk IN path, and three of the four events could never fire. Three
+of the seven tests were `#[ignore]`d with product-gap notes; two more passed while their action
+payloads used parameter names the executor rejects.
 
-### Prerequisites
+## The FAT16 builder (`fat16.rs`)
 
-- Linux system with vhci-hcd kernel module
-- `usbip` tools installed (`sudo apt-get install usbip`)
-- Root access for device attachment
-- Disk image creation tools (`dd`, `mkfs.vfat`)
+Built rather than committed as a binary, so the layout is visible and the bytes reproducible —
+every field is fixed, including the volume id and timestamps.
 
-### Test Scenarios
+512-byte sectors, 1 sector per cluster, 8192 sectors (4 MiB), which gives 8095 data clusters:
+inside FAT16's 4085..65525 window, so a host reads the FAT with 16-bit entries.
 
-#### Test 1: Device Attachment (< 2 LLM calls)
+| LBA | Contents |
+|---|---|
+| 0 | Boot sector / BPB |
+| 1..33 | FAT #1 |
+| 33..65 | FAT #2 |
+| 65..97 | Root directory (512 entries) — `fat16::ROOT_DIR_LBA` |
+| 97.. | Data; cluster *n* at `fat16::cluster_lba(n)` |
 
-```rust
-#[tokio::test]
-async fn test_msc_device_attachment() {
-    // 1. Start server with 10MB disk image
-    // 2. Verify device appears in usbip list
-    // 3. Attach device with sudo usbip attach
-    // 4. Verify /dev/sdX appears
-    // 5. Check device capacity with fdisk
-}
+## The client (`tests/helpers/usbip_client.rs`)
+
+Written against the wire format, **not** against the `usbip` crate's types, so it compiles into
+every test binary regardless of which protocol features are on.
+
+- `connect` / `list_devices` / `import` — enumeration and attach.
+- `submit` / `control_in` / `control_out` / `bulk_in` / `bulk_out` — raw URBs.
+- `get_max_lun`, `bulk_only_reset` — the two MSC class requests.
+- `scsi_data_in` / `scsi_data_out` / `scsi_no_data` — BOT command wrappers, tag-checked.
+- `scsi_inquiry`, `scsi_test_unit_ready`, `scsi_read_capacity_10`, `scsi_read_10`,
+  `scsi_write_10`, `scsi_request_sense`, `scsi_mode_sense_6`.
+
+Encoding traps it exists to hide: USB/IP is big-endian while CBW/CSW and USB setup packets are
+little-endian; USB/IP direction is `OUT = 0`, `IN = 1` (the opposite of `rusb::Direction`); and
+`USBIP_CMD_SUBMIT` carries an endpoint *number*, so an IN transfer on `0x81` is `ep = 1`.
+
+`scsi_data_in` tolerates a device that short-circuits to the CSW where the data phase would have
+been — that is what a failed command looks like without an endpoint stall.
+
+## Tests
+
+| Test | Proves | LLM calls |
+|---|---|---|
+| `test_usb_msc_serves_hello_txt` | devlist advertises 08/06/50; import; Get Max LUN; INQUIRY; capacity follows the image; boot sector, root directory and file cluster read back as a FAT16 volume containing `world`; a write is refused with DATA PROTECT and does not land; `usb_msc_read` fires | 3 |
+| `test_usb_msc_write_and_detach` | `set_write_protect(false)` lets WRITE(10) through; the host reads back what it wrote; the bytes are flushed to the image file on disk; `usb_msc_write` and `usb_msc_detached` fire | 4 |
+| `test_usb_msc_mount_then_eject` | `mount_disk` swaps in a different image at its own size and serves it; the read event's handler ejects; TEST UNIT READY then fails NOT READY / MEDIUM NOT PRESENT and READ(10) returns no data | 3 |
+
+**LLM budget: 10 calls**, at the project ceiling. Read events are coalesced, so a burst of
+`READ(10)`s may produce one event or several; those rules use `expect_at_least(1)` rather than an
+exact count.
+
+## Synchronisation
+
+Every test waits for `"USB MSC LLM call completed (attach)"` before asserting: the attach event
+fires as soon as the TCP connection is accepted, well before `OP_REQ_IMPORT`. The log line puts
+the event kind *before* the connection id precisely so a test can wait on one specific event with
+a substring match — waiting on a call *count* is ambiguous when a read event and a write event
+race.
+
+## Running
+
+```bash
+./cargo-isolated.sh test --no-default-features --features usb-msc \
+    --test server -- --test-threads=100 usb_msc
 ```
 
-#### Test 2: Read Operations (< 3 LLM calls)
+About 1 second for the suite. **Run it twice**: the first run after a source edit relinks the
+`netget` binary the tests spawn, and every test then fails with
+`Timeout waiting for netget startup` at exactly 120s.
 
-```rust
-#[tokio::test]
-async fn test_msc_read_operations() {
-    // 1. Create FAT32 disk image with test file
-    // 2. Attach device
-    // 3. Mount device
-    // 4. Verify file contents
-    // 5. Test LLM receives read events
-}
-```
+## Not covered
 
-#### Test 3: Write Operations (< 3 LLM calls)
-
-```rust
-#[tokio::test]
-async fn test_msc_write_operations() {
-    // 1. Attach writable device
-    // 2. Mount device
-    // 3. Create test file
-    // 4. Verify file persists in disk image
-    // 5. Test LLM receives write events
-}
-```
-
-#### Test 4: Write Protection (< 2 LLM calls)
-
-```rust
-#[tokio::test]
-async fn test_msc_write_protection() {
-    // 1. Attach write-protected device
-    // 2. Mount device
-    // 3. Attempt to create file (should fail)
-    // 4. Verify LLM action to disable write-protect
-    // 5. Retry file creation (should succeed)
-}
-```
-
-### Total LLM Call Budget
-
-**Target**: < 10 LLM calls for full suite
-
-**Current**: N/A (tests not implemented)
-
-## Runtime Expectations
-
-- **Device attachment**: 5-10 seconds
-- **Disk mounting**: 2-5 seconds
-- **File operations**: 1-2 seconds per operation
-- **Total suite**: < 30 seconds (excluding LLM calls)
-
-## Known Issues
-
-### Implementation Blockers
-
-1. **No SCSI Handler**: UsbInterfaceHandler not implemented
-2. **No BOT Protocol**: CBW/CSW parsing not implemented
-3. **No Disk I/O**: Virtual disk image management not implemented
-4. **No Device Export**: USB/IP device creation not integrated
-
-### Test Blockers
-
-1. Cannot test until basic SCSI commands work
-2. Need working READ_CAPACITY and READ(10) for read tests
-3. Need working WRITE(10) for write tests
-4. Need MODE_SENSE for write-protect tests
-
-## Future Testing Plan
-
-Once implementation is complete:
-
-1. **Manual Testing First**:
-    - Verify device enumeration
-    - Test with real usbip client
-    - Validate SCSI command responses
-
-2. **Automated E2E Tests Second**:
-    - Create minimal test suite
-    - Use small disk images (1-10MB)
-    - Focus on core functionality
-
-3. **Performance Testing Last**:
-    - Benchmark read/write throughput
-    - Test with larger disk images
-    - Measure LLM response latency
-
-## References
-
-- Main implementation: `src/server/usb/msc/CLAUDE.md`
-- SCSI implementation guide: See main CLAUDE.md
-- USB/IP testing: Linux kernel docs
+- Attaching from a real Linux host (`sudo usbip attach`) — needs `vhci-hcd` and root.
+- Mounting the volume through a real filesystem driver.
+- Multiple hosts attached at once, and therefore the `connection_id`-required branch of
+  `resolve_handler`.
+- `Bulk-Only Mass Storage Reset` mid-transfer (the client can send it; nothing asserts on it).
+- Multi-sector transfers and short data phases.
