@@ -1,178 +1,107 @@
-# USB Smart Card E2E Tests
+# USB Smart Card (CCID) E2E Testing
 
-## Test Strategy
+## Strategy
 
-**Approach:** Black-box testing with OpenSC tools and PC/SC middleware
+The tests are a **real USB/IP client** written against the protocol, plus a **real CCID
+client** on top of it. They speak `OP_REQ_IMPORT`, then push `USBIP_CMD_SUBMIT` URBs on the
+bulk OUT and bulk IN endpoints carrying CCID messages, and assert on the bytes the reader
+returns.
 
-**Test Types:**
+This is deliberate. The protocol this replaced was `Incomplete`: `Server::spawn` was
+`bail!("not yet implemented")` and every test in this file was `#[ignore]`d, so the suite said
+nothing either way. A test that merely opened a TCP connection and checked that an event fired
+would be the only thing between a stub and a green suite.
 
-- Unit tests: None (APDU logic tested via E2E)
-- E2E tests: USB/IP attachment + OpenSC/PKCS#11 tools
-- PIV tests: PIV applet operations (when implemented)
+No `usbip` kernel module, no root, no `pcscd`, no `vpcd`. Everything is loopback TCP.
 
-## LLM Call Budget
+## The client (`UsbIpClient` in `e2e_test.rs`)
 
-**Target:** < 5 LLM calls total
-**Current:** 0 (tests use real PC/SC tools, not LLM)
+| Method | What it does |
+|---|---|
+| `attach(port)` | `OP_REQ_IMPORT` for bus id `0-0-0`, reads the 320-byte `OP_REP_IMPORT` |
+| `send_ccid(type, params, payload)` | builds the 10-byte CCID header, bulk OUT on endpoint 2, returns the `bSeq` it used |
+| `read_ccid(timeout)` | polls bulk IN, **reassembling 64-byte packets** until `dwLength` is satisfied, returns a parsed response |
+| `power_on()` | `PC_to_RDR_IccPowerOn`, asserts `bSeq` is echoed |
+| `slot_status()` | `PC_to_RDR_GetSlotStatus`, asserts `bSeq` is echoed |
+| `transmit_apdu(bytes)` | `PC_to_RDR_XfrBlock`, asserts `bSeq` is echoed |
 
-**Rationale:**
+Two things the client has to get right, and both are load-bearing:
 
-- Smart Card protocol doesn't require LLM for operation
-- Tests verify USB CCID and cryptographic correctness
-- No prompt-driven behavior to test
+- **Wire direction is not rusb's `Direction`.** On the USB/IP wire OUT is 0 and IN is 1;
+  `rusb::Direction` has `In = 0`.
+- **The reader uses 64-byte packets**, so a response longer than that arrives over several
+  URBs. `read_ccid` reassembles by reading the CCID `dwLength` field, exactly as a host does.
+  A client that assumed one URB per message would pass today and break on the first long ATR.
 
-## Test Environment
+## Tests
 
-### System Requirements
+| Test | Proves | LLM calls |
+|---|---|---|
+| `test_usb_smartcard_atr_and_apdu_exchange` | `set_atr` reaches the wire; an APDU round-trips through the handler; no answer fails closed to `6F00` | 5 |
+| `test_usb_smartcard_no_card_fails_without_llm` | an empty slot is refused by the reader with no LLM call; `usb_smartcard_detached` fires | 4 |
 
-```bash
-# Ubuntu/Debian
-sudo apt-get install libusb-1.0-0-dev pkg-config usbip pcscd pcsc-tools \
-    opensc opensc-pkcs11 libpcsclite-dev
+**LLM budget: 9 calls**, under the project ceiling of 10.
 
-# Fedora/RHEL
-sudo dnf install libusb1-devel pkgconfig usbip pcsc-lite pcsc-tools \
-    opensc opensc-pkcs11 pcsc-lite-devel
+### What each assertion is for
 
-# macOS (USB/IP not available)
-brew install opensc pcsc-lite
-# Tests marked as ignored on macOS
-```
+`test_usb_smartcard_atr_and_apdu_exchange`:
 
-### PC/SC Daemon
+- The mock sets a distinctive ATR (`3B8F80014E6574476574`) and the test asserts the exact hex
+  the host receives. A reader that ignored `set_atr` and returned the built-in default
+  (`3B901100`) fails.
+- The SELECT-by-AID response is asserted as the full byte string `"NetGet PIV" 90 00` — body
+  from `data_text`, then SW1/SW2 — so both the handler's body and its status word have to
+  survive the round trip.
+- The VERIFY case has the mock answer with `show_message` and **no `respond_to_apdu`**. The
+  test asserts `6F00`. This is the fail-closed path: an implementation that defaulted to `9000`
+  when the handler said nothing fails here.
 
-```bash
-# Start pcscd daemon
-sudo systemctl start pcscd
+`test_usb_smartcard_no_card_fails_without_llm`:
 
-# Verify daemon running
-sudo systemctl status pcscd
+- `set_card_present false` at `usb_smartcard_reader_ready`, then `bmICCStatus` must read 2
+  (no ICC present).
+- `IccPowerOn` must come back as `RDR_to_PC_SlotStatus` (not a data block) with
+  `bmCommandStatus` = failed and `bError` = `0xFE` (`ICC_MUTE`).
+- `XfrBlock` must be refused **by the reader**, not forwarded to the handler. The assertion is
+  on the message type: a refusal is `RDR_to_PC_SlotStatus`, whereas anything that reached the
+  handler comes back as `RDR_to_PC_DataBlock`. The mock also registers no
+  `usb_smartcard_apdu_received` expectation, so a forwarded APDU would additionally get an
+  HTTP 500 from the mock and show up in `verify_mocks`.
 
-# Monitor card events (optional)
-pcsc_scan
-```
+## Synchronisation
 
-## Running Tests
+Both tests wait for `"USB smart card LLM call completed for connection"` before asserting,
+because the attach event and the USB/IP import are independent: the LLM call starts as soon as
+the TCP connection is accepted, well before the client sends `OP_REQ_IMPORT`.
 
-### All E2E Tests (Requires Root)
+`test_usb_smartcard_no_card_fails_without_llm` waits for that line **twice** (attach, then
+detach) via `wait_for_log_count`, plus `"USB smart card host detached on connection"`.
 
-```bash
-# Build with Smart Card feature
-./cargo-isolated.sh build --no-default-features --features usb-smartcard
+## Mock actions
 
-# Run tests (requires sudo for usbip)
-sudo -E ./cargo-isolated.sh test --no-default-features --features usb-smartcard --test usb_smartcard::e2e_test
-```
+`wait_for_more` is **not** a valid action for this protocol — the harness
+(`tests/helpers/mock_action_names.rs`) fails the test if a mock returns it, because the server
+would reject it as unknown and the mock would prove nothing. Use `show_message` for a no-op
+answer; it is generic, executes cleanly, and produces no `respond_to_apdu`, which is exactly
+what the fail-closed assertion needs.
 
-### Individual Tests
-
-```bash
-# Test card detection
-sudo -E cargo test --no-default-features --features usb-smartcard test_card_detection -- --ignored
-
-# Test APDU exchange
-sudo -E cargo test --no-default-features --features usb-smartcard test_apdu_exchange -- --ignored
-```
-
-## Expected Runtime
-
-| Test             | Duration | LLM Calls |
-|------------------|----------|-----------|
-| Server startup   | 2s       | 0         |
-| Card detection   | 5s       | 0         |
-| APDU exchange    | 10s      | 0         |
-| PIN verification | 10s      | 0         |
-| RSA signing      | 15s      | 0         |
-| Key generation   | 20s      | 0         |
-| PKCS#11 access   | 15s      | 0         |
-| PIV operations   | 30s      | 0         |
-
-**Total:** ~2-3 minutes
-
-## Known Issues
-
-### Issue 1: Requires Root Access
-
-**Problem:** usbip command requires root/sudo
-**Workaround:** Run tests with `sudo -E`
-**Fix:** Add udev rules for non-root usbip (future)
-
-### Issue 2: pcscd Must Be Running
-
-**Problem:** Tests fail if pcscd not running
-**Workaround:** `sudo systemctl start pcscd` before testing
-**Fix:** Tests should start pcscd automatically
-
-### Issue 3: Linux-Only
-
-**Problem:** USB/IP requires Linux kernel module
-**Workaround:** Tests automatically ignored on non-Linux
-**Fix:** None (inherent limitation)
-
-### Issue 4: PIV Not Implemented
-
-**Problem:** PIV tests will fail (PIV applet not yet implemented)
-**Workaround:** Mark PIV tests as ignored until implemented
-**Fix:** Implement PIV card application (Phase 1 roadmap)
-
-## Test Coverage
-
-**Current Coverage:** 0% (tests not yet implemented)
-
-**Target Coverage:**
-
-- ✅ USB CCID device detection
-- ✅ ATR (Answer To Reset)
-- ✅ Basic APDU exchange (SELECT, GET DATA)
-- ✅ PIN verification
-- ✅ RSA cryptography (INTERNAL_AUTHENTICATE)
-- ✅ Key storage and retrieval
-- ❌ PIV applet (not implemented)
-- ❌ OpenPGP applet (not implemented)
-- ❌ Full ISO 7816-4 file system (not implemented)
-
-## Manual Testing
-
-### Quick Manual Test
+## Running
 
 ```bash
-# Terminal 1: Start server
-cargo run --no-default-features --features usb-smartcard -- --protocol usb-smartcard --listen 0.0.0.0:3240
-
-# Terminal 2: Attach device
-sudo modprobe vhci-hcd
-sudo usbip list -r localhost
-sudo usbip attach -r localhost:3240 -b 1-1
-
-# Terminal 3: Test with OpenSC
-pcsc_scan  # Should show virtual reader with card
-opensc-tool --list-readers
-opensc-tool --reader 0 --send-apdu 00:A4:00:0C:02:3F:00  # SELECT MF
-
-# Test RSA signing
-opensc-tool --reader 0 --send-apdu 00:88:00:9A:20:...  # INTERNAL_AUTHENTICATE
-
-# Cleanup
-sudo usbip detach -p 0
+CARGO_TARGET_DIR=/tmp/ccid-target cargo test --no-default-features --features usb-smartcard \
+    --test server -- --test-threads=100 usb_smartcard
 ```
 
-### PKCS#11 Testing
+Runtime is about 1 second for both tests.
 
-```bash
-# List slots
-pkcs11-tool --module /usr/lib/opensc-pkcs11.so --list-slots
+Use a private `CARGO_TARGET_DIR` when other agents may be rebuilding the shared `target/`.
 
-# Login and list objects
-pkcs11-tool --module /usr/lib/opensc-pkcs11.so --login --list-objects
+## Not covered
 
-# Test signing
-pkcs11-tool --module /usr/lib/opensc-pkcs11.so --login --sign --id 9A --mechanism RSA-PKCS
-```
-
-## References
-
-- OpenSC project: https://github.com/OpenSC/OpenSC
-- CCID specification: https://www.usb.org/sites/default/files/DWG_Smart-Card_CCID_Rev110.pdf
-- ISO 7816-4: https://www.iso.org/standard/77180.html
-- PC/SC workgroup: https://pcscworkgroup.com/
-- PKCS#11: https://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/pkcs11-base-v2.40.html
+- Attaching from a real Linux host (`sudo usbip attach` + `pcscd` + `opensc-tool`) — needs
+  `vhci-hcd` and root.
+- The interrupt endpoint: `RDR_to_PC_NotifySlotChange` is implemented but never polled here.
+- `GetParameters` / `SetParameters` / `Escape` / `Abort` (implemented, not asserted).
+- Two hosts attached at once sharing the one slot.
+- A response body long enough to need more than one bulk IN URB — the reassembly loop handles
+  it and is exercised by ATR and APDU reads, but not by a >64-byte payload specifically.

@@ -1,231 +1,717 @@
-//! USB Smart Card Reader (CCID) server implementation
+//! USB Smart Card (CCID) server — a virtual chip card interface device over USB/IP.
 //!
-//! This module implements a virtual smart card that connects to vpcd daemon.
-//! This approach avoids implementing USB CCID by using the vsmartcard infrastructure.
+//! NetGet exports a **real USB CCID class device** (interface class `0x0B`). A Linux host that
+//! imports it and runs `pcscd` sees a card reader with a card in it; anything that speaks
+//! USB/IP over TCP can drive it with no kernel module.
 //!
-//! ## Implementation Status
+//! This replaced a `vpicc`/`vpcd` design that never ran: `Server::spawn` was
+//! `bail!("not yet implemented")`, so the protocol was `Incomplete` and unreachable. The
+//! `usbip` 0.9 upgrade (0.3 pinned tokio 0.3 and panicked "there is no reactor running" on
+//! every attach) made the USB/IP path viable, and CCID removes the external daemon entirely.
 //!
-//! **FUNCTIONAL IMPLEMENTATION** - ISO 7816-4 APDU handling with RSA cryptography support.
-//! See src/server/usb/smartcard/CLAUDE.md for full implementation plan.
-//!
-//! ## Architecture
+//! ## Layers
 //!
 //! ```text
-//! ┌───────────┐    TCP     ┌──────┐    PC/SC    ┌─────────┐
-//! │  NetGet   │ ◄─────────► vpcd  │ ◄──────────► pcscd   │
-//! │ + APDU    │  port 35963│ drv  │             │ daemon  │
-//! └───────────┘            └──────┘             └─────────┘
+//! USB/IP over TCP                       ← usbip::handler on the socket we accepted
+//!   └─ USB CCID class 0x0B              ← handler.rs (UsbInterfaceHandler)
+//!        └─ ISO 7816-4 command APDUs    ← apdu.rs
+//!             └─ the handler's answer   ← call_llm / script / static
 //! ```
 //!
-//! ## Setup Requirements
+//! ## Who decides what
 //!
-//! 1. Install vpcd daemon:
-//!    ```bash
-//!    sudo apt-get install vpcd  # Ubuntu/Debian
-//!    ```
+//! Rust owns the CCID framing, the sequence numbers, the slot state machine and the APDU
+//! parsing. The **handler** owns everything the card says: the ATR (`set_atr`), whether a card
+//! is in the slot (`set_card_present`), and every response APDU (`respond_to_apdu`). There is
+//! no file system, no PIN store and no key store here — the previous implementation had all
+//! three, which is storage inside a protocol and the root CLAUDE.md forbids it.
 //!
-//! 2. Start vpcd daemon:
-//!    ```bash
-//!    vpcd --tcp-port 35963
-//!    ```
+//! ## Fail closed
 //!
-//! 3. Start NetGet with smart card protocol:
-//!    ```bash
-//!    netget --protocol usb-smartcard
-//!    ```
+//! If the handler errors, returns no `respond_to_apdu`, or returns one that cannot be decoded,
+//! the card answers **`6F00`** (ISO 7816-4 "no precise diagnosis") and logs at ERROR. It never
+//! falls through to `9000`, so the model's own refusal (`6982`, `6A82`, …) stays structurally
+//! distinguishable from the model having said nothing.
 //!
-//! ## Supported Features
+//! ## No connection state machine, deliberately
 //!
-//! - ✅ ISO 7816-4 APDU parsing
-//! - ✅ Basic file system (SELECT, READ_BINARY, UPDATE_BINARY)
-//! - ✅ PIN verification (VERIFY command)
-//! - ✅ RSA-2048 key generation and storage
-//! - ✅ INTERNAL_AUTHENTICATE (RSA-SHA256 signatures)
-//! - ✅ vpcd protocol integration
-//! - ⚠️  No persistent storage (in-memory only)
-//! - ⚠️  No card applications (PIV/OpenPGP) yet
+//! `XfrBlock` payloads arrive on one channel and are answered one at a time before the next is
+//! taken, so a connection can never have two handler calls in flight and there is nothing to
+//! reassemble — the CCID header carries its own length.
 
 pub mod actions;
 pub mod apdu;
-pub mod crypto;
+pub mod ccid;
+pub mod handler;
 
-#[cfg(feature = "usb-smartcard")]
-use anyhow::Result;
-#[cfg(feature = "usb-smartcard")]
+pub use actions::UsbSmartCardProtocol;
+
 use std::net::SocketAddr;
-#[cfg(feature = "usb-smartcard")]
-use std::sync::Arc;
-#[cfg(feature = "usb-smartcard")]
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[cfg(feature = "usb-smartcard")]
-use tokio::net::TcpStream;
-#[cfg(feature = "usb-smartcard")]
+use std::sync::{Arc, Mutex as StdMutex};
+
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
-#[cfg(feature = "usb-smartcard")]
 use tracing::{debug, error, info, warn};
 
-#[cfg(feature = "usb-smartcard")]
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-#[cfg(feature = "usb-smartcard")]
+use crate::llm::ActionResult;
+use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::state::ServerId;
+use crate::{console_debug, console_error};
 
-#[cfg(feature = "usb-smartcard")]
-use apdu::ApduHandler;
+use actions::{
+    USB_SMARTCARD_APDU_RECEIVED_EVENT, USB_SMARTCARD_ATTACHED_EVENT, USB_SMARTCARD_DETACHED_EVENT,
+    USB_SMARTCARD_READER_READY_EVENT,
+};
+use apdu::{ApduCommand, ApduResponse};
+use handler::{CardState, PendingApdu, UsbCcidHandler};
 
-/// USB Smart Card server (using vpcd approach)
-#[cfg(feature = "usb-smartcard")]
+/// Answer To Reset used until the handler calls `set_atr`.
+///
+/// `3B 90 11 00` is a minimal, valid, T=0-only ATR: TS direct convention, T0 announcing TA1
+/// and TD1 with no historical bytes, TA1 = 372/1, TD1 = 0 (protocol T=0, no further interface
+/// bytes). T=0-only ATRs carry no TCK, so there is no checksum to get wrong.
+const DEFAULT_ATR: &[u8] = &[0x3B, 0x90, 0x11, 0x00];
+
+/// Boxed interface handler as `usbip` wants it.
+type SharedUsbHandler = Arc<StdMutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>;
+
 pub struct UsbSmartCardServer;
 
-/// Default Answer To Reset (ATR) for a generic smart card
-/// This identifies the card to the PC/SC system
-#[cfg(feature = "usb-smartcard")]
-const DEFAULT_ATR: &[u8] = &[
-    0x3B, // TS: Direct convention
-    0x9F, // T0: Y1=9, K=15
-    0x95, // TA1: Fi=372, Di=4
-    0x81, // TB1: Programming voltage
-    0x31, // TC1: Extra guard time
-    0xFE, // TD1: Y2=F, T=14 (T=14)
-    0x5D, // TA2: Specific mode, cannot change
-    0x00, // TB2
-    0x31, // TC2
-    0x80, // TD2
-    0x31, // TA3
-    0x80, // TB3
-    0x65, // TC3
-    0xB0, // TD3
-    0x05, 0x01, 0x02, 0x03, 0x04, 0x05, // Historical bytes
-    0x29, // TCK: Checksum
-];
-
-#[cfg(feature = "usb-smartcard")]
 impl UsbSmartCardServer {
-    /// Spawn the USB Smart Card server
-    ///
-    /// This implementation creates a simplified vpcd client that:
-    /// 1. Connects to vpcd daemon (localhost:35963 default)
-    /// 2. Sends ATR (Answer To Reset)
-    /// 3. Processes APDU commands
-    /// 4. Returns APDU responses
+    /// Bind the USB/IP listener and start exporting the virtual reader.
     pub async fn spawn_with_llm_actions(
-        _listen_addr: SocketAddr,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
-        _card_type: Option<String>,
-        vpcd_host: Option<String>,
-        vpcd_port: Option<u16>,
+        server_id: ServerId,
+        card_type: Option<String>,
     ) -> Result<SocketAddr> {
-        let vpcd_host = vpcd_host.unwrap_or_else(|| "localhost".to_string());
-        let vpcd_port = vpcd_port.unwrap_or(35963);
-        let vpcd_addr = format!("{}:{}", vpcd_host, vpcd_port);
+        let card_type = card_type.unwrap_or_else(|| "generic".to_string());
 
-        info!("USB Smart Card server connecting to vpcd at {}", vpcd_addr);
+        // Bind before anything else so a port conflict is reported as a startup failure
+        // rather than a server that claims to be Running with no socket.
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let local_addr = listener.local_addr()?;
 
-        // Connect to vpcd daemon
-        let stream = match TcpStream::connect(&vpcd_addr).await {
-            Ok(stream) => {
-                info!("Connected to vpcd daemon at {}", vpcd_addr);
-                stream
-            }
-            Err(e) => {
-                error!("Failed to connect to vpcd at {}: {}", vpcd_addr, e);
-                error!(
-                    "Make sure vpcd daemon is running: vpcd --tcp-port {}",
-                    vpcd_port
-                );
-                let _ = status_tx.send(format!(
-                    "Smart Card ERROR: vpcd daemon not running at {}",
-                    vpcd_addr
-                ));
-                return Err(e.into());
-            }
-        };
-
-        let local_addr = stream.local_addr()?;
-
+        info!(
+            "USB smart card (CCID) reader listening on {} (card_type={})",
+            local_addr, card_type
+        );
         let _ = status_tx.send(format!(
-            "USB Smart Card connected to vpcd at {} (ISO 7816-4 APDU ready)",
-            vpcd_addr
+            "[INFO] USB smart card reader listening on {local_addr} (card_type={card_type}) - \
+             attach with: sudo usbip attach -r {} -b 0-0-0",
+            local_addr.ip()
         ));
 
-        // Spawn handler task
-        tokio::spawn(async move {
-            if let Err(e) = Self::handle_vpcd_connection(stream, status_tx).await {
-                error!("Smart card connection error: {}", e);
+        let card = Arc::new(StdMutex::new(CardState {
+            atr: DEFAULT_ATR.to_vec(),
+            card_present: true,
+        }));
+        let protocol = Arc::new(UsbSmartCardProtocol::new());
+
+        // Configure the card before the first host can reach it.
+        let ready_event = Event::new(
+            &USB_SMARTCARD_READER_READY_EVENT,
+            json!({
+                "listen_addr": local_addr.to_string(),
+                "card_type": card_type,
+                "atr_hex": hex::encode_upper(DEFAULT_ATR),
+            }),
+        );
+        let execution = call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            None, // Server-level event, no connection yet
+            &ready_event,
+            protocol.as_ref(),
+        )
+        .await?;
+        for message in execution.messages {
+            let _ = status_tx.send(message);
+        }
+        Self::apply_card_config(execution.protocol_results, &card, None, &status_tx);
+
+        {
+            let snapshot = lock_card(&card);
+            debug!(
+                "Virtual smart card configured: atr={}, card_present={}",
+                hex::encode_upper(&snapshot.atr),
+                snapshot.card_present
+            );
+        }
+
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                let (stream, remote_addr) = match listener.accept().await {
+                    Ok(accepted) => accepted,
+                    Err(e) => {
+                        // A persistent accept error (EMFILE, socket torn down) recurs
+                        // immediately, so continuing spins a hot loop on an unbounded status
+                        // channel. Give up the listener instead.
+                        error!("USB smart card accept failed, stopping accept loop: {}", e);
+                        let _ = status_tx.send(format!(
+                            "[ERROR] USB smart card accept failed: {e}; stopping"
+                        ));
+                        break;
+                    }
+                };
+
+                let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                info!(
+                    "USB/IP connection {} from {} (USB smart card)",
+                    connection_id, remote_addr
+                );
+
+                {
+                    use crate::state::server::{
+                        ConnectionState, ConnectionStatus, ProtocolConnectionInfo,
+                    };
+                    let now = std::time::Instant::now();
+                    let conn_state = ConnectionState {
+                        id: connection_id,
+                        remote_addr,
+                        local_addr: stream.local_addr().unwrap_or(local_addr),
+                        bytes_sent: 0,
+                        bytes_received: 0,
+                        packets_sent: 0,
+                        packets_received: 0,
+                        last_activity: now,
+                        status: ConnectionStatus::Active,
+                        status_changed_at: now,
+                        protocol_info: ProtocolConnectionInfo::new(json!({
+                            "transport": "usbip",
+                            "usb_class": "ccid",
+                            "card_type": card_type,
+                        })),
+                    };
+                    app_state
+                        .add_connection_to_server(server_id, conn_state)
+                        .await;
+                }
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+                let llm_client = llm_client.clone();
+                let conn_app_state = app_state.clone();
+                let status_tx = status_tx.clone();
+                let card = card.clone();
+                let protocol = protocol.clone();
+                let card_type = card_type.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = Self::handle_connection(
+                        stream,
+                        connection_id,
+                        server_id,
+                        card,
+                        card_type,
+                        llm_client,
+                        conn_app_state.clone(),
+                        status_tx.clone(),
+                        protocol,
+                    )
+                    .await
+                    {
+                        console_error!(
+                            status_tx,
+                            "USB smart card connection {} error: {}",
+                            connection_id,
+                            e
+                        );
+                    }
+                    conn_app_state
+                        .close_connection_on_server(server_id, connection_id)
+                        .await;
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                });
             }
         });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }
 
-    /// Handle vpcd connection and APDU processing
-    async fn handle_vpcd_connection(
-        mut stream: TcpStream,
+    /// Drive one USB/IP session and the CCID exchange that hangs off it.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_connection(
+        mut stream: tokio::net::TcpStream,
+        connection_id: ConnectionId,
+        server_id: ServerId,
+        card: Arc<StdMutex<CardState>>,
+        card_type: String,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<UsbSmartCardProtocol>,
     ) -> Result<()> {
-        // Enable crypto for RSA signing support
-        let mut apdu_handler = ApduHandler::new_with_crypto(true);
+        // `handle_urb` is synchronous and cannot await an LLM call, so XfrBlock payloads cross
+        // to this task on a channel and the answer is queued back on the handler.
+        let (apdu_tx, mut apdu_rx) = mpsc::unbounded_channel::<PendingApdu>();
 
-        // Send ATR (Answer To Reset)
-        // vpcd protocol: send ATR length (u16 big-endian) + ATR bytes
-        let atr_len = DEFAULT_ATR.len() as u16;
-        stream.write_u16(atr_len).await?;
-        stream.write_all(DEFAULT_ATR).await?;
-        stream.flush().await?;
+        let ccid_handler: SharedUsbHandler = Arc::new(StdMutex::new(Box::new(UsbCcidHandler::new(
+            card.clone(),
+            apdu_tx,
+        ))
+            as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
-        info!("Sent ATR ({} bytes) to vpcd", DEFAULT_ATR.len());
-        let _ = status_tx.send("Smart Card: ATR sent, ready for APDU commands".to_string());
+        let device = usbip::UsbDevice::new(0).with_interface(
+            usbip::ClassCode::SmartCard as u8,
+            0x00, // bInterfaceSubClass: no subclass
+            0x00, // bInterfaceProtocol: bulk transfer, CCID rev 1.1
+            Some("NetGet Virtual CCID Reader"),
+            UsbCcidHandler::endpoints(),
+            ccid_handler.clone(),
+        );
 
-        // Main loop: receive APDU commands, send responses
-        let mut buffer = vec![0u8; 4096];
+        let usbip_server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
 
-        loop {
-            // Read APDU length (u16 big-endian)
-            let apdu_len = match stream.read_u16().await {
-                Ok(len) => len as usize,
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    info!("vpcd connection closed");
-                    break;
-                }
-                Err(e) => {
-                    error!("Failed to read APDU length: {}", e);
-                    break;
-                }
-            };
-
-            if apdu_len == 0 || apdu_len > buffer.len() {
-                warn!("Invalid APDU length: {}", apdu_len);
-                continue;
+        let mut usbip_task = tokio::spawn(async move {
+            match usbip::handler(&mut stream, usbip_server).await {
+                Ok(()) => debug!(
+                    "USB/IP session ended for smart card connection {}",
+                    connection_id
+                ),
+                Err(e) => debug!(
+                    "USB/IP session for smart card connection {} ended with error: {}",
+                    connection_id, e
+                ),
             }
+        });
 
-            // Read APDU data
-            stream.read_exact(&mut buffer[..apdu_len]).await?;
-            let apdu_cmd = &buffer[..apdu_len];
-
-            debug!("Received APDU command: {} bytes", apdu_len);
-
-            // Process APDU command
-            let apdu_response = apdu_handler.process_command(apdu_cmd);
-
-            // Send response length (u16 big-endian) + response bytes
-            let response_len = apdu_response.len() as u16;
-            stream.write_u16(response_len).await?;
-            stream.write_all(&apdu_response).await?;
-            stream.flush().await?;
-
-            debug!("Sent APDU response: {} bytes", apdu_response.len());
-
-            // Notify about command processing
-            let _ = status_tx.send(format!(
-                "Smart Card: Processed APDU ({} bytes in, {} bytes out)",
-                apdu_len,
-                apdu_response.len()
-            ));
+        // Tell the handler a host is here, and let it reconfigure the card for this session.
+        let (atr_hex, card_present) = {
+            let snapshot = lock_card(&card);
+            (hex::encode_upper(&snapshot.atr), snapshot.card_present)
+        };
+        let attached_event = Event::new(
+            &USB_SMARTCARD_ATTACHED_EVENT,
+            json!({
+                "connection_id": connection_id.to_string(),
+                "card_type": card_type,
+                "card_present": card_present,
+                "atr_hex": atr_hex,
+            }),
+        );
+        match call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            Some(connection_id),
+            &attached_event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(execution) => {
+                for message in execution.messages {
+                    let _ = status_tx.send(message);
+                }
+                Self::apply_card_config(
+                    execution.protocol_results,
+                    &card,
+                    Some(&ccid_handler),
+                    &status_tx,
+                );
+                info!(
+                    "USB smart card LLM call completed for connection {} (attach)",
+                    connection_id
+                );
+            }
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "USB smart card attach handler failed for {}: {}",
+                    connection_id,
+                    e
+                );
+            }
         }
 
-        info!("Smart card vpcd connection closed");
+        // Serve APDUs until the USB/IP session ends. Each is answered before the next is
+        // taken, so there is never more than one handler call in flight per connection.
+        loop {
+            tokio::select! {
+                pending = apdu_rx.recv() => {
+                    let Some(pending) = pending else { break };
+                    let response = Self::answer_apdu(
+                        &pending,
+                        connection_id,
+                        server_id,
+                        &card_type,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        protocol.as_ref(),
+                    )
+                    .await;
+
+                    let status_word = response.status_word();
+                    let bytes = response.into_bytes();
+                    let _ = status_tx.send(format!(
+                        "→ USB smart card response SW={} ({} data byte(s)) to {}",
+                        status_word,
+                        bytes.len().saturating_sub(2),
+                        connection_id
+                    ));
+                    if with_ccid_handler(&ccid_handler, |h| {
+                        h.queue_apdu_response(pending.slot, pending.seq, &bytes)
+                    })
+                    .is_none()
+                    {
+                        console_error!(
+                            status_tx,
+                            "USB smart card could not reach the CCID handler for {}; the host \
+                             will not get an answer to seq {}",
+                            connection_id,
+                            pending.seq
+                        );
+                    }
+                }
+                _ = &mut usbip_task => break,
+            }
+        }
+
+        info!(
+            "USB smart card host detached on connection {}",
+            connection_id
+        );
+
+        let detached_event = Event::new(
+            &USB_SMARTCARD_DETACHED_EVENT,
+            json!({ "connection_id": connection_id.to_string() }),
+        );
+        match call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            Some(connection_id),
+            &detached_event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(execution) => {
+                for message in execution.messages {
+                    let _ = status_tx.send(message);
+                }
+                info!(
+                    "USB smart card LLM call completed for connection {} (detach)",
+                    connection_id
+                );
+            }
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "USB smart card detach handler failed for {}: {}",
+                    connection_id,
+                    e
+                );
+            }
+        }
+
         Ok(())
+    }
+
+    /// Raise `usb_smartcard_apdu_received` and turn the handler's answer into a response APDU.
+    ///
+    /// Fails **closed**: a malformed command APDU is answered `6700` without reaching the
+    /// handler, and a handler that errors, says nothing, or returns something undecodable gets
+    /// `6F00`. Never `9000`.
+    #[allow(clippy::too_many_arguments)]
+    async fn answer_apdu(
+        pending: &PendingApdu,
+        connection_id: ConnectionId,
+        server_id: ServerId,
+        card_type: &str,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: &UsbSmartCardProtocol,
+    ) -> ApduResponse {
+        let command = match ApduCommand::parse(&pending.apdu) {
+            Ok(command) => command,
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "USB smart card host {} sent a malformed APDU: {}",
+                    connection_id,
+                    e
+                );
+                return ApduResponse::wrong_length();
+            }
+        };
+
+        let mut event_data = json!({
+            "connection_id": connection_id.to_string(),
+            "card_type": card_type,
+            "ins_name": command.ins_name(),
+            "cla": format!("{:02X}", command.cla),
+            "ins": format!("{:02X}", command.ins),
+            "p1": format!("{:02X}", command.p1),
+            "p2": format!("{:02X}", command.p2),
+            "lc": command.data.len(),
+            "data_hex": hex::encode_upper(&command.data),
+            "le": command.le,
+        });
+        if let Some(map) = event_data.as_object_mut() {
+            if let Some(text) = apdu::printable_text(&command.data) {
+                map.insert("data_text".into(), json!(text));
+            }
+            if command.is_select_by_aid() {
+                map.insert(
+                    "application_id".into(),
+                    json!(hex::encode_upper(&command.data)),
+                );
+            }
+        }
+
+        let event = Event::new(&USB_SMARTCARD_APDU_RECEIVED_EVENT, event_data);
+        console_debug!(
+            status_tx,
+            "USB smart card {} on {} (Lc={}, Le={:?})",
+            command.ins_name(),
+            connection_id,
+            command.data.len(),
+            command.le
+        );
+
+        let execution = match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol,
+        )
+        .await
+        {
+            Ok(execution) => execution,
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "USB smart card handler failed for {} on {}: {}; answering 6F00",
+                    event.id(),
+                    connection_id,
+                    e
+                );
+                return ApduResponse::card_error();
+            }
+        };
+
+        for message in execution.messages {
+            let _ = status_tx.send(message);
+        }
+
+        let mut response = None;
+        let mut results = Vec::new();
+        flatten_results(execution.protocol_results, &mut results);
+        for result in results {
+            let ActionResult::Custom { name, data } = result else {
+                continue;
+            };
+            if name != "respond_to_apdu" {
+                continue;
+            }
+            match decode_apdu_response(&data) {
+                Ok(decoded) => {
+                    if response.is_none() {
+                        response = Some(decoded);
+                    } else {
+                        console_error!(
+                            status_tx,
+                            "USB smart card handler returned more than one respond_to_apdu for \
+                             {}; ignoring the extra one",
+                            connection_id
+                        );
+                    }
+                }
+                Err(e) => {
+                    console_error!(
+                        status_tx,
+                        "USB smart card respond_to_apdu could not be decoded on {}: {}",
+                        connection_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        match response {
+            Some(response) => response,
+            None => {
+                console_error!(
+                    status_tx,
+                    "USB smart card handler produced no respond_to_apdu for {} on {}; \
+                     answering 6F00",
+                    event.id(),
+                    connection_id
+                );
+                ApduResponse::card_error()
+            }
+        }
+    }
+
+    /// Apply `set_atr` / `set_card_present` results to the shared card state, and tell a live
+    /// CCID handler about a slot change so the host is notified.
+    fn apply_card_config(
+        results: Vec<ActionResult>,
+        card: &Arc<StdMutex<CardState>>,
+        ccid_handler: Option<&SharedUsbHandler>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let mut flattened = Vec::new();
+        flatten_results(results, &mut flattened);
+        for result in flattened {
+            let ActionResult::Custom { name, data } = result else {
+                continue;
+            };
+            match name.as_str() {
+                "set_atr" => match decode_atr(&data) {
+                    Ok(atr) => {
+                        let atr_hex = hex::encode_upper(&atr);
+                        lock_card(card).atr = atr;
+                        let _ = status_tx.send(format!("[INFO] USB smart card ATR set: {atr_hex}"));
+                        debug!("Virtual smart card ATR set to {}", atr_hex);
+                    }
+                    Err(e) => {
+                        console_error!(status_tx, "USB smart card set_atr rejected: {}", e);
+                    }
+                },
+                "set_card_present" => match data.get("present").and_then(|v| v.as_bool()) {
+                    Some(present) => {
+                        lock_card(card).card_present = present;
+                        if let Some(handler) = ccid_handler {
+                            with_ccid_handler(handler, |h| h.note_slot_change());
+                        }
+                        let _ = status_tx.send(format!(
+                            "[INFO] USB smart card slot: card {}",
+                            if present { "inserted" } else { "removed" }
+                        ));
+                        debug!("Virtual smart card present={}", present);
+                    }
+                    None => {
+                        console_error!(
+                            status_tx,
+                            "USB smart card set_card_present had no boolean 'present'"
+                        );
+                    }
+                },
+                "respond_to_apdu" => {
+                    console_error!(
+                        status_tx,
+                        "USB smart card respond_to_apdu is only valid in response to \
+                         usb_smartcard_apdu_received; ignoring it"
+                    );
+                }
+                other => {
+                    warn!(
+                        "USB smart card ignoring unhandled action result '{}'",
+                        other
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Lock the shared card state, recovering rather than propagating a poisoned mutex: a poisoned
+/// lock here would otherwise take the reader down for the rest of the process.
+fn lock_card(card: &Arc<StdMutex<CardState>>) -> std::sync::MutexGuard<'_, CardState> {
+    match card.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Run `f` against the live CCID handler, or return `None` if it cannot be reached.
+fn with_ccid_handler<R>(
+    handler: &SharedUsbHandler,
+    f: impl FnOnce(&mut UsbCcidHandler) -> R,
+) -> Option<R> {
+    let mut guard = match handler.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let ccid = guard.as_any().downcast_mut::<UsbCcidHandler>()?;
+    Some(f(ccid))
+}
+
+/// `ExecutionResult::protocol_results` can nest via `ActionResult::Multiple`; flatten so a
+/// nested action is not silently dropped.
+fn flatten_results(results: Vec<ActionResult>, out: &mut Vec<ActionResult>) {
+    for result in results {
+        match result {
+            ActionResult::Multiple(nested) => flatten_results(nested, out),
+            other => out.push(other),
+        }
+    }
+}
+
+/// Decode the normalised `set_atr` payload produced by `execute_action`.
+fn decode_atr(data: &Value) -> Result<Vec<u8>> {
+    let atr_hex = data
+        .get("atr_hex")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("Missing atr_hex"))?;
+    let atr = actions::parse_hex("atr_hex", atr_hex)?;
+    if atr.is_empty() {
+        return Err(anyhow!("ATR must not be empty"));
+    }
+    if atr.len() > ccid::MAX_PAYLOAD_LEN {
+        return Err(anyhow!(
+            "ATR is {} bytes; a CCID data block carries at most {}",
+            atr.len(),
+            ccid::MAX_PAYLOAD_LEN
+        ));
+    }
+    Ok(atr)
+}
+
+/// Decode the normalised `respond_to_apdu` payload produced by `execute_action`.
+fn decode_apdu_response(data: &Value) -> Result<ApduResponse> {
+    let data_hex = data
+        .get("data_hex")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let body = if data_hex.is_empty() {
+        Vec::new()
+    } else {
+        actions::parse_hex("data_hex", data_hex)?
+    };
+
+    // Response body plus SW1/SW2 has to fit in one CCID data block.
+    if body.len() + 2 > ccid::MAX_PAYLOAD_LEN {
+        return Err(anyhow!(
+            "Response body of {} bytes does not fit in a CCID data block (max {} including SW)",
+            body.len(),
+            ccid::MAX_PAYLOAD_LEN
+        ));
+    }
+
+    let sw1 = decode_status_byte(data, "sw1", 0x90)?;
+    let sw2 = decode_status_byte(data, "sw2", 0x00)?;
+    Ok(ApduResponse::new(body, sw1, sw2))
+}
+
+fn decode_status_byte(data: &Value, field: &str, default: u8) -> Result<u8> {
+    let Some(value) = data.get(field).and_then(|v| v.as_str()) else {
+        return Ok(default);
+    };
+    match actions::parse_hex(field, value)?.as_slice() {
+        [byte] => Ok(*byte),
+        other => Err(anyhow!(
+            "'{field}' must be exactly one hex byte, got {} byte(s)",
+            other.len()
+        )),
     }
 }

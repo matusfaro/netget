@@ -1,338 +1,436 @@
-//! USB Smart Card Reader (CCID) protocol actions implementation
+//! USB Smart Card (CCID) protocol actions and events.
 //!
-//! This module implements a virtual smart card using the vpicc crate and vsmartcard infrastructure.
-//! This approach avoids implementing USB CCID directly by using the mature vsmartcard project.
+//! The server exports a real USB CCID class device over USB/IP; see
+//! `src/server/usb/smartcard/mod.rs` and `src/server/usb/smartcard/CLAUDE.md`.
+//!
+//! NetGet owns the CCID framing and the ISO 7816-4 parsing. The handler owns everything the
+//! *card* says: the ATR, whether a card is in the slot, and every response APDU.
 
-#[cfg(feature = "usb-smartcard")]
 use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
-#[cfg(feature = "usb-smartcard")]
 use crate::protocol::log_template::LogTemplate;
-#[cfg(feature = "usb-smartcard")]
 use crate::protocol::EventType;
-#[cfg(feature = "usb-smartcard")]
 use crate::state::app_state::AppState;
-#[cfg(feature = "usb-smartcard")]
-use anyhow::{Context, Result};
-#[cfg(feature = "usb-smartcard")]
+use anyhow::{anyhow, Context, Result};
 use serde_json::json;
-#[cfg(feature = "usb-smartcard")]
 use std::sync::LazyLock;
-#[cfg(feature = "usb-smartcard")]
-use tracing::{debug, info};
 
-// Event type definitions
-#[cfg(feature = "usb-smartcard")]
-pub static SMARTCARD_INSERTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+/// Configure the Answer To Reset the card returns when the host powers it up.
+pub static SET_ATR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(set_atr_action);
+/// Insert or remove the virtual card.
+pub static SET_CARD_PRESENT_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(set_card_present_action);
+/// Answer a command APDU.
+pub static RESPOND_TO_APDU_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(respond_to_apdu_action);
+
+/// Emitted once, after the USB/IP socket is bound and before the first host is accepted, so
+/// the card is fully configured by the time anything can power it up.
+pub static USB_SMARTCARD_READER_READY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
-        "smartcard_inserted",
-        "Smart card inserted into virtual reader",
+        "usb_smartcard_reader_ready",
+        "Virtual CCID reader bound and ready; configure the card before a host attaches",
         json!({
-            "type": "list_files",
-            "connection_id": "conn_1"
+            "type": "set_atr",
+            "atr_hex": "3B901100"
         }),
     )
     .with_parameters(vec![
         Parameter {
-            name: "connection_id".to_string(),
+            name: "listen_addr".to_string(),
             type_hint: "string".to_string(),
-            description: "Connection ID".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "atr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Answer To Reset (ATR) hex string".to_string(),
+            description: "Address the USB/IP reader is listening on".to_string(),
             required: true,
         },
         Parameter {
             name: "card_type".to_string(),
             type_hint: "string".to_string(),
-            description: "Card type (PIV, OpenPGP, Generic)".to_string(),
+            description: "Card type this server was started with".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "atr_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "ATR currently configured, as uppercase hex".to_string(),
             required: true,
         },
     ])
-});
-
-#[cfg(feature = "usb-smartcard")]
-pub static SMARTCARD_REMOVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "smartcard_removed",
-        "Smart card removed from virtual reader",
-        json!({
-            "type": "remove_card",
-            "connection_id": "conn_1"
-        }),
+    .with_actions(vec![
+        SET_ATR_ACTION.clone(),
+        SET_CARD_PRESENT_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("USB smart card reader ready on {listen_addr} (card={card_type})")
+            .with_debug("USB-SmartCard reader_ready: addr={listen_addr} type={card_type}"),
     )
-    .with_parameters(vec![Parameter {
-        name: "connection_id".to_string(),
-        type_hint: "string".to_string(),
-        description: "Connection ID".to_string(),
-        required: true,
-    }])
 });
 
-#[cfg(feature = "usb-smartcard")]
-pub static SMARTCARD_PIN_REQUESTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+/// Emitted when a host completes a USB/IP import of the reader.
+pub static USB_SMARTCARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
-        "smartcard_pin_requested",
-        "Application requested PIN verification",
+        "usb_smartcard_attached",
+        "A host attached to the virtual CCID reader over USB/IP",
         json!({
-            "type": "verify_pin",
-            "connection_id": "conn_1",
-            "pin": "123456"
+            "type": "set_card_present",
+            "present": true
         }),
     )
     .with_parameters(vec![
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
-            description: "Connection ID".to_string(),
+            description: "Connection ID of the attached host".to_string(),
             required: true,
         },
         Parameter {
-            name: "pin_reference".to_string(),
-            type_hint: "number".to_string(),
-            description: "PIN reference number (0-15)".to_string(),
+            name: "card_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Card type this server was started with".to_string(),
             required: true,
         },
         Parameter {
-            name: "retries_remaining".to_string(),
-            type_hint: "number".to_string(),
-            description: "Number of retries remaining".to_string(),
+            name: "card_present".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether a card is currently in the slot".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "atr_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "ATR currently configured, as uppercase hex".to_string(),
             required: true,
         },
     ])
+    .with_actions(vec![
+        SET_ATR_ACTION.clone(),
+        SET_CARD_PRESENT_ACTION.clone(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("USB smart card host attached ({connection_id})")
+            .with_debug("USB-SmartCard attached: connection_id={connection_id}"),
+    )
 });
 
-#[cfg(feature = "usb-smartcard")]
-pub static SMARTCARD_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+/// Emitted for every command APDU the host sends in a `PC_to_RDR_XfrBlock`.
+pub static USB_SMARTCARD_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
-        "smartcard_apdu_received",
-        "Application sent APDU command to card",
+        "usb_smartcard_apdu_received",
+        "Command APDU received by the virtual smart card",
         json!({
-            "type": "list_files",
-            "connection_id": "conn_1"
+            "type": "respond_to_apdu",
+            "sw1": "90",
+            "sw2": "00"
         }),
     )
     .with_parameters(vec![
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
-            description: "Connection ID".to_string(),
+            description: "Connection ID of the host that sent the APDU".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "ins_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Decoded instruction name: SELECT_BY_AID, SELECT, READ_BINARY, VERIFY, \
+                          GET_DATA, INTERNAL_AUTHENTICATE, ... or UNKNOWN"
+                .to_string(),
             required: true,
         },
         Parameter {
             name: "cla".to_string(),
-            type_hint: "number".to_string(),
-            description: "Class byte".to_string(),
+            type_hint: "string".to_string(),
+            description: "Class byte as two hex digits".to_string(),
             required: true,
         },
         Parameter {
             name: "ins".to_string(),
-            type_hint: "number".to_string(),
-            description: "Instruction byte".to_string(),
+            type_hint: "string".to_string(),
+            description: "Instruction byte as two hex digits".to_string(),
             required: true,
         },
         Parameter {
-            name: "command".to_string(),
+            name: "p1".to_string(),
             type_hint: "string".to_string(),
-            description: "Human-readable command description".to_string(),
+            description: "Parameter 1 as two hex digits".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "p2".to_string(),
+            type_hint: "string".to_string(),
+            description: "Parameter 2 as two hex digits".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "lc".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of bytes in the command data field".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "Command data field as uppercase hex. Hex is used because this field is \
+                          opaque bytes chosen by the host; prefer data_text when it is present."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data_text".to_string(),
+            type_hint: "string".to_string(),
+            description: "Command data as text, present only when every byte is printable ASCII"
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "application_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "For SELECT_BY_AID only: the application identifier the host selected, \
+                          as uppercase hex"
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "le".to_string(),
+            type_hint: "number".to_string(),
+            description: "Maximum response length the host will accept, null if absent".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "card_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Card type this server was started with".to_string(),
             required: true,
         },
     ])
+    .with_actions(vec![RESPOND_TO_APDU_ACTION.clone()])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("USB smart card APDU {ins_name} (Lc={lc})")
+            .with_debug(
+                "USB-SmartCard apdu_received: {ins_name} cla={cla} ins={ins} p1={p1} p2={p2} \
+                 lc={lc}",
+            ),
+    )
 });
 
-/// USB Smart Card protocol action handler
-#[cfg(feature = "usb-smartcard")]
+/// Emitted when a host's USB/IP session ends.
+pub static USB_SMARTCARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "usb_smartcard_detached",
+        "The host detached from the virtual CCID reader",
+        json!({ "type": "wait_for_more" }),
+    )
+    .with_parameters(vec![Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection ID of the host that detached".to_string(),
+        required: true,
+    }])
+    // Nothing can be written to a reader no host is attached to.
+    .with_no_actions()
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("USB smart card host detached ({connection_id})")
+            .with_debug("USB-SmartCard detached: connection_id={connection_id}"),
+    )
+});
+
+fn set_atr_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "set_atr".to_string(),
+        description: "Set the Answer To Reset (ATR) the card returns when the host powers it up \
+                      (CCID PC_to_RDR_IccPowerOn). The ATR is how a host identifies the card."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "atr_hex".to_string(),
+            type_hint: "string".to_string(),
+            description: "ATR bytes as a hex string, at most 261 bytes. ISO 7816-3 defines the \
+                          ATR as raw bytes, so hex is the only faithful form. Example: \
+                          '3B901100' is a minimal valid T=0 ATR."
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "set_atr",
+            "atr_hex": "3B901100"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB smart card set ATR")
+                .with_debug("USB-SmartCard set_atr: atr={atr_hex}"),
+        ),
+    }
+}
+
+fn set_card_present_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "set_card_present".to_string(),
+        description: "Insert or remove the virtual card. With no card in the slot the reader \
+                      refuses power-on and APDU transfers, and reports the change to the host \
+                      on the interrupt endpoint. A card is present by default."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "present".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "true to insert the card, false to remove it".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "set_card_present",
+            "present": true
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB smart card present={present}")
+                .with_debug("USB-SmartCard set_card_present: present={present}"),
+        ),
+    }
+}
+
+fn respond_to_apdu_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "respond_to_apdu".to_string(),
+        description: "Answer the command APDU with an optional response body and a two-byte \
+                      status word. This is the only way to reply; if you do not use it the card \
+                      answers 6F00 (card error)."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "data_text".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response body as text; sent as its UTF-8 bytes. Use this whenever \
+                              the answer is text. Mutually exclusive with data_hex."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "data_hex".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response body as a hex string, for genuinely binary answers such \
+                              as a certificate or a TLV object. Mutually exclusive with data_text."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "sw1".to_string(),
+                type_hint: "string".to_string(),
+                description: "Status byte 1 as two hex digits (default '90'). Refuse with '69' \
+                              (security status not satisfied), '6A' (wrong parameters) or '6D' \
+                              (instruction not supported)."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "sw2".to_string(),
+                type_hint: "string".to_string(),
+                description: "Status byte 2 as two hex digits (default '00'; 9000 means success)"
+                    .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "respond_to_apdu",
+            "data_hex": "6F0A8408A000000308000010",
+            "sw1": "90",
+            "sw2": "00"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB smart card APDU response SW={sw1}{sw2}")
+                .with_debug("USB-SmartCard respond_to_apdu: data={data_hex} sw1={sw1} sw2={sw2}"),
+        ),
+    }
+}
+
+/// Parse a hex string, tolerating the spaces a model naturally writes between bytes, and
+/// rejecting anything else so a malformed value fails where it is produced rather than being
+/// logged as if it had been accepted.
+pub fn parse_hex(field: &str, value: &str) -> Result<Vec<u8>> {
+    let compact: String = value.chars().filter(|c| !c.is_whitespace()).collect();
+    hex::decode(&compact).map_err(|e| anyhow!("Invalid hex in '{field}' ({value}): {e}"))
+}
+
+/// Parse a single-byte hex field such as `sw1`.
+fn parse_status_byte(field: &str, value: &str) -> Result<u8> {
+    match parse_hex(field, value)?.as_slice() {
+        [byte] => Ok(*byte),
+        other => Err(anyhow!(
+            "'{field}' must be exactly one hex byte (two digits), got {} byte(s)",
+            other.len()
+        )),
+    }
+}
+
+/// USB Smart Card (CCID) protocol.
 pub struct UsbSmartCardProtocol;
 
-#[cfg(feature = "usb-smartcard")]
 impl UsbSmartCardProtocol {
     pub fn new() -> Self {
         Self
     }
 }
 
-// Implement Protocol trait
-#[cfg(feature = "usb-smartcard")]
-impl Protocol for UsbSmartCardProtocol {
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "card_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "Type of smart card to emulate (piv, openpgp, generic)".to_string(),
-                required: false,
-                example: json!("generic"),
-            },
-            ParameterDefinition {
-                name: "default_pin".to_string(),
-                type_hint: "string".to_string(),
-                description: "Default PIN for the card".to_string(),
-                required: false,
-                example: json!("123456"),
-            },
-            ParameterDefinition {
-                name: "vpcd_host".to_string(),
-                type_hint: "string".to_string(),
-                description: "vsmartcard vpcd daemon host".to_string(),
-                required: false,
-                example: json!("localhost"),
-            },
-            ParameterDefinition {
-                name: "vpcd_port".to_string(),
-                type_hint: "number".to_string(),
-                description: "vsmartcard vpcd daemon port".to_string(),
-                required: false,
-                example: json!(35963),
-            },
-        ]
+impl Default for UsbSmartCardProtocol {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
+impl Protocol for UsbSmartCardProtocol {
     fn protocol_name(&self) -> &'static str {
         "usb-smartcard"
     }
 
     fn stack_name(&self) -> &'static str {
-        "USB Smart Card Reader (vpicc)"
+        "USB Smart Card Reader (CCID)"
+    }
+
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "card_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "Card type, reported back to you in every smart card event so a handler \
+                          can branch on it: 'piv', 'openpgp', 'generic' (default). The server \
+                          does not interpret it — nothing is answered by built-in card logic."
+                .to_string(),
+            required: false,
+            example: json!("generic"),
+        }]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "insert_card".to_string(),
-                description: "Insert virtual smart card into reader".to_string(),
-                parameters: vec![Parameter {
-                    name: "connection_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Connection ID".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "insert_card",
-                    "connection_id": "conn_1"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Smart card insert")
-                        .with_debug("USB-SmartCard insert_card: connection_id={connection_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "remove_card".to_string(),
-                description: "Remove virtual smart card from reader".to_string(),
-                parameters: vec![Parameter {
-                    name: "connection_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Connection ID".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "remove_card",
-                    "connection_id": "conn_1"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Smart card remove")
-                        .with_debug("USB-SmartCard remove_card: connection_id={connection_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "set_pin".to_string(),
-                description: "Set or change the card PIN".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "connection_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Connection ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "new_pin".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "New PIN value".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "set_pin",
-                    "connection_id": "conn_1",
-                    "new_pin": "123456"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Smart card set PIN")
-                        .with_debug("USB-SmartCard set_pin: connection_id={connection_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "verify_pin".to_string(),
-                description: "Verify PIN (approve pending PIN request)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "connection_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Connection ID".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "pin".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "PIN to verify".to_string(),
-                        required: true,
-                    },
-                ],
-                example: json!({
-                    "type": "verify_pin",
-                    "connection_id": "conn_1",
-                    "pin": "123456"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Smart card verify PIN")
-                        .with_debug("USB-SmartCard verify_pin: connection_id={connection_id}"),
-                ),
-            },
-            ActionDefinition {
-                name: "list_files".to_string(),
-                description: "List files on the card".to_string(),
-                parameters: vec![Parameter {
-                    name: "connection_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Connection ID".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "list_files",
-                    "connection_id": "conn_1"
-                }),
-                log_template: Some(
-                    LogTemplate::new()
-                        .with_info("-> Smart card list files")
-                        .with_debug("USB-SmartCard list_files: connection_id={connection_id}"),
-                ),
-            },
-        ]
+        vec![SET_ATR_ACTION.clone(), SET_CARD_PRESENT_ACTION.clone()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]
+        vec![RESPOND_TO_APDU_ACTION.clone()]
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            SMARTCARD_INSERTED_EVENT.clone(),
-            SMARTCARD_REMOVED_EVENT.clone(),
-            SMARTCARD_PIN_REQUESTED_EVENT.clone(),
-            SMARTCARD_APDU_RECEIVED_EVENT.clone(),
+            (*USB_SMARTCARD_READER_READY_EVENT).clone(),
+            (*USB_SMARTCARD_ATTACHED_EVENT).clone(),
+            (*USB_SMARTCARD_APDU_RECEIVED_EVENT).clone(),
+            (*USB_SMARTCARD_DETACHED_EVENT).clone(),
         ]
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["usb", "smartcard", "smart card", "ccid", "vpicc"]
+        vec![
+            "usb",
+            "smartcard",
+            "smart card",
+            "ccid",
+            "apdu",
+            "iso7816",
+            "piv",
+            "pcsc",
+        ]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
@@ -341,21 +439,48 @@ impl Protocol for UsbSmartCardProtocol {
         };
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Incomplete)
+            .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("Virtual smart card using vpicc crate and vsmartcard infrastructure")
-            .llm_control("Card insertion, PIN verification, APDU response generation")
-            .e2e_testing("Not yet implemented - requires vpcd daemon and PC/SC client")
-            .notes("Uses vpicc instead of USB CCID for simplicity. Requires external vpcd daemon.")
+            .implementation(
+                "Real USB CCID class device (interface class 0x0B) exported over USB/IP, with a \
+                 hand-written usbip::UsbInterfaceHandler: CCID rev 1.1 class descriptor, bulk \
+                 IN/OUT and interrupt IN endpoints, and the IccPowerOn / IccPowerOff / \
+                 GetSlotStatus / XfrBlock / Get-Set-ResetParameters / Escape / Abort / IccClock \
+                 message set, each answered by the matching RDR_to_PC_* with bSeq echoed. No \
+                 external daemon: vpcd and vpicc are gone.",
+            )
+            .llm_control(
+                "The ATR and card presence at startup and on attach; the response body and \
+                 ISO 7816-4 status word for every command APDU. Nothing is answered by built-in \
+                 card logic — there is no file system, PIN store or key store — and a handler \
+                 that produces no respond_to_apdu gets 6F00 rather than a success.",
+            )
+            .e2e_testing(
+                "Mocked E2E drives a real USB/IP client over TCP (OP_REQ_IMPORT then bulk \
+                 transfers) and asserts the CCID response bytes, including the ATR returned by \
+                 IccPowerOn and the response APDU returned by XfrBlock \
+                 (tests/server/usb_smartcard/e2e_test.rs). No hardware, no kernel module, no root.",
+            )
+            .notes(
+                "All four events fire: usb_smartcard_reader_ready at bind, usb_smartcard_attached \
+                 on USB/IP import, usb_smartcard_apdu_received per XfrBlock, \
+                 usb_smartcard_detached when the session ends. XfrBlock before IccPowerOn, or \
+                 with no card in the slot, is refused by the reader without an LLM call. \
+                 Attaching from a real Linux host (usbip attach + pcscd) needs vhci-hcd and root \
+                 and has not been tested. Short APDU level of exchange only: CCID messages are \
+                 capped at the advertised dwMaxCCIDMessageLength of 271 bytes, so extended APDUs \
+                 beyond that are refused. No T=0/T=1 transmission layer, no PPS, no time \
+                 extension while the handler thinks.",
+            )
             .build()
     }
 
     fn description(&self) -> &'static str {
-        "Virtual smart card reader (CCID) for authentication and secure storage"
+        "Virtual USB CCID smart card reader answering ISO 7816-4 APDUs over USB/IP"
     }
 
     fn example_prompt(&self) -> &'static str {
-        "Create a virtual smart card reader on USB that emulates a PIV card with PIN 123456"
+        "Create a virtual USB smart card reader on port {AVAILABLE_PORT} that answers APDU commands"
     }
 
     fn group_name(&self) -> &'static str {
@@ -364,142 +489,169 @@ impl Protocol for UsbSmartCardProtocol {
 
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
-        use serde_json::json;
 
         StartupExamples::new(
-            // LLM mode: LLM handles smart card
+            // LLM mode: the model answers every APDU.
             json!({
                 "type": "open_server",
                 "port": 3240,
                 "base_stack": "usb-smartcard",
-                "instruction": "Create a virtual smart card reader that emulates a PIV card with PIN 123456",
+                "instruction": "Act as a PIV smart card: answer SELECT for the PIV AID and refuse \
+                                everything else with 6A82",
                 "startup_params": {
-                    "card_type": "piv",
-                    "default_pin": "123456"
+                    "card_type": "piv"
                 }
             }),
-            // Script mode: Code-based smart card handling
+            // Script mode: deterministic APDU handling, no LLM round-trip per command.
             json!({
                 "type": "open_server",
                 "port": 3240,
                 "base_stack": "usb-smartcard",
                 "startup_params": {
-                    "card_type": "generic",
-                    "default_pin": "123456"
+                    "card_type": "generic"
                 },
                 "event_handlers": [{
-                    "event_pattern": "smartcard_pin_requested",
+                    "event_pattern": "usb_smartcard_apdu_received",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<smartcard_handler>"
+                        "code": "<smartcard_apdu_handler>"
                     }
                 }]
             }),
-            // Static mode: Fixed smart card response
+            // Static mode: one fixed ATR and one fixed answer.
             json!({
                 "type": "open_server",
                 "port": 3240,
                 "base_stack": "usb-smartcard",
                 "startup_params": {
-                    "card_type": "generic",
-                    "default_pin": "123456"
+                    "card_type": "generic"
                 },
-                "event_handlers": [{
-                    "event_pattern": "smartcard_inserted",
-                    "handler": {
-                        "type": "static",
-                        "actions": [{
-                            "type": "list_files",
-                            "connection_id": "conn_1"
-                        }]
+                "event_handlers": [
+                    {
+                        "event_pattern": "usb_smartcard_reader_ready",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "set_atr",
+                                "atr_hex": "3B901100"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "usb_smartcard_apdu_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "respond_to_apdu",
+                                "sw1": "90",
+                                "sw2": "00"
+                            }]
+                        }
                     }
-                }]
+                ]
             }),
         )
     }
 }
 
-// Implement Server trait
-#[cfg(feature = "usb-smartcard")]
 impl Server for UsbSmartCardProtocol {
     fn spawn(
         &self,
-        _ctx: crate::protocol::SpawnContext,
+        ctx: crate::protocol::SpawnContext,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
-            // TODO: Implement USB smart card server spawning
-            // This will require vpicc integration with USB/IP
-            anyhow::bail!("USB Smart Card server not yet implemented - requires vpicc integration")
+            let card_type = match ctx.startup_params {
+                Some(ref params) => params.get_optional_string("card_type")?,
+                None => None,
+            };
+
+            crate::server::usb::smartcard::UsbSmartCardServer::spawn_with_llm_actions(
+                ctx.legacy_listen_addr(),
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                card_type,
+            )
+            .await
         })
     }
 
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action["type"].as_str().context("Missing action type")?;
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
         match action_type {
-            "insert_card" => {
-                let _conn_id = action["connection_id"]
-                    .as_str()
-                    .context("Missing connection_id")?;
-
-                // NOTE: Card state is managed in the SmartCardHandler
-                // Virtual card is always "inserted" upon USB/IP connection
-                // True card insertion/removal would require vpicc integration
-                info!("insert_card called - card is virtually inserted on USB attach");
-                Ok(ActionResult::NoAction)
+            "set_atr" => {
+                let atr_hex = action
+                    .get("atr_hex")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'atr_hex' parameter")?;
+                let atr = parse_hex("atr_hex", atr_hex)?;
+                if atr.is_empty() {
+                    return Err(anyhow!("'atr_hex' must not be empty"));
+                }
+                if atr.len() > super::ccid::MAX_PAYLOAD_LEN {
+                    return Err(anyhow!(
+                        "'atr_hex' is {} bytes; a CCID data block carries at most {}",
+                        atr.len(),
+                        super::ccid::MAX_PAYLOAD_LEN
+                    ));
+                }
+                Ok(ActionResult::Custom {
+                    name: "set_atr".to_string(),
+                    data: json!({ "atr_hex": hex::encode_upper(&atr) }),
+                })
             }
-            "remove_card" => {
-                let _conn_id = action["connection_id"]
-                    .as_str()
-                    .context("Missing connection_id")?;
-
-                info!("remove_card called - card removal requires USB disconnect");
-                Ok(ActionResult::NoAction)
+            "set_card_present" => {
+                let present = action
+                    .get("present")
+                    .and_then(|v| v.as_bool())
+                    .context("Missing or non-boolean 'present' parameter")?;
+                Ok(ActionResult::Custom {
+                    name: "set_card_present".to_string(),
+                    data: json!({ "present": present }),
+                })
             }
-            "set_pin" => {
-                let _conn_id = action["connection_id"]
-                    .as_str()
-                    .context("Missing connection_id")?;
-                let new_pin = action["new_pin"].as_str().context("Missing new_pin")?;
+            "respond_to_apdu" => {
+                let data_hex = action.get("data_hex").and_then(|v| v.as_str());
+                let data_text = action.get("data_text").and_then(|v| v.as_str());
 
-                // NOTE: PIN is managed in SmartCardHandler's PIN store
-                // Would need direct handler access to modify
-                info!("set_pin called - PIN management requires handler access");
-                debug!(
-                    "Requested PIN change to '{}...'",
-                    &new_pin.chars().take(1).collect::<String>()
-                );
-                Ok(ActionResult::NoAction)
-            }
-            "verify_pin" => {
-                let _conn_id = action["connection_id"]
-                    .as_str()
-                    .context("Missing connection_id")?;
-                let pin = action["pin"].as_str().context("Missing pin")?;
+                // Normalise both spellings of the body to hex so the server has exactly one
+                // form to decode. Refusing the ambiguous case is the point: "48656c6c6f" is
+                // simultaneously valid text and valid hex and only the sender knows which it
+                // meant.
+                let body = match (data_text, data_hex) {
+                    (Some(text), None) => text.as_bytes().to_vec(),
+                    (None, Some(hex_str)) => parse_hex("data_hex", hex_str)?,
+                    (None, None) => Vec::new(),
+                    (Some(_), Some(_)) => {
+                        return Err(anyhow!(
+                            "respond_to_apdu accepts 'data_text' or 'data_hex', not both"
+                        ))
+                    }
+                };
 
-                // NOTE: PIN verification happens via VERIFY APDU from client
-                // LLM observes via smartcard_pin_requested_event
-                info!("verify_pin called - PIN verification is client-driven via APDU");
-                debug!(
-                    "PIN verification with '{}...'",
-                    &pin.chars().take(1).collect::<String>()
-                );
-                Ok(ActionResult::NoAction)
-            }
-            "list_files" => {
-                let _conn_id = action["connection_id"]
-                    .as_str()
-                    .context("Missing connection_id")?;
+                let sw1 = action.get("sw1").and_then(|v| v.as_str()).unwrap_or("90");
+                let sw2 = action.get("sw2").and_then(|v| v.as_str()).unwrap_or("00");
+                let sw1 = parse_status_byte("sw1", sw1)?;
+                let sw2 = parse_status_byte("sw2", sw2)?;
 
-                // NOTE: File system is in SmartCardHandler
-                // Currently implements basic RSA key storage, not full ISO 7816-4 FS
-                info!("list_files called - card has RSA key store, not full file system yet");
-                Ok(ActionResult::NoAction)
+                Ok(ActionResult::Custom {
+                    name: "respond_to_apdu".to_string(),
+                    data: json!({
+                        "data_hex": hex::encode_upper(&body),
+                        "sw1": format!("{:02X}", sw1),
+                        "sw2": format!("{:02X}", sw2),
+                    }),
+                })
             }
-            _ => Ok(ActionResult::NoAction),
+            other => Err(anyhow!("Unknown action type: {}", other)),
         }
     }
 }
