@@ -2,420 +2,218 @@
 
 ## Overview
 
-TURN (Traversal Using Relays around NAT) server implementing RFC 8656 (TURN - Traversal Using Relays around NAT).
-Provides relay functionality for NAT traversal when direct peer-to-peer connection fails (e.g., symmetric NAT). Extends
-STUN protocol with allocation and relay capabilities.
+TURN (Traversal Using Relays around NAT) server, RFC 8656. Clients that cannot reach a peer
+directly ask a TURN server for a *relayed transport address*; the server then forwards
+datagrams in both directions on their behalf.
 
-**Compliance**: RFC 8656 (TURN), RFC 8489 (STUN), RFC 5766 (obsolete TURN)
+**Compliance**: RFC 8656 (TURN), RFC 8489 (STUN). RFC 5766 is the obsolete predecessor.
 
-> **Status: Incomplete — this is NOT a working relay.**
+> **Status: `Experimental` — it does relay.**
 >
-> No relay socket is ever bound. `relay_address` is whatever string the model
-> invents; the server never listens on it, never receives peer traffic, and never
-> forwards a byte in either direction. Send and Data indications are parsed and
-> then dropped, because there is no action that could act on them.
+> Every granted allocation binds its own UDP socket. Peer traffic arriving there is
+> forwarded to the client as a Data indication or a ChannelData frame; Send indications
+> and ChannelData frames from the client are forwarded to permitted peers from that
+> socket. `tests/server/turn/e2e_test.rs` proves this with two ordinary UDP sockets and
+> a payload that has to cross in both directions.
 >
-> What does work is the request/response bookkeeping: Allocate, Refresh and
-> CreatePermission produce well-formed replies that echo the transaction ID, and
-> allocations are tracked with lifetimes and expiry. That is enough for a honeypot
-> or a protocol probe, and not enough for NAT traversal. `DevelopmentState` is
-> `Incomplete`, so the protocol is hidden from LLM prompts unless
-> `--include-disabled-protocols` is passed.
+> It is `Experimental`, not `Beta`: it has never been run against `turnutils_uclient`,
+> libwebrtc or any other real TURN client, and it implements **no authentication**.
 
-**Protocol Purpose**: TURN relays traffic between peers when direct connection impossible due to restrictive NATs or
-firewalls. Essential fallback for WebRTC, VoIP, and real-time communication.
+## Division of labour
 
-## Library Choices
+This is the part to understand before changing anything here.
 
-**Manual Implementation** - Complete TURN protocol built on STUN message format
+| | Owner | Why |
+|---|---|---|
+| Binding the relay socket, choosing the relay address | Rust | It is a fact about a socket, not a decision. A model-invented address is exactly the bug this protocol shipped with. |
+| Granting Allocate / Refresh / CreatePermission / ChannelBind, lifetimes, which peers | LLM (or script / static handler) | This is policy, which is what NetGet exists to put a model in charge of. |
+| Forwarding each relayed packet | Rust | One LLM round-trip per packet would be absurd, and the permission decision was already made on the control plane. |
+| Binding requests (STUN over the TURN port) | Rust | The answer is the client's own address. |
 
-- **Why**: TURN is STUN + allocation management + relay logic
-- No mature Rust TURN server libraries with LLM integration
-- Manual implementation provides full control over allocation policies
+**The data plane never raises an event and never calls the LLM.** Do not add one. Per-packet
+messages must also stay off `status_tx`, which is an unbounded channel with no backpressure —
+relay forwarding logs at `trace!` to the file log only.
 
-**Extends STUN**:
+## Library choice
 
-- Uses STUN message format (20-byte header + attributes)
-- Adds new methods: Allocate (3), Refresh (4), CreatePermission (8), SendIndication (6)
-- Reuses STUN transport (UDP on port 3478 by default)
+Hand-rolled on top of the STUN message format, *not* `webrtc-turn`, even though the `turn`
+feature declares that dependency. `webrtc-turn` 0.1.3 has all the machinery (allocation
+manager, relay address generators, request handler, its own client), and adopting it was the
+first choice. Three things stopped it, in order of how hard they are to work around:
 
-## Architecture Decisions
+1. **Its public API is expressed in `webrtc-util` types it does not re-export.** Every entry
+   point needs one: `Manager::new` takes a `Box<dyn RelayAddressGenerator>`, all three
+   supplied generators need `net: Arc<util::vnet::net::Net>`, implementing the trait yourself
+   needs `util::Conn` and `util::Error` in the signature, and `AuthHandler` needs
+   `util::Error`. So adoption requires adding `webrtc-util` (and `webrtc-stun`) to
+   `Cargo.toml` and to the `turn` feature.
+2. **`Allocation::relay_addr` and `relay_socket` are `pub(crate)`.** A partial adoption — its
+   allocation manager under NetGet's own request handling — cannot read back the address to
+   report to the client, and cannot send anything client→peer.
+3. **Its request handler mandates long-term credentials.** `authenticate_request` is called
+   unconditionally for Allocate/Refresh/CreatePermission/ChannelBind and answers 401 before
+   any event could be raised, so the model could not be the one to grant or refuse. Using
+   `server::Server` wholesale also runs its own read loop, which would delete NetGet's event
+   and action surface entirely.
 
-### Stateful Relay Server
+If someone adds `webrtc-util` to the `turn` feature, point 1 dissolves; points 2 and 3 mean
+the useful shape would still be "NetGet's loop + its `proto` encoders", not its server.
 
-Unlike STUN (stateless), TURN maintains **allocation state**:
+## Architecture
 
-- Maps client ↔ relay address
-- Tracks allocation lifetime
-- Manages peer permissions
-- Relays data between client and permitted peers
-
-**Allocation Lifecycle**:
-
-1. **Allocate Request**: Client requests relay address from TURN server
-2. **Allocate Response**: Server assigns relay address (e.g., 203.0.113.5:54321), returns lifetime
-3. **Relay Active**: Server forwards data between client and permitted peers
-4. **Refresh Requests**: Client extends lifetime before expiration
-5. **Expiration**: Allocation deleted after lifetime expires (cleanup task)
-
-### Allocation Management
-
-**`TurnAllocation` struct** tracks per-client state:
-
-```rust
-pub struct TurnAllocation {
-    client_addr: SocketAddr,           // Client's IP:port
-    relay_addr: SocketAddr,            // Assigned relay IP:port
-    allocated_at: Instant,             // Allocation timestamp
-    expires_at: Instant,               // Expiration time
-    lifetime_seconds: u32,             // Negotiated lifetime
-    permitted_peers: Vec<SocketAddr>,  // Peers allowed to send/receive
-}
-```
-
-**Allocation Storage**:
-
-- `HashMap<String, TurnAllocation>` (key = allocation_id hex string)
-- Wrapped in `Arc<Mutex<>>` for concurrent access
-- Cleaned up by periodic background task (every 30 seconds)
-
-**Allocation ID**:
-
-- Unique identifier per allocation (currently transaction ID from allocate request)
-- Future: Could use random UUID for security
-
-### TURN Message Types
-
-**Request Methods**:
-
-- **Allocate (0x0003)**: Request relay address allocation
-- **Refresh (0x0004)**: Extend allocation lifetime
-- **CreatePermission (0x0008)**: Add peer to permitted list
-- **SendIndication (0x0006)**: Send data through relay (client → peer)
-- **DataIndication (0x0007)**: Receive data through relay (peer → client)
-
-**Response Classes**:
-
-- Success Response (class=1): Method + 0x0100 (e.g., Allocate Success = 0x0103)
-- Error Response (class=2): Method + 0x0110 (e.g., Allocate Error = 0x0113)
-
-### Relay Data Flow
-
-**Outbound (Client → Peer via TURN)**:
-
-1. Client sends SendIndication to TURN server
-2. TURN checks allocation exists and peer permitted
-3. TURN relays data to peer from relay address
-4. Peer sees traffic from relay address (not client)
-
-**Inbound (Peer → Client via TURN)**:
-
-1. Peer sends data to relay address
-2. TURN checks if peer permitted for this allocation
-3. TURN sends DataIndication to client
-4. Client receives data with peer's address in indication
-
-**Not Yet Implemented**: Full relay logic pending. Currently handles allocation management only.
-
-## LLM Integration
-
-### Action-Based Allocation Control
-
-**Allocate Request** (`TURN_ALLOCATE_REQUEST_EVENT`):
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_turn_allocate_response",
-      "allocation_id": "abc123def456",
-      "relay_address": "203.0.113.5:54321",
-      "lifetime_seconds": 600,
-      "transaction_id": "0102030405060708090a0b0c"
-    },
-    {
-      "type": "send_turn_allocate_error",
-      "error_code": 508,
-      "reason": "Insufficient Capacity",
-      "transaction_id": "0102030405060708090a0b0c"
-    }
-  ]
-}
-```
-
-**Refresh Request** (`TURN_REFRESH_REQUEST_EVENT`):
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_turn_refresh_response",
-      "lifetime_seconds": 600,
-      "transaction_id": "..."
-    }
-  ]
-}
-```
-
-**CreatePermission Request** (`TURN_CREATE_PERMISSION_REQUEST_EVENT`):
-
-```json
-{
-  "actions": [
-    {
-      "type": "send_turn_create_permission_response",
-      "peer_address": "198.51.100.10:5000",
-      "transaction_id": "..."
-    }
-  ]
-}
-```
-
-**SendIndication**: no event and no action. `TURN_SEND_INDICATION_EVENT` and the
-`relay_data_to_peer` action have been removed. The action decoded its payload,
-logged "TURN would relay N bytes", and returned `NoAction`; its documented
-`data_base64` field did not exist (the executor read `data` and hex-decoded it,
-so the base64 example in these docs could only ever have failed), and its output
-could not have reached a peer anyway, since an action's output is written back to
-the client socket. The event could not fire either: Send is an *indication*
-(class 1) and the parser's table listed it under class 0.
-
-Two async actions, `allocate_relay_address` and `revoke_allocation`, have also
-been removed: they were advertised but `execute_action` had no arm for either, so
-invoking one returned "Unknown TURN action".
-
-### Event Types
-
-1. **`TURN_ALLOCATE_REQUEST_EVENT`**
-    - Triggered: Client requests relay allocation
-    - Context: peer_addr, local_addr, transaction_id, existing_allocations
-    - LLM decides: Allocate (with relay_address, lifetime) or Deny (error code)
-
-2. **`TURN_REFRESH_REQUEST_EVENT`**
-    - Triggered: Client requests lifetime extension
-    - Context: peer_addr, transaction_id, existing_allocations
-    - LLM decides: Extend lifetime or reject
-
-3. **`TURN_CREATE_PERMISSION_REQUEST_EVENT`**
-    - Triggered: Client adds peer to permission list
-    - Context: peer_addr, transaction_id, existing_allocations
-    - LLM decides: Allow peer or reject
-
-(Send/Data indications produce no event — see above.)
-
-All three events carry `transaction_id` (hex), `peer_addr`, `local_addr`,
-`message_type`, `bytes_received` and `existing_allocations`. These are now declared
-as event parameters; previously the events declared none, so the model was never
-told a transaction ID existed to echo. Static handlers can echo it without an LLM
-call via `"transaction_id": "{{event.transaction_id}}"`.
-
-## Connection and State Management
-
-**Per-Client State** (`ProtocolConnectionInfo::Turn`):
+### Allocation state
 
 ```rust
-Turn {
-    allocation_ids: Vec<String>,       // All allocation IDs for this client
-    relay_addresses: Vec<String>,      // Assigned relay addresses
+struct TurnAllocation {
+    client_addr:  SocketAddr,          // the client 5-tuple this belongs to
+    relay_addr:   SocketAddr,          // advertised address (may differ from bound IP)
+    relay_socket: Arc<UdpSocket>,      // the socket peers actually send to
+    state:        Arc<Mutex<AllocationState>>,
+    relay_task:   JoinHandle<()>,
+}
+
+struct AllocationState {   // shared with the relay task
+    expires_at:  Instant,
+    permissions: HashMap<IpAddr, Instant>,       // RFC 8656: per IP, 5 minutes
+    channels:    HashMap<u16, (SocketAddr, Instant)>,  // 10 minutes
 }
 ```
 
-**Global Allocation State** (`TurnServer`):
+Two details that are load-bearing:
 
-```rust
-pub struct TurnServer {
-    allocations: Arc<Mutex<HashMap<String, TurnAllocation>>>,
-}
-```
+- **`expires_at` lives in the shared state, not beside the socket.** The relay task checks it
+  per packet. Keeping it only in the allocation table meant an expired allocation kept
+  relaying until the 30-second cleanup tick happened to notice.
+- **`impl Drop for TurnAllocation` aborts `relay_task`.** Dropping a `JoinHandle` detaches the
+  task rather than stopping it, so without this an expired, replaced, or server-stopped
+  allocation would keep its socket bound and keep forwarding.
 
-**Cleanup Task**:
+The table is `HashMap<allocation_id, TurnAllocation>` behind an `Arc<Mutex<_>>`; the cleanup
+task holds only a `Weak` reference, because `register_server_task` stores one handle per
+server (the accept loop's) and this task must notice on its own when the server stops.
 
-- Spawned at server startup
-- Runs every 30 seconds
-- Deletes allocations where `expires_at <= now`
-- Logs expired allocations
+### Allocate: reserve, then ask
 
-**Connection Lifecycle**:
+1. Reject non-UDP `REQUESTED-TRANSPORT` with 442, and anything past `MAX_ALLOCATIONS` (256)
+   with 508. Resource exhaustion is not a policy question.
+2. **Bind the relay socket first**, then raise `turn_allocate_request` with its address in
+   `relay_address`. The model echoes that value back in `send_turn_allocate_response`.
+3. If the action names any other address, the allocation is refused with 508 and the model's
+   packet is never sent. Confirming an address nobody listens on is worse than refusing.
+4. If the model refuses, ignores, or the LLM call fails, the reserved socket is dropped and
+   closed. Nothing is granted by default.
 
-1. Client sends Allocate Request → Create allocation entry
-2. Server assigns relay address → Store in allocations HashMap
-3. Client sends Refresh Requests → Update `expires_at`
-4. Client sends CreatePermission → Add peer to `permitted_peers`
-5. Allocation expires or client sends Refresh with lifetime=0 → Delete allocation
+The lifetime the model grants is capped at `MAX_LIFETIME_SECONDS` (3600).
 
-## Protocol Compliance
+### Relay data flow
 
-### Supported Features
+**Client → peer**: Send indication (or ChannelData frame) → look up the client's allocation →
+check the peer is permitted → `relay_socket.send_to(payload, peer)`. RFC 8656 section 10.2:
+indications are never answered with an error, so anything unrelayable is silently dropped.
 
-- ✅ Allocate Request/Response (RFC 8656 Section 6.2)  *(bookkeeping only, no relay)*
-- ✅ Refresh Request/Response (RFC 8656 Section 7)
-- ✅ CreatePermission Request/Response (RFC 8656 Section 9)
-- ✅ Allocation lifetime management and expiration
-- ✅ XOR-RELAYED-ADDRESS attribute (0x0016)
-- ✅ LIFETIME attribute (0x000D)
-- ✅ Error responses (e.g., 508 Insufficient Capacity)
+**Peer → client**: the per-allocation relay task reads the relay socket → drops the packet if
+the allocation has expired or the source IP is not permitted → wraps it in a ChannelData frame
+if a channel is bound to that peer, otherwise in a Data indication (XOR-PEER-ADDRESS + DATA) →
+sends it on the TURN socket to the client's address.
 
-### Not Yet Fully Implemented
+### Message parsing
 
-- ❌ **Data Relay**: not implemented at all; no relay socket is bound and
-  Send/Data indications are dropped
-- ⚠️ **Channel Binding**: ChannelBind/ChannelData methods (RFC 8656 Section 11)
-- ❌ **TCP Allocations**: Only UDP relay addresses
-- ❌ **Dual-Stack Allocations**: IPv4-only (no REQUESTED-ADDRESS-FAMILY)
-- ❌ **Authentication**: REALM, NONCE, MESSAGE-INTEGRITY attributes
-- ❌ **Mobility**: MOBILITY-TICKET for client IP changes
+`TurnMessage::parse` is the only decoder. It is fed unauthenticated datagrams from anyone who
+can reach the socket, so every field is bounds-checked and it returns `Option` rather than
+panicking — a panic in the per-datagram task is silent and the server keeps reporting Running.
+It trusts the shorter of the declared attribute length and the bytes actually received, and
+stops (keeping what it has) at the first attribute whose length runs past the end.
 
-### Protocol Compliance Gaps
+ChannelData frames are tested for **before** STUN parsing: they have no magic cookie, and
+their first two bits are `01` (channel numbers are 0x4000–0x7FFF).
 
-**RFC 8656 Features Not Implemented**:
+## LLM integration
 
-- Alternate Server (ALTERNATE-SERVER)
-- Reservation tokens (RESERVATION-TOKEN)
-- Even/odd port allocation (EVEN-PORT, RESERVE-NEXT-HIGHER-PORT)
-- Don't Fragment (DONT-FRAGMENT)
-- Bandwidth negotiation (BANDWIDTH)
+### Events
 
-**Impact**: Sufficient for basic TURN relay testing. Not production-ready for WebRTC at scale.
+| Event | Extra fields beyond the common set | Decision |
+|---|---|---|
+| `turn_allocate_request` | `relay_address`, `requested_lifetime_seconds`, `requested_transport` | grant / refuse, lifetime |
+| `turn_refresh_request` | `requested_lifetime_seconds` | extend, refuse, or delete (lifetime 0) |
+| `turn_create_permission_request` | `peer_addresses` | which of the requested peers to permit |
+| `turn_channel_bind_request` | `channel_number`, `peer_address` | grant / refuse |
+
+Common to all four: `transaction_id` (hex), `peer_addr`, `local_addr`, `message_type`,
+`bytes_received`, `existing_allocations`. Static handlers echo the transaction ID with
+`"transaction_id": "{{event.transaction_id}}"` and the relay address with
+`"{{event.relay_address}}"` — no LLM call needed.
+
+### Actions
+
+- `send_turn_allocate_response` — `relay_address` (**must** be `{{event.relay_address}}`),
+  `transaction_id`, optional `client_address` (echo `{{event.peer_addr}}`, sent as
+  XOR-MAPPED-ADDRESS), `lifetime_seconds`, `allocation_id`.
+- `send_turn_refresh_response` — `transaction_id`, `lifetime_seconds` (0 deletes).
+- `send_turn_create_permission_response` — `transaction_id`, optional `peer_addresses` to
+  permit a subset. Omitting it permits every peer the request named; peers the request did
+  *not* name are ignored, so a hallucinated address cannot open a hole.
+- `send_turn_channel_bind_response` — `transaction_id`. Binding also permits the peer.
+- `send_turn_error_response` — `error_code`, `reason`, `transaction_id`, and `method`
+  (`allocate` / `refresh` / `create_permission` / `channel_bind`). The method must match the
+  request or the client discards the error.
+- `ignore_request`.
+
+Send and Data indications have **no event and no action**, by design (see the table above).
+
+### Startup parameters
+
+- `relay_ip` (optional) — the IP advertised in XOR-RELAYED-ADDRESS. Relay sockets are always
+  bound to the server's own listen address; set this only when clients reach the relay at a
+  different address (NAT, port forwarding). Binding to a wildcard address without setting it
+  logs a WARN, because `0.0.0.0:port` is useless to a client.
 
 ## Limitations
 
-### Current Limitations
+1. **No authentication.** REALM / NONCE / MESSAGE-INTEGRITY are not implemented, so this is an
+   open relay to anyone who can reach the port, bounded only by the model's grant decisions
+   and the 256-allocation cap. Real deployments must not expose it. This is the single largest
+   gap between this and a usable TURN server.
+2. **Never tested against a real TURN client** (`turnutils_uclient`, libwebrtc, Pion). The E2E
+   suite encodes and decodes the wire format itself.
+3. **UDP relays only.** No TCP allocations, no `REQUESTED-ADDRESS-FAMILY` (IPv4 relay
+   addresses in practice, since the relay binds the listen address).
+4. **No RESERVATION-TOKEN, EVEN-PORT, DONT-FRAGMENT, BANDWIDTH or ALTERNATE-SERVER.**
+5. **Datagrams larger than 2048 bytes are truncated** (`RELAY_MTU`), with a WARN when a
+   received datagram exactly fills the buffer.
+6. **Permission and channel lifetimes are fixed** at the RFC values (300s / 600s); the model
+   cannot change them, only whether they exist.
+7. **One allocation per client 5-tuple.** A second grant replaces the first (RFC 8656 says
+   answer 437 Allocation Mismatch; a model can do that explicitly with
+   `send_turn_error_response`).
 
-1. **No Actual Data Relay**
-    - Allocation tracking works
-    - Send/Data indications are parsed and dropped (no event, no action)
-    - No relay socket is bound, so `relay_address` is fiction
-    - **Status**: not implemented; protocol marked `Incomplete`
+## Security notes
 
-2. **No TCP Support**
-    - Only UDP relay addresses
-    - RFC 8656 allows TCP allocations (REQUESTED-TRANSPORT)
+**Open relay / amplification**: TURN relays are an amplification vector and, unauthenticated,
+a free proxy. The cap and the per-IP permission checks limit the blast radius; authentication
+is what would actually fix it.
 
-3. **No Authentication**
-    - Anyone can allocate
-    - Production TURN servers require credentials (to prevent abuse)
+**Fail-closed points** worth preserving if you refactor: no allocation without an explicit
+grant action; no relaying to or from an unpermitted IP; a mismatched relay address refuses
+rather than confirms; an LLM error grants nothing.
 
-4. **No IPv6**
-    - Only IPv4 relay addresses
-    - REQUESTED-ADDRESS-FAMILY (0x0017) not supported
-
-5. **No Channel Binding**
-    - All data uses SendIndication/DataIndication (higher overhead)
-    - Channel Binding reduces header size for frequent peer communication
-
-6. **Simple Allocation IDs**
-    - `allocation_id` defaults to the request's transaction ID when the action
-      omits it (as documented). Previously the tracking code required
-      `allocation_id`, `relay_address` and `lifetime_seconds` to all be present,
-      so omitting either optional field sent a success response while recording
-      no allocation at all.
-    - Security issue: predictable IDs
-    - Should use random UUIDs
-
-7. **Error responses must name their method**
-    - `send_turn_error_response` takes a `method` parameter (`allocate` (default),
-      `refresh`, `create_permission`). It used to hardcode Allocate, so a Refresh
-      or CreatePermission failure came back as an Allocate error, which clients
-      ignore.
-
-### Security Considerations
-
-**Open Relay Risk**: Without authentication, anyone can allocate relay addresses and consume server resources.
-
-**Resource Exhaustion**: No limits on allocations per client. Attacker could exhaust relay address pool.
-
-**Amplification Attack**: TURN can amplify traffic (client sends 1 packet, server relays to N peers). Requires rate
-limiting.
-
-## Performance Considerations
-
-**Stateful Overhead**: Each allocation consumes memory. Typical deployment: 10,000-100,000 concurrent allocations.
-
-**Cleanup Task**: Periodic cleanup adds O(N) cost every 30 seconds (N = number of allocations). Acceptable for <10,000
-allocations.
-
-**LLM Latency**: 500ms-5s per allocation request. Acceptable for TURN (allocations long-lived, not latency-sensitive).
-
-**Relay Throughput**: Once implemented, relay adds ~1ms forwarding overhead per packet. Thousands of packets/second
-possible.
-
-## Example Prompts
-
-### Basic TURN Relay
+## Example prompts
 
 ```
-Start a TURN relay server on port 0 with 600 second allocations. Assign relay
-addresses from 203.0.113.0/24 pool.
+Start a TURN relay server on port 3478 with 600 second allocations.
 ```
-
-### TURN with Short Lifetimes (Testing)
-
-```
-Start a TURN relay server on port 0 with very short 5 second allocation lifetime.
-```
-
-### TURN Rejecting Allocations
 
 ```
 Start a TURN relay server on port 0 that rejects all allocations with error 508
 Insufficient Capacity.
 ```
 
-### TURN with Permission Tracking
-
 ```
-Start a TURN relay server on port 0 that tracks all CreatePermission requests and
-logs which peers are permitted for each allocation.
+Start a TURN relay server on port 3478 that only permits peers in 198.51.100.0/24.
 ```
-
-### TURN with Automatic Refresh
-
-```
-Start a TURN relay server on port 0. When clients send Refresh requests, always
-extend lifetime by 600 seconds.
-```
-
-## Use Cases
-
-### WebRTC Fallback
-
-**Typical ICE Flow**:
-
-1. Try direct connection (STUN reveals public IP)
-2. If symmetric NAT or firewall blocks direct connection → Use TURN relay
-3. All media flows through TURN server (adds latency and bandwidth cost)
-
-### Gaming (P2P Multiplayer)
-
-**When Direct Connection Fails**:
-
-- Players behind symmetric NAT can't establish P2P
-- TURN relays game state updates
-- Higher latency than direct, but still playable for turn-based games
-
-### VoIP (SIP/RTP)
-
-**Last Resort for Audio/Video**:
-
-- Direct RTP connection preferred (low latency)
-- TURN relay used when firewalls block UDP or symmetric NAT prevents hole punching
-
-## Integration with STUN
-
-**TURN is STUN Extension**:
-
-- Uses same message format (STUN header)
-- Uses same magic cookie (0x2112A442)
-- Shares attribute format (type-length-value)
-- Can coexist on same port (server distinguishes by method field)
-
-**Unified Server**: NetGet could run STUN + TURN on same UDP port. Method field (Binding=1, Allocate=3) disambiguates.
 
 ## References
 
 - RFC 8656: Traversal Using Relays around NAT (TURN)
 - RFC 8489: Session Traversal Utilities for NAT (STUN)
-- RFC 5766: Traversal Using Relays around NAT (obsolete TURN)
-- RFC 5766bis: TURN Extensions (various RFCs)
-- WebRTC TURN Usage: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection
-- TURN Protocol Specification: https://datatracker.ietf.org/doc/html/rfc8656
+- `webrtc-turn` 0.1.3 source, for a second opinion on the wire format:
+  `~/.cargo/registry/src/*/webrtc-turn-0.1.3/src/`

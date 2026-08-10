@@ -1,19 +1,20 @@
-//! E2E tests for TURN protocol
+//! E2E tests for the TURN relay server.
 //!
-//! These tests verify TURN server functionality by starting NetGet with TURN prompts
-//! and using raw UDP sockets to send TURN allocate/refresh/permission requests.
+//! The point of this suite is the relay, not the bookkeeping. A test that only
+//! checks NetGet answered an Allocate with a well-formed packet proves nothing:
+//! that is exactly what the protocol did while relaying nothing at all. So the
+//! headline test puts a **second, ordinary UDP socket** on the other side of
+//! the relay address and asserts the payload actually crosses:
 //!
-//! ROOT CAUSE IDENTIFIED: Tests use std::net::UdpSocket (sync/blocking) which
-//! cannot properly communicate with tokio::net::UdpSocket (async) in the test environment.
-//! The BOOTP tests work because they use tokio::net::UdpSocket (async).
+//! * peer -> client: the peer sends to the relayed transport address and the
+//!   client receives a Data indication carrying those bytes;
+//! * client -> peer: the client sends a Send indication and the peer receives
+//!   the raw bytes *from the relay address*.
 //!
-//! SOLUTION: Convert all TURN tests to use `tokio::net::UdpSocket` with async/await:
-//! - Change import: `use tokio::net::UdpSocket;`
-//! - Add `.await` to: `bind()`, `send_to()`, `recv_from()`
-//! - Replace `set_read_timeout()` with `tokio::time::timeout()`
-//! - Update match arms: `Ok((len, from))` → `Ok(Ok((len, from)))` + `Err(_)` for timeout
-//!
-//! See BOOTP tests (tests/server/bootp/e2e_test.rs) for working async UDP examples.
+//! Neither direction can pass unless a real socket was bound and real datagrams
+//! were forwarded. Requests are encoded and responses decoded here from the RFC
+//! 8656 / RFC 8489 wire format (message types are the literal constants from RFC
+//! 8656 section 17) rather than by calling NetGet's own encoder.
 
 #![cfg(feature = "turn")]
 
@@ -22,1016 +23,742 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 
-#[tokio::test]
-async fn test_turn_basic_allocation() -> E2EResult<()> {
-    let config =
-        NetGetConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
-            .with_log_level("off")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("server")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "TURN",
-                            "instruction": "TURN relay server with 600 second allocations"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: Allocate request received
-                    .on_event("turn_allocate_request")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_turn_allocate_response",
-                            "relay_address": "127.0.0.1:50000",
-                            "transaction_id": "0102030405060708090a0b0c",
-                            "lifetime_seconds": 600
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
+// ---------------------------------------------------------------------------
+// Wire format helpers (RFC 8489 / RFC 8656)
+// ---------------------------------------------------------------------------
 
-    let test_state = start_netget_server(config).await?;
+const MAGIC_COOKIE: u32 = 0x2112_A442;
 
-    // Wait for server to be ready
-    tokio::time::sleep(Duration::from_millis(500)).await;
+// Message types, RFC 8656 section 17.
+const ALLOCATE_REQUEST: u16 = 0x0003;
+const ALLOCATE_SUCCESS: u16 = 0x0103;
+const ALLOCATE_ERROR: u16 = 0x0113;
+const REFRESH_REQUEST: u16 = 0x0004;
+const REFRESH_SUCCESS: u16 = 0x0104;
+const CREATE_PERMISSION_REQUEST: u16 = 0x0008;
+const CREATE_PERMISSION_SUCCESS: u16 = 0x0108;
+const CHANNEL_BIND_REQUEST: u16 = 0x0009;
+const CHANNEL_BIND_SUCCESS: u16 = 0x0109;
+const SEND_INDICATION: u16 = 0x0016;
+const DATA_INDICATION: u16 = 0x0017;
 
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
+// Attribute types.
+const ATTR_CHANNEL_NUMBER: u16 = 0x000C;
+const ATTR_LIFETIME: u16 = 0x000D;
+const ATTR_XOR_PEER_ADDRESS: u16 = 0x0012;
+const ATTR_DATA: u16 = 0x0013;
+const ATTR_ERROR_CODE: u16 = 0x0009;
+const ATTR_XOR_RELAYED_ADDRESS: u16 = 0x0016;
+const ATTR_REQUESTED_TRANSPORT: u16 = 0x0019;
 
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // Build TURN allocate request
-    let allocate_request = build_turn_allocate_request();
-
-    // Send allocate request
-    client
-        .send_to(&allocate_request, server_addr)
-        .await
-        .expect("Failed to send TURN allocate request");
-
-    println!("Sent TURN allocate request to {}", server_addr);
-
-    // Receive response with timeout
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, from))) => {
-            println!("Received {} bytes from {}", len, from);
-
-            let response = &buf[..len];
-
-            // Verify it's a valid TURN message
-            assert!(len >= 20, "Response too short to be TURN message");
-
-            // Check message type (should be 0x0103 for Allocate Success Response)
-            let message_type = u16::from_be_bytes([response[0], response[1]]);
-            println!("Message type: 0x{:04x}", message_type);
-
-            // Message type 0x0103 = Allocate Success Response
-            // Class = 1 (success), Method = 3 (allocate)
-            assert!(
-                message_type == 0x0103,
-                "Expected Allocate Success Response (0x0103), got 0x{:04x}",
-                message_type
-            );
-
-            // Verify magic cookie
-            let magic_cookie =
-                u32::from_be_bytes([response[4], response[5], response[6], response[7]]);
-            assert_eq!(
-                magic_cookie, 0x2112A442,
-                "Invalid magic cookie: 0x{:08x}",
-                magic_cookie
-            );
-
-            // Verify transaction ID matches
-            let response_tid = &response[8..20];
-            let request_tid = &allocate_request[8..20];
-            assert_eq!(response_tid, request_tid, "Transaction ID mismatch");
-
-            // Look for XOR-RELAYED-ADDRESS attribute (0x0016)
-            let mut found_relay_addr = false;
-            let mut pos = 20; // Skip header
-
-            while pos < len {
-                if pos + 4 > len {
-                    break;
-                }
-
-                let attr_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-                let attr_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
-
-                if attr_type == 0x0016 {
-                    found_relay_addr = true;
-                    println!("✓ Found XOR-RELAYED-ADDRESS attribute");
-                }
-
-                // Move to next attribute
-                pos += 4 + attr_len;
-                if attr_len % 4 != 0 {
-                    pos += 4 - (attr_len % 4);
-                }
-            }
-
-            assert!(
-                found_relay_addr || response.len() >= 20,
-                "Expected XOR-RELAYED-ADDRESS attribute or valid response"
-            );
-
-            println!("✓ TURN allocate request/response successful");
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive TURN response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for TURN response");
-        }
+fn transaction_id(seed: u8) -> [u8; 12] {
+    let mut tid = [0u8; 12];
+    for (i, byte) in tid.iter_mut().enumerate() {
+        *byte = seed.wrapping_add(i as u8).wrapping_mul(7).wrapping_add(1);
     }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-
-    test_state.stop().await?;
-    Ok(())
+    tid
 }
 
-#[tokio::test]
-async fn test_turn_refresh_allocation() -> E2EResult<()> {
-    let config =
-        NetGetConfig::new("Start a TURN relay server on port 0 allowing allocation refresh")
-            .with_log_level("off")
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("server")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("turn_allocate_request")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 600}
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("turn_refresh_request")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "send_turn_refresh_response", "transaction_id": "020202020202020202020202", "lifetime_seconds": 600}
-                    ]))
-                    .expect_calls(1)
-                    .and()
-            });
-
-    let test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // First, allocate
-    let allocate_request = build_turn_allocate_request();
-    client
-        .send_to(&allocate_request, server_addr)
-        .await
-        .expect("Failed to send allocate");
-
-    let mut buf = vec![0u8; 2048];
-    tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
-        .await
-        .expect("Timeout waiting for allocate response")
-        .expect("Failed to receive allocate response");
-
-    println!("✓ Initial allocation successful");
-
-    // Now send refresh request
-    let refresh_request = build_turn_refresh_request();
-    client
-        .send_to(&refresh_request, server_addr)
-        .await
-        .expect("Failed to send refresh");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-
-            // Check message type (should be 0x0104 for Refresh Success Response)
-            let message_type = u16::from_be_bytes([response[0], response[1]]);
-            println!("Refresh message type: 0x{:04x}", message_type);
-
-            // Either 0x0104 (Refresh Success) or 0x0103 (Allocate Success if LLM decided to re-allocate)
-            assert!(
-                message_type == 0x0104 || message_type == 0x0103,
-                "Expected Refresh or Allocate Success Response, got 0x{:04x}",
-                message_type
-            );
-
-            println!("✓ TURN refresh successful");
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive refresh response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for refresh response");
-        }
+fn attribute(attr_type: u16, value: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + value.len() + 3);
+    out.extend_from_slice(&attr_type.to_be_bytes());
+    out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    out.extend_from_slice(value);
+    while out.len() % 4 != 0 {
+        out.push(0);
     }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-
-    test_state.stop().await?;
-    Ok(())
+    out
 }
 
-#[tokio::test]
-async fn test_turn_create_permission() -> E2EResult<()> {
-    let config = NetGetConfig::new(
-        "Start a TURN relay server on port 0 that allows creating permissions for peers",
+fn xor_address_value(addr: SocketAddr) -> Vec<u8> {
+    let SocketAddr::V4(v4) = addr else {
+        panic!("these tests only use IPv4 peers");
+    };
+    let mut value = vec![0x00, 0x01];
+    value.extend_from_slice(&(v4.port() ^ (MAGIC_COOKIE >> 16) as u16).to_be_bytes());
+    let magic = MAGIC_COOKIE.to_be_bytes();
+    for (i, octet) in v4.ip().octets().iter().enumerate() {
+        value.push(octet ^ magic[i]);
+    }
+    value
+}
+
+fn decode_xor_address(value: &[u8]) -> SocketAddr {
+    assert!(value.len() >= 8, "XOR address attribute too short");
+    assert_eq!(value[1], 0x01, "expected an IPv4 XOR address");
+    let port = u16::from_be_bytes([value[2], value[3]]) ^ (MAGIC_COOKIE >> 16) as u16;
+    let magic = MAGIC_COOKIE.to_be_bytes();
+    let mut octets = [0u8; 4];
+    for i in 0..4 {
+        octets[i] = value[4 + i] ^ magic[i];
+    }
+    SocketAddr::from((octets, port))
+}
+
+fn build_message(message_type: u16, tid: &[u8; 12], attributes: &[Vec<u8>]) -> Vec<u8> {
+    let body: Vec<u8> = attributes.concat();
+    let mut msg = Vec::with_capacity(20 + body.len());
+    msg.extend_from_slice(&message_type.to_be_bytes());
+    msg.extend_from_slice(&(body.len() as u16).to_be_bytes());
+    msg.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+    msg.extend_from_slice(tid);
+    msg.extend_from_slice(&body);
+    msg
+}
+
+/// (message_type, transaction_id, attributes) of a received STUN message.
+type ParsedMessage = (u16, [u8; 12], Vec<(u16, Vec<u8>)>);
+
+fn parse_message(msg: &[u8]) -> ParsedMessage {
+    assert!(msg.len() >= 20, "STUN message shorter than a header");
+    let message_type = u16::from_be_bytes([msg[0], msg[1]]);
+    let length = u16::from_be_bytes([msg[2], msg[3]]) as usize;
+    assert_eq!(
+        u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]),
+        MAGIC_COOKIE,
+        "bad magic cookie"
+    );
+    assert_eq!(
+        20 + length,
+        msg.len(),
+        "declared attribute length {} does not match the {} bytes received",
+        length,
+        msg.len() - 20
+    );
+
+    let mut tid = [0u8; 12];
+    tid.copy_from_slice(&msg[8..20]);
+
+    let mut attributes = Vec::new();
+    let mut pos = 20;
+    while pos + 4 <= msg.len() {
+        let attr_type = u16::from_be_bytes([msg[pos], msg[pos + 1]]);
+        let attr_len = u16::from_be_bytes([msg[pos + 2], msg[pos + 3]]) as usize;
+        let value_end = pos + 4 + attr_len;
+        assert!(value_end <= msg.len(), "attribute runs past end of message");
+        attributes.push((attr_type, msg[pos + 4..value_end].to_vec()));
+        pos = value_end + ((4 - attr_len % 4) % 4);
+    }
+    (message_type, tid, attributes)
+}
+
+fn find_attribute(attributes: &[(u16, Vec<u8>)], attr_type: u16) -> Option<&[u8]> {
+    attributes
+        .iter()
+        .find(|(t, _)| *t == attr_type)
+        .map(|(_, v)| v.as_slice())
+}
+
+fn allocate_request(tid: &[u8; 12], lifetime: u32) -> Vec<u8> {
+    build_message(
+        ALLOCATE_REQUEST,
+        tid,
+        &[
+            // REQUESTED-TRANSPORT: 17 = UDP
+            attribute(ATTR_REQUESTED_TRANSPORT, &[17, 0, 0, 0]),
+            attribute(ATTR_LIFETIME, &lifetime.to_be_bytes()),
+        ],
     )
-    .with_log_level("off")
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("server")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
-            .on_event("turn_allocate_request")
-            .respond_with_actions(serde_json::json!([{"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 600}]))
-            .expect_calls(1)
-            .and()
-            .on_event("turn_create_permission_request")
-            .respond_with_actions(serde_json::json!([{"type": "send_turn_create_permission_response", "transaction_id": "030303030303030303030303"}]))
-            .expect_calls(1)
-            .and()
-    });
-
-    let test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // First, allocate
-    let allocate_request = build_turn_allocate_request();
-    client
-        .send_to(&allocate_request, server_addr)
-        .await
-        .expect("Failed to send allocate");
-
-    let mut buf = vec![0u8; 2048];
-    tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
-        .await
-        .expect("Timeout waiting for allocate response")
-        .expect("Failed to receive allocate response");
-
-    println!("✓ Initial allocation successful");
-
-    // Now send create permission request
-    let permission_request = build_turn_create_permission_request();
-    client
-        .send_to(&permission_request, server_addr)
-        .await
-        .expect("Failed to send permission");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-
-            // Check message type (should be 0x0108 for CreatePermission Success Response)
-            let message_type = u16::from_be_bytes([response[0], response[1]]);
-            println!("Permission message type: 0x{:04x}", message_type);
-
-            // Either 0x0108 (CreatePermission Success) or another success type
-            let is_success = (message_type & 0x0110) == 0x0100; // Class = 1 (success)
-            assert!(
-                is_success,
-                "Expected success response, got 0x{:04x}",
-                message_type
-            );
-
-            println!("✓ TURN create permission successful");
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive permission response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for permission response");
-        }
-    }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
 }
 
-#[tokio::test]
-async fn test_turn_multiple_allocations() -> E2EResult<()> {
-    let config =
-        NetGetConfig::new("Start a TURN relay server on port 0 supporting multiple allocations")
-            .with_log_level("off")
-            .with_mock(|mock| {
-                mock
-                    .on_instruction_containing("server")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("turn_allocate_request")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 600}
-                    ]))
-                    .expect_calls(3)
-                    .and()
-            });
-
-    let mut test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // Create multiple clients
-    for i in 0..3 {
-        let client = UdpSocket::bind("127.0.0.1:0")
-            .await
-            .expect("Failed to bind client socket");
-
-        let request = build_turn_allocate_request_with_tid(&[i; 12]);
-        client
-            .send_to(&request, server_addr)
-            .await
-            .expect("Failed to send allocate");
-
-        let mut buf = vec![0u8; 2048];
-        match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-            Ok(Ok((len, _))) => {
-                let response = &buf[..len];
-                let message_type = u16::from_be_bytes([response[0], response[1]]);
-
-                // Check if it's a success response
-                let is_success = (message_type & 0x0110) == 0x0100;
-                assert!(is_success, "Client {} allocation failed", i);
-
-                println!("✓ Client {} allocation successful", i);
-            }
-            Ok(Err(e)) => panic!("Client {} recv failed: {}", i, e),
-            Err(_) => panic!("Client {} timeout", i),
-        }
-    }
-
-    println!("✓ Multiple allocations successful");
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start a TURN relay server on port 0 that rejects allocations with error 508 Insufficient Capacity")
-        .with_log_level("off")
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("server")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
-                ]))
-                .expect_calls(1)
-                .and()
-                .on_event("turn_allocate_request")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "send_turn_error_response", "error_code": 508, "reason": "Insufficient Capacity", "transaction_id": "0102030405060708090a0b0c"}
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-    let mut test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    let allocate_request = build_turn_allocate_request();
-    client
-        .send_to(&allocate_request, server_addr)
-        .await
-        .expect("Failed to send allocate");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-            let message_type = u16::from_be_bytes([response[0], response[1]]);
-
-            // Check if it's an error response (class = 2)
-            let class = (message_type & 0x0110) >> 4;
-            println!(
-                "Response message type: 0x{:04x}, class: {}",
-                message_type, class
-            );
-
-            // Should be error response (0x0113 = Allocate Error Response)
-            assert!(
-                class == 2 || message_type == 0x0113,
-                "Expected error response"
-            );
-
-            println!("✓ TURN server sent error response");
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive error response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for error response");
-        }
-    }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start a TURN relay server on port 0 that validates packets")
-        .with_log_level("off")
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("server")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-    let mut test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // Send TURN packet with invalid magic cookie
-    let invalid_request = build_turn_request_with_invalid_magic_cookie();
-    client
-        .send_to(&invalid_request, server_addr)
-        .await
-        .expect("Failed to send invalid request");
-
-    println!("Sent TURN request with invalid magic cookie");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-            if len >= 20 {
-                let message_type = u16::from_be_bytes([response[0], response[1]]);
-                let class = (message_type & 0x0110) >> 4;
-                println!(
-                    "Received response: 0x{:04x}, class: {}",
-                    message_type, class
-                );
-
-                // If server responds, it should be an error
-                assert_eq!(class, 2, "Expected error response class");
-            }
-            println!("✓ Server rejected invalid magic cookie");
-        }
-        Ok(Err(_)) | Err(_) => {
-            // Timeout or error means server silently ignored invalid packet
-            println!("✓ Server silently ignored invalid packet");
-        }
-    }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start a TURN relay server on port 0 that tracks allocations and rejects refresh without allocation")
-        .with_log_level("off")
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("server")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
-                ]))
-                .expect_calls(1)
-                .and()
-                .on_event("turn_refresh_request")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "send_turn_refresh_response", "transaction_id": "020202020202020202020202", "lifetime_seconds": 600}
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-    let mut test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // Send refresh WITHOUT prior allocation
-    let refresh_request = build_turn_refresh_request();
-    client
-        .send_to(&refresh_request, server_addr)
-        .await
-        .expect("Failed to send refresh");
-
-    println!("Sent TURN refresh without prior allocation");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-            if len >= 20 {
-                let message_type = u16::from_be_bytes([response[0], response[1]]);
-                let class = (message_type & 0x0010) >> 4;
-
-                println!(
-                    "Response message type: 0x{:04x}, class: {}",
-                    message_type, class
-                );
-
-                // Either success (LLM is lenient) or error (proper validation)
-                // We accept both behaviors
-                assert!(
-                    class == 1 || class == 0,
-                    "Expected success or error response, got class {}",
-                    class
-                );
-
-                if class == 2 {
-                    println!("✓ Server rejected refresh without allocation (strict validation)");
-                } else {
-                    println!("✓ Server allowed refresh without allocation (lenient mode)");
-                }
-            }
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for response");
-        }
-    }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_turn_permission_without_allocation() -> E2EResult<()> {
-    let config = NetGetConfig::new(
-        "Start a TURN relay server on port 0 that rejects permission requests without allocation",
+fn create_permission_request(tid: &[u8; 12], peer: SocketAddr) -> Vec<u8> {
+    build_message(
+        CREATE_PERMISSION_REQUEST,
+        tid,
+        &[attribute(ATTR_XOR_PEER_ADDRESS, &xor_address_value(peer))],
     )
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("server")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
-            .on_event("turn_create_permission_request")
-            .respond_with_actions(serde_json::json!([{"type": "send_turn_create_permission_response", "transaction_id": "030303030303030303030303"}]))
-            .expect_calls(1)
-            .and()
-    })
-    .with_log_level("off");
-
-    let mut test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // Send create permission WITHOUT prior allocation
-    let permission_request = build_turn_create_permission_request();
-    client
-        .send_to(&permission_request, server_addr)
-        .await
-        .expect("Failed to send permission");
-
-    println!("Sent TURN create permission without prior allocation");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-            if len >= 20 {
-                let message_type = u16::from_be_bytes([response[0], response[1]]);
-                let class = (message_type & 0x0010) >> 4;
-
-                println!(
-                    "Response message type: 0x{:04x}, class: {}",
-                    message_type, class
-                );
-
-                // Either success (LLM is lenient) or error (proper validation)
-                assert!(
-                    class == 1 || class == 0,
-                    "Expected success or error response, got class {}",
-                    class
-                );
-
-                if class == 2 {
-                    println!("✓ Server rejected permission without allocation (strict)");
-                } else {
-                    println!("✓ Server allowed permission without allocation (lenient)");
-                }
-            }
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for response");
-        }
-    }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
 }
 
-#[tokio::test]
-async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
-    let config = NetGetConfig::new(
-        "Start a TURN relay server on port 0 with very short 5 second allocation lifetime",
+fn send_indication(tid: &[u8; 12], peer: SocketAddr, payload: &[u8]) -> Vec<u8> {
+    build_message(
+        SEND_INDICATION,
+        tid,
+        &[
+            attribute(ATTR_XOR_PEER_ADDRESS, &xor_address_value(peer)),
+            attribute(ATTR_DATA, payload),
+        ],
     )
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("server")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
-            .on_event("turn_allocate_request")
-            .respond_with_actions(serde_json::json!([{"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 5}]))
-            .expect_calls(1)
-            .and()
-    })
-    .with_log_level("off");
-
-    let test_state = start_netget_server(config).await?;
-
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
-
-    // First, allocate
-    let allocate_request = build_turn_allocate_request();
-    client
-        .send_to(&allocate_request, server_addr)
-        .await
-        .expect("Failed to send allocate");
-
-    let mut buf = vec![0u8; 2048];
-    let (len, _) = tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
-        .await
-        .expect("Timeout waiting for allocate response")
-        .expect("Failed to receive allocate response");
-
-    let response = &buf[..len];
-    let message_type = u16::from_be_bytes([response[0], response[1]]);
-
-    // Verify allocation succeeded
-    let is_success = (message_type & 0x0110) == 0x0100;
-    assert!(is_success, "Initial allocation should succeed");
-
-    println!("✓ Initial allocation successful, waiting for expiration...");
-
-    // Wait for allocation to expire (5 seconds + buffer)
-    tokio::time::sleep(Duration::from_secs(7)).await;
-
-    // Try to refresh the expired allocation
-    let refresh_request = build_turn_refresh_request();
-    client
-        .send_to(&refresh_request, server_addr)
-        .await
-        .expect("Failed to send refresh");
-
-    println!("Sent refresh request after expiration");
-
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-            if len >= 20 {
-                let message_type = u16::from_be_bytes([response[0], response[1]]);
-                let class = (message_type & 0x0110) >> 4;
-
-                println!(
-                    "Response after expiration: 0x{:04x}, class: {}",
-                    message_type, class
-                );
-
-                // Either error (allocation expired) or success (LLM doesn't track expiration strictly)
-                // Both are acceptable behaviors
-                if class == 2 {
-                    println!("✓ Server correctly detected expired allocation");
-                } else {
-                    println!("✓ Server allowed refresh (lenient expiration handling)");
-                }
-            }
-        }
-        Ok(Err(_)) | Err(_) => {
-            // Timeout or error means server ignored refresh of expired allocation
-            println!("✓ Server ignored refresh of expired allocation (no response)");
-        }
-    }
-
-    // Verify mocks
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
-    Ok(())
 }
 
+fn channel_bind_request(tid: &[u8; 12], channel: u16, peer: SocketAddr) -> Vec<u8> {
+    let mut channel_value = channel.to_be_bytes().to_vec();
+    channel_value.extend_from_slice(&[0, 0]); // RFFU
+    build_message(
+        CHANNEL_BIND_REQUEST,
+        tid,
+        &[
+            attribute(ATTR_CHANNEL_NUMBER, &channel_value),
+            attribute(ATTR_XOR_PEER_ADDRESS, &xor_address_value(peer)),
+        ],
+    )
+}
+
+fn channel_data(channel: u16, payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&channel.to_be_bytes());
+    frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
+async fn recv_within(socket: &UdpSocket, seconds: u64, what: &str) -> (Vec<u8>, SocketAddr) {
+    let mut buf = vec![0u8; 2048];
+    match tokio::time::timeout(Duration::from_secs(seconds), socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, from))) => (buf[..len].to_vec(), from),
+        Ok(Err(e)) => panic!("socket error while waiting for {}: {}", what, e),
+        Err(_) => panic!("timed out after {}s waiting for {}", seconds, what),
+    }
+}
+
+async fn expect_silence(socket: &UdpSocket, millis: u64, what: &str) {
+    let mut buf = vec![0u8; 2048];
+    if let Ok(Ok((len, from))) =
+        tokio::time::timeout(Duration::from_millis(millis), socket.recv_from(&mut buf)).await
+    {
+        panic!(
+            "expected no {} but received {} bytes from {}: {:02x?}",
+            what,
+            len,
+            from,
+            &buf[..len.min(64)]
+        );
+    }
+}
+
+/// Allocate a relay through the server and return the relayed transport address.
+async fn allocate(
+    client: &UdpSocket,
+    server_addr: SocketAddr,
+    seed: u8,
+    lifetime: u32,
+) -> SocketAddr {
+    let tid = transaction_id(seed);
+    client
+        .send_to(&allocate_request(&tid, lifetime), server_addr)
+        .await
+        .expect("send allocate request");
+
+    let (response, _) = recv_within(client, 10, "allocate response").await;
+    let (message_type, response_tid, attributes) = parse_message(&response);
+    assert_eq!(
+        message_type, ALLOCATE_SUCCESS,
+        "expected Allocate success (0x0103), got 0x{:04x}",
+        message_type
+    );
+    assert_eq!(response_tid, tid, "transaction ID must be echoed");
+
+    let relayed = find_attribute(&attributes, ATTR_XOR_RELAYED_ADDRESS)
+        .expect("Allocate success must carry XOR-RELAYED-ADDRESS");
+
+    // The address must really be XOR-ed with the magic cookie: an
+    // implementation that forgot would still round-trip through this test's own
+    // decoder. 127.0.0.1 XOR 0x2112A442 = 5E 12 A4 43 (RFC 8489 section 14.2).
+    assert_eq!(
+        &relayed[4..8],
+        &[0x5E, 0x12, 0xA4, 0x43],
+        "XOR-RELAYED-ADDRESS is not XOR-ed with the magic cookie"
+    );
+
+    let relay_addr = decode_xor_address(relayed);
+    assert_eq!(
+        relay_addr.ip().to_string(),
+        "127.0.0.1",
+        "relay should be advertised on the server's own address"
+    );
+    assert_ne!(relay_addr.port(), 0, "relay port must be a bound port");
+    assert_ne!(
+        relay_addr.port(),
+        server_addr.port(),
+        "the relay must be its own socket, not the TURN listener"
+    );
+
+    let lifetime_attr =
+        find_attribute(&attributes, ATTR_LIFETIME).expect("Allocate success must carry LIFETIME");
+    assert_eq!(lifetime_attr.len(), 4, "LIFETIME must be 4 bytes");
+
+    relay_addr
+}
+
+async fn create_permission(
+    client: &UdpSocket,
+    server_addr: SocketAddr,
+    seed: u8,
+    peer: SocketAddr,
+) {
+    let tid = transaction_id(seed);
+    client
+        .send_to(&create_permission_request(&tid, peer), server_addr)
+        .await
+        .expect("send create permission request");
+
+    let (response, _) = recv_within(client, 10, "create permission response").await;
+    let (message_type, response_tid, _) = parse_message(&response);
+    assert_eq!(
+        message_type, CREATE_PERMISSION_SUCCESS,
+        "expected CreatePermission success (0x0108), got 0x{:04x}",
+        message_type
+    );
+    assert_eq!(response_tid, tid, "transaction ID must be echoed");
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/// The test that separates a relay from a pretend relay: bytes cross between two
+/// independent UDP sockets, in both directions, through the allocation.
 #[tokio::test]
-async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
+async fn test_turn_relays_payload_between_two_peers() -> E2EResult<()> {
     let config = NetGetConfig::new("Start a TURN relay server on port 0")
         .with_log_level("off")
         .with_mock(|mock| {
-            mock
-                .on_instruction_containing("server")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
-                ]))
+            mock.on_instruction_containing("server")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TURN",
+                    "instruction": "TURN relay server"
+                }]))
                 .expect_calls(1)
                 .and()
                 .on_event("turn_allocate_request")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 300}
-                ]))
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_allocate_response",
+                        // The relay address is NetGet's, not the model's.
+                        "relay_address": event["relay_address"],
+                        "client_address": event["peer_addr"],
+                        "transaction_id": event["transaction_id"],
+                        "lifetime_seconds": 600
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+                .on_event("turn_create_permission_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_create_permission_response",
+                        "transaction_id": event["transaction_id"]
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });
 
-    let mut test_state = start_netget_server(config).await?;
-
+    let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to bind client socket");
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
-        .parse()
-        .expect("Failed to parse server address");
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port).parse()?;
+    let client = UdpSocket::bind("127.0.0.1:0").await?;
+    let peer = UdpSocket::bind("127.0.0.1:0").await?;
+    let peer_addr = peer.local_addr()?;
 
-    // Send allocate with LIFETIME attribute requesting 300 seconds
-    let allocate_request = build_turn_allocate_request_with_lifetime(300);
+    let relay_addr = allocate(&client, server_addr, 1, 600).await;
+
+    // Before any permission exists, peer traffic is dropped rather than
+    // relayed. (This has to be checked *before* CreatePermission: RFC 8656
+    // permissions match on IP address only, so on loopback a second socket is
+    // indistinguishable from the permitted one.)
+    peer.send_to(b"too early", relay_addr).await?;
+    expect_silence(&client, 1000, "relayed traffic from an unpermitted peer").await;
+
+    create_permission(&client, server_addr, 2, peer_addr).await;
+
+    // --- peer -> client -------------------------------------------------
+    let from_peer = b"payload from the peer";
+    peer.send_to(from_peer, relay_addr).await?;
+
+    let (indication, from) = recv_within(&client, 10, "data indication").await;
+    assert_eq!(
+        from, server_addr,
+        "data indications arrive on the TURN 5-tuple"
+    );
+    let (message_type, _, attributes) = parse_message(&indication);
+    assert_eq!(
+        message_type, DATA_INDICATION,
+        "expected a Data indication (0x0017), got 0x{:04x}",
+        message_type
+    );
+    let echoed_peer = decode_xor_address(
+        find_attribute(&attributes, ATTR_XOR_PEER_ADDRESS)
+            .expect("Data indication must carry XOR-PEER-ADDRESS"),
+    );
+    assert_eq!(
+        echoed_peer, peer_addr,
+        "Data indication must name the peer that sent the datagram"
+    );
+    assert_eq!(
+        find_attribute(&attributes, ATTR_DATA).expect("Data indication must carry DATA"),
+        from_peer,
+        "relayed payload was altered"
+    );
+
+    // --- client -> peer -------------------------------------------------
+    let from_client = b"payload from the client";
     client
-        .send_to(&allocate_request, server_addr)
-        .await
-        .expect("Failed to send allocate");
+        .send_to(
+            &send_indication(&transaction_id(3), peer_addr, from_client),
+            server_addr,
+        )
+        .await?;
 
-    println!("Sent TURN allocate with LIFETIME attribute (300s)");
+    let (relayed, relayed_from) = recv_within(&peer, 10, "relayed payload at the peer").await;
+    assert_eq!(
+        relayed, from_client,
+        "peer received something other than the client's payload"
+    );
+    assert_eq!(
+        relayed_from, relay_addr,
+        "peer must see the traffic coming from the relay address, not the client"
+    );
 
-    let mut buf = vec![0u8; 2048];
-    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let response = &buf[..len];
-
-            assert!(len >= 20, "Response too short");
-
-            let message_type = u16::from_be_bytes([response[0], response[1]]);
-            println!("Response message type: 0x{:04x}", message_type);
-
-            let is_success = (message_type & 0x0110) == 0x0100;
-            assert!(is_success, "Expected success response");
-
-            // Look for LIFETIME attribute in response (0x000D)
-            let mut pos = 20; // Skip header
-            let mut found_lifetime = false;
-
-            while pos < len {
-                if pos + 4 > len {
-                    break;
-                }
-
-                let attr_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-                let attr_len = u16::from_be_bytes([response[pos + 2], response[pos + 3]]) as usize;
-
-                if attr_type == 0x000D {
-                    found_lifetime = true;
-                    if attr_len == 4 && pos + 8 <= len {
-                        let lifetime = u32::from_be_bytes([
-                            response[pos + 4],
-                            response[pos + 5],
-                            response[pos + 6],
-                            response[pos + 7],
-                        ]);
-                        println!("✓ Found LIFETIME attribute: {} seconds", lifetime);
-                    }
-                    break;
-                }
-
-                // Move to next attribute
-                pos += 4 + attr_len;
-                if attr_len % 4 != 0 {
-                    pos += 4 - (attr_len % 4);
-                }
-            }
-
-            assert!(
-                found_lifetime || response.len() >= 20,
-                "Expected LIFETIME attribute or valid response"
-            );
-
-            println!("✓ TURN allocate with LIFETIME successful");
-        }
-        Ok(Err(e)) => {
-            panic!("Failed to receive response: {}", e);
-        }
-        Err(_) => {
-            panic!("Timeout waiting for response");
-        }
-    }
-
-    // Verify mocks
     test_state.verify_mocks().await?;
-    test_state.stop().await?;
     Ok(())
 }
 
-// Helper functions
+/// Channel bindings: the same relay, framed as ChannelData in both directions.
+#[tokio::test]
+async fn test_turn_relays_over_a_bound_channel() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start a TURN relay server on port 0")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("server")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TURN",
+                    "instruction": "TURN relay server"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_allocate_response",
+                        "relay_address": event["relay_address"],
+                        "transaction_id": event["transaction_id"],
+                        "lifetime_seconds": 600
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+                .on_event("turn_channel_bind_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_channel_bind_response",
+                        "transaction_id": event["transaction_id"]
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+        });
 
-/// Build a TURN allocate request
-fn build_turn_allocate_request() -> Vec<u8> {
-    build_turn_allocate_request_with_tid(&[
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-    ])
+    let test_state = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port).parse()?;
+    let client = UdpSocket::bind("127.0.0.1:0").await?;
+    let peer = UdpSocket::bind("127.0.0.1:0").await?;
+    let peer_addr = peer.local_addr()?;
+
+    let relay_addr = allocate(&client, server_addr, 11, 600).await;
+
+    // Bind channel 0x4001 to the peer. A channel bind also permits the peer,
+    // so no CreatePermission is needed.
+    let channel = 0x4001u16;
+    let tid = transaction_id(12);
+    client
+        .send_to(&channel_bind_request(&tid, channel, peer_addr), server_addr)
+        .await?;
+    let (response, _) = recv_within(&client, 10, "channel bind response").await;
+    let (message_type, response_tid, _) = parse_message(&response);
+    assert_eq!(
+        message_type, CHANNEL_BIND_SUCCESS,
+        "expected ChannelBind success (0x0109), got 0x{:04x}",
+        message_type
+    );
+    assert_eq!(response_tid, tid, "transaction ID must be echoed");
+
+    // --- peer -> client, framed as ChannelData ---------------------------
+    let from_peer = b"channelled from the peer";
+    peer.send_to(from_peer, relay_addr).await?;
+
+    let (frame, _) = recv_within(&client, 10, "channel data").await;
+    assert!(frame.len() >= 4, "ChannelData frame is too short");
+    assert_eq!(
+        u16::from_be_bytes([frame[0], frame[1]]),
+        channel,
+        "ChannelData carries the bound channel number"
+    );
+    let length = u16::from_be_bytes([frame[2], frame[3]]) as usize;
+    assert_eq!(&frame[4..4 + length], from_peer, "relayed payload altered");
+
+    // --- client -> peer, framed as ChannelData ---------------------------
+    let from_client = b"channelled from the client";
+    client
+        .send_to(&channel_data(channel, from_client), server_addr)
+        .await?;
+
+    let (relayed, relayed_from) = recv_within(&peer, 10, "relayed channel payload").await;
+    assert_eq!(relayed, from_client, "peer received the wrong payload");
+    assert_eq!(
+        relayed_from, relay_addr,
+        "channelled traffic must leave from the relay address"
+    );
+
+    test_state.verify_mocks().await?;
+    Ok(())
 }
 
-/// Build a TURN allocate request with custom transaction ID
-fn build_turn_allocate_request_with_tid(tid: &[u8; 12]) -> Vec<u8> {
-    let mut packet = Vec::new();
+/// An allocation stops relaying when its lifetime runs out, not when the
+/// 30-second cleanup tick happens to notice.
+#[tokio::test]
+async fn test_turn_stops_relaying_after_the_lifetime_expires() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start a TURN relay server on port 0")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("server")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TURN",
+                    "instruction": "TURN relay server with short allocations"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_allocate_response",
+                        "relay_address": event["relay_address"],
+                        "transaction_id": event["transaction_id"],
+                        "lifetime_seconds": 5
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+                .on_event("turn_create_permission_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_create_permission_response",
+                        "transaction_id": event["transaction_id"]
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+        });
 
-    // Message Type: 0x0003 (Allocate Request)
-    // Method = 3 (allocate), Class = 0 (request)
-    packet.extend_from_slice(&0x0003u16.to_be_bytes());
+    let test_state = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Message Length: 0 (no attributes for basic test)
-    packet.extend_from_slice(&0u16.to_be_bytes());
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port).parse()?;
+    let client = UdpSocket::bind("127.0.0.1:0").await?;
+    let peer = UdpSocket::bind("127.0.0.1:0").await?;
+    let peer_addr = peer.local_addr()?;
 
-    // Magic Cookie: 0x2112A442
-    packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
+    let relay_addr = allocate(&client, server_addr, 21, 5).await;
+    create_permission(&client, server_addr, 22, peer_addr).await;
 
-    // Transaction ID (12 bytes)
-    packet.extend_from_slice(tid);
+    // While the allocation is live the relay works.
+    peer.send_to(b"before expiry", relay_addr).await?;
+    let (indication, _) = recv_within(&client, 4, "data indication before expiry").await;
+    let (message_type, _, attributes) = parse_message(&indication);
+    assert_eq!(message_type, DATA_INDICATION);
+    assert_eq!(
+        find_attribute(&attributes, ATTR_DATA).expect("DATA attribute"),
+        b"before expiry"
+    );
 
-    packet
+    // After it expires nothing is relayed, well before the cleanup tick.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    peer.send_to(b"after expiry", relay_addr).await?;
+    expect_silence(
+        &client,
+        1500,
+        "relayed traffic after the allocation expired",
+    )
+    .await;
+
+    test_state.verify_mocks().await?;
+    Ok(())
 }
 
-/// Build a TURN refresh request
-fn build_turn_refresh_request() -> Vec<u8> {
-    let mut packet = Vec::new();
+/// A relay address the model invented is refused rather than confirmed: handing
+/// a client an address nobody listens on is the failure this protocol shipped
+/// with for its whole existence. Also checks that a datagram with a bad magic
+/// cookie is dropped silently.
+#[tokio::test]
+async fn test_turn_refuses_an_invented_relay_address() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start a TURN relay server on port 0")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("server")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TURN",
+                    "instruction": "TURN relay server"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_allocate_response",
+                        // Not the reserved socket: nothing listens here.
+                        "relay_address": "203.0.113.100:55000",
+                        "transaction_id": event["transaction_id"],
+                        "lifetime_seconds": 600
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+        });
 
-    // Message Type: 0x0004 (Refresh Request)
-    // Method = 4 (refresh), Class = 0 (request)
-    packet.extend_from_slice(&0x0004u16.to_be_bytes());
+    let test_state = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Message Length: 0
-    packet.extend_from_slice(&0u16.to_be_bytes());
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port).parse()?;
+    let client = UdpSocket::bind("127.0.0.1:0").await?;
 
-    // Magic Cookie
-    packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
+    let tid = transaction_id(31);
+    client
+        .send_to(&allocate_request(&tid, 600), server_addr)
+        .await?;
 
-    // Transaction ID
-    let tid = [
-        0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
-    ];
-    packet.extend_from_slice(&tid);
+    let (response, _) = recv_within(&client, 10, "allocate error response").await;
+    let (message_type, response_tid, attributes) = parse_message(&response);
+    assert_eq!(
+        message_type, ALLOCATE_ERROR,
+        "an unusable relay address must produce an Allocate error (0x0113), got 0x{:04x}",
+        message_type
+    );
+    assert_eq!(response_tid, tid, "transaction ID must be echoed");
 
-    packet
+    let error = find_attribute(&attributes, ATTR_ERROR_CODE).expect("ERROR-CODE attribute");
+    assert!(error.len() >= 4, "ERROR-CODE too short");
+    assert_eq!(
+        (error[2] as u16) * 100 + error[3] as u16,
+        508,
+        "expected 508 Insufficient Capacity"
+    );
+    assert!(
+        find_attribute(&attributes, ATTR_XOR_RELAYED_ADDRESS).is_none(),
+        "a refused allocation must not hand out a relay address"
+    );
+
+    // A datagram that is not STUN at all is dropped without a reply.
+    let mut bogus = allocate_request(&transaction_id(32), 600);
+    bogus[4] = 0xDE;
+    bogus[5] = 0xAD;
+    bogus[6] = 0xBE;
+    bogus[7] = 0xEF;
+    client.send_to(&bogus, server_addr).await?;
+    expect_silence(&client, 1000, "a reply to a bad magic cookie").await;
+
+    test_state.verify_mocks().await?;
+    Ok(())
 }
 
-/// Build a TURN create permission request
-fn build_turn_create_permission_request() -> Vec<u8> {
-    let mut packet = Vec::new();
+/// The model's refusal reaches the client as a TURN error, and a Refresh it
+/// grants comes back with the lifetime it chose.
+#[tokio::test]
+async fn test_turn_denied_allocation_and_refresh() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start a TURN relay server on port 0 that rejects allocations")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("server")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TURN",
+                    "instruction": "TURN relay server that refuses allocations"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_error_response",
+                        "error_code": 486,
+                        "reason": "Allocation Quota Reached",
+                        "method": "allocate",
+                        "transaction_id": event["transaction_id"]
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+                .on_event("turn_refresh_request")
+                .respond_with_actions_from_event(|event| {
+                    serde_json::json!([{
+                        "type": "send_turn_refresh_response",
+                        "transaction_id": event["transaction_id"],
+                        "lifetime_seconds": 300
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+        });
 
-    // Message Type: 0x0008 (CreatePermission Request)
-    // Method = 8 (CreatePermission), Class = 0 (request)
-    packet.extend_from_slice(&0x0008u16.to_be_bytes());
+    let test_state = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Message Length: 0
-    packet.extend_from_slice(&0u16.to_be_bytes());
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port).parse()?;
+    let client = UdpSocket::bind("127.0.0.1:0").await?;
 
-    // Magic Cookie
-    packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
+    // --- refusal ---------------------------------------------------------
+    let tid = transaction_id(41);
+    client
+        .send_to(&allocate_request(&tid, 600), server_addr)
+        .await?;
+    let (response, _) = recv_within(&client, 10, "allocate error response").await;
+    let (message_type, response_tid, attributes) = parse_message(&response);
+    assert_eq!(
+        message_type, ALLOCATE_ERROR,
+        "expected an Allocate error (0x0113), got 0x{:04x}",
+        message_type
+    );
+    assert_eq!(response_tid, tid);
+    let error = find_attribute(&attributes, ATTR_ERROR_CODE).expect("ERROR-CODE attribute");
+    assert_eq!((error[2] as u16) * 100 + error[3] as u16, 486);
 
-    // Transaction ID
-    let tid = [
-        0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,
-    ];
-    packet.extend_from_slice(&tid);
+    // Nothing was allocated, so a Send indication cannot be relayed anywhere.
+    let stranger = UdpSocket::bind("127.0.0.1:0").await?;
+    client
+        .send_to(
+            &send_indication(&transaction_id(42), stranger.local_addr()?, b"nope"),
+            server_addr,
+        )
+        .await?;
+    expect_silence(&stranger, 1000, "traffic relayed without an allocation").await;
 
-    packet
-}
+    // --- refresh ---------------------------------------------------------
+    let tid = transaction_id(43);
+    client
+        .send_to(
+            &build_message(
+                REFRESH_REQUEST,
+                &tid,
+                &[attribute(ATTR_LIFETIME, &300u32.to_be_bytes())],
+            ),
+            server_addr,
+        )
+        .await?;
+    let (response, _) = recv_within(&client, 10, "refresh response").await;
+    let (message_type, response_tid, attributes) = parse_message(&response);
+    assert_eq!(
+        message_type, REFRESH_SUCCESS,
+        "expected a Refresh success (0x0104), got 0x{:04x}",
+        message_type
+    );
+    assert_eq!(response_tid, tid);
+    let lifetime = find_attribute(&attributes, ATTR_LIFETIME).expect("LIFETIME attribute");
+    assert_eq!(
+        u32::from_be_bytes([lifetime[0], lifetime[1], lifetime[2], lifetime[3]]),
+        300,
+        "refresh must report the lifetime the model granted"
+    );
 
-/// Build a TURN request with invalid magic cookie (for testing rejection)
-fn build_turn_request_with_invalid_magic_cookie() -> Vec<u8> {
-    let mut packet = Vec::new();
-
-    // Message Type: 0x0003 (Allocate Request)
-    packet.extend_from_slice(&0x0003u16.to_be_bytes());
-
-    // Message Length: 0
-    packet.extend_from_slice(&0u16.to_be_bytes());
-
-    // INVALID Magic Cookie: 0xDEADBEEF (should be 0x2112A442)
-    packet.extend_from_slice(&0xDEADBEEFu32.to_be_bytes());
-
-    // Transaction ID
-    packet.extend_from_slice(&[0xCC; 12]);
-
-    packet
-}
-
-/// Build a TURN allocate request with LIFETIME attribute
-fn build_turn_allocate_request_with_lifetime(lifetime_seconds: u32) -> Vec<u8> {
-    let mut packet = Vec::new();
-
-    // Message Type: 0x0003 (Allocate Request)
-    packet.extend_from_slice(&0x0003u16.to_be_bytes());
-
-    // Message Length placeholder
-    let length_pos = packet.len();
-    packet.extend_from_slice(&0u16.to_be_bytes());
-
-    // Magic Cookie
-    packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
-
-    // Transaction ID
-    packet.extend_from_slice(&[0xDD; 12]);
-
-    let attributes_start = packet.len();
-
-    // Add LIFETIME attribute (0x000D)
-    packet.extend_from_slice(&0x000Du16.to_be_bytes()); // Attribute type
-    packet.extend_from_slice(&4u16.to_be_bytes()); // Attribute length (4 bytes)
-    packet.extend_from_slice(&lifetime_seconds.to_be_bytes()); // Lifetime value
-
-    // Update message length
-    let attributes_length = (packet.len() - attributes_start) as u16;
-    packet[length_pos..length_pos + 2].copy_from_slice(&attributes_length.to_be_bytes());
-
-    packet
+    test_state.verify_mocks().await?;
+    Ok(())
 }

@@ -19,6 +19,12 @@ impl TurnProtocol {
     }
 }
 
+impl Default for TurnProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Implement Protocol trait (common functionality)
 impl Protocol for TurnProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -32,9 +38,24 @@ impl Protocol for TurnProtocol {
             send_turn_allocate_response_action(),
             send_turn_refresh_response_action(),
             send_turn_create_permission_response_action(),
+            send_turn_channel_bind_response_action(),
             send_turn_error_response_action(),
             ignore_request_action(),
         ]
+    }
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![ParameterDefinition {
+            name: "relay_ip".to_string(),
+            type_hint: "string".to_string(),
+            description: "IP address advertised to clients in XOR-RELAYED-ADDRESS. Relay sockets \
+                          are always bound to the server's own listen address; set this only when \
+                          clients reach the relay at a different address (NAT, port forwarding). \
+                          Default: the server's listen address."
+                .to_string(),
+            required: false,
+            example: json!("203.0.113.5"),
+        }]
     }
     fn protocol_name(&self) -> &'static str {
         "TURN"
@@ -52,11 +73,11 @@ impl Protocol for TurnProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Incomplete)
-            .implementation("Manual TURN protocol (RFC 8656), allocation bookkeeping only")
-            .llm_control("Allocate/Refresh/CreatePermission responses and error codes")
-            .e2e_testing("turnutils_uclient / WebRTC")
-            .notes("NOT a working relay: no relay socket is ever bound, so Send/Data indications are ignored and no client traffic is ever forwarded. Allocate/Refresh/CreatePermission responses are well-formed, which is enough for a honeypot or protocol probe but not for NAT traversal. Also no authentication (REALM/NONCE/MESSAGE-INTEGRITY), no channel binding, IPv4 relay addresses only")
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual TURN protocol (RFC 8656) with a real UDP relay: every granted allocation binds its own socket and forwards traffic both ways")
+            .llm_control("Whether to grant Allocate/Refresh/CreatePermission/ChannelBind, the lifetime, and which peers are permitted. The data plane never calls the LLM")
+            .e2e_testing("Mocked E2E relays a payload between two real UDP peers in both directions (tests/server/turn/e2e_test.rs)")
+            .notes("Relays UDP: Send indications and ChannelData go out the allocation's relay socket to permitted peers, and peer traffic comes back as Data indications or ChannelData. The relay address is chosen by NetGet (the socket it actually bound), not by the model; an action naming any other address is refused with 508. No authentication (REALM/NONCE/MESSAGE-INTEGRITY are not implemented), so access control rests entirely on the model's grant decisions plus a 256-allocation cap. UDP relays only (no TCP allocations, no REQUESTED-ADDRESS-FAMILY), no reservation tokens or EVEN-PORT")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -112,7 +133,8 @@ impl Protocol for TurnProtocol {
                         "type": "static",
                         "actions": [{
                             "type": "send_turn_allocate_response",
-                            "relay_address": "203.0.113.100:55000",
+                            "relay_address": "{{event.relay_address}}",
+                            "client_address": "{{event.peer_addr}}",
                             "transaction_id": "{{event.transaction_id}}",
                             "lifetime_seconds": 600
                         }]
@@ -132,6 +154,13 @@ impl Server for TurnProtocol {
         Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
     > {
         Box::pin(async move {
+            let relay_ip = ctx
+                .startup_params
+                .as_ref()
+                .map(|p| p.get_optional_string("relay_ip"))
+                .transpose()?
+                .flatten();
+
             use crate::server::turn::TurnServer;
             TurnServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
@@ -139,6 +168,7 @@ impl Server for TurnProtocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                relay_ip,
             )
             .await
         })
@@ -153,6 +183,7 @@ impl Server for TurnProtocol {
             "send_turn_allocate_response" => self.execute_send_allocate_response(action),
             "send_turn_refresh_response" => self.execute_send_refresh_response(action),
             "send_turn_create_permission_response" => self.execute_send_permission_response(action),
+            "send_turn_channel_bind_response" => self.execute_send_channel_bind_response(action),
             "send_turn_error_response" => self.execute_send_error_response(action),
             "ignore_request" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown TURN action: {}", action_type)),
@@ -161,6 +192,22 @@ impl Server for TurnProtocol {
 }
 
 impl TurnProtocol {
+    /// Read and validate the `transaction_id` field shared by every response action.
+    fn transaction_id_from(action: &serde_json::Value) -> Result<[u8; 12]> {
+        let transaction_id = action
+            .get("transaction_id")
+            .and_then(|v| v.as_str())
+            .context("Missing 'transaction_id' field")?;
+
+        let bytes = hex::decode(transaction_id).context("Invalid transaction_id hex")?;
+
+        let bytes: [u8; 12] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Transaction ID must be 12 bytes (24 hex characters)"))?;
+
+        Ok(bytes)
+    }
+
     /// Execute TURN allocate response
     fn execute_send_allocate_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let relay_address = action
@@ -168,85 +215,76 @@ impl TurnProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'relay_address' field")?;
 
-        let transaction_id = action
-            .get("transaction_id")
-            .and_then(|v| v.as_str())
-            .context("Missing 'transaction_id' field")?;
+        let transaction_id = Self::transaction_id_from(&action)?;
 
         let lifetime_seconds = action
             .get("lifetime_seconds")
             .and_then(|v| v.as_u64())
             .unwrap_or(600) as u32;
 
-        // Note: allocation_id is extracted by the TURN server's main loop
-        // from the raw action JSON for allocation tracking
-
-        // Parse transaction ID from hex
-        let transaction_id_bytes =
-            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
-
-        if transaction_id_bytes.len() != 12 {
-            return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
-        }
-
-        // Parse relay address
+        // Parse relay address. The server loop checks this against the socket
+        // it actually bound and refuses the allocation if they differ.
         let relay_addr: std::net::SocketAddr = relay_address
             .parse()
             .context("Invalid relay_address format")?;
 
-        // Build TURN allocate response
-        let packet =
-            Self::build_allocate_response(&transaction_id_bytes, relay_addr, lifetime_seconds)?;
+        // Optional XOR-MAPPED-ADDRESS (RFC 8656 section 6.3): the client's own
+        // reflexive address, echoed from the event's peer_addr.
+        let client_addr = match action.get("client_address").and_then(|v| v.as_str()) {
+            Some(addr) => Some(
+                addr.parse::<std::net::SocketAddr>()
+                    .context("Invalid client_address format")?,
+            ),
+            None => None,
+        };
 
-        // Note: Allocation metadata tracking is handled in the TURN server's main loop
-        // The server maintains an allocations HashMap with all necessary state
+        // Note: allocation tracking is handled in the TURN server's main loop,
+        // which owns the relay socket this response advertises.
+        let packet = Self::build_allocate_response(
+            &transaction_id,
+            relay_addr,
+            lifetime_seconds,
+            client_addr,
+        )?;
 
         Ok(ActionResult::Output(packet))
     }
 
     /// Execute TURN refresh response
     fn execute_send_refresh_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let transaction_id = action
-            .get("transaction_id")
-            .and_then(|v| v.as_str())
-            .context("Missing 'transaction_id' field")?;
+        let transaction_id = Self::transaction_id_from(&action)?;
 
         let lifetime_seconds = action
             .get("lifetime_seconds")
             .and_then(|v| v.as_u64())
             .unwrap_or(600) as u32;
 
-        // Parse transaction ID from hex
-        let transaction_id_bytes =
-            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
-
-        if transaction_id_bytes.len() != 12 {
-            return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
-        }
-
-        // Build TURN refresh response
-        let packet = Self::build_refresh_response(&transaction_id_bytes, lifetime_seconds)?;
+        let packet = Self::build_refresh_response(&transaction_id, lifetime_seconds)?;
 
         Ok(ActionResult::Output(packet))
     }
 
     /// Execute TURN create permission response
     fn execute_send_permission_response(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let transaction_id = action
-            .get("transaction_id")
-            .and_then(|v| v.as_str())
-            .context("Missing 'transaction_id' field")?;
+        let transaction_id = Self::transaction_id_from(&action)?;
 
-        // Parse transaction ID from hex
-        let transaction_id_bytes =
-            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
+        // The permitted peers themselves are applied by the server loop, which
+        // owns the allocation table; this only builds the acknowledgement.
+        let packet = Self::build_permission_response(&transaction_id)?;
 
-        if transaction_id_bytes.len() != 12 {
-            return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
-        }
+        Ok(ActionResult::Output(packet))
+    }
 
-        // Build TURN create permission response
-        let packet = Self::build_permission_response(&transaction_id_bytes)?;
+    /// Execute TURN channel bind response
+    fn execute_send_channel_bind_response(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
+        let transaction_id = Self::transaction_id_from(&action)?;
+
+        // Channel number and peer come from the request; the server loop binds
+        // them when it sees this action.
+        let packet = Self::build_success_response(&transaction_id, 9)?;
 
         Ok(ActionResult::Output(packet))
     }
@@ -263,18 +301,7 @@ impl TurnProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("Bad Request");
 
-        let transaction_id = action
-            .get("transaction_id")
-            .and_then(|v| v.as_str())
-            .context("Missing 'transaction_id' field")?;
-
-        // Parse transaction ID from hex
-        let transaction_id_bytes =
-            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
-
-        if transaction_id_bytes.len() != 12 {
-            return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
-        }
+        let transaction_id = Self::transaction_id_from(&action)?;
 
         // The error response must carry the same method as the request it
         // answers; hardcoding Allocate meant a Refresh or CreatePermission
@@ -287,150 +314,152 @@ impl TurnProtocol {
             "allocate" => 3,
             "refresh" => 4,
             "create_permission" | "createpermission" => 8,
+            "channel_bind" | "channelbind" => 9,
             other => {
                 return Err(anyhow::anyhow!(
                     "Unknown 'method' value {other:?}. Valid values are \"allocate\", \
-                     \"refresh\" and \"create_permission\"."
+                     \"refresh\", \"create_permission\" and \"channel_bind\"."
                 ))
             }
         };
 
-        let packet = Self::build_error_response(&transaction_id_bytes, method, error_code, reason)?;
+        let packet = Self::build_error_response(&transaction_id, method, error_code, reason)?;
 
         Ok(ActionResult::Output(packet))
     }
 
+    /// STUN message type for a (method, class) pair (RFC 8489 section 5).
+    fn message_type(method: u16, class: u16) -> u16 {
+        let class_bits = ((class & 0x2) << 7) | ((class & 0x1) << 4);
+        (method & 0x000F) | ((method & 0x0070) << 1) | ((method & 0x0F80) << 2) | class_bits
+    }
+
+    /// Start a STUN message: type, placeholder length, magic cookie, transaction ID.
+    fn start_message(message_type: u16, transaction_id: &[u8; 12]) -> Vec<u8> {
+        let mut packet = Vec::with_capacity(32);
+        packet.extend_from_slice(&message_type.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes()); // length placeholder
+        packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
+        packet.extend_from_slice(transaction_id);
+        packet
+    }
+
+    /// Write the attribute length into the header once all attributes are added.
+    fn finish_message(packet: &mut [u8]) {
+        let attributes_length = (packet.len() - 20) as u16;
+        packet[2..4].copy_from_slice(&attributes_length.to_be_bytes());
+    }
+
     /// Build TURN allocate response packet
     fn build_allocate_response(
-        transaction_id: &[u8],
+        transaction_id: &[u8; 12],
         relay_addr: std::net::SocketAddr,
         lifetime_seconds: u32,
+        client_addr: Option<std::net::SocketAddr>,
     ) -> Result<Vec<u8>> {
-        let mut packet = Vec::new();
+        // 0x0103 = Allocate Success Response (class 2 = success)
+        let mut packet = Self::start_message(Self::message_type(3, 2), transaction_id);
 
-        // Message Type: 0x0103 (Allocate Success Response)
-        packet.extend_from_slice(&0x0103u16.to_be_bytes());
-
-        // Message Length (will be updated later)
-        let length_pos = packet.len();
-        packet.extend_from_slice(&0u16.to_be_bytes());
-
-        // Magic Cookie: 0x2112A442
-        packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
-
-        // Transaction ID (12 bytes)
-        packet.extend_from_slice(transaction_id);
-
-        let attributes_start = packet.len();
-
-        // Add XOR-RELAYED-ADDRESS attribute (0x0016)
+        // XOR-RELAYED-ADDRESS (0x0016)
         Self::add_xor_address_attribute(&mut packet, 0x0016, relay_addr, transaction_id)?;
 
-        // Add LIFETIME attribute (0x000D)
-        Self::add_lifetime_attribute(&mut packet, lifetime_seconds)?;
+        // XOR-MAPPED-ADDRESS (0x0020), when the caller echoed the client address
+        if let Some(client_addr) = client_addr {
+            Self::add_xor_address_attribute(&mut packet, 0x0020, client_addr, transaction_id)?;
+        }
 
-        // Add SOFTWARE attribute
+        Self::add_lifetime_attribute(&mut packet, lifetime_seconds)?;
         Self::add_software_attribute(&mut packet, "NetGet TURN/1.0")?;
 
-        // Update message length
-        let attributes_length = (packet.len() - attributes_start) as u16;
-        packet[length_pos..length_pos + 2].copy_from_slice(&attributes_length.to_be_bytes());
-
+        Self::finish_message(&mut packet);
         Ok(packet)
     }
 
     /// Build TURN refresh response packet
-    fn build_refresh_response(transaction_id: &[u8], lifetime_seconds: u32) -> Result<Vec<u8>> {
-        let mut packet = Vec::new();
-
-        // Message Type: 0x0104 (Refresh Success Response)
-        packet.extend_from_slice(&0x0104u16.to_be_bytes());
-
-        // Message Length (will be updated later)
-        let length_pos = packet.len();
-        packet.extend_from_slice(&0u16.to_be_bytes());
-
-        // Magic Cookie
-        packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
-
-        // Transaction ID
-        packet.extend_from_slice(transaction_id);
-
-        let attributes_start = packet.len();
-
-        // Add LIFETIME attribute
+    fn build_refresh_response(transaction_id: &[u8; 12], lifetime_seconds: u32) -> Result<Vec<u8>> {
+        // 0x0104 = Refresh Success Response
+        let mut packet = Self::start_message(Self::message_type(4, 2), transaction_id);
         Self::add_lifetime_attribute(&mut packet, lifetime_seconds)?;
-
-        // Update message length
-        let attributes_length = (packet.len() - attributes_start) as u16;
-        packet[length_pos..length_pos + 2].copy_from_slice(&attributes_length.to_be_bytes());
-
+        Self::finish_message(&mut packet);
         Ok(packet)
     }
 
     /// Build TURN create permission response packet
-    fn build_permission_response(transaction_id: &[u8]) -> Result<Vec<u8>> {
-        let mut packet = Vec::new();
+    fn build_permission_response(transaction_id: &[u8; 12]) -> Result<Vec<u8>> {
+        Self::build_success_response(transaction_id, 8)
+    }
 
-        // Message Type: 0x0108 (CreatePermission Success Response)
-        packet.extend_from_slice(&0x0108u16.to_be_bytes());
-
-        // Message Length (will be updated later)
-        let length_pos = packet.len();
-        packet.extend_from_slice(&0u16.to_be_bytes());
-
-        // Magic Cookie
-        packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
-
-        // Transaction ID
-        packet.extend_from_slice(transaction_id);
-
-        let attributes_start = packet.len();
-
-        // Add SOFTWARE attribute
+    /// Build a success response carrying no method-specific attributes.
+    fn build_success_response(transaction_id: &[u8; 12], method: u16) -> Result<Vec<u8>> {
+        let mut packet = Self::start_message(Self::message_type(method, 2), transaction_id);
         Self::add_software_attribute(&mut packet, "NetGet TURN/1.0")?;
-
-        // Update message length
-        let attributes_length = (packet.len() - attributes_start) as u16;
-        packet[length_pos..length_pos + 2].copy_from_slice(&attributes_length.to_be_bytes());
-
+        Self::finish_message(&mut packet);
         Ok(packet)
     }
 
+    /// Build a STUN Binding success response (XOR-MAPPED-ADDRESS of the client).
+    pub(crate) fn build_binding_response(
+        transaction_id: &[u8; 12],
+        client_addr: std::net::SocketAddr,
+    ) -> Result<Vec<u8>> {
+        let mut packet = Self::start_message(Self::message_type(1, 2), transaction_id);
+        Self::add_xor_address_attribute(&mut packet, 0x0020, client_addr, transaction_id)?;
+        Self::add_software_attribute(&mut packet, "NetGet TURN/1.0")?;
+        Self::finish_message(&mut packet);
+        Ok(packet)
+    }
+
+    /// Build a Data indication carrying relayed peer traffic to the client
+    /// (RFC 8656 section 11.3). Sent by the relay task, not by an action: the
+    /// data plane must not cost an LLM round-trip per packet.
+    pub(crate) fn build_data_indication(
+        peer_addr: std::net::SocketAddr,
+        payload: &[u8],
+    ) -> Result<Vec<u8>> {
+        // Indications carry their own transaction ID; nothing correlates them.
+        let transaction_id: [u8; 12] = rand::random();
+
+        // 0x0017 = Data Indication (method 7, class 1 = indication)
+        let mut packet = Self::start_message(Self::message_type(7, 1), &transaction_id);
+
+        // XOR-PEER-ADDRESS (0x0012)
+        Self::add_xor_address_attribute(&mut packet, 0x0012, peer_addr, &transaction_id)?;
+
+        // DATA (0x0013)
+        packet.extend_from_slice(&0x0013u16.to_be_bytes());
+        let len = u16::try_from(payload.len())
+            .map_err(|_| anyhow::anyhow!("Relayed payload too large for a DATA attribute"))?;
+        packet.extend_from_slice(&len.to_be_bytes());
+        packet.extend_from_slice(payload);
+        Self::add_padding(&mut packet);
+
+        Self::finish_message(&mut packet);
+        Ok(packet)
+    }
+
+    /// Build a ChannelData frame (RFC 8656 section 12.4).
+    pub(crate) fn build_channel_data(channel_number: u16, payload: &[u8]) -> Vec<u8> {
+        let mut packet = Vec::with_capacity(4 + payload.len() + 3);
+        packet.extend_from_slice(&channel_number.to_be_bytes());
+        packet.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        packet.extend_from_slice(payload);
+        // ChannelData over UDP need not be padded, but padding is permitted and
+        // keeps the framing identical over any transport.
+        Self::add_padding(&mut packet);
+        packet
+    }
+
     /// Build TURN error response packet
-    fn build_error_response(
-        transaction_id: &[u8],
+    pub(crate) fn build_error_response(
+        transaction_id: &[u8; 12],
         method: u16,
         error_code: u16,
         reason: &str,
     ) -> Result<Vec<u8>> {
-        let mut packet = Vec::new();
-
-        // Message Type: error response for given method
-        // Class = 2 (error), method = provided
-        let message_type =
-            (method & 0x000F) | ((method & 0x0070) << 1) | ((method & 0x0F80) << 2) | 0x0110;
-        packet.extend_from_slice(&message_type.to_be_bytes());
-
-        // Message Length (will be updated later)
-        let length_pos = packet.len();
-        packet.extend_from_slice(&0u16.to_be_bytes());
-
-        // Magic Cookie
-        packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
-
-        // Transaction ID
-        packet.extend_from_slice(transaction_id);
-
-        let attributes_start = packet.len();
-
-        // Add ERROR-CODE attribute
+        // Class = 3 (error response)
+        let mut packet = Self::start_message(Self::message_type(method, 3), transaction_id);
         Self::add_error_code_attribute(&mut packet, error_code, reason)?;
-
-        // Update message length
-        let attributes_length = (packet.len() - attributes_start) as u16;
-        packet[length_pos..length_pos + 2].copy_from_slice(&attributes_length.to_be_bytes());
-
+        Self::finish_message(&mut packet);
         Ok(packet)
     }
 
@@ -558,12 +587,18 @@ impl TurnProtocol {
 fn send_turn_allocate_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_turn_allocate_response".to_string(),
-        description: "Send TURN allocate response with relay address".to_string(),
+        description: "Grant the allocation: NetGet starts relaying on the reserved relay socket \
+                      and tells the client its address"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "relay_address".to_string(),
                 type_hint: "string".to_string(),
-                description: "Relay address allocated for client (e.g., \"203.0.113.100:55000\")"
+                description: "MUST be exactly the event's relay_address, i.e. \
+                              \"{{event.relay_address}}\". NetGet has already bound this UDP \
+                              socket; it is the only address peer traffic can arrive on. Any \
+                              other value is refused with a 508 error, because a relay address \
+                              nobody listens on silently breaks the client."
                     .to_string(),
                 required: true,
             },
@@ -574,9 +609,19 @@ fn send_turn_allocate_response_action() -> ActionDefinition {
                 required: true,
             },
             Parameter {
+                name: "client_address".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client's own address as seen by the server, i.e. \
+                              \"{{event.peer_addr}}\". Sent back as XOR-MAPPED-ADDRESS."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
                 name: "lifetime_seconds".to_string(),
                 type_hint: "number".to_string(),
-                description: "Allocation lifetime in seconds. Default: 600".to_string(),
+                description: "Allocation lifetime in seconds. Default: 600, capped at 3600. The \
+                              relay socket is closed when it expires."
+                    .to_string(),
                 required: false,
             },
             Parameter {
@@ -588,10 +633,10 @@ fn send_turn_allocate_response_action() -> ActionDefinition {
         ],
         example: json!({
             "type": "send_turn_allocate_response",
-            "relay_address": "203.0.113.100:55000",
-            "transaction_id": "0123456789abcdef01234567",
-            "lifetime_seconds": 600,
-            "allocation_id": "alloc-123"
+            "relay_address": "{{event.relay_address}}",
+            "client_address": "{{event.peer_addr}}",
+            "transaction_id": "{{event.transaction_id}}",
+            "lifetime_seconds": 600
         }),
         log_template: Some(
             LogTemplate::new()
@@ -637,7 +682,46 @@ fn send_turn_refresh_response_action() -> ActionDefinition {
 fn send_turn_create_permission_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_turn_create_permission_response".to_string(),
-        description: "Send TURN create permission response".to_string(),
+        description: "Permit peers to exchange relayed traffic with this client. Only permitted \
+                      peers are relayed in either direction."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "transaction_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Transaction ID from request (hex string)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "peer_addresses".to_string(),
+                type_hint: "array".to_string(),
+                description: "Subset of the request's peer_addresses to permit, e.g. \
+                              [\"198.51.100.10:5000\"]. Omit to permit every peer the request \
+                              named. Addresses the request did not name are ignored. Permissions \
+                              match on IP address (RFC 8656) and last 5 minutes."
+                    .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_turn_create_permission_response",
+            "transaction_id": "{{event.transaction_id}}"
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> TURN permission created")
+                .with_debug("TURN create_permission_response"),
+        ),
+    }
+}
+
+fn send_turn_channel_bind_response_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_turn_channel_bind_response".to_string(),
+        description: "Bind the requested channel number to the requested peer. Traffic to and \
+                      from that peer is then framed as ChannelData instead of Send/Data \
+                      indications, and the peer is permitted."
+            .to_string(),
         parameters: vec![Parameter {
             name: "transaction_id".to_string(),
             type_hint: "string".to_string(),
@@ -645,13 +729,13 @@ fn send_turn_create_permission_response_action() -> ActionDefinition {
             required: true,
         }],
         example: json!({
-            "type": "send_turn_create_permission_response",
-            "transaction_id": "0123456789abcdef01234567"
+            "type": "send_turn_channel_bind_response",
+            "transaction_id": "{{event.transaction_id}}"
         }),
         log_template: Some(
             LogTemplate::new()
-                .with_info("-> TURN permission created")
-                .with_debug("TURN create_permission_response"),
+                .with_info("-> TURN channel bound")
+                .with_debug("TURN channel_bind_response"),
         ),
     }
 }
@@ -682,7 +766,7 @@ fn send_turn_error_response_action() -> ActionDefinition {
             Parameter {
                 name: "method".to_string(),
                 type_hint: "string".to_string(),
-                description: "Which request this error answers: \"allocate\" (default), \"refresh\" or \"create_permission\". Must match the request's method or the client ignores the error.".to_string(),
+                description: "Which request this error answers: \"allocate\" (default), \"refresh\", \"create_permission\" or \"channel_bind\". Must match the request's method or the client ignores the error.".to_string(),
                 required: false,
             },
         ],
@@ -719,18 +803,9 @@ fn ignore_request_action() -> ActionDefinition {
 
 // Event types
 
-pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "turn_allocate_request",
-        "TURN allocate request received from client",
-        json!({
-            "type": "send_turn_allocate_response",
-            "relay_address": "203.0.113.100:55000",
-            "transaction_id": "{{event.transaction_id}}",
-            "lifetime_seconds": 600
-        }),
-    )
-    .with_parameters(vec![
+/// Fields every TURN event carries.
+fn common_event_parameters() -> Vec<Parameter> {
+    vec![
         Parameter {
             name: "transaction_id".to_string(),
             type_hint: "string".to_string(),
@@ -764,10 +839,52 @@ pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "existing_allocations".to_string(),
             type_hint: "array".to_string(),
-            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers".to_string(),
+            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers, channels".to_string(),
             required: true,
         },
-    ])
+    ]
+}
+
+fn with_extra(mut params: Vec<Parameter>, extra: Vec<Parameter>) -> Vec<Parameter> {
+    params.extend(extra);
+    params
+}
+
+pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "turn_allocate_request",
+        "TURN allocate request received from client",
+        json!({
+            "type": "send_turn_allocate_response",
+            "relay_address": "{{event.relay_address}}",
+            "client_address": "{{event.peer_addr}}",
+            "transaction_id": "{{event.transaction_id}}",
+            "lifetime_seconds": 600
+        }),
+    )
+    .with_parameters(with_extra(
+        common_event_parameters(),
+        vec![
+            Parameter {
+                name: "relay_address".to_string(),
+                type_hint: "string".to_string(),
+                description: "IP:port of the UDP relay socket NetGet has already bound for this request. Copy it verbatim into send_turn_allocate_response: it is where peers will send traffic for this client, and no other address will work. The socket is closed again if the allocation is not granted.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "requested_lifetime_seconds".to_string(),
+                type_hint: "number".to_string(),
+                description: "Lifetime the client asked for (LIFETIME attribute), or null if it did not ask. You are free to grant less.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "requested_transport".to_string(),
+                type_hint: "string".to_string(),
+                description: "Transport the client asked to relay: \"udp\", \"tcp\", or null. Only UDP is relayed; TCP requests are refused with 442 before this event fires.".to_string(),
+                required: false,
+            },
+        ],
+    ))
     .with_actions(vec![
         send_turn_allocate_response_action(),
         send_turn_error_response_action(),
@@ -791,44 +908,15 @@ pub static TURN_REFRESH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             "lifetime_seconds": 600
         }),
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "transaction_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "STUN/TURN transaction ID from the request, hex-encoded (24 hex chars = 12 bytes). MUST be copied into the response: clients discard any reply whose transaction ID differs from the request they sent.".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "peer_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Client's IP:port as seen by the server".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "local_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Server's listening IP:port".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "message_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "Decoded TURN message type, e.g. \"AllocateRequest\"".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "bytes_received".to_string(),
+    .with_parameters(with_extra(
+        common_event_parameters(),
+        vec![Parameter {
+            name: "requested_lifetime_seconds".to_string(),
             type_hint: "number".to_string(),
-            description: "Size of the received datagram in bytes".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "existing_allocations".to_string(),
-            type_hint: "array".to_string(),
-            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers".to_string(),
-            required: true,
-        },
-    ])
+            description: "Lifetime the client asked for, or null. Zero means the client wants the allocation deleted; answering with lifetime_seconds 0 closes the relay socket.".to_string(),
+            required: false,
+        }],
+    ))
     .with_actions(vec![
         send_turn_refresh_response_action(),
         send_turn_error_response_action(),
@@ -851,44 +939,15 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
             "transaction_id": "{{event.transaction_id}}"
         }),
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "transaction_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "STUN/TURN transaction ID from the request, hex-encoded (24 hex chars = 12 bytes). MUST be copied into the response: clients discard any reply whose transaction ID differs from the request they sent.".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "peer_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Client's IP:port as seen by the server".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "local_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "Server's listening IP:port".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "message_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "Decoded TURN message type, e.g. \"AllocateRequest\"".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "bytes_received".to_string(),
-            type_hint: "number".to_string(),
-            description: "Size of the received datagram in bytes".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "existing_allocations".to_string(),
+    .with_parameters(with_extra(
+        common_event_parameters(),
+        vec![Parameter {
+            name: "peer_addresses".to_string(),
             type_hint: "array".to_string(),
-            description: "Allocations currently held by this client: allocation_id, relay_address, lifetime_seconds, expires_in_seconds, permitted_peers".to_string(),
+            description: "Peer IP:port values the client asks permission for. Until a peer is permitted, nothing is relayed to or from it.".to_string(),
             required: true,
-        },
-    ])
+        }],
+    ))
     .with_actions(vec![
         send_turn_create_permission_response_action(),
         send_turn_error_response_action(),
@@ -902,10 +961,50 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
     )
 });
 
+pub static TURN_CHANNEL_BIND_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "turn_channel_bind_request",
+        "TURN channel bind request received from client",
+        json!({
+            "type": "send_turn_channel_bind_response",
+            "transaction_id": "{{event.transaction_id}}"
+        }),
+    )
+    .with_parameters(with_extra(
+        common_event_parameters(),
+        vec![
+            Parameter {
+                name: "channel_number".to_string(),
+                type_hint: "number".to_string(),
+                description: "Channel number the client wants bound (0x4000-0x7FFF). Out-of-range values are refused with 400 before this event fires.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "peer_address".to_string(),
+                type_hint: "string".to_string(),
+                description: "Peer IP:port to bind the channel to. Granting the bind also permits that peer.".to_string(),
+                required: true,
+            },
+        ],
+    ))
+    .with_actions(vec![
+        send_turn_channel_bind_response_action(),
+        send_turn_error_response_action(),
+        ignore_request_action(),
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("TURN channel bind request")
+            .with_debug("TURN channel bind request")
+            .with_trace("TURN channel bind: {json_pretty(.)}"),
+    )
+});
+
 fn get_turn_event_types() -> Vec<EventType> {
     vec![
         TURN_ALLOCATE_REQUEST_EVENT.clone(),
         TURN_REFRESH_REQUEST_EVENT.clone(),
         TURN_CREATE_PERMISSION_REQUEST_EVENT.clone(),
+        TURN_CHANNEL_BIND_REQUEST_EVENT.clone(),
     ]
 }
