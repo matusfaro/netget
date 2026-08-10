@@ -1,15 +1,61 @@
-//! OpenVPN packet structures and serialization
+//! OpenVPN wire format: control-channel and data-channel framing.
 //!
-//! Implements the OpenVPN protocol packet format for control and data channels.
+//! # Layout
+//!
+//! Every OpenVPN packet starts with one byte carrying the opcode in the upper
+//! five bits and the key id in the lower three.
+//!
+//! Control and ACK packets (`P_CONTROL_*`, `P_ACK_V1`) are laid out as:
+//!
+//! ```text
+//! u8       opcode << 3 | key_id
+//! u64      session id of the *sender*
+//! u8       number of acknowledged packet ids (may be 0)
+//! u32 * n  acknowledged packet ids
+//! u64      session id of the *peer*   -- present only when n > 0
+//! u32      message packet id          -- absent for P_ACK_V1
+//! ...      payload (TLS ciphertext for P_CONTROL_V1)
+//! ```
+//!
+//! Two details in that layout are easy to get wrong and both break
+//! interoperability with a real client:
+//!
+//! 1. The **message packet id comes after the ACK array and the peer session
+//!    id**, not before them.
+//! 2. The **peer session id is present only when the ACK array is non-empty**.
+//!    It is not an optional trailer to be sniffed for by length.
+//!
+//! Data packets carry no reliability fields:
+//!
+//! ```text
+//! P_DATA_V1: u8 opcode/key_id | ciphertext
+//! P_DATA_V2: u8 opcode/key_id | u24 peer id | ciphertext
+//! ```
+//!
+//! # Verification
+//!
+//! The layout above is not inferred from this codebase. It was read off the
+//! wire from OpenVPN 2.7.4 (`aarch64-apple-darwin`, OpenSSL 3.6.2); the captured
+//! frames are pinned as literal byte vectors in
+//! `tests/server/openvpn/codec_test.rs`, and the frames this module emits were
+//! confirmed to be accepted by that client (it logged `TLS: Initial packet
+//! from ...` for our reset reply and `P_ACK_V1 kid=0 [ 1 ] DATA len=0` for our
+//! ACK, then stopped retransmitting).
+//!
+//! # Robustness
+//!
+//! Every field is length-checked before it is read. Parsing is fed straight
+//! from a UDP socket, so it is fully attacker-controlled: it must return `Err`
+//! rather than panic on any input, including empty, truncated and
+//! deliberately-inconsistent frames.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Result};
 use bytes::{BufMut, BytesMut};
 
-/// Maximum OpenVPN packet size
+/// Largest UDP payload we will look at.
 pub const MAX_PACKET_SIZE: usize = 65535;
 
-/// OpenVPN packet opcodes (from protocol spec)
-/// Opcode is stored in the upper 5 bits of the first byte
+/// OpenVPN opcodes, as carried in the upper five bits of the first byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opcode {
@@ -22,6 +68,11 @@ pub enum Opcode {
     ControlHardResetClientV2 = 7,
     ControlHardResetServerV2 = 8,
     DataV2 = 9,
+    /// tls-crypt-v2 client reset. Everything after the session id is encrypted,
+    /// so it must never be parsed with the plaintext layout above.
+    ControlHardResetClientV3 = 10,
+    /// tls-crypt-v2 wrapped client key. Same caveat as V3.
+    ControlWkcV1 = 11,
 }
 
 impl Opcode {
@@ -36,10 +87,18 @@ impl Opcode {
             7 => Some(Opcode::ControlHardResetClientV2),
             8 => Some(Opcode::ControlHardResetServerV2),
             9 => Some(Opcode::DataV2),
+            10 => Some(Opcode::ControlHardResetClientV3),
+            11 => Some(Opcode::ControlWkcV1),
             _ => None,
         }
     }
 
+    /// True for opcodes that use the control-channel reliability layout.
+    ///
+    /// `ControlHardResetClientV3` and `ControlWkcV1` are deliberately excluded:
+    /// they are tls-crypt-v2 frames whose reliability fields are encrypted, so
+    /// applying the plaintext layout to them yields garbage. See
+    /// [`Opcode::is_tls_crypt_v2`].
     pub fn is_control(&self) -> bool {
         matches!(
             self,
@@ -59,266 +118,281 @@ impl Opcode {
     pub fn is_ack(&self) -> bool {
         matches!(self, Opcode::AckV1)
     }
+
+    /// True for the tls-crypt-v2 opcodes this server cannot decode.
+    pub fn is_tls_crypt_v2(&self) -> bool {
+        matches!(self, Opcode::ControlHardResetClientV3 | Opcode::ControlWkcV1)
+    }
+
+    /// True for a client-initiated session reset.
+    pub fn is_client_reset(&self) -> bool {
+        matches!(
+            self,
+            Opcode::ControlHardResetClientV1 | Opcode::ControlHardResetClientV2
+        )
+    }
 }
 
-/// OpenVPN packet header
-#[derive(Debug, Clone)]
-pub struct PacketHeader {
+/// Split the leading byte into `(opcode, key_id)` without consuming the frame.
+pub fn parse_opcode_byte(data: &[u8]) -> Result<(Opcode, u8)> {
+    let first = *data.first().ok_or_else(|| anyhow::anyhow!("Empty packet"))?;
+    let raw = (first >> 3) & 0x1F;
+    let opcode =
+        Opcode::from_u8(raw).ok_or_else(|| anyhow::anyhow!("Unknown OpenVPN opcode: {}", raw))?;
+    Ok((opcode, first & 0x07))
+}
+
+/// Little cursor that refuses to read past the end of the buffer.
+struct Reader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Reader { buf, pos: 0 }
+    }
+
+    fn take(&mut self, n: usize, what: &str) -> Result<&'a [u8]> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| anyhow::anyhow!("Length overflow reading {}", what))?;
+        if end > self.buf.len() {
+            bail!(
+                "Packet too short for {}: need {} more bytes at offset {}, have {}",
+                what,
+                n,
+                self.pos,
+                self.buf.len().saturating_sub(self.pos)
+            );
+        }
+        let out = &self.buf[self.pos..end];
+        self.pos = end;
+        Ok(out)
+    }
+
+    fn u8(&mut self, what: &str) -> Result<u8> {
+        Ok(self.take(1, what)?[0])
+    }
+
+    fn u32(&mut self, what: &str) -> Result<u32> {
+        let b = self.take(4, what)?;
+        Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn u64(&mut self, what: &str) -> Result<u64> {
+        let b = self.take(8, what)?;
+        Ok(u64::from_be_bytes([
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        ]))
+    }
+
+    fn rest(&mut self) -> &'a [u8] {
+        let out = &self.buf[self.pos..];
+        self.pos = self.buf.len();
+        out
+    }
+}
+
+/// A control-channel or ACK frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlFrame {
     pub opcode: Opcode,
     pub key_id: u8,
-    pub session_id: Option<u64>,
-    pub packet_id_array_len: Option<u8>,
-    pub packet_id: Option<u32>,
-}
-
-impl PacketHeader {
-    /// Parse packet header from bytes
-    pub fn parse(data: &[u8]) -> Result<(Self, usize)> {
-        if data.is_empty() {
-            anyhow::bail!("Empty packet");
-        }
-
-        let mut buf = data;
-        let first_byte = buf[0];
-        buf = &buf[1..];
-
-        // Extract opcode (upper 5 bits) and key_id (lower 3 bits)
-        let opcode_u8 = (first_byte >> 3) & 0x1F;
-        let key_id = first_byte & 0x07;
-
-        let opcode =
-            Opcode::from_u8(opcode_u8).context(format!("Invalid opcode: {}", opcode_u8))?;
-
-        let mut offset = 1;
-
-        // V2 packets include session ID (8 bytes)
-        let session_id = if matches!(
-            opcode,
-            Opcode::ControlHardResetClientV2 | Opcode::ControlHardResetServerV2 | Opcode::DataV2
-        ) {
-            if buf.len() < 8 {
-                anyhow::bail!("Packet too short for V2 session ID");
-            }
-            let sid = u64::from_be_bytes([
-                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-            ]);
-            buf = &buf[8..];
-            offset += 8;
-            Some(sid)
-        } else {
-            None
-        };
-
-        // Control packets have packet_id_array_len and packet_id
-        let (packet_id_array_len, packet_id) = if opcode.is_control() || opcode.is_ack() {
-            if buf.is_empty() {
-                anyhow::bail!("Packet too short for packet_id_array_len");
-            }
-            let array_len = buf[0];
-            buf = &buf[1..];
-            offset += 1;
-
-            if buf.len() < 4 {
-                anyhow::bail!("Packet too short for packet_id");
-            }
-            let pid = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-            offset += 4;
-
-            (Some(array_len), Some(pid))
-        } else {
-            (None, None)
-        };
-
-        Ok((
-            PacketHeader {
-                opcode,
-                key_id,
-                session_id,
-                packet_id_array_len,
-                packet_id,
-            },
-            offset,
-        ))
-    }
-
-    /// Serialize packet header to bytes
-    pub fn serialize(&self, buf: &mut BytesMut) {
-        // First byte: opcode (upper 5 bits) + key_id (lower 3 bits)
-        let first_byte = ((self.opcode as u8) << 3) | (self.key_id & 0x07);
-        buf.put_u8(first_byte);
-
-        // V2 packets include session ID
-        if let Some(session_id) = self.session_id {
-            buf.put_u64(session_id);
-        }
-
-        // Control packets have packet_id_array_len and packet_id
-        if self.opcode.is_control() || self.opcode.is_ack() {
-            buf.put_u8(self.packet_id_array_len.unwrap_or(0));
-            buf.put_u32(self.packet_id.unwrap_or(0));
-        }
-    }
-}
-
-/// OpenVPN control packet
-#[derive(Debug, Clone)]
-pub struct ControlPacket {
-    pub header: PacketHeader,
+    /// Session id of whoever sent this frame.
+    pub session_id: u64,
+    /// Packet ids this frame acknowledges. May be empty.
     pub ack_packet_ids: Vec<u32>,
+    /// Session id of the receiving side. Present on the wire only when
+    /// `ack_packet_ids` is non-empty; serialization enforces the same rule.
     pub remote_session_id: Option<u64>,
-    pub tls_payload: Vec<u8>,
+    /// This frame's own packet id. `None` for `P_ACK_V1`, which carries none.
+    pub packet_id: Option<u32>,
+    /// TLS ciphertext for `P_CONTROL_V1`; empty for a plain reset or ACK.
+    pub payload: Vec<u8>,
 }
 
-impl ControlPacket {
-    /// Parse control packet from bytes
+impl ControlFrame {
+    /// Build a `P_CONTROL_HARD_RESET_SERVER_V2` answering a client reset.
+    pub fn hard_reset_server_v2(
+        key_id: u8,
+        server_session_id: u64,
+        client_session_id: u64,
+        client_packet_id: u32,
+        our_packet_id: u32,
+    ) -> Self {
+        ControlFrame {
+            opcode: Opcode::ControlHardResetServerV2,
+            key_id,
+            session_id: server_session_id,
+            ack_packet_ids: vec![client_packet_id],
+            remote_session_id: Some(client_session_id),
+            packet_id: Some(our_packet_id),
+            payload: Vec::new(),
+        }
+    }
+
+    /// Build a standalone `P_ACK_V1` acknowledging one or more packet ids.
+    pub fn ack(
+        key_id: u8,
+        server_session_id: u64,
+        client_session_id: u64,
+        ack_packet_ids: Vec<u32>,
+    ) -> Self {
+        ControlFrame {
+            opcode: Opcode::AckV1,
+            key_id,
+            session_id: server_session_id,
+            ack_packet_ids,
+            remote_session_id: Some(client_session_id),
+            packet_id: None,
+            payload: Vec::new(),
+        }
+    }
+
+    /// Parse a control or ACK frame.
+    ///
+    /// Returns `Err` — never panics — for empty, truncated, unknown-opcode,
+    /// wrong-category and tls-crypt-v2 frames.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        let (header, offset) = PacketHeader::parse(data)?;
+        let (opcode, key_id) = parse_opcode_byte(data)?;
 
-        if !header.opcode.is_control() && !header.opcode.is_ack() {
-            anyhow::bail!("Not a control packet: {:?}", header.opcode);
+        if opcode.is_tls_crypt_v2() {
+            bail!(
+                "{:?} is a tls-crypt-v2 frame: its reliability fields are encrypted and \
+                 this server has no tls-crypt-v2 key, so it cannot be parsed",
+                opcode
+            );
+        }
+        if !opcode.is_control() && !opcode.is_ack() {
+            bail!("Not a control or ACK packet: {:?}", opcode);
         }
 
-        let mut buf = &data[offset..];
+        let mut r = Reader::new(data);
+        r.take(1, "opcode byte")?;
 
-        // Read ACK array
-        let ack_count = header.packet_id_array_len.unwrap_or(0) as usize;
-        let mut ack_packet_ids = Vec::with_capacity(ack_count);
+        let session_id = r.u64("session id")?;
 
-        for _ in 0..ack_count {
-            if buf.len() < 4 {
-                anyhow::bail!("Packet too short for ACK array");
-            }
-            let ack_id = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-            ack_packet_ids.push(ack_id);
-            buf = &buf[4..];
+        let ack_count = r.u8("ACK array length")? as usize;
+        let mut ack_packet_ids = Vec::with_capacity(ack_count.min(64));
+        for i in 0..ack_count {
+            ack_packet_ids.push(r.u32(&format!("ACK id #{}", i))?);
         }
 
-        // Read remote session ID (if present, 8 bytes)
-        let remote_session_id = if buf.len() >= 8 {
-            let rsid = u64::from_be_bytes([
-                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-            ]);
-            buf = &buf[8..];
-            Some(rsid)
+        // Present only when at least one packet id is acknowledged.
+        let remote_session_id = if ack_count > 0 {
+            Some(r.u64("remote session id")?)
         } else {
             None
         };
 
-        // Remaining data is TLS payload
-        let tls_payload = buf.to_vec();
+        // P_ACK_V1 is pure acknowledgement and carries no packet id of its own.
+        let packet_id = if opcode.is_ack() {
+            None
+        } else {
+            Some(r.u32("message packet id")?)
+        };
 
-        Ok(ControlPacket {
-            header,
+        Ok(ControlFrame {
+            opcode,
+            key_id,
+            session_id,
             ack_packet_ids,
             remote_session_id,
-            tls_payload,
+            packet_id,
+            payload: r.rest().to_vec(),
         })
     }
 
-    /// Serialize control packet to bytes
+    /// Serialize this frame.
+    ///
+    /// The peer session id is written only when the ACK array is non-empty, and
+    /// the message packet id only for non-ACK opcodes, so a round trip through
+    /// [`ControlFrame::parse`] is lossless for any frame that is valid on the
+    /// wire.
     pub fn serialize(&self) -> BytesMut {
-        let mut buf = BytesMut::with_capacity(1024);
+        let mut buf = BytesMut::with_capacity(32 + self.payload.len());
 
-        self.header.serialize(&mut buf);
+        buf.put_u8(((self.opcode as u8) << 3) | (self.key_id & 0x07));
+        buf.put_u64(self.session_id);
 
-        // Write ACK array
-        for ack_id in &self.ack_packet_ids {
-            buf.put_u32(*ack_id);
+        // The count is a u8 on the wire; truncate rather than emit a length that
+        // disagrees with the array that follows.
+        let acks = &self.ack_packet_ids[..self.ack_packet_ids.len().min(u8::MAX as usize)];
+        buf.put_u8(acks.len() as u8);
+        for id in acks {
+            buf.put_u32(*id);
         }
 
-        // Write remote session ID
-        if let Some(rsid) = self.remote_session_id {
-            buf.put_u64(rsid);
+        if !acks.is_empty() {
+            buf.put_u64(self.remote_session_id.unwrap_or(0));
         }
 
-        // Write TLS payload
-        buf.put_slice(&self.tls_payload);
+        if !self.opcode.is_ack() {
+            buf.put_u32(self.packet_id.unwrap_or(0));
+        }
 
+        buf.put_slice(&self.payload);
         buf
+    }
+
+    /// True when this looks like an unprotected reset, i.e. no `--tls-auth` or
+    /// `--tls-crypt` wrapper.
+    ///
+    /// A plain `P_CONTROL_HARD_RESET_CLIENT_V*` carries no payload. With
+    /// `--tls-auth` an HMAC, a replay packet id and a timestamp sit between the
+    /// session id and the ACK array; the fields we read are then not the fields
+    /// the client wrote, and the leftover bytes show up here as payload. Callers
+    /// use this to refuse a frame they would otherwise silently mis-parse.
+    pub fn is_plain_reset(&self) -> bool {
+        self.opcode.is_client_reset() && self.payload.is_empty() && self.ack_packet_ids.is_empty()
     }
 }
 
-/// OpenVPN data packet (encrypted IP packet)
-#[derive(Debug, Clone)]
-pub struct DataPacket {
-    pub header: PacketHeader,
-    pub encrypted_payload: Vec<u8>,
+/// A data-channel frame. The payload is opaque ciphertext.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataFrame {
+    pub opcode: Opcode,
+    pub key_id: u8,
+    /// 24-bit peer id, present on `P_DATA_V2` only.
+    pub peer_id: Option<u32>,
+    pub payload: Vec<u8>,
 }
 
-impl DataPacket {
-    /// Parse data packet from bytes
+impl DataFrame {
     pub fn parse(data: &[u8]) -> Result<Self> {
-        let (header, offset) = PacketHeader::parse(data)?;
-
-        if !header.opcode.is_data() {
-            anyhow::bail!("Not a data packet: {:?}", header.opcode);
+        let (opcode, key_id) = parse_opcode_byte(data)?;
+        if !opcode.is_data() {
+            bail!("Not a data packet: {:?}", opcode);
         }
 
-        let encrypted_payload = data[offset..].to_vec();
+        let mut r = Reader::new(data);
+        r.take(1, "opcode byte")?;
 
-        Ok(DataPacket {
-            header,
-            encrypted_payload,
+        let peer_id = if opcode == Opcode::DataV2 {
+            let b = r.take(3, "peer id")?;
+            Some(u32::from_be_bytes([0, b[0], b[1], b[2]]))
+        } else {
+            None
+        };
+
+        Ok(DataFrame {
+            opcode,
+            key_id,
+            peer_id,
+            payload: r.rest().to_vec(),
         })
     }
 
-    /// Serialize data packet to bytes
     pub fn serialize(&self) -> BytesMut {
-        let mut buf = BytesMut::with_capacity(self.encrypted_payload.len() + 32);
-
-        self.header.serialize(&mut buf);
-        buf.put_slice(&self.encrypted_payload);
-
-        buf
-    }
-}
-
-/// OpenVPN ACK-only packet
-#[derive(Debug, Clone)]
-pub struct AckPacket {
-    pub header: PacketHeader,
-    pub ack_packet_ids: Vec<u32>,
-    pub remote_session_id: Option<u64>,
-}
-
-impl AckPacket {
-    /// Create new ACK packet
-    pub fn new(
-        key_id: u8,
-        session_id: u64,
-        my_packet_id: u32,
-        ack_packet_ids: Vec<u32>,
-        remote_session_id: u64,
-    ) -> Self {
-        AckPacket {
-            header: PacketHeader {
-                opcode: Opcode::AckV1,
-                key_id,
-                session_id: Some(session_id),
-                packet_id_array_len: Some(ack_packet_ids.len() as u8),
-                packet_id: Some(my_packet_id),
-            },
-            ack_packet_ids,
-            remote_session_id: Some(remote_session_id),
+        let mut buf = BytesMut::with_capacity(4 + self.payload.len());
+        buf.put_u8(((self.opcode as u8) << 3) | (self.key_id & 0x07));
+        if self.opcode == Opcode::DataV2 {
+            let id = self.peer_id.unwrap_or(0);
+            buf.put_slice(&[(id >> 16) as u8, (id >> 8) as u8, id as u8]);
         }
-    }
-
-    /// Serialize ACK packet to bytes
-    pub fn serialize(&self) -> BytesMut {
-        let mut buf = BytesMut::with_capacity(64);
-
-        self.header.serialize(&mut buf);
-
-        // Write ACK array
-        for ack_id in &self.ack_packet_ids {
-            buf.put_u32(*ack_id);
-        }
-
-        // Write remote session ID
-        if let Some(rsid) = self.remote_session_id {
-            buf.put_u64(rsid);
-        }
-
+        buf.put_slice(&self.payload);
         buf
     }
 }

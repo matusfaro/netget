@@ -1,6 +1,20 @@
-//! OpenVPN data channel encryption
+//! OpenVPN data channel encryption primitives.
 //!
-//! Supports AES-GCM and ChaCha20-Poly1305 for data channel encryption.
+//! Supports AES-256-GCM and ChaCha20-Poly1305.
+//!
+//! # Not wired into the server
+//!
+//! Nothing in `src/server/openvpn/mod.rs` calls this module. The server is a
+//! control-plane responder with no TLS control channel, so no key exchange ever
+//! happens and there is no key material to hand these ciphers. It used to be
+//! driven with keys derived by HKDF over three string literals committed to this
+//! repository, which made every peer on every installation share one key; that
+//! call site is gone.
+//!
+//! The AEAD and HKDF code itself is correct and is kept as the piece a future
+//! key exchange would plug into. **Do not call [`derive_data_keys`] with
+//! constants.** Its inputs must be the per-session secrets negotiated over a
+//! real control channel, or the result is not a key.
 
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},

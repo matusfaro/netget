@@ -1,553 +1,104 @@
-# OpenVPN VPN Server E2E Tests
+# OpenVPN E2E tests
 
-## Test Overview
+## Strategy
 
-Tests full OpenVPN VPN server functionality by connecting with the native `openvpn` command-line client. This validates
-the complete protocol implementation including handshake, encryption, and tunnel establishment.
+Two suites, both of which must be able to fail for the reason they claim to test.
 
-**Protocol Status**: Full VPN implementation (MVP)
-**Test Focus**: Real-world VPN connectivity with actual OpenVPN client
+### `wire.rs` — an independently written codec
 
-## Test Strategy
+Byte layout decoded and encoded with explicit offsets, never calling
+`netget::server::openvpn::packet`. Both suites build their requests and decode the server's replies through it.
 
-### Native Client Integration
+This exists because a test that checks NetGet's parser against NetGet's serializer proves nothing — both can be wrong in
+the same way, and that is exactly how this protocol shipped a reset reply with the message packet id written before the
+ACK array, which no real client could parse.
 
-**Why native client**: No viable Rust OpenVPN client library exists. Using the system's `openvpn` command provides:
+It also holds the captured frames. Every literal was taken off the wire from **OpenVPN 2.7.4**
+(`aarch64-apple-darwin`, OpenSSL 3.6.2) against a reference responder written outside this repository:
 
-- Full protocol compliance testing
-- Real-world validation
-- Complete handshake and encryption verification
+| Constant                      | What it is                                                        |
+|-------------------------------|-------------------------------------------------------------------|
+| `CAPTURED_CLIENT_RESET_V2`    | The 14-byte `P_CONTROL_HARD_RESET_CLIENT_V2` a real client sends   |
+| `CAPTURED_SERVER_RESET_V2`    | The 26-byte reply that client **accepted**                        |
+| `CAPTURED_SERVER_ACK_V1`      | The 22-byte `P_ACK_V1` that client **accepted**                   |
+| `CAPTURED_CLIENT_CONTROL_V1`  | Head of the `P_CONTROL_V1` carrying its TLS ClientHello           |
 
-**Requirements**:
+Acceptance was observed in the client's own log: `TLS: Initial packet from [AF_INET]127.0.0.1:PORT, sid=...` for the
+reset reply, and `UDPv4 READ [22] ... P_ACK_V1 kid=0 [ 1 ] DATA len=0` followed by retransmissions stopping, for the
+ACK.
 
-- `openvpn` command must be installed on the system
-- Tests require elevated privileges (root/sudo) for TUN interface creation
-- Tests automatically skip if requirements not met
+### `codec_test.rs` — wire format, 10 tests, 0 LLM calls
 
-### Test Structure
+Parses the captured client frames and asserts the decoded fields; emits our reset reply and ACK and asserts they are
+**byte-identical** to the frames the real client accepted; round-trips; and feeds hostile input — empty, truncated,
+`ACK length 255` with nothing behind it, unknown opcodes, wrong-category opcodes, tls-crypt-v2 — asserting `Err` and no
+panic. `no_byte_string_can_panic_either_parser` fuzzes both parsers with 20,000 pseudorandom strings, half of them
+starting from a plausible opcode byte.
 
-**5 test functions** covering:
+### `e2e_test.rs` — 4 tests, 4 LLM calls
 
-1. **Client availability check** - Fails if `openvpn` not installed
-2. **Server startup** - Verifies TUN interface and VPN subnet configuration
-3. **Handshake with client** - Full OpenVPN client connection (requires sudo)
-4. **Protocol compatibility** - Verifies server configuration
-5. **Manual packet test** - Legacy test for quick protocol validation
+1. **`test_real_openvpn_client_accepts_our_reset_reply`** — drives the system `openvpn` binary against the server and
+   asserts its log contains `TLS: Initial packet from [AF_INET]127.0.0.1:<port>`, a line it emits only after parsing and
+   accepting a `P_CONTROL_HARD_RESET_SERVER_V2`. It also asserts the client never logs
+   `Initialization Sequence Completed` — the server cannot build a tunnel, and if that ever changes the metadata and
+   docs are wrong and this test says so.
 
-### LLM Call Budget
+   The client runs with `--dev null` (no TUN, no root), `--auth-user-pass` pointing at a throwaway file, and
+   `--peer-fingerprint` with a bogus fingerprint. Both are needed only to get past `openvpn`'s config validation;
+   neither is ever exercised, because the handshake cannot reach a certificate. The test asserts the client did **not**
+   print `Options error`, so a future `openvpn` release that rejects this command line fails the test loudly instead of
+   silently testing nothing.
 
-**Per-Test Breakdown**:
+2. **`test_reset_reply_is_spec_correct_and_control_packets_are_acked`** — raw UDP. Asserts the reply is 26 bytes,
+   opcode 8, acknowledges the packet id actually sent, echoes the session id actually sent (not a constant), numbers its
+   own packet 0, and carries no trailing bytes. Then: a retransmitted reset gets the identical answer; a `P_CONTROL_V1`
+   carrying a TLS record gets a 22-byte `P_ACK_V1` with no message packet id; a `P_DATA_V2` gets no reply at all; and
+   after being fed five hostile datagrams the server still answers a brand-new peer correctly.
 
-1. **test_openvpn_client_availability**: 0 LLM calls (pure availability check)
-2. **test_openvpn_server_startup**: 1 LLM call (server startup)
-3. **test_openvpn_handshake_with_client**: 1 LLM call (server startup, client runs externally)
-4. **test_openvpn_protocol_compatibility**: 1 LLM call (server startup)
-5. **test_openvpn_manual_handshake_v2**: 1 LLM call (server startup)
+3. **`test_rejected_peer_receives_nothing`** — `reject_peer` is enforced: no bytes at all, including for a
+   retransmission.
 
-**Total: 4 LLM calls** (well under 10 limit)
+4. **`test_absent_decision_fails_closed`** — the handler runs and logs but produces neither decision. The peer must
+   still receive nothing, and the log must distinguish "no decision" from an explicit refusal. This is the regression
+   test for the fail-open pattern that OAuth2 shipped.
 
-### Hard Failure Requirements
+## Privileges
 
-Tests will **fail** (not skip) if:
+**No test requires root.** The server has no TUN device, so there is nothing to elevate for. The old suite asserted
+`geteuid() == 0` and failed outright on any normal machine.
 
-- `openvpn` command not available
-- Not running with sufficient privileges for tests requiring root (Unix)
-- TUN interface creation fails
+## `openvpn` must be installed
 
-**Result**: Tests require proper environment setup. Install openvpn and run with sudo for all tests to pass.
+The real-client test **fails** rather than skips when the binary is missing. A capability check that returns success
+when the capability is absent is worse than no test: it reports coverage that does not exist. Install with
+`brew install openvpn` or `apt-get install openvpn`.
 
-## Client Library
+## LLM call budget
 
-### Native OpenVPN Client
+4 calls total — one server startup per E2E test. Peer decisions use static `event_handlers`, so no model call happens
+per peer. The codec suite makes none.
 
-**Command**: `openvpn`
-**Configuration**: Generated `.ovpn` config file
-**Features used**:
-
-- UDP transport
-- TUN device
-- AES-256-GCM cipher
-- No authentication (simplified for MVP)
-
-### Client Configuration Example
-
-```ovpn
-client
-dev tun
-proto udp
-remote 127.0.0.1 51820
-resolv-retry infinite
-nobind
-persist-key
-persist-tun
-cipher AES-256-GCM
-verb 3
-auth-nocache
-auth none  # Simplified for MVP testing
-```
-
-### Installation
-
-**Ubuntu/Debian**:
+## Running
 
 ```bash
-sudo apt-get install openvpn
+# Use your own target dir: target/debug/netget is shared and another agent's
+# build will silently break a run in progress.
+CARGO_TARGET_DIR=/tmp/ovpn-target cargo test --no-default-features --features openvpn \
+    --test server -- --test-threads=100 openvpn
 ```
 
-**macOS**:
+Expected: `14 passed; 0 failed`, about 9 seconds.
 
-```bash
-brew install openvpn
-```
+The first run after a source edit rebuilds and can time out; run twice and use the second result.
 
-**Fedora/RHEL**:
+## Verifying these tests can fail
 
-```bash
-sudo dnf install openvpn
-```
-
-## Expected Runtime
-
-**Model**: qwen3-coder:30b (or configured model)
-**Runtime**: ~30-60 seconds for full test suite
-
-**Breakdown**:
-
-- Client availability: <1 second (no LLM)
-- Server startup: 3-5 seconds
-- Client handshake test: 10-30 seconds (external client + handshake)
-- Protocol compatibility: 2-3 seconds
-- Manual packet test: 1-2 seconds
-
-**Note**: Handshake test takes longer due to:
-
-- TUN interface creation (requires sudo)
-- OpenVPN client startup and initialization
-- Protocol negotiation (our simplified implementation)
-
-## Failure Rate
-
-**Low to Medium** (10-20%):
-
-- **Low** for non-sudo tests (availability, startup, manual packet)
-- **Medium** for handshake test (requires sudo, external process coordination)
-
-**Common failures**:
-
-- `openvpn` not installed (test fails with assertion error)
-- Not running with sudo for handshake test (test fails with assertion error)
-- Client connection timeout (our simplified protocol may not complete full handshake)
-
-**Stability**: Tests are designed to be lenient on handshake completion - they pass if handshake is detected on server
-side, even if full connection doesn't complete.
-
-## Test Cases
-
-### 1. test_openvpn_client_availability
-
-**What it tests**:
-
-- Checks if `openvpn` command is available
-- Fails test suite if not found (with installation instructions)
-
-**No LLM calls** - Pure system check
-
-**Expected output**:
-
-```
-✓ OpenVPN client is available
-```
-
-Or:
-
-```
-⚠️  OpenVPN client not found. Install with:
-   Ubuntu/Debian: sudo apt-get install openvpn
-   macOS: brew install openvpn
-```
-
-### 2. test_openvpn_server_startup
-
-**What it tests**:
-
-- Server starts with OpenVPN stack
-- TUN interface is created
-- VPN subnet is configured
-
-**Assertions**:
-
-```rust
-assert!(output.contains("OpenVPN") && output.contains("VPN server"));
-assert!(output.contains("TUN interface created") || output.contains("netget_ovpn"));
-```
-
-**Expected server output**:
-
-```
-[INFO] Starting OpenVPN VPN server on 0.0.0.0:XXXXX (full VPN tunnel support)
-[INFO] TLS configuration created
-[INFO] Creating TUN interface: netget_ovpn0
-[INFO] TUN interface created: netget_ovpn0
-[INFO] OpenVPN listening on 0.0.0.0:XXXXX
-[INFO] VPN subnet: 10.8.0.0/24
-```
-
-### 3. test_openvpn_handshake_with_client
-
-**What it tests** (⚠️ Requires sudo):
-
-- Generates OpenVPN client config
-- Starts `openvpn` client as subprocess
-- Monitors client output for connection success
-- Verifies server logs handshake
-
-**Privilege check**:
-
-```rust
-#[cfg(unix)]
-{
-    let is_root = unsafe { libc::geteuid() } == 0;
-    assert!(
-        is_root,
-        "This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test"
-    );
-}
-```
-
-**Client output monitoring**:
-
-- Looks for `"Initialization Sequence Completed"`
-- Or `"Peer Connection Initiated"`
-- 30 second timeout
-
-**Lenient assertion**:
-
-```rust
-// Pass if server received handshake (even if client didn't fully connect)
-assert!(output.contains("OpenVPN")
-    && (output.contains("handshake") || output.contains("peer")));
-```
-
-**Expected server output**:
-
-```
-[INFO] OpenVPN handshake from 127.0.0.1:XXXXX
-[INFO] Allocated VPN IP 10.8.0.2 to 127.0.0.1:XXXXX
-[DEBUG] Data channel ready for 127.0.0.1:XXXXX
-[INFO] OpenVPN peer connected: 127.0.0.1:XXXXX (VPN IP: 10.8.0.2)
-```
-
-**Expected client output**:
-
-```
-OpenVPN 2.x.x ...
-TCP/UDP: Preserving recently used remote address: [AF_INET]127.0.0.1:51820
-UDP link local: (not bound)
-UDP link remote: [AF_INET]127.0.0.1:51820
-Peer Connection Initiated with [AF_INET]127.0.0.1:51820
-```
-
-**Note**: Our simplified MVP implementation may not complete full OpenVPN handshake. Test passes if server receives and
-logs handshake attempt.
-
-### 4. test_openvpn_protocol_compatibility
-
-**What it tests**:
-
-- Server configures VPN subnet correctly
-- Server initializes encryption ciphers
-
-**Assertions**:
-
-```rust
-assert!(output.contains("VPN subnet") || output.contains("10.8.0"));
-assert!(output.contains("AES") || output.contains("cipher"));
-```
-
-### 5. test_openvpn_manual_handshake_v2 (Legacy)
-
-**What it tests**:
-
-- Manual packet construction and sending
-- Server responds with HARD_RESET_SERVER_V2
-- Quick protocol validation without external client
-
-**Packet structure**:
-
-```
-| Opcode/KeyID (1) | Session ID (8) | Array Len (1) | Packet ID (4)
-| Remote Session ID (8) | TLS Payload (5) |
-```
-
-**Expected response**: Opcode 8 (P_CONTROL_HARD_RESET_SERVER_V2)
-
-## Known Issues
-
-### Simplified Protocol Implementation
-
-**Issue**: Our OpenVPN server is an MVP with simplified TLS handshake.
-
-**Impact**:
-
-- Native OpenVPN client may not complete full connection
-- Tests are lenient - pass if server receives handshake
-- Full tunnel functionality may not work until TLS is fully implemented
-
-**Acceptable**: MVP goal is to demonstrate protocol handling, not full OpenVPN compatibility.
-
-### Requires Elevated Privileges
-
-**Issue**: TUN interface creation requires root/sudo.
-
-**Solution**: Handshake test will fail with assertion error if not running with sufficient privileges.
-
-**For CI**: Either run handshake test with sudo or exclude it from test runs using `--skip handshake`.
-
-### Platform-Specific TUN Names
-
-**Issue**: TUN interface names vary by platform:
-
-- Linux: `netget_ovpn0`
-- macOS: `utun11`
-- Windows: `netget_ovpn0`
-
-**Solution**: Tests check for both generic "TUN interface created" and specific names.
-
-### External Process Coordination
-
-**Issue**: Managing `openvpn` subprocess adds complexity.
-
-**Mitigation**:
-
-- Use `kill_on_drop` for automatic cleanup
-- Set reasonable timeouts (30 seconds)
-- Monitor stdout for connection status
-
-### No Full Tunnel Testing
-
-**Issue**: Tests don't verify actual IP packet forwarding through tunnel.
-
-**Why**: MVP focused on protocol implementation, not full VPN functionality.
-
-**Future**: Add ping test through tunnel once full protocol is implemented:
-
-```rust
-// Future test
-#[tokio::test]
-async fn test_tunnel_connectivity() {
-    // Connect client
-    // Ping server through VPN tunnel (10.8.0.1)
-    // Verify packets forwarded
-}
-```
-
-## Running Tests
-
-### Prerequisites
-
-```bash
-# Install OpenVPN client
-sudo apt-get install openvpn  # Ubuntu/Debian
-brew install openvpn          # macOS
-
-# Build release binary
-./cargo-isolated.sh build --release --all-features
-```
-
-### Run All Tests
-
-```bash
-# Without sudo (will skip handshake test)
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test
-
-# With sudo (runs all tests including handshake)
-sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test
-```
-
-### Test Parallelism (CRITICAL)
-
-**Mock Mode (Default)**: Tests use mock LLM responses and can run in parallel.
-
-```bash
-# Run with high parallelism (100 concurrent tests) - FAST
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --test-threads=100
-```
-
-**Real Ollama Mode**: When using `--use-ollama`, tests must run sequentially to avoid LLM API conflicts.
-
-```bash
-# Run with NO parallelism (1 test at a time) - REQUIRED for Ollama
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --use-ollama --test-threads=1
-```
-
-**Why this matters**:
-
-- **Mock mode**: No actual LLM calls, tests are fast and independent → use `--test-threads=100`
-- **Ollama mode**: Shares LLM API, concurrent calls cause conflicts → use `--test-threads=1`
-
-**Default behavior**: Tests run in mock mode with high parallelism. Only use `--use-ollama` for validation.
-
-### Run Specific Tests
-
-```bash
-# Just availability check
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- test_openvpn_client_availability
-
-# Server startup only (no sudo needed)
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- test_openvpn_server_startup
-
-# Full handshake test (requires sudo)
-sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- test_openvpn_handshake_with_client
-
-# Manual packet test (no sudo needed)
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- test_openvpn_manual_handshake_v2
-```
-
-### Run with Output
-
-```bash
-# See detailed output
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --nocapture
-
-# With sudo and output
-sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --nocapture
-```
-
-### Expected Output (Without Sudo)
-
-```
-running 5 tests
-test test_openvpn_client_availability ... ok
-test test_openvpn_server_startup ... FAILED
-test test_openvpn_handshake_with_client ... FAILED
-test test_openvpn_protocol_compatibility ... FAILED
-test test_openvpn_manual_handshake_v2 ... FAILED
-
-failures:
-
----- test_openvpn_server_startup stdout ----
-thread 'test_openvpn_server_startup' panicked at tests/server/openvpn/e2e_test.rs:98:9:
-This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
-
----- test_openvpn_handshake_with_client stdout ----
-thread 'test_openvpn_handshake_with_client' panicked at tests/server/openvpn/e2e_test.rs:147:9:
-This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
-
----- test_openvpn_protocol_compatibility stdout ----
-thread 'test_openvpn_protocol_compatibility' panicked at tests/server/openvpn/e2e_test.rs:268:9:
-This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
-
----- test_openvpn_manual_handshake_v2 stdout ----
-thread 'test_openvpn_manual_handshake_v2' panicked at tests/server/openvpn/e2e_test.rs:315:9:
-This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
-
-test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-```
-
-### Expected Output (With Sudo)
-
-```
-running 5 tests
-test test_openvpn_client_availability ... ok
-test test_openvpn_server_startup ... ok
-test test_openvpn_handshake_with_client ... ok
-test test_openvpn_protocol_compatibility ... ok
-test test_openvpn_manual_handshake_v2 ... ok
-
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.67s
-```
-
-## CI/CD Considerations
-
-### GitHub Actions
-
-**Mock Mode (Recommended for CI)**:
-
-```yaml
-- name: Run OpenVPN E2E tests (Mock Mode)
-  run: ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --test-threads=100
-```
-
-**With Sudo (Full Testing)**:
-
-```yaml
-- name: Install OpenVPN
-  run: sudo apt-get update && sudo apt-get install -y openvpn
-
-- name: Run OpenVPN E2E tests with sudo
-  run: sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --test-threads=100
-```
-
-**With Real Ollama (Optional Validation)**:
-
-```yaml
-- name: Install and start Ollama
-  run: |
-    curl -sSL https://ollama.ai/install.sh | sh
-    ollama serve &
-    ollama pull qwen3-coder:30b
-
-- name: Run OpenVPN E2E tests with Ollama
-  run: sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --use-ollama --test-threads=1
-```
-
-### Skip TUN Interface Tests in CI
-
-If sudo is problematic, run only the client availability check:
-
-```bash
-# Run only tests that don't require sudo
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- test_openvpn_client_availability --test-threads=100
-```
-
-## Future Improvements
-
-### Full TLS Handshake
-
-Once TLS 1.3 control channel is fully implemented:
-
-- Client will complete full connection
-- Remove lenient assertions
-- Add tunnel connectivity tests
-
-### Tunnel Traffic Testing
-
-```rust
-#[tokio::test]
-async fn test_tunnel_ping() {
-    // Start server
-    // Connect client
-    // Ping through VPN tunnel
-    // Verify packet forwarding
-}
-```
-
-### Multi-Client Testing
-
-```rust
-#[tokio::test]
-async fn test_multiple_clients() {
-    // Start server
-    // Connect 3 OpenVPN clients concurrently
-    // Verify each gets unique VPN IP
-    // Test inter-client routing
-}
-```
-
-### Encryption Validation
-
-```rust
-#[tokio::test]
-async fn test_data_channel_encryption() {
-    // Capture packets with pcap
-    // Verify encryption is active
-    // Verify packet IDs are sequential
-}
-```
+The suite was checked against a deliberate regression: `ControlFrame::serialize` was reverted to the old field order
+(message packet id before the ACK array). All four E2E tests and the three frame-emitting codec tests failed, including
+the real-client test. Re-run that check if you change the codec — a wire-format test that cannot fail is the failure
+mode this protocol already had once.
 
 ## References
 
-- [OpenVPN Manual](https://openvpn.net/community-resources/reference-manual-for-openvpn-2-4/)
-- [OpenVPN Protocol](https://openvpn.net/community-resources/openvpn-protocol/)
-- [NetGet OpenVPN Implementation](../../../src/server/openvpn/CLAUDE.md)
-- [TUN/TAP Interface](https://www.kernel.org/doc/Documentation/networking/tuntap.txt)
+- [OpenVPN protocol overview](https://openvpn.net/community-resources/openvpn-protocol/)
+- [NetGet OpenVPN implementation](../../../src/server/openvpn/CLAUDE.md)

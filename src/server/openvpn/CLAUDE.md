@@ -1,170 +1,172 @@
-# OpenVPN Server Implementation — INCOMPLETE AND INSECURE
+# OpenVPN — control-plane responder
 
-## ⚠️ Read this first
+## What this is
 
-**This is not a working OpenVPN server and must not be used to carry real traffic.**
+A server that speaks the unauthenticated front half of the OpenVPN UDP protocol. It decodes the real wire format,
+answers a client's session reset with a `P_CONTROL_HARD_RESET_SERVER_V2` that a genuine `openvpn` client accepts,
+acknowledges the control packets the client sends next, and asks the LLM whether to answer each peer at all.
 
-It implements the OpenVPN *packet format* and a real TUN data path, but the security-critical half of the protocol is
-absent:
+Useful as a honeypot and protocol observatory: who is probing UDP/1194, with what options, and what their TLS
+ClientHello looks like.
 
-| Component                        | Status                                                                       |
-|----------------------------------|------------------------------------------------------------------------------|
-| TLS control channel              | ❌ **Does not exist.** `create_tls_config()` builds a config that is never used |
-| Peer authentication              | ❌ **None.** Any host sending a HARD_RESET is accepted                          |
-| Client certificate verification  | ❌ None                                                                        |
-| Data-channel key derivation      | ❌ **Hardcoded constants** — every peer derives the same key                    |
-| `handle_control_message()`       | ❌ Empty stub                                                                  |
-| `handle_ack_packet()`            | ❌ Empty stub                                                                  |
-| Packet parse/serialize (V1/V2)   | ✅ Implemented                                                                 |
-| TUN interface + IP pool          | ✅ Implemented                                                                 |
-| AES-256-GCM / ChaCha20-Poly1305  | ✅ Correct AEAD calls — operating on worthless keys                            |
+**Status**: `DevelopmentState::Experimental` · **Privileges**: `PrivilegeRequirement::None`
 
-### The key problem, specifically
+## What this is not
 
-`initialize_data_channel()` (`mod.rs`) derives every peer's cipher key with HKDF over three fixed literals:
+**It is not a VPN and never carries traffic.** There is no TLS control channel, therefore no key exchange, therefore no
+data-channel keys, no TUN device and no tunnel. A real client gets as far as sending its ClientHello, receives ACKs for
+it, then times out waiting for a ServerHello this server cannot produce. Use `src/server/wireguard/` for a real VPN.
 
-```rust
-let master_secret = b"simplified_master_secret_for_mvp";
-let client_random = b"client_random_data_12345678";
-let server_random = b"server_random_data_87654321";
+| Component                              | Status                                                     |
+|----------------------------------------|------------------------------------------------------------|
+| Packet parse/serialize (control, ACK, data) | ✅ Spec-correct, validated against a real client       |
+| Session reset exchange                 | ✅ A real `openvpn` client accepts our reply                |
+| Control-packet ACKs                    | ✅ A real client accepts them and stops retransmitting      |
+| LLM accept/reject policy               | ✅ Enforced — only `accept_peer` causes any bytes to be sent |
+| TLS control channel                    | ❌ Does not exist                                           |
+| Peer authentication                    | ❌ None — the model's decision is the only gate             |
+| Key exchange / data channel / TUN      | ❌ Removed, see below                                       |
+| `--tls-auth` / `--tls-crypt` / `-v2`   | ❌ Detected and refused rather than mis-parsed              |
+
+## What was wrong before, and what changed
+
+This protocol was rated Stable, then demoted to `Incomplete` on inspection because it had never been run against a real
+client. Driving OpenVPN 2.7.4 against it showed three separate problems.
+
+### 1. The reset reply had its fields in the wrong order
+
+The old `PacketHeader::serialize` wrote the message packet id **before** the ACK array and the peer session id. The real
+layout is:
+
+```text
+u8       opcode << 3 | key_id
+u64      sender's session id
+u8       ACK count n
+u32 * n  acknowledged packet ids
+u64      peer session id      -- present only when n > 0
+u32      message packet id    -- absent for P_ACK_V1
 ```
 
-There is no per-session entropy. **Every peer, on every run, on every installation derives the identical key**, and
-the inputs are in this repository and its public git history. Anyone who can read the source can decrypt the tunnel.
-The encryption is decorative.
+So no `openvpn` client could ever parse the reply. Three further codec bugs sat behind it:
 
-A real OpenVPN server derives these keys from the TLS master secret negotiated during the control-channel handshake.
-No handshake happens here, so there is no master secret to derive from.
+- The 8-byte session id was read only for the `*_V2` opcodes. It is present on **every** control and ACK packet,
+  so `P_CONTROL_V1` and `P_ACK_V1` were mis-parsed.
+- The peer session id was sniffed for with `if buf.len() >= 8`, which eats eight bytes of TLS payload when it is absent
+  and misses it when the remaining payload is short.
+- `P_ACK_V1` was given a message packet id, which it does not have, and `P_DATA_V2` was given an 8-byte session id
+  where the protocol has a 24-bit peer id.
 
-**Status**: `DevelopmentState::Incomplete` — hidden from the LLM by `ProtocolMetadataV2::is_available_to_llm()`
-**Privileges**: `PrivilegeRequirement::Root` (TUN device creation)
-**Use instead**: WireGuard (`src/server/wireguard/`), NetGet's only functional VPN
+The reply now emitted is byte-identical to a frame OpenVPN 2.7.4 accepted; see `tests/server/openvpn/`.
 
-### Why it is kept
+### 2. The data channel was decorative and unreachable
 
-As a packet-format testbed and as a honeypot that speaks plausible-looking OpenVPN to a scanner. Not as a VPN.
+`initialize_data_channel()` derived every peer's AES-256-GCM/ChaCha20-Poly1305 key with HKDF over three string literals
+committed to this repository, so every peer on every installation shared one key that anyone could reproduce from the
+source. It was also unreachable: without a key exchange no peer can legitimately be keyed, and no real client ever got
+past the broken reset reply anyway.
 
-## Library Choices
+The TUN device and that call site are gone. Data packets are now parsed, counted and dropped with an explicit log line
+saying no key exchange has taken place. `crypto.rs` is kept, unwired, as the piece a future key exchange would plug
+into — its module docs say so, and say not to call `derive_data_keys` with constants.
 
-Custom implementation — no viable Rust OpenVPN *server* library exists (the reference C++ implementation is 500k+
-LOC; `openvpn-parser` is read-only and unmaintained; `libopenvpn3` FFI is client-only).
+### 3. Root was claimed for something that no longer exists
 
-Dependencies used:
+The TUN device was the only reason for `PrivilegeRequirement::Root`, and `server_startup` gates on it, so the protocol
+could not start — or be tested — on an ordinary machine. With no TUN device, nothing here needs elevation and the
+declaration is now `None` (port 1194 is unprivileged).
 
-- `tun` v0.7 — TUN interface creation
-- `aes-gcm` v0.10, `chacha20poly1305` v0.10 — data-channel AEAD
-- `rustls` + `rcgen` — certificate generation (**generated, then unused**)
-- `hkdf` + `sha2` — key derivation (**over constants, see above**)
+## Library choices
+
+None. Custom implementation — no viable Rust OpenVPN *server* library exists (`openvpn-parser` is read-only and
+unmaintained; `libopenvpn3` FFI is client-only).
+
+### Declared dependencies that are not used
+
+The `openvpn` feature in `Cargo.toml` declares more than the code needs. Cargo.toml is shared, so this is recorded
+rather than edited:
+
+- `tokio-rustls` — never referenced by this protocol, before or after this change.
+- `hmac` — never referenced; `crypto.rs` uses `hkdf` + `sha2` only.
+- `tun` — no longer referenced (still used by `src/server/wireguard/`, so the dependency itself is live).
+- `rustls` / `rcgen` — the old `create_tls_config()` built a `ServerConfig` that was stored in a field and never used.
+  That function is gone, so neither is referenced by this protocol any more.
+- `aes-gcm`, `chacha20poly1305`, `hkdf`, `sha2` — used by `crypto.rs`, which is compiled but not wired into the server.
 
 ## Architecture
 
-### TUN interface
+`mod.rs` binds one UDP socket. The receive loop and an idle sweep run inside a single task joined by `tokio::select!`,
+because `register_server_task` stores exactly one handle per server — registering two would silently drop the first and
+leak it past `stop_server`.
 
-Platform-specific naming: `netget_ovpn0` (Linux/Windows), `utun11` (macOS). Server takes `10.8.0.1` on `10.8.0.0/24`;
-clients get `10.8.0.2`–`10.8.0.254` from `IpPool`.
+Peer decisions are dispatched to a spawned task so an LLM call does not stall the receive loop.
 
-The device is **split** with `tokio::io::split()`. The read loop owns the `ReadHalf`; the write side is an
-`Arc<Mutex<WriteHalf>>`. This matters: an earlier version held a single `RwLock<AsyncDevice>` write guard while parked
-in `read()`, so no decrypted client packet could ever be written to the TUN while the TUN was idle — a deadlock that
-silently broke the client-to-network direction. Per the project rule: never hold a lock across I/O.
+### Connection flow
 
-### Task lifecycle
-
-`AppState::register_server_task()` stores exactly **one** handle per server, so the UDP listener and the TUN reader are
-run inside a single task joined by `tokio::select!`. Registering them as two tasks would silently drop the first
-handle and leak that loop past `stop_server`. Aborting the one registered handle cancels both loops.
-
-### Connection flow (what actually happens)
-
-```
-Client                                    Server
-  ├──── HARD_RESET_CLIENT_V2 ─────────────>│
-  │                                        ├─ (no authentication of any kind)
-  │                                        ├─ Allocate VPN IP
-  │                                        ├─ Initialize cipher from CONSTANTS
-  │<─────── HARD_RESET_SERVER_V2 ──────────┤   (empty TLS payload)
-  │                                        ├─ raise openvpn_peer_connected
-  ├──── DATA_V2 ──────────────────────────>│
-  │                                        ├─ Decrypt, write to TUN
+```text
+client ──> P_CONTROL_HARD_RESET_CLIENT_V2
+                    │  peer recorded as Deciding
+                    │  openvpn_peer_reset raised
+                    ├─ accept_peer  ──> P_CONTROL_HARD_RESET_SERVER_V2
+                    ├─ reject_peer  ──> nothing is sent
+                    └─ no decision  ──> nothing is sent (fails closed)
+client ──> P_CONTROL_V1 (TLS ClientHello)
+                    └─ ACKed; payload logged and dropped
+client ──> P_DATA_V1/V2
+                    └─ dropped: no keys exist and none can
 ```
 
-A real `openvpn` client will not interoperate: it expects a TLS session inside the control channel and gets an empty
-payload, so it never reaches the data phase.
+### Retransmission
 
-## LLM Integration
+A client retransmits its reset every couple of seconds until it hears back, which is faster than an LLM decision. The
+peer is inserted as `Deciding` **before** the model is consulted, so one handshake costs at most one model call:
+retransmits arriving mid-decision are dropped, retransmits after acceptance get the cached reply bytes verbatim, and
+retransmits from a rejected peer stay unanswered. A reset from a known address bearing a *different* session id is
+treated as a restart and starts over.
 
-### Event flow
+### Peer table
 
-`openvpn_peer_connected` is raised from `handle_handshake_initiation` via `crate::llm::action_helper::call_llm`,
-which runs any configured script/static handler first and only falls back to a real model call when none is set.
+`MAX_PEERS` (100) entries; a sweep every 30s drops peers idle for more than 120s and closes their connection in
+`AppState`, so a scan cannot pin every slot indefinitely.
 
-Because the protocol is `Incomplete`, it is **not offered to the LLM** during server selection; it can still be
-started explicitly (e.g. tests using `with_include_disabled_protocols`).
+## LLM integration
 
-### Event Types
+One event, `openvpn_peer_reset`, raised once per handshake. Control packets after the reset are ACKed without consulting
+the model: clients retransmit them, so an event per packet would spend model calls on duplicates while changing nothing
+the server is able to do.
 
-- `openvpn_peer_connected` — a peer was accepted and assigned a VPN IP
+Two sync actions, both enforced:
 
-Data fields: `peer_addr`, `vpn_ip`, `session_id`, `authenticated` (always `false`).
+- **accept_peer** — send `P_CONTROL_HARD_RESET_SERVER_V2` and start tracking the peer. The only thing that causes any
+  byte to be sent.
+- **reject_peer** — send nothing and drop the peer. OpenVPN has no reject packet at reset time, so silence is the
+  refusal.
 
-An `openvpn_peer_request` authorization event was previously declared but **never emitted** — peers are auto-accepted
-inside `handle_handshake_initiation` — so it has been removed rather than left as a false promise of pre-connection
-authorization.
+`execute_action` returns `ActionResult::Custom { name: PEER_DECISION_RESULT, data: { accept, reason } }`, which the
+server loop reads. **Fails closed**: a rejection, an empty answer, and an LLM error all leave the peer unanswered, and
+all three are logged distinctly so an outage can never be mistaken for approval.
 
-### Sync Actions
-
-All are **observation/logging hooks**. None gates a connection, because the peer is already accepted, addressed and
-keyed before the event fires.
-
-1. **authorize_peer** — NOT ENFORCED; records that a peer is considered authorized
-2. **reject_peer** — NOT ENFORCED; nothing tears the peer down
-3. **set_peer_limit** — NOT ENFORCED; no traffic shaping is configured
-4. **inspect_traffic** — flags the peer's traffic for logging
-
-### Async Actions
-
-**None.** `get_async_actions()` returns an empty list.
-
-`list_peers` / `remove_peer` / `get_server_info` were previously advertised, but the action executor calls
-`Server::execute_action()` on a stateless `OpenvpnProtocol` struct with no handle to the running `OpenvpnServer`, so
-they returned `NoAction` unconditionally. They remain accepted by `execute_action` for backwards compatibility.
-
-## Peer Management
-
-- `PeerState`: WaitingForHandshake → TlsHandshaking → KeyExchange → Connected → Disconnecting
-  (in practice peers jump straight to Connected)
-- Max 100 peers
-- Packet IDs tracked per peer for basic replay rejection; `received_packet_ids` grows without bound for long-lived
-  peers (no window eviction)
+No async actions: the executor builds a stateless `OpenvpnProtocol` with no handle to the running server, so anything
+listed there could only return `NoAction`.
 
 ## Storage
 
-None, per NetGet's protocol rules. Peer state is in-memory runtime state only — no database, no filesystem, no
-persistence.
+None. Peer state is in-memory transport state — no database, no filesystem, no persistence.
 
-## Future Work (large — not a patch)
+## Robustness
 
-Making this a real OpenVPN server requires the whole control channel:
+Everything the parsers see arrives from a UDP socket. Every field is length-checked before it is read and no parse path
+uses `unwrap()` on input-derived data; a panic in the receive loop would be silent while the server kept reporting
+`Running`. `tests/server/openvpn/codec_test.rs` fuzzes both parsers with 20,000 pseudorandom byte strings.
 
-1. Wrap a genuine TLS 1.3 session over the OpenVPN reliability layer
-2. Implement control-channel retransmission, ACK windows and sequencing
-3. Exchange key material through the TLS session
-4. Derive per-session keys from the negotiated master secret via the OpenVPN PRF (replacing the constants)
-5. Verify client certificates
-6. Implement configuration push/pull, then compression and TCP transport
+## Future work (large — not a patch)
 
-Steps 1–4 are the minimum for the protocol to stop being insecure. This is a project in its own right and is
-deliberately out of scope.
-
-## Testing
-
-`tests/server/openvpn/e2e_test.rs` requires the `openvpn` binary and root, and skips otherwise. It cannot verify a
-successful tunnel — a real client cannot complete a handshake against a server with no control channel.
+Making this a real VPN needs the entire control channel: a genuine TLS session over the OpenVPN reliability layer
+(retransmission windows, ACK windows, fragmentation), key-method-2 material exchange inside it, per-session key
+derivation, `PUSH_REQUEST`/`PUSH_REPLY`, then the data channel and a TUN device. That is a project in its own right and
+is deliberately out of scope. Anything less than all of it produces a server that still cannot carry traffic — which is
+what this protocol was before.
 
 ## References
 
-- [OpenVPN Protocol Documentation](https://openvpn.net/community-resources/openvpn-protocol/)
-- [OpenVPN Source Code](https://github.com/OpenVPN/openvpn)
-- [AES-GCM](https://datatracker.ietf.org/doc/html/rfc5116)
-- [ChaCha20-Poly1305](https://datatracker.ietf.org/doc/html/rfc8439)
-- [HKDF](https://datatracker.ietf.org/doc/html/rfc5869)
+- [OpenVPN protocol overview](https://openvpn.net/community-resources/openvpn-protocol/)
+- [OpenVPN source](https://github.com/OpenVPN/openvpn) — `ssl_pkt.c` for the control-channel layout
