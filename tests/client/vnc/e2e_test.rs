@@ -1,223 +1,182 @@
-//! E2E tests for VNC client
+//! E2E tests for the VNC client
 //!
-//! These tests verify VNC client functionality by spawning the actual NetGet binary
-//! and testing client behavior as a black-box.
-//! Test strategy: Use netget binary to start VNC server + client, < 10 LLM calls total.
+//! Each test starts a mocked NetGet VNC **server** and points a mocked NetGet VNC **client** at
+//! it, so the whole exchange is determined and nothing depends on an external VNC host.
+//!
+//! All four tests were broken in the same three ways, and had been since they were written —
+//! the same copy-paste rot found in the UDP and DNS client suites:
+//!
+//! 1. The rule meant to start the **server** answered with `open_client`. Even when it matched,
+//!    no listener was ever opened.
+//! 2. That `open_client` carried no `remote_addr`, which is required, so it was rejected with
+//!    "LLM returned malformed action: open_client" before anything could happen.
+//! 3. The client configs carried **no mock at all**, while still calling `verify_mocks()`.
+//!
+//! The matcher was `on_instruction_containing("vnc")` against prompts reading "via VNC", and
+//! that comparison is a case-sensitive substring match, so it matched nothing either.
+//!
+//! `vnc_connected` firing on the client is the real assertion in every test: it can only happen
+//! if the RFB handshake against the server actually completed. The server-side event mocks are
+//! the other half — they are reachable only if the client's request crossed the wire.
 
 #[cfg(all(test, feature = "vnc"))]
 mod vnc_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
 
-    /// Test VNC client connection to a local server
-    /// LLM calls: 2 (server startup, client connection)
-    #[tokio::test]
-    async fn test_vnc_client_connect_to_server() -> E2EResult<()> {
-        // Start a VNC server listening on an available port
-        let server_config = NetGetConfig::new(
+    /// A mocked VNC server that answers one event, then stays quiet.
+    fn server_awaiting(event: &'static str, response: serde_json::Value) -> NetGetConfig {
+        NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
              Provide a 800x600 framebuffer with name 'NetGet Test VNC'.",
         )
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
+        .with_mock(move |mock| {
+            mock.on_instruction_containing("Listen on port")
+                .and_instruction_containing("VNC")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "VNC",
+                    "instruction": "Answer the client",
+                    "startup_params": {
+                        "width": 800,
+                        "height": 600,
+                        "desktop_name": "NetGet Test VNC"
+                    }
+                }]))
                 .expect_calls(1)
                 .and()
-        });
+                // Reachable only if the client's message actually arrived.
+                .on_event(event)
+                .respond_with_actions(serde_json::json!([response]))
+                .expect_calls(1)
+                .and()
+        })
+    }
 
-        let mut server = start_netget_server(server_config).await?;
+    /// The client half: connect, then run `action` once the RFB handshake completes.
+    fn connecting_client(
+        remote: String,
+        instruction: &str,
+        action: serde_json::Value,
+    ) -> NetGetConfig {
+        let instruction = instruction.to_string();
+        let prompt_instruction = instruction.clone();
+        NetGetConfig::new(format!(
+            "Connect to {remote} via VNC with no password. {prompt_instruction}"
+        ))
+        .with_mock(move |mock| {
+            mock.on_instruction_containing("Connect to")
+                .and_instruction_containing("VNC")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_client",
+                    "remote_addr": remote,
+                    "protocol": "VNC",
+                    "instruction": instruction
+                }]))
+                .expect_calls(1)
+                .and()
+                // Firing at all is the assertion: the RFB handshake completed.
+                .on_event("vnc_connected")
+                .respond_with_actions(serde_json::json!([action]))
+                .expect_calls(1)
+                .and()
+        })
+    }
 
-        // Give server time to start
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+    /// The handshake completes and the client's framebuffer request reaches the server.
+    #[tokio::test]
+    async fn test_vnc_client_connect_to_server() -> E2EResult<()> {
+        let mut server = start_netget_server(server_awaiting(
+            "vnc_framebuffer_update_request",
+            serde_json::json!({
+                "type": "vnc_render_display",
+                "commands": [
+                    {"type": "rect", "x": 0, "y": 0, "width": 800, "height": 600,
+                     "color": "#101020"}
+                ]
+            }),
+        ))
+        .await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Now start a VNC client that connects to this server
-        let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via VNC with no password. \
-             Request a framebuffer update after connecting.",
-            server.port
-        ));
+        let mut client = start_netget_client(connecting_client(
+            format!("127.0.0.1:{}", server.port),
+            "Request a framebuffer update after connecting.",
+            serde_json::json!({"type": "request_framebuffer_update", "incremental": false}),
+        ))
+        .await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let mut client = start_netget_client(client_config).await?;
-
-        // Give client time to connect and handshake
-        tokio::time::sleep(Duration::from_millis(2000)).await;
-
-        // Verify client output shows connection
-        assert!(
-            client.output_contains("connected").await,
-            "Client should show connection message. Output: {:?}",
-            client.get_output().await
-        );
-
-        println!("✅ VNC client connected to server successfully");
-
-        // Cleanup
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        // Verify mocks
         client.verify_mocks().await?;
         client.stop().await?;
-
+        server.verify_mocks().await?;
+        server.stop().await?;
         Ok(())
     }
 
-    /// Test VNC client can send pointer events
-    /// LLM calls: 2 (client startup with pointer action)
+    /// A pointer event reaches the server.
     #[tokio::test]
     async fn test_vnc_client_pointer_event() -> E2EResult<()> {
-        // Start a VNC server
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
-             Log all pointer events received.",
-        )
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
-                .expect_calls(1)
-                .and()
-        });
+        let mut server = start_netget_server(server_awaiting(
+            "vnc_pointer_event",
+            serde_json::json!({"type": "vnc_no_change"}),
+        ))
+        .await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let mut server = start_netget_server(server_config).await?;
+        let mut client = start_netget_client(connecting_client(
+            format!("127.0.0.1:{}", server.port),
+            "Click the left button at 150,120.",
+            serde_json::json!({
+                "type": "send_pointer_event", "x": 150, "y": 120, "button_mask": 1
+            }),
+        ))
+        .await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        // Client that sends a pointer event (mouse click)
-        let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via VNC. \
-             After connecting, send a pointer event (left click) at position (100, 200).",
-            server.port
-        ));
-
-        let mut client = start_netget_client(client_config).await?;
-
-        tokio::time::sleep(Duration::from_millis(2000)).await;
-
-        // Verify the client protocol is VNC
-        assert_eq!(client.protocol, "VNC", "Client should be VNC protocol");
-
-        println!("✅ VNC client sent pointer event successfully");
-
-        // Cleanup
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        // Verify mocks
         client.verify_mocks().await?;
         client.stop().await?;
-
+        server.verify_mocks().await?;
+        server.stop().await?;
         Ok(())
     }
 
-    /// Test VNC client can send key events
-    /// LLM calls: 2 (client startup with key action)
+    /// A key event reaches the server.
     #[tokio::test]
     async fn test_vnc_client_key_event() -> E2EResult<()> {
-        // Start a VNC server
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
-             Log all key events received.",
-        )
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
-                .expect_calls(1)
-                .and()
-        });
+        let mut server = start_netget_server(server_awaiting(
+            "vnc_key_event",
+            serde_json::json!({"type": "vnc_no_change"}),
+        ))
+        .await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let mut server = start_netget_server(server_config).await?;
+        let mut client = start_netget_client(connecting_client(
+            format!("127.0.0.1:{}", server.port),
+            "Press the 'a' key.",
+            serde_json::json!({"type": "send_key_event", "key": "a", "down": true}),
+        ))
+        .await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        // Client that sends key events
-        let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via VNC. \
-             After connecting, send key event for 'A' key (keysym 65) press and release.",
-            server.port
-        ));
-
-        let mut client = start_netget_client(client_config).await?;
-
-        tokio::time::sleep(Duration::from_millis(2000)).await;
-
-        // Verify client connected
-        assert!(
-            client.output_contains("connected").await,
-            "Client should connect successfully"
-        );
-
-        println!("✅ VNC client sent key events successfully");
-
-        // Cleanup
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        // Verify mocks
         client.verify_mocks().await?;
         client.stop().await?;
-
+        server.verify_mocks().await?;
+        server.stop().await?;
         Ok(())
     }
 
-    /// Test VNC client with password authentication
-    /// LLM calls: 2 (server + client with auth)
+    /// VNC password authentication.
+    ///
+    /// Ignored because the server implements security type `None` only — there is no VNC-Auth
+    /// (DES challenge/response) path for a password to exercise, so a test asserting one would
+    /// assert a feature that does not exist. This is a missing feature, not a broken test;
+    /// `src/server/vnc/CLAUDE.md` lists it under limitations. The previous reason claimed the
+    /// auth was "simplified" and "may fail with strict servers", which implied it existed.
     #[tokio::test]
-    #[ignore] // Ignore by default as VNC auth implementation is simplified
+    #[ignore = "Server implements security type None only; VNC-Auth is not implemented, so there is nothing to authenticate against."]
     async fn test_vnc_client_with_password() -> E2EResult<()> {
-        // Start a VNC server with password
-        let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via VNC with password 'test123'. \
-             Accept connections from clients with matching password.",
-        )
-        .with_mock(|mock| {
-            mock
-                .on_instruction_containing("vnc")
-                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let mut server = start_netget_server(server_config).await?;
-
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        // Client with password
-        let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via VNC with password 'test123'.",
-            server.port
-        ));
-
-        let mut client = start_netget_client(client_config).await?;
-
-        tokio::time::sleep(Duration::from_millis(2000)).await;
-
-        // Verify authentication succeeded
-        assert!(
-            client.output_contains("connected").await,
-            "Client should authenticate and connect"
-        );
-
-        println!("✅ VNC client authenticated with password successfully");
-
-        // Cleanup
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        // Verify mocks
-        client.verify_mocks().await?;
-        client.stop().await?;
-
         Ok(())
     }
 }

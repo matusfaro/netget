@@ -184,8 +184,9 @@ impl Protocol for VncClientProtocol {
                 parameters: vec![
                     Parameter {
                         name: "key".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "X11 keysym value".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "The key to send: a single character such as \"a\" or \"A\",                             a named key such as \"Enter\", \"Escape\", \"Tab\", \"Backspace\", an                             arrow (\"Left\"/\"Up\"/\"Right\"/\"Down\"), a modifier (\"Shift\",                             \"Control\", \"Alt\", \"Meta\") or a function key (\"F1\"..\"F35\"). An                             X11 keysym number is also accepted. An unrecognised value is an                             error rather than a silently-sent keysym 0"
+                            .to_string(),
                         required: true,
                     },
                     Parameter {
@@ -197,7 +198,7 @@ impl Protocol for VncClientProtocol {
                 ],
                 example: json!({
                     "type": "send_key_event",
-                    "key": 65,
+                    "key": "a",
                     "down": true
                 }),
                 log_template: None,
@@ -274,6 +275,44 @@ impl Protocol for VncClientProtocol {
                     "y": 200,
                     "button_mask": 1
                 }),
+                log_template: None,
+            },
+            // send_key_event and send_client_cut_text were declared ONLY as async actions, so
+            // answering a network event the model could move the pointer but could not press a
+            // key or set the clipboard — the executor rejects an action the event never
+            // advertised. Both have working sync executors, so the gap was purely in what was
+            // offered. Found by a test whose key press never reached the server.
+            ActionDefinition {
+                name: "send_key_event".to_string(),
+                description: "Send a key press or release to the VNC server".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "key".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "The key: a single character such as \"a\", a named key                             such as \"Enter\"/\"Escape\"/\"Tab\", an arrow, a modifier, or                             \"F1\"..\"F35\". An X11 keysym number is also accepted"
+                            .to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "down".to_string(),
+                        type_hint: "boolean".to_string(),
+                        description: "True for key press, false for key release".to_string(),
+                        required: true,
+                    },
+                ],
+                example: json!({"type": "send_key_event", "key": "a", "down": true}),
+                log_template: None,
+            },
+            ActionDefinition {
+                name: "send_client_cut_text".to_string(),
+                description: "Set the VNC server's clipboard to this text".to_string(),
+                parameters: vec![Parameter {
+                    name: "text".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Clipboard contents to send".to_string(),
+                    required: true,
+                }],
+                example: json!({"type": "send_client_cut_text", "text": "hello"}),
                 log_template: None,
             },
             ActionDefinition {
@@ -483,10 +522,15 @@ impl Client for VncClientProtocol {
                 })
             }
             "send_key_event" => {
-                let key = action
-                    .get("key")
-                    .and_then(|v| v.as_u64())
-                    .context("Missing or invalid 'key' field")? as u32;
+                // Accepts a name ("a", "Enter", "F1") or a keysym number. This is where the
+                // action is validated before dispatch, so requiring as_u64() here rejected
+                // every named key regardless of what the executor could handle.
+                let key = crate::client::vnc::resolve_keysym(
+                    action.get("key").unwrap_or(&serde_json::Value::Null),
+                )
+                .context(
+                    "Missing or invalid 'key' field: use a single character like \"a\", a name                      like \"Enter\"/\"Escape\"/\"F1\", or an X11 keysym number",
+                )?;
                 let down = action
                     .get("down")
                     .and_then(|v| v.as_bool())

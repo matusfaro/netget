@@ -24,6 +24,64 @@ use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use serde_json::Value as JsonValue;
 
+/// Resolve the `key` field of `send_key_event` to an X11 keysym.
+///
+/// Accepts a number (a keysym directly) or a **name** — a single character such as `"a"`, or a
+/// named key such as `"Enter"`, `"Escape"`, `"Tab"`, `"F1"`. The action originally took a bare
+/// number described as an "X11 keysym value", which asks a model to recall an encoding table;
+/// CLAUDE.md's action-design rule is explicit that models cannot reliably produce encoded
+/// values, and a model answering `"a"` silently sent keysym 0 because `as_u64()` on a string is
+/// `None` and the code fell through to `unwrap_or(0)`. A wrong keysym is invisible: the server
+/// receives a well-formed KeyEvent for a key nobody pressed.
+///
+/// Returns `None` for an unrecognised name so the caller can refuse rather than send keysym 0.
+#[cfg(feature = "vnc")]
+pub fn resolve_keysym(value: &serde_json::Value) -> Option<u32> {
+    if let Some(n) = value.as_u64() {
+        return u32::try_from(n).ok();
+    }
+    let name = value.as_str()?;
+
+    // ASCII printables are their own keysym (X11 keysymdef).
+    let mut chars = name.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        if c.is_ascii_graphic() || c == ' ' {
+            return Some(c as u32);
+        }
+    }
+
+    Some(match name.to_ascii_lowercase().as_str() {
+        "enter" | "return" => 0xff0d,
+        "backspace" => 0xff08,
+        "tab" => 0xff09,
+        "escape" | "esc" => 0xff1b,
+        "space" => 0x0020,
+        "delete" | "del" => 0xffff,
+        "home" => 0xff50,
+        "left" => 0xff51,
+        "up" => 0xff52,
+        "right" => 0xff53,
+        "down" => 0xff54,
+        "pageup" => 0xff55,
+        "pagedown" => 0xff56,
+        "end" => 0xff57,
+        "insert" => 0xff63,
+        "shift" => 0xffe1,
+        "control" | "ctrl" => 0xffe3,
+        "alt" => 0xffe9,
+        "meta" | "super" | "cmd" => 0xffeb,
+        other => {
+            // F1..F35
+            let n: u32 = other.strip_prefix('f')?.parse().ok()?;
+            if (1..=35).contains(&n) {
+                0xffbe + (n - 1)
+            } else {
+                return None;
+            }
+        }
+    })
+}
+
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionState {
@@ -725,7 +783,13 @@ impl VncClient {
                 stream.write_all(&msg).await?;
             }
             "send_key_event" => {
-                let key = data["key"].as_u64().unwrap_or(0) as u32;
+                let Some(key) = resolve_keysym(&data["key"]) else {
+                    anyhow::bail!(
+                        "send_key_event: unrecognised 'key' {}. Use a keysym number, a single \
+                         character like \"a\", or a name like \"Enter\"/\"Escape\"/\"F1\"",
+                        data["key"]
+                    );
+                };
                 let down = data["down"].as_bool().unwrap_or(false);
 
                 let msg = [
@@ -815,7 +879,13 @@ impl VncClient {
                 writer.write_all(&msg).await?;
             }
             "send_key_event" => {
-                let key = data["key"].as_u64().unwrap_or(0) as u32;
+                let Some(key) = resolve_keysym(&data["key"]) else {
+                    anyhow::bail!(
+                        "send_key_event: unrecognised 'key' {}. Use a keysym number, a single \
+                         character like \"a\", or a name like \"Enter\"/\"Escape\"/\"F1\"",
+                        data["key"]
+                    );
+                };
                 let down = data["down"].as_bool().unwrap_or(false);
 
                 let msg = [
