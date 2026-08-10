@@ -1,438 +1,350 @@
-//! E2E tests for AMQP server protocol
+//! E2E tests for the AMQP 0-9-1 broker.
 //!
-//! These tests verify AMQP broker functionality by starting NetGet with AMQP prompts
-//! and using lapin client library to connect and perform basic operations.
+//! Driven by `lapin`, a real AMQP client. `lapin` is the wrong library for the *server*
+//! side — it is a client and cannot implement a broker — but it is exactly the right one
+//! for the test side: if it completes a handshake, declares a queue, publishes and
+//! receives the delivery, the broker's framing is right at every layer.
 //!
-//! NOTE: AMQP broker is currently a simplified implementation. These tests verify
-//! basic protocol negotiation and connection handling.
+//! The load-bearing assertion is the last one in
+//! `test_amqp_publish_is_delivered_to_consumer`: the body the mock told the broker to
+//! deliver has to come back out of the consumer stream. Everything before it is setup
+//! that would fail the test on its own if the wire format were wrong.
 
 #![cfg(feature = "amqp")]
 
 use crate::server::helpers::*;
+use futures::StreamExt;
+use lapin::options::{BasicConsumeOptions, BasicPublishOptions, QueueDeclareOptions};
+use lapin::types::FieldTable;
+use lapin::{BasicProperties, Connection, ConnectionProperties};
 use serde_json::json;
 use std::time::Duration;
 
-/// Test that AMQP broker starts successfully (with mocks)
+const QUEUE: &str = "netget-e2e-queue";
+const CONSUMER_TAG: &str = "netget-e2e-consumer";
+const BODY: &str = "hello from lapin";
+
+fn amqp_uri(port: u16) -> String {
+    format!("amqp://127.0.0.1:{}/%2f", port)
+}
+
+/// Connect with a bounded wait so a broker that never answers fails the test instead of
+/// hanging the suite.
+async fn connect(port: u16) -> Result<Connection, String> {
+    match tokio::time::timeout(
+        Duration::from_secs(20),
+        Connection::connect(&amqp_uri(port), ConnectionProperties::default()),
+    )
+    .await
+    {
+        Ok(Ok(conn)) => Ok(conn),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("the AMQP handshake did not finish within 20s".to_string()),
+    }
+}
+
+/// A real client completes the handshake, declares a queue, consumes, publishes, and
+/// receives back exactly the body the mocked model asked the broker to deliver.
 #[tokio::test]
-async fn test_amqp_broker_starts() -> E2EResult<()> {
-    let config = NetGetConfig::new("Start an AMQP broker on port 0")
+async fn test_amqp_publish_is_delivered_to_consumer() -> E2EResult<()> {
+    let config = NetGetConfig::new(
+        "Start an AMQP broker on port 0 that accepts every client and forwards published \
+         messages to the attached consumer",
+    )
+    .with_log_level("debug")
+    .with_mock(|mock| {
+        mock.on_instruction_containing("AMQP broker")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "amqp",
+                "instruction": "Accept every connection, confirm queue declarations, accept \
+                                consumers, and forward every published message to the consumer"
+            }]))
+            .expect_calls(1)
+            .and()
+            // One decision per connection: let the client in.
+            .on_event("amqp_connection_open")
+            .respond_with_actions(json!([{"type": "amqp_connection_open_ok"}]))
+            .expect_calls(1)
+            .and()
+            // The queue name has to be echoed back or lapin rejects the declare-ok.
+            .on_event("amqp_queue_declare")
+            .respond_with_actions_from_event(|event| {
+                json!([{
+                    "type": "amqp_queue_declare_ok",
+                    "queue": event["queue"],
+                    "message_count": 0,
+                    "consumer_count": 0
+                }])
+            })
+            .expect_calls(1)
+            .and()
+            // The consumer tag has to be echoed back or lapin never matches deliveries.
+            .on_event("amqp_basic_consume")
+            .respond_with_actions_from_event(|event| {
+                json!([{
+                    "type": "amqp_basic_consume_ok",
+                    "consumer_tag": event["consumer_tag"]
+                }])
+            })
+            .expect_calls(1)
+            .and()
+            // Nothing is routed by the broker: this action is the whole delivery path.
+            .on_event("amqp_basic_publish")
+            .respond_with_actions_from_event(|event| {
+                json!([{
+                    "type": "amqp_basic_deliver",
+                    "consumer_tag": event["active_consumers"][0]["consumer_tag"],
+                    "routing_key": event["routing_key"],
+                    "body": event["body"],
+                    "content_type": "text/plain"
+                }])
+            })
+            .expect_calls(1)
+            .and()
+    });
+
+    let test_state = start_netget_server(config).await?;
+
+    let conn = connect(test_state.port)
+        .await
+        .map_err(|e| format!("AMQP handshake failed: {}", e))?;
+    println!("✓ handshake complete (Start/Tune/Open all accepted by lapin)");
+
+    let channel = conn
+        .create_channel()
+        .await
+        .map_err(|e| format!("channel.open failed: {}", e))?;
+
+    let queue = channel
+        .queue_declare(
+            QUEUE.into(),
+            QueueDeclareOptions::default(),
+            FieldTable::default(),
+        )
+        .await
+        .map_err(|e| format!("queue.declare failed: {}", e))?;
+    assert_eq!(
+        queue.name().as_str(),
+        QUEUE,
+        "the broker confirmed a different queue name than the client declared"
+    );
+    assert_eq!(queue.message_count(), 0);
+
+    let mut consumer = channel
+        .basic_consume(
+            QUEUE.into(),
+            CONSUMER_TAG.into(),
+            BasicConsumeOptions {
+                no_ack: true,
+                ..Default::default()
+            },
+            FieldTable::default(),
+        )
+        .await
+        .map_err(|e| format!("basic.consume failed: {}", e))?;
+    assert_eq!(
+        consumer.tag().as_str(),
+        CONSUMER_TAG,
+        "the broker confirmed a different consumer tag than the client asked for"
+    );
+
+    let _confirm = channel
+        .basic_publish(
+            "".into(),
+            QUEUE.into(),
+            BasicPublishOptions::default(),
+            BODY.as_bytes(),
+            BasicProperties::default(),
+        )
+        .await
+        .map_err(|e| format!("basic.publish failed: {}", e))?;
+
+    let delivery = match tokio::time::timeout(Duration::from_secs(20), consumer.next()).await {
+        Ok(Some(Ok(delivery))) => delivery,
+        Ok(Some(Err(e))) => return Err(format!("the delivery was malformed: {}", e).into()),
+        Ok(None) => return Err("the consumer stream ended before a delivery arrived".into()),
+        Err(_) => return Err("no AMQP delivery arrived within 20s".into()),
+    };
+
+    // The assertion that separates a working broker from a listening socket.
+    assert_eq!(
+        String::from_utf8_lossy(&delivery.data),
+        BODY,
+        "the consumer received a different body than the publisher sent"
+    );
+    assert_eq!(delivery.routing_key.as_str(), QUEUE);
+    assert_eq!(
+        delivery
+            .properties
+            .content_type()
+            .as_ref()
+            .map(|s| s.to_string()),
+        Some("text/plain".to_string()),
+        "content-type from the deliver action did not reach the consumer"
+    );
+    println!("✓ consumer received the published body through Basic.Deliver");
+
+    // Exercises Connection.Close -> Close-Ok.
+    let _ = conn.close(200, "test finished".into()).await;
+
+    test_state.verify_mocks().await?;
+    test_state.stop().await?;
+    Ok(())
+}
+
+/// A handler that answers `amqp_connection_open` with nothing usable must not open the
+/// broker. This is the fail-closed default: silence is a refusal, not an acceptance.
+#[tokio::test]
+async fn test_amqp_connection_refused_when_handler_makes_no_decision() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start an AMQP broker on port 0 with no connection policy")
         .with_log_level("debug")
         .with_mock(|mock| {
-            // Mock the user command interpretation
-            mock.on_instruction_containing("Start an AMQP broker")
-                .respond_with_actions(json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "AMQP",
-                        "instruction": "Run AMQP broker"
-                    }
-                ]))
-                // NOTE: // NOTE: .expect_calls() disabled
-                // .expect_calls() disabled - call counts don't work across process boundary
-                // // NOTE: .expect_calls() disabled
-                // .expect_calls(1)
+            mock.on_instruction_containing("AMQP broker")
+                .respond_with_actions(json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "amqp",
+                    "instruction": "Observe connections without deciding anything"
+                }]))
+                .expect_calls(1)
+                .and()
+                // A valid action that is not a decision about this connection.
+                .on_event("amqp_connection_open")
+                .respond_with_actions(json!([{
+                    "type": "show_message",
+                    "message": "a client is connecting"
+                }]))
+                .expect_calls(1)
                 .and()
         });
 
     let test_state = start_netget_server(config).await?;
 
-    println!("✓ AMQP broker started on port {}", test_state.port);
+    match connect(test_state.port).await {
+        Ok(_) => {
+            return Err(
+                "the broker accepted a connection although its handler made no decision".into(),
+            )
+        }
+        Err(e) => {
+            assert!(
+                e.contains("no decision"),
+                "expected the fail-closed refusal, got: {}",
+                e
+            );
+            println!("✓ connection refused with: {}", e);
+        }
+    }
 
-    // Verify mock expectations
     test_state.verify_mocks().await?;
-
     test_state.stop().await?;
     Ok(())
 }
 
-/// Test AMQP protocol is detectable from prompt keywords (with mocks)
-///
-/// Verifies that the protocol registry can detect AMQP from various keywords
-/// like "amqp", "rabbitmq", etc.
+/// An explicit refusal reaches the client with the model's own reply code and text, and
+/// is textually distinct from the silence path above.
 #[tokio::test]
-async fn test_amqp_keyword_detection() -> E2EResult<()> {
-    // Test various AMQP keywords
-    let amqp_prompts = vec![
-        "Start an AMQP broker on port 5672",
-        "Create a RabbitMQ server for message queuing",
-        "Listen via AMQP on port 0",
-        "Set up message broker on port 5672",
-    ];
+async fn test_amqp_connection_refused_by_handler() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start an AMQP broker on port 0 that rejects unknown users")
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("AMQP broker")
+                .respond_with_actions(json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "amqp",
+                    "instruction": "Refuse every connection"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("amqp_connection_open")
+                .respond_with_actions(json!([{
+                    "type": "amqp_connection_close",
+                    "reply_code": 403,
+                    "reply_text": "ACCESS_REFUSED - denied by policy"
+                }]))
+                .expect_calls(1)
+                .and()
+        });
 
-    for prompt in amqp_prompts {
-        println!("Testing prompt: {}", prompt);
+    let test_state = start_netget_server(config).await?;
 
-        let config = NetGetConfig::new(prompt)
-            .with_log_level("off")
-            .with_mock(|mock| {
-                // Mock expects any AMQP-related prompt
-                mock.on_any()
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "AMQP",
-                            "instruction": "Run AMQP broker"
-                        }
-                    ]))
-                    // NOTE: // NOTE: .expect_calls() disabled
-                    // .expect_calls() disabled - call counts don't work across process boundary
-                    // // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
-                    .and()
-            });
-
-        let test_state = start_netget_server(config).await?;
-        println!("  ✓ AMQP detected and started from: {}", prompt);
-
-        test_state.verify_mocks().await?;
-        test_state.stop().await?;
+    match connect(test_state.port).await {
+        Ok(_) => return Err("the broker accepted a connection its handler refused".into()),
+        Err(e) => {
+            assert!(
+                e.contains("denied by policy"),
+                "the handler's own reply text did not reach the client, got: {}",
+                e
+            );
+            println!("✓ handler refusal surfaced to the client: {}", e);
+        }
     }
 
-    println!("✓ AMQP keyword detection working");
+    test_state.verify_mocks().await?;
+    test_state.stop().await?;
     Ok(())
 }
 
-// ============================================================================
-// AMQP BROKER TESTS
-// ============================================================================
-
-/// Test basic AMQP connection using lapin client
-///
-/// This test verifies that:
-/// 1. AMQP broker accepts TCP connections
-/// 2. Protocol header exchange works
-/// 3. Connection.Start frame is sent
+/// A method the broker does not implement produces a channel error rather than a hang.
 #[tokio::test]
-async fn test_amqp_basic_connect() -> E2EResult<()> {
-    let config = NetGetConfig::new(
-        "Start an AMQP broker on port 0. Accept all client connections and send Connection.Start.",
-    )
-    .with_log_level("debug")
-    .with_mock(|mock| {
-        mock
-            // Mock 1: Server startup (user command)
-            .on_instruction_containing("Start an AMQP broker")
-            .respond_with_actions(json!([
-                {
+async fn test_amqp_unimplemented_method_closes_the_channel() -> E2EResult<()> {
+    let config = NetGetConfig::new("Start an AMQP broker on port 0 that accepts every client")
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("AMQP broker")
+                .respond_with_actions(json!([{
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "AMQP",
-                    "instruction": "Accept all client connections and send Connection.Start"
-                }
-            ]))
-            // NOTE: .expect_calls() disabled
-            // .expect_calls(1)
-            .and()
-            // Mock 2: Client connection received
-            .on_event("amqp_connection_received")
-            .respond_with_actions(json!([
-                {
-                    "type": "send_amqp_frame",
-                    "channel": 0,
-                    "method_name": "Connection.Start",
-                    "arguments": {
-                        "version_major": 0,
-                        "version_minor": 9,
-                        "server_properties": {
-                            "product": "NetGet-AMQP",
-                            "version": "0.1.0",
-                            "platform": "Rust"
-                        },
-                        "mechanisms": "PLAIN",
-                        "locales": "en_US"
-                    }
-                }
-            ]))
-            // NOTE: .expect_calls() disabled
-            // .expect_calls(1)
-            .and()
-    });
+                    "base_stack": "amqp",
+                    "instruction": "Accept every connection"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("amqp_connection_open")
+                .respond_with_actions(json!([{"type": "amqp_connection_open_ok"}]))
+                .expect_calls(1)
+                .and()
+        });
 
     let test_state = start_netget_server(config).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    println!(
-        "Connecting lapin client to AMQP broker on port {}",
-        test_state.port
-    );
+    let conn = connect(test_state.port)
+        .await
+        .map_err(|e| format!("AMQP handshake failed: {}", e))?;
+    let channel = conn
+        .create_channel()
+        .await
+        .map_err(|e| format!("channel.open failed: {}", e))?;
 
-    // Create AMQP client connection
-    let conn_result = tokio::time::timeout(
-        Duration::from_secs(5),
-        lapin::Connection::connect(
-            &format!("amqp://127.0.0.1:{}", test_state.port),
-            lapin::ConnectionProperties::default(),
-        ),
+    // Basic.Get is deliberately outside the implemented subset.
+    let result = tokio::time::timeout(
+        Duration::from_secs(20),
+        channel.basic_get(QUEUE.into(), lapin::options::BasicGetOptions::default()),
     )
     .await;
 
-    match conn_result {
-        Ok(Ok(_conn)) => {
-            println!("✓ Successfully connected to AMQP broker");
-            println!("✓ Protocol header exchange successful");
-            println!("✓ Connection.Start received and processed");
-        }
+    match result {
+        Ok(Ok(_)) => return Err("basic.get was answered although it is not implemented".into()),
         Ok(Err(e)) => {
-            println!(
-                "⚠ Connection failed (expected for simplified broker): {}",
-                e
+            let message = e.to_string();
+            assert!(
+                message.contains("NOT_IMPLEMENTED") || message.contains("basic.get"),
+                "expected a NOT_IMPLEMENTED channel error, got: {}",
+                message
             );
-            println!("✓ AMQP protocol header was accepted (connection attempt started)");
+            println!("✓ unimplemented method reported as: {}", message);
         }
         Err(_) => {
-            println!("⚠ Connection timeout (expected for simplified broker)");
-            println!("✓ AMQP broker is listening and accepting connections");
+            return Err(
+                "basic.get neither succeeded nor failed within 20s (the broker hung)".into(),
+            )
         }
     }
 
-    // Verify mock expectations
     test_state.verify_mocks().await?;
-
     test_state.stop().await?;
     Ok(())
 }
-
-/// Test AMQP protocol header validation
-///
-/// Verifies that the broker correctly validates the AMQP protocol header
-#[tokio::test]
-async fn test_amqp_protocol_header() -> E2EResult<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
-
-    let config =
-        NetGetConfig::new("Start an AMQP broker on port 0. Validate AMQP protocol headers.")
-            .with_log_level("debug")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Start an AMQP broker")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "AMQP",
-                            "instruction": "Validate AMQP protocol headers"
-                        }
-                    ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
-                    .and()
-                    // Mock 2: Protocol header received
-                    .on_event("amqp_connection_received")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "send_amqp_frame",
-                            "channel": 0,
-                            "method_name": "Connection.Start",
-                            "arguments": {
-                                "version_major": 0,
-                                "version_minor": 9,
-                                "server_properties": {},
-                                "mechanisms": "PLAIN",
-                                "locales": "en_US"
-                            }
-                        }
-                    ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
-                    .and()
-            });
-
-    let test_state = start_netget_server(config).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Connect raw TCP socket
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", test_state.port)).await?;
-
-    // Send AMQP 0.9.1 protocol header
-    let amqp_header = b"AMQP\x00\x00\x09\x01";
-    stream.write_all(amqp_header).await?;
-    stream.flush().await?;
-
-    println!("✓ Sent AMQP 0.9.1 protocol header");
-
-    // Try to read response (Connection.Start or error)
-    let mut buf = vec![0u8; 1024];
-    match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-        Ok(Ok(n)) if n > 0 => {
-            println!("✓ Received {} bytes response from broker", n);
-            println!("✓ AMQP protocol header accepted");
-        }
-        Ok(Ok(_)) => {
-            println!("⚠ Connection closed by broker (may be expected)");
-        }
-        Ok(Err(e)) => {
-            println!(
-                "⚠ Read error: {} (may be expected for simplified broker)",
-                e
-            );
-        }
-        Err(_) => {
-            println!("⚠ Timeout reading response (may be expected)");
-        }
-    }
-
-    // Verify mock expectations
-    test_state.verify_mocks().await?;
-
-    test_state.stop().await?;
-    Ok(())
-}
-
-/// Test invalid protocol header rejection
-#[tokio::test]
-async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
-
-    let config =
-        NetGetConfig::new("Start an AMQP broker on port 0. Reject invalid protocol headers.")
-            .with_log_level("debug")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Start an AMQP broker")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "AMQP",
-                            "instruction": "Reject invalid protocol headers"
-                        }
-                    ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
-                    .and()
-                    // Mock 2: Invalid data received - close connection
-                    .on_event("amqp_invalid_header")
-                    .respond_with_actions(json!([
-                        {
-                            "type": "close_connection"
-                        }
-                    ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(0)  // May or may not trigger depending on implementation
-                    .and()
-            });
-
-    let test_state = start_netget_server(config).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Connect raw TCP socket
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", test_state.port)).await?;
-
-    // Send invalid protocol header
-    let invalid_header = b"HTTP/1.1\r\n\r\n";
-    stream.write_all(invalid_header).await?;
-    stream.flush().await?;
-
-    println!("✓ Sent invalid protocol header");
-
-    // Connection should be closed or error returned
-    let mut buf = vec![0u8; 1024];
-    match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-        Ok(Ok(n)) if n == 0 => {
-            println!("✓ Connection closed by broker (invalid header rejected)");
-        }
-        Ok(Ok(n)) => {
-            println!("⚠ Received {} bytes (broker may send error response)", n);
-        }
-        Ok(Err(e)) => {
-            println!("✓ Read error: {} (invalid header rejected)", e);
-        }
-        Err(_) => {
-            println!("⚠ Timeout (broker may have silently dropped connection)");
-        }
-    }
-
-    // Verify mock expectations
-    test_state.verify_mocks().await?;
-
-    test_state.stop().await?;
-    Ok(())
-}
-
-// Future tests - to be implemented when full AMQP functionality is added
-/*
-#[tokio::test]
-#[ignore = "Queue operations not yet implemented"]
-async fn test_amqp_queue_declare() -> E2EResult<()> {
-    let config = NetGetConfig::new(
-        "Start an AMQP broker on port 0. \
-         Allow clients to declare durable queues. \
-         Return Queue.Declare-Ok for successful declarations."
-    )
-    .with_log_level("debug");
-
-    let test_state = start_netget_server(config).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Connect and create channel
-    let conn = lapin::Connection::connect(
-        &format!("amqp://127.0.0.1:{}", test_state.port),
-        lapin::ConnectionProperties::default(),
-    )
-    .await?;
-
-    let channel = conn.create_channel().await?;
-
-    // Declare queue
-    let queue = channel
-        .queue_declare(
-            "test_queue",
-            lapin::options::QueueDeclareOptions {
-                durable: true,
-                ..Default::default()
-            },
-            lapin::types::FieldTable::default(),
-        )
-        .await?;
-
-    assert_eq!(queue.name(), "test_queue");
-    println!("✓ Queue declared successfully");
-
-    test_state.stop().await?;
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "Publishing not yet implemented"]
-async fn test_amqp_basic_publish() -> E2EResult<()> {
-    let config = NetGetConfig::new(
-        "Start an AMQP broker on port 0. \
-         Allow publishing messages to exchanges. \
-         Route messages based on routing keys."
-    )
-    .with_log_level("debug");
-
-    let test_state = start_netget_server(config).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    let conn = lapin::Connection::connect(
-        &format!("amqp://127.0.0.1:{}", test_state.port),
-        lapin::ConnectionProperties::default(),
-    )
-    .await?;
-
-    let channel = conn.create_channel().await?;
-
-    // Publish message
-    channel
-        .basic_publish(
-            "",
-            "test_queue",
-            lapin::options::BasicPublishOptions::default(),
-            b"Hello AMQP",
-            lapin::BasicProperties::default(),
-        )
-        .await?;
-
-    println!("✓ Message published successfully");
-
-    test_state.stop().await?;
-    Ok(())
-}
-*/
