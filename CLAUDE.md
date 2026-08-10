@@ -29,20 +29,21 @@ Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/proto
 - **Experimental** — LLM-authored or newly implemented, not fully reviewed. The overwhelming
   majority (~99).
 - **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Down to
-  **3**, and each for a reason that is not "unfinished":
-  - `bluetooth_ble_beacon` — **macOS cannot do this at all.** A beacon is its advertising
+  **one**, and it is a platform limit rather than unfinished work:
+  - `bluetooth_ble_beacon` — **macOS cannot do this at all.** A beacon *is* its advertising
     payload, and `CBPeripheralManager.startAdvertising:` accepts only
     `CBAdvertisementDataLocalNameKey` and `CBAdvertisementDataServiceUUIDsKey`; every other key
-    is documented as ignored. Writing our own CoreBluetooth bindings would change nothing.
+    is documented as ignored, so writing our own CoreBluetooth bindings would change nothing.
     Linux/BlueZ *can* (`org.bluez.LEAdvertisement1` exposes `ManufacturerData`/`ServiceData`),
-    so this is implementable as a Linux-only path.
-  - `usb/smartcard` — uses `vpicc` rather than USB CCID and needs an external `vpcd` daemon.
-  - `openvpn` — was rated `Stable` and had never been validated against a real client.
+    so it is implementable as a Linux-only path if someone wants it.
 
-Ten protocols left `Incomplete` in August 2026 — `amqp`, `bgp`, `kafka`, `nfc`, `turn`, `vnc`,
-`webdav`, `webrtc`, `usb/serial`, `zookeeper` — each verified against a real client rather than
-a mock echo. Where no real client existed (BGP, Kafka) the wire format was validated against an
-independent codec or RFC-derived literal bytes, and the metadata says which.
+Twelve protocols left `Incomplete` in August 2026 — `amqp`, `bgp`, `kafka`, `nfc`, `openvpn`,
+`turn`, `usb/serial`, `usb/smartcard`, `vnc`, `webdav`, `webrtc`, `zookeeper`. Each was verified
+against a **real client** where one exists (`lapin`, `reqwest_dav`, `zookeeper-async`, `webrtc-rs`
+as a peer, a real `openvpn` 2.7.4 binary, two UDP sockets proving TURN relays a payload), and
+against an **independent codec or RFC-derived literal bytes** where none does (BGP via
+`netgauze`, Kafka via `kafka-protocol`'s client-side codecs). Each `metadata()` note says which,
+and what is still untested.
 
 Derive these rather than trusting the counts, which drift. **Match the fully-qualified form
 too** — roughly half the protocols write `crate::protocol::metadata::DevelopmentState::X`, and a
