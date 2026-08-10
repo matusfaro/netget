@@ -1,168 +1,225 @@
 # Kafka Protocol Implementation
 
-## Status: INCOMPLETE — hidden from the LLM
+## Status: EXPERIMENTAL
 
-`DevelopmentState::Incomplete` (`src/server/kafka/actions.rs`), so `is_available_to_llm()`
-returns false. It was previously `Experimental` with `llm_control("Message routing, topic
-management, consumer offsets")` — a claim with no code behind it.
+`DevelopmentState::Experimental` (`src/server/kafka/actions.rs`). It was `Incomplete` until
+this pass, for three disqualifying reasons that are all fixed: ApiVersions advertised an
+empty API list so no client could negotiate, every decode and encode was hardcoded to
+version 0 so every request body after `client_id` was garbage, and the LLM was never called
+so all nine actions and all four event types were dead.
 
-**No real Kafka client can use this broker, and the LLM controls none of it.**
+Not validated against librdkafka or the Java client — see [Testing](#testing) for what *was*
+validated and how.
 
-## Why it is Incomplete
+## Supported surface — this is the whole of it
 
-### 1. No client gets past the first request
+| API | key | versions | answered by |
+|---|---|---|---|
+| ApiVersions  | 18 | 0–3  | Rust, no LLM call |
+| Metadata     | 3  | 0–8  | LLM / script / static handler |
+| Produce      | 0  | 0–8  | LLM / script / static handler |
+| Fetch        | 1  | 0–11 | LLM / script / static handler |
+| OffsetCommit | 8  | 0–7  | LLM / script / static handler |
 
-`handle_api_versions` (`mod.rs`) returns `ApiVersionsResponse::default()`, whose
-`api_keys` list is empty. ApiVersions is the first thing every Kafka client sends; an
-empty list means "supports nothing", and the client aborts. `tests/server/kafka/e2e_test.rs`
-documents the symptom in its header comment: rdkafka crashes against this server, so all
-three tests assert only that `TcpStream::connect` succeeds — they would pass against `nc -l`.
+`SUPPORTED_APIS` in `mod.rs` is the single source of truth: ApiVersions is generated from
+it and the dispatcher validates against it, so the advertised table and the implemented set
+cannot drift apart.
 
-### 2. The API version is ignored everywhere
+The version ceilings each sit one below that message's first *flexible* (tagged-field)
+version, and below the versions that replace topic names with topic UUIDs
+(Metadata v10+, Fetch v13+). Higher versions are refused rather than mis-encoded.
 
-Every `decode`/`encode` call passes a hardcoded `0`:
+**Not implemented, and not advertised**: `ListOffsets`, `FindCoordinator`, `JoinGroup`,
+`SyncGroup`, `Heartbeat`, `LeaveGroup`, `OffsetFetch`, and every admin API. The practical
+consequence is worth stating plainly:
 
-- `RequestHeader::decode(&mut cursor, 0)` — five call sites
-- `MetadataRequest`/`ProduceRequest`/`FetchRequest`/`OffsetCommitRequest::decode(..., 0)`
-- every response `encode(&mut buf, 0)`
+- **Consumer groups do not work.** Group coordination needs FindCoordinator/JoinGroup/
+  SyncGroup/Heartbeat. A consumer must use manual partition assignment.
+- **`auto.offset.reset` cannot be resolved**, because that needs ListOffsets. A consumer
+  must fetch from an explicit offset.
+- A committed offset is acknowledged and then forgotten, because there is no storage and
+  OffsetFetch does not exist.
 
-`header.request_api_version` is never read. Request header **v0 does not carry
-`client_id`** (`kafka-protocol` gates it on `version >= 1`), but every real client sends
-v1 or v2. So the cursor is left sitting on the `client_id` length prefix and each request
-body is parsed starting inside that string: topic names, partition indices and offsets are
-all garbage. Responses are encoded at v0 no matter what the client negotiated, so a client
-that asked for, say, Metadata v12 (flexible encoding, tagged fields, topic UUIDs) receives
-a v0 body and desynchronises.
+## What happens to everything else
 
-Knock-on effect: `MetadataResponse::encode` gates `cluster_id` on `version >= 2` and
-`controller_id` on `version >= 1`, so the `cluster_id` startup parameter never reaches the
-wire at all.
+Nothing is answered with a body this broker cannot build correctly.
 
-### 3. The LLM is never called
+- **Unknown API key** → ERROR log + status message, connection closed.
+- **Known API key at an unsupported version** → same. Real brokers close the connection
+  here too.
+- **ApiVersions at an unsupported version** → the one exception, and it is Kafka's own
+  rule: reply `UNSUPPORTED_VERSION` (35) *plus the supported-API table*, both encoded at
+  v0, which every client can parse. That is how a client steps down to a version this
+  broker implements. Encoding that reply at the requested version would leave the client
+  unable to read the message telling it what to do.
 
-`handle_metadata`, `handle_produce`, `handle_fetch` and `handle_offset_commit` all take
-`_llm_client`, `_app_state`, `_server_id` and `_protocol` and use none of them. There is no
-`call_llm`, no `Event::new`, and no read of `ExecutionResult::protocol_results` anywhere in
-the module. Therefore:
+The old `create_error_response`, which wrote a bare `i16` as an entire response body — not
+a valid body for any Kafka API — is gone.
 
-- the server `instruction` has no effect on any byte on the wire;
-- **`event_handlers` are silently inert** — script and static dispatch happens inside
-  `call_llm`, which is never reached. A user configures a handler, gets no error, and gets
-  hardcoded behaviour. `get_startup_examples` still advertises exactly this;
-- all nine declared actions (`produce_response`, `fetch_response`, `metadata_response`,
-  `offset_commit_response`, `error_response`, `publish_message`, `create_topic`,
-  `delete_topic`, `set_retention`) are dead: `execute_action` builds an
-  `ActionResult::Custom` that nothing consumes, so **every documented field of every action
-  is ignored**. The action `log_template` is still rendered on success, so the TUI prints
-  `-> Kafka produce OK offset=42` while the client receives an offset computed elsewhere;
-- all four declared event types (`kafka_produce_request`, `kafka_fetch_request`,
-  `kafka_metadata_request`, `kafka_offset_commit_request`) are never constructed. Their
-  documented parameters, including `first_value_preview` (`required: true`), cannot be
-  produced.
+## Version handling
 
-### 4. It stores broker state in Rust
+`api_key`, `api_version` and `correlation_id` are read from fixed offsets in the first
+eight bytes, before any decode. Then:
 
-Against the project's no-storage rule:
+- request header ← `ApiKey::request_header_version(api_version)`
+- request body ← `api_version`, decoded from the *same cursor* the header left
+- response header ← `ApiKey::response_header_version(api_version)`
+- response body ← `api_version`
 
-```rust
-topics: Arc<RwLock<HashMap<String, Vec<Vec<KafkaRecord>>>>>,
-consumer_offsets: Arc<RwLock<HashMap<String, HashMap<String, HashMap<i32, i64>>>>>,
-```
+Because `correlation_id` sits at a fixed offset in every request header version, the error
+paths echo it without having decoded a header. `correlation_id` is echoed on every path,
+including the ones that then close the connection.
 
-Topics are auto-created on produce, records are pushed and never evicted, and consumer
-group offsets accumulate — all keyed by unauthenticated network input. `log_retention_hours`
-and `auto_create_topics` are both parsed, stored as `_`-prefixed fields, and never read:
-setting `auto_create_topics: false` does nothing, because topics are created
-unconditionally.
+## LLM integration
 
-This is left in place rather than half-removed: deleting it without the LLM path would
-leave a broker that answers nothing at all. It is step 2 of the work below.
+Each request unit raises one event through `call_llm`, which is also where script and
+static `event_handlers` are dispatched — so all three handling modes work here exactly as
+they do elsewhere.
 
-## Correlation identifiers
+| Event | raised | expects |
+|---|---|---|
+| `kafka_metadata_request`      | once per Metadata request | `metadata_response` |
+| `kafka_produce_request`       | once per (topic, partition) | `produce_response` |
+| `kafka_fetch_request`         | once per (topic, partition) | `fetch_response` |
+| `kafka_offset_commit_request` | once per (topic, partition) | `offset_commit_response` |
 
-`correlation_id` is the one thing this module gets right. It is read from the request
-header and echoed into every response header — metadata, produce, fetch, offset-commit and
-the error path. It is not exposed to any handler, because no event is emitted.
+`error_response` is accepted for all four. The first recognised action wins, so a refusal
+is never overridden by a later success.
 
-`api_key` is used for dispatch and correctly not echoed (Kafka responses do not carry it).
-`api_version` is the broken one — see above.
+A Produce or Fetch naming many partitions therefore costs many model round trips.
+`MAX_UNITS_PER_REQUEST` (64) caps that; units beyond it are rejected with
+`UNKNOWN_SERVER_ERROR` without consulting the model, so an attacker cannot use one frame to
+amplify requests against the model backend.
 
-## Crash and DoS defects fixed while auditing
+There are **no async actions**. Kafka is pull-based — a broker cannot push a record to a
+consumer, only answer a Fetch — and this broker stores nothing, so there is no topic list
+to create or delete against. The previous `publish_message`, `create_topic`, `delete_topic`
+and `set_retention` had no implementation and could not have had one; they are deleted
+rather than left as documentation of a lie.
 
-These were live regardless of the maturity label, since the port can still be opened
-explicitly:
+## Failure is refusal
 
-- **Remote panic from four bytes.** A size prefix of `00 00 00 00` made
-  `buffer.resize(0, 0)` shrink the read buffer permanently; the next loop iteration
-  indexed `buffer[..4]` and panicked with "range end index 4 out of range for slice of
-  length 0". Sizes 1-3 did the same. The panic sat inside a detached `tokio::spawn`, so it
-  was swallowed while the connection stayed `Active` and the server stayed `Running`.
-  Fixed: the prefix is read into a fixed `[u8; 4]` with `read_exact`, and the buffer only
-  ever grows.
-- **Remote OOM / process abort.** `i32::from_be_bytes(...) as usize` sign-extends, so a
-  prefix of `80 00 00 00` became ~1.8e19 and aborted on `Vec::resize`; `7F FF FF FF`
-  zeroed 2 GiB per connection. Fixed: sizes are validated against `MIN_REQUEST_BYTES`
-  (8, the header minimum) and `MAX_REQUEST_BYTES` (100 MiB, matching Kafka's
-  `socket.request.max.bytes`) before any allocation.
-- **Unbounded loop on a wire-supplied partition index.** `while partitions.len() <=
-  partition_idx as usize` with `partition_idx = -1` (`usize::MAX` after the cast) pushed
-  `Vec::new()` until the allocator aborted; `2_000_000_000` is a legal i32 asking for
-  ~48 GB. Fixed: indices outside `0..=MAX_PARTITIONS` (1024) are rejected with error code
-  3 (UNKNOWN_TOPIC_OR_PARTITION).
-- **Panic from a startup parameter.** `default_partitions` comes from LLM or MCP JSON and
-  reached `vec![Vec::new(); n as usize]`; `-1` aborted the process. Fixed: clamped to
-  `1..=MAX_PARTITIONS`.
-- **TRACE hex amplification.** `hex::encode` doubles the payload, so a maximum-size
-  request built a 200 MiB `String` on an unbounded status channel. Fixed: capped at
-  `MAX_TRACE_HEX_BYTES` (4 KiB).
-- **Short read on the size prefix.** `read` (not `read_exact`) can return 1-3 bytes; all
-  four were parsed anyway, mixing in stale bytes. Fixed.
-- **Hot accept loop.** An accept error logged and continued with no backoff or break, so a
-  persistent EMFILE saturated a core and flooded the unbounded status channel. Fixed: the
-  loop breaks.
-- **Connections never removed.** Entries were added to server state and never marked
-  closed, so the TUI accumulated `Active` connections for dead sockets. Fixed in the accept
-  loop's spawn wrapper.
+If the model returns nothing usable, the client gets the correct response *type* carrying
+`UNKNOWN_SERVER_ERROR` (-1). Silence never becomes success:
 
-## Known defects still open
+- Produce: `error_code = -1`, `base_offset = -1`.
+- Fetch: `error_code = -1`, empty record set.
+- OffsetCommit: `error_code = -1`.
+- Metadata: every topic the client *asked about* comes back with -1. A topic the client
+  asked about that the model simply did not describe comes back `UNKNOWN_TOPIC_OR_PARTITION`
+  (3) — omission is reported, never silently dropped.
 
-- Unsupported APIs get `create_error_response`, which writes a bare `i16` error code as
-  the entire response body. That is not a valid body for any Kafka API — most begin with
-  `throttle_time_ms` (i32) — so the client misparses it. The `encode` error is also
-  discarded with `let _ =`.
-- A record batch that fails to parse is replaced by an **empty placeholder record** and the
-  producer is told `error_code(0)` — success. This path is hit by *any* compressed batch
-  (`decode_with_custom_compression` is passed `None`, so gzip/snappy/lz4/zstd all fail) and
-  by any CRC mismatch. It should return `CORRUPT_MESSAGE` (2).
-- Per-connection byte and packet counters are never updated, so connection stats read zero.
+An `error_response` carrying `error_code: 0` is a contradiction and is rewritten to -1 with
+a WARN, so a refusal can never be mistaken for an acknowledgement.
 
-## Route to Experimental
+**The one default.** A Metadata reply always carries at least one broker, and if the model
+names none it is this server's own `advertised_host` and bound port, with `broker_id` as the
+node id and the default partition leader. That is transport truth the model has no way to
+know, and no client can proceed without it. A topic the model lists with zero partitions is
+given one partition led by this broker for the same reason (logged at DEBUG). Neither
+invents a topic; both only make a topic the model *did* declare usable.
 
-1. Decode the request header at the version implied by `(api_key, api_version)`, pass
-   `header.request_api_version` to every body decode and response encode, and populate
-   `ApiVersionsResponse.api_keys` with the ranges actually supported. Verify with a real
-   rdkafka client, not a TCP connect.
-2. Delete `topics` and `consumer_offsets` and the hardcoded response logic. Emit the four
-   already-declared events via `call_llm` and consume `ActionResult::Custom` in `mod.rs`
-   for the nine already-declared actions. This one change fixes LLM integration, action
-   liveness and the storage violation together.
-3. Fix `create_error_response` to emit a valid body per API, and return a real error code
-   for unparseable record batches.
-4. Rewrite `tests/server/kafka/e2e_test.rs` to exercise Kafka bytes and to call
-   `server.verify_mocks().await?`, which it currently never does.
+## No storage
 
-## Startup Parameters
+`topics` and `consumer_offsets` — an in-Rust broker database written from unauthenticated
+network input and never evicted — are gone. `KafkaServer` now holds `cluster_id`,
+`broker_id` and `advertised_host`, all fixed at startup.
 
-Parsed by `spawn_with_llm_actions`:
+There is no per-connection or per-server offset bookkeeping either. A Fetch returns exactly
+the records the handler supplied for that request; if the model wants a consumer to advance,
+it returns different records next time. The only transport state is the record offsets
+*within one response*, which are derived from the request's `fetch_offset` and not retained.
 
-- `cluster_id` (string, default `"netget-kafka-1"`) — stored; never reaches the wire,
-  because `MetadataResponse` v0 does not encode it
-- `broker_id` (number, default 0) — used in metadata responses
-- `auto_create_topics` (boolean, default true) — **parsed and never read**; topics are
-  auto-created unconditionally
-- `default_partitions` (number, default 1) — used, now clamped to `1..=1024`
-- `log_retention_hours` (number, default 168) — **parsed and never read**; no retention
-  logic exists
+## Record encoding
+
+Record keys and values are bytes; models cannot produce or read base64. Following the
+pattern TCP settled on, the encoding is stated explicitly rather than sniffed:
+
+- **Inbound** (produce events): each record carries `key`/`value` plus `key_encoding`/
+  `value_encoding`, which is `"utf8"` when the bytes were printable text and `"hex"`
+  otherwise. Values are truncated to 1 KiB and at most 20 records are described.
+- **Outbound** (`fetch_response`): each record may carry `key_encoding`/`value_encoding`
+  (or a single `encoding` for both), defaulting to `"utf8"`. `"hex"` **is** decoded —
+  `decode_field` is the executor, so the documented encoding and the implementation agree.
+  Invalid hex fails the whole partition with `UNKNOWN_SERVER_ERROR` rather than putting
+  literal ASCII on the wire.
+
+Fetch offsets are made contiguous from the batch base, which is never below the request's
+`fetch_offset`. Kafka's v2 batch stores per-record offset *deltas* and the encoder requires
+`offset - sequence` to be constant across a batch, so honouring arbitrary gaps would split
+or corrupt it. A rewritten offset is logged at DEBUG.
+
+## Startup parameters
+
+- `cluster_id` (string, default `"netget-kafka-1"`) — reaches the wire at Metadata v2+;
+  earlier Metadata versions have no such field.
+- `broker_id` (number, default 0) — node id, controller id and default partition leader.
+- `advertised_host` (string) — host advertised in Metadata when the model names no broker.
+  Defaults to the bound IP, or `localhost` when bound to a wildcard address, because
+  `0.0.0.0` is not a connectable address.
+
+`auto_create_topics`, `default_partitions` and `log_retention_hours` are **removed**. All
+three were parsed and never read, and with no storage none of them has a meaning. Passing
+one now produces a clean startup error naming the key.
+
+## Bounds and DoS surface
+
+Kept from the earlier audit and still enforced:
+
+- Size prefix read with `read_exact` into a fixed `[u8; 4]`; validated against
+  `MIN_REQUEST_BYTES` (8) and `MAX_REQUEST_BYTES` (100 MiB) **in i64** before any
+  allocation, so neither sign extension nor `4 + len` can wrap. The read buffer only ever
+  grows.
+- Partition indices outside `0..=MAX_PARTITIONS` (1024) are rejected with error 3, on both
+  the produce path and the metadata path.
+- TRACE hex dumps capped at `MAX_TRACE_HEX_BYTES` (4 KiB) in both directions.
+- Accept loop breaks on error instead of spinning.
+- Connections are marked `Closed` when their task ends.
+
+Added this pass:
+
+- `MAX_UNITS_PER_REQUEST` (64) caps model round trips per frame.
+- `MAX_RECORDS_PER_FETCH` (1000) and `MAX_FETCH_PAYLOAD_BYTES` (8 MiB) cap what a handler
+  can make the broker encode.
+- Byte and packet counters are now updated, so connection stats no longer read zero.
+- A record batch that fails to decode returns `CORRUPT_MESSAGE` (2). It used to be replaced
+  by an empty placeholder record and acknowledged with `error_code(0)` — the producer was
+  told its data was durable after it had been silently dropped.
+
+There are no `unwrap()`s on parsed bytes anywhere in the module.
+
+## Compression
+
+`RecordBatchDecoder::decode_with_custom_compression(.., None)` selects `kafka-protocol`'s
+built-in codecs, and the crate's default features enable gzip, snappy, lz4 and zstd. An
+earlier note in this file claimed passing `None` made every compressed batch fail; that was
+wrong — `None` means "use the built-ins", not "no decompression".
+
+## Testing
+
+`tests/server/kafka/e2e_test.rs`, 2 tests, ~1-2 s, 7 LLM calls.
+
+There is no usable pure-Rust Kafka client here (`rdkafka` was removed for malloc aborts;
+adding a dev-dependency would mean editing `Cargo.toml`), so the tests build requests and
+decode responses with `kafka-protocol`'s **client-side** codecs — the opposite direction
+from this module's encoders — reached through the `pub use kafka_protocol;` re-export in
+`mod.rs`. That validates NetGet's framing, version negotiation, dispatch, event emission
+and action handling against schemas generated from Apache Kafka's own message definitions.
+It does **not** validate those schemas, and it is not a substitute for driving a real
+client. See `tests/server/kafka/CLAUDE.md`.
+
+## Route to Beta
+
+1. Drive it with a real client (librdkafka via a scratch binary, or the Java console
+   producer/consumer) and fix what breaks.
+2. Add `ListOffsets` so `auto.offset.reset` resolves; that alone makes a normal
+   assign-based consumer work out of the box.
+3. Add `FindCoordinator` + `JoinGroup` + `SyncGroup` + `Heartbeat` + `OffsetFetch` if
+   consumer groups are wanted. This is the large one, and it needs the model to hold group
+   state across requests — server memory rather than Rust storage.
+4. Raise the version ceilings past the flexible boundary (Metadata v9+, Produce v9+,
+   Fetch v12+), which mostly means testing tagged-field encoding, and past the topic-UUID
+   boundary, which needs a UUID the model chooses per topic.
 
 ## References
 

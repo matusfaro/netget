@@ -1,69 +1,96 @@
-//! Kafka broker — INCOMPLETE, no LLM integration and no working handshake
+//! Kafka broker — Rust owns the wire format, the LLM owns the content.
 //!
-//! `DevelopmentState::Incomplete` (see `actions.rs`), so it is hidden from the LLM.
-//! Three independent reasons, any one of which is disqualifying:
+//! # What this broker supports
 //!
-//! 1. **No client can negotiate.** `handle_api_versions` returns
-//!    `ApiVersionsResponse::default()`, whose `api_keys` list is empty. ApiVersions is
-//!    the first request every Kafka client sends; an empty list means "this broker
-//!    supports nothing" and the client gives up. `tests/server/kafka/e2e_test.rs`
-//!    records the symptom — rdkafka crashes against this server, so the tests fall
-//!    back to asserting that a TCP connect succeeds.
+//! A deliberately narrow subset of the Kafka protocol: enough for a client to complete
+//! its opening sequence (ApiVersions → Metadata) and then produce and fetch records.
 //!
-//! 2. **The API version is ignored everywhere.** Every `decode`/`encode` call below
-//!    passes a hardcoded version 0. Request header v0 does not carry `client_id`
-//!    (`kafka-protocol` gates it on `version >= 1`), so for the header v1/v2 that real
-//!    clients send, the cursor is left inside the `client_id` string and every body
-//!    field after it — topic names, partition indices, offsets — is garbage. Responses
-//!    are likewise encoded at v0 whatever the client asked for.
+//! | API | key | versions | answered by |
+//! |---|---|---|---|
+//! | ApiVersions  | 18 | 0–3  | Rust (pure transport negotiation, no LLM call) |
+//! | Metadata     | 3  | 0–8  | LLM / script / static handler |
+//! | Produce      | 0  | 0–8  | LLM / script / static handler |
+//! | Fetch        | 1  | 0–11 | LLM / script / static handler |
+//! | OffsetCommit | 8  | 0–7  | LLM / script / static handler |
 //!
-//! 3. **The LLM is never called.** `handle_metadata`, `handle_produce`, `handle_fetch`
-//!    and `handle_offset_commit` all take `_llm_client`, `_app_state`, `_server_id` and
-//!    `_protocol` and use none of them. Every response is computed by the hardcoded
-//!    Rust below. Consequently all nine actions in `actions.rs` are dead code, none of
-//!    the four declared event types is ever constructed, and — because handler
-//!    dispatch lives inside `call_llm` — script and static `event_handlers` never fire.
+//! Everything else — `ListOffsets`, `FindCoordinator`, `JoinGroup`, `SyncGroup`,
+//! `Heartbeat`, `OffsetFetch`, the admin APIs — is **not implemented**. Those keys are
+//! not advertised in ApiVersions, and if a client sends one anyway the connection is
+//! closed with an ERROR log rather than answered with a body this broker cannot build
+//! correctly. The practical consequence: a consumer must use manual partition
+//! assignment and an explicit fetch offset. Consumer *groups* do not work, because
+//! group coordination needs the APIs above.
 //!
-//! It also violates the project's no-storage rule outright: `topics` and
-//! `consumer_offsets` are a real in-Rust broker database, written from unauthenticated
-//! network input and never evicted. That is deliberately left in place rather than
-//! half-removed, because ripping it out without the LLM path would leave a server that
-//! answers nothing at all. Removing it is step 2 of the work described in CLAUDE.md.
+//! The version ceilings are all one below the first *flexible* (tagged-field) version of
+//! each message, and below the versions that replace topic names with topic UUIDs. That
+//! is the subset that has been exercised end to end.
 //!
-//! What *was* fixed here is the crash and denial-of-service surface, which was live
-//! regardless of the maturity label: see `MIN_REQUEST_BYTES`, `MAX_REQUEST_BYTES`,
-//! `MAX_PARTITIONS` and `MAX_TRACE_HEX_BYTES`.
+//! # Version handling
 //!
-//! Correlation: `correlation_id` is the one thing this module gets right — it is
-//! parsed from the request header and echoed into every response header. It is not
-//! exposed to any handler, because no event is emitted.
+//! `api_key` and `api_version` are read from the first four bytes of the frame, the
+//! request header is decoded at `ApiKey::request_header_version(api_version)`, the body
+//! at `api_version`, and the response header at
+//! `ApiKey::response_header_version(api_version)`. Nothing is hardcoded to version 0.
+//! `correlation_id` sits at a fixed offset in every request header version, so the error
+//! paths can echo it without having decoded the header.
 //!
-//! Uses the kafka-protocol crate for wire format parsing/serialization.
+//! # No storage
+//!
+//! This module keeps no topics, no log and no consumer offsets. Every produce, fetch,
+//! metadata and offset-commit answer comes from an action returned by the LLM, a script
+//! handler or a static handler. A Fetch returns exactly the records the model supplied
+//! for that request. There is no per-connection or per-server bookkeeping of offsets:
+//! the only state is `cluster_id`, `broker_id` and the advertised host, all fixed at
+//! startup.
+//!
+//! # Failure is refusal, never a default answer
+//!
+//! If the model (or handler) returns nothing usable, the client gets the correct
+//! response *type* carrying `UNKNOWN_SERVER_ERROR` (-1). A model that wants to refuse
+//! uses the `error_response` action and picks its own Kafka error code, which is a
+//! structurally different path from silence. Nothing is ever invented to keep a client
+//! happy — with one documented exception: the broker list in a Metadata response
+//! defaults to this server's own listen address, because that is transport truth the
+//! model has no way to know and no client can proceed without it.
 
 pub mod actions;
 
+/// Re-export of the wire library.
+///
+/// Integration tests decode this broker's responses with `kafka-protocol`'s own
+/// code-generated client-side decoders — the opposite direction from the encoders used
+/// here — which is not possible from `tests/` unless the crate is reachable through
+/// `netget`. It is not a dev-dependency and adding one would mean touching `Cargo.toml`.
+pub use kafka_protocol;
+
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::KafkaProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_trace};
+use crate::{console_debug, console_error, console_trace, console_warn};
+use actions::{
+    FETCH_REQUEST_EVENT, METADATA_REQUEST_EVENT, OFFSET_COMMIT_REQUEST_EVENT, PRODUCE_REQUEST_EVENT,
+};
 use anyhow::Result;
 use bytes::Bytes;
 use kafka_protocol::messages::{
-    ApiKey, ApiVersionsResponse, FetchRequest, FetchResponse, MetadataRequest, MetadataResponse,
-    OffsetCommitRequest, OffsetCommitResponse, ProduceRequest, ProduceResponse, RequestHeader,
-    ResponseHeader,
+    ApiKey, ApiVersionsResponse, BrokerId, FetchRequest, FetchResponse, MetadataRequest,
+    MetadataResponse, OffsetCommitRequest, OffsetCommitResponse, ProduceRequest, ProduceResponse,
+    RequestHeader, ResponseHeader,
 };
-use kafka_protocol::protocol::{Decodable, Encodable};
+use kafka_protocol::protocol::{Decodable, Encodable, StrBytes};
 use kafka_protocol::records::{
-    Compression, Record, RecordBatchDecoder, RecordBatchEncoder, RecordEncodeOptions,
+    Compression, Record, RecordBatchDecoder, RecordBatchEncoder, RecordEncodeOptions, TimestampType,
 };
-use std::collections::HashMap;
+use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 /// Smallest useful Kafka request: api_key (i16) + api_version (i16) + correlation_id (i32).
@@ -77,40 +104,80 @@ const MAX_REQUEST_BYTES: usize = 100 * 1024 * 1024;
 /// Cap on how much of a request is hex-dumped at TRACE level.
 const MAX_TRACE_HEX_BYTES: usize = 4096;
 
-/// Upper bound on partitions the broker will materialise for one topic. The
-/// partition index arrives on the wire as an i32 and was used directly to size a
-/// Vec, so -1 (`usize::MAX` after the cast) looped until the allocator aborted.
+/// Upper bound on a partition index this broker will talk about. Partition indices
+/// arrive as unvalidated i32s and are used to size and index collections.
 const MAX_PARTITIONS: i32 = 1024;
 
-/// Kafka broker server state
-pub struct KafkaServer {
-    /// Cluster ID
-    cluster_id: String,
-    /// Broker ID
-    broker_id: i32,
-    /// Auto-create topics on first produce
-    _auto_create_topics: bool,
-    /// Default partition count
-    default_partitions: i32,
-    /// Log retention hours
-    _log_retention_hours: i64,
-    /// Topic storage: topic_name -> partitions -> (offset, Vec<records>)
-    topics: Arc<RwLock<HashMap<String, Vec<Vec<KafkaRecord>>>>>,
-    /// Consumer group offsets: group_id -> topic -> partition -> offset
-    consumer_offsets: Arc<RwLock<HashMap<String, HashMap<String, HashMap<i32, i64>>>>>,
+/// Upper bound on how many (topic, partition) units one request may contain. Each unit
+/// costs one LLM round trip, so an attacker naming 100k partitions in one Produce would
+/// otherwise be a request amplifier against the model backend.
+const MAX_UNITS_PER_REQUEST: usize = 64;
+
+/// Upper bound on records encoded into one Fetch response partition.
+const MAX_RECORDS_PER_FETCH: usize = 1000;
+
+/// Upper bound on the total record payload encoded into one Fetch response partition.
+const MAX_FETCH_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+/// How many produced records are described to the model in one `kafka_produce_request`
+/// event, and how many bytes of each. Prompts, not wire limits.
+const MAX_EVENT_RECORDS: usize = 20;
+const MAX_EVENT_VALUE_BYTES: usize = 1024;
+
+// Kafka error codes used by this module. See
+// <https://kafka.apache.org/protocol.html#protocol_error_codes>.
+const ERR_UNKNOWN_SERVER_ERROR: i16 = -1;
+const ERR_NONE: i16 = 0;
+const ERR_CORRUPT_MESSAGE: i16 = 2;
+const ERR_UNKNOWN_TOPIC_OR_PARTITION: i16 = 3;
+const ERR_UNSUPPORTED_VERSION: i16 = 35;
+
+/// The API keys this broker implements, with the version range it implements for each.
+///
+/// This table is the single source of truth: it is what ApiVersions advertises and what
+/// the dispatcher validates against, so the two can never disagree.
+pub const SUPPORTED_APIS: &[(i16, i16, i16)] = &[
+    (ApiKey::Produce as i16, 0, 8),
+    (ApiKey::Fetch as i16, 0, 11),
+    (ApiKey::Metadata as i16, 0, 8),
+    (ApiKey::OffsetCommit as i16, 0, 7),
+    (ApiKey::ApiVersions as i16, 0, 3),
+];
+
+/// Version range this broker implements for `api_key`, if any.
+pub fn supported_versions(api_key: i16) -> Option<(i16, i16)> {
+    SUPPORTED_APIS
+        .iter()
+        .find(|(k, _, _)| *k == api_key)
+        .map(|(_, min, max)| (*min, *max))
 }
 
-/// Kafka record (simplified)
-#[derive(Debug, Clone)]
-struct KafkaRecord {
-    offset: i64,
-    key: Option<Vec<u8>>,
-    value: Vec<u8>,
-    timestamp: i64,
+/// Kafka broker server state.
+///
+/// Deliberately tiny: everything here is fixed at startup and describes *this process*,
+/// not the contents of any topic. There is no log and no offset store; see the module
+/// docs.
+pub struct KafkaServer {
+    /// Cluster ID reported in Metadata (v2+ only; earlier versions have no such field).
+    cluster_id: String,
+    /// Broker ID reported in Metadata and used as the default partition leader.
+    broker_id: i32,
+    /// Host advertised to clients in Metadata when the model does not name one.
+    advertised_host: String,
+}
+
+/// What the model said about one request unit.
+enum Reply {
+    /// The expected response action, with its parameters.
+    Data(Value),
+    /// An explicit `error_response` with a model-chosen Kafka error code.
+    Error(i16),
+    /// Nothing usable came back. Never treated as approval.
+    NoAnswer,
 }
 
 impl KafkaServer {
-    /// Spawn Kafka server with LLM integration
+    /// Spawn Kafka broker with LLM integration
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -119,7 +186,6 @@ impl KafkaServer {
         server_id: crate::state::ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
-        // Extract startup parameters with defaults
         let cluster_id = startup_params
             .as_ref()
             .map(|p| p.get_optional_string("cluster_id"))
@@ -131,59 +197,49 @@ impl KafkaServer {
             .map(|p| p.get_optional_i64("broker_id"))
             .transpose()?
             .flatten()
-            .unwrap_or(0) as i32;
-        let auto_create_topics = startup_params
+            .unwrap_or(0)
+            .clamp(0, i32::MAX as i64) as i32;
+        let advertised_host_param = startup_params
             .as_ref()
-            .map(|p| p.get_optional_bool("auto_create_topics"))
+            .map(|p| p.get_optional_string("advertised_host"))
             .transpose()?
-            .flatten()
-            .unwrap_or(true);
-        // Clamped, not cast: this value comes from LLM or MCP-client JSON, and
-        // `vec![Vec::new(); n as usize]` aborts the process on a negative n.
-        let default_partitions = startup_params
-            .as_ref()
-            .map(|p| p.get_optional_i64("default_partitions"))
-            .transpose()?
-            .flatten()
-            .unwrap_or(1)
-            .clamp(1, MAX_PARTITIONS as i64) as i32;
-        let log_retention_hours = startup_params
-            .as_ref()
-            .map(|p| p.get_optional_i64("log_retention_hours"))
-            .transpose()?
-            .flatten()
-            .unwrap_or(168);
+            .flatten();
 
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
+
+        // A client connects to whatever host the Metadata response names. If we are
+        // bound to a wildcard address, the bound IP is not connectable, so fall back to
+        // localhost rather than advertising 0.0.0.0.
+        let advertised_host = advertised_host_param.unwrap_or_else(|| {
+            if local_addr.ip().is_unspecified() {
+                "localhost".to_string()
+            } else {
+                local_addr.ip().to_string()
+            }
+        });
+
         info!(
-            "Kafka broker listening on {} (cluster={}, broker_id={})",
-            local_addr, cluster_id, broker_id
+            "Kafka broker listening on {} (cluster={}, broker_id={}, advertised_host={})",
+            local_addr, cluster_id, broker_id, advertised_host
         );
         let _ = status_tx.send(format!(
             "[INFO] Kafka broker listening on {} (cluster={}, broker_id={})",
             local_addr, cluster_id, broker_id
         ));
-        warn!(
-            "Kafka server on {} is INCOMPLETE: ApiVersions advertises no supported APIs, every \
-             request is decoded at hardcoded version 0, and the LLM is never called",
-            local_addr
-        );
-        let _ = status_tx.send(
-            "[WARN] Kafka is INCOMPLETE: no real client completes the ApiVersions handshake, and \
-             the LLM is never consulted — instructions, script handlers and static handlers have \
-             no effect. Responses come from hardcoded Rust."
-                .to_string(),
-        );
+        let _ = status_tx.send(format!(
+            "[INFO] Kafka supports ApiVersions v0-3, Metadata v0-8, Produce v0-8, Fetch v0-11, \
+             OffsetCommit v0-7. Other API keys (ListOffsets, FindCoordinator, JoinGroup, \
+             SyncGroup, Heartbeat, OffsetFetch, admin) are not implemented, so consumer groups \
+             do not work; consumers must assign partitions and fetch from an explicit offset. \
+             Broker advertises host '{}'.",
+            advertised_host
+        ));
 
         let server = Arc::new(KafkaServer {
             cluster_id,
             broker_id,
-            _auto_create_topics: auto_create_topics,
-            default_partitions,
-            _log_retention_hours: log_retention_hours,
-            topics: Arc::new(RwLock::new(HashMap::new())),
-            consumer_offsets: Arc::new(RwLock::new(HashMap::new())),
+            advertised_host,
         });
 
         let protocol = Arc::new(KafkaProtocol::new());
@@ -203,7 +259,6 @@ impl KafkaServer {
                         let server_clone = server.clone();
                         let protocol_clone = protocol.clone();
 
-                        // Track connection in UI
                         use crate::state::server::{
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
@@ -277,12 +332,13 @@ impl KafkaServer {
         Ok(local_addr)
     }
 
-    /// Handle a Kafka client connection
+    /// Read one length-prefixed request, answer it, repeat.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_connection(
         mut stream: TcpStream,
         peer_addr: SocketAddr,
         local_addr: SocketAddr,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
         server: Arc<KafkaServer>,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -290,7 +346,7 @@ impl KafkaServer {
         server_id: crate::state::ServerId,
         protocol: Arc<KafkaProtocol>,
     ) -> Result<()> {
-        let mut buffer = vec![0u8; 8192]; // Kafka messages can be large
+        let mut buffer = vec![0u8; 8192];
 
         loop {
             // Read the size prefix with read_exact. A plain read() may return 1-3
@@ -310,7 +366,8 @@ impl KafkaServer {
             // unauthenticated input: `i32 as usize` sign-extends, so a prefix of
             // 0x80000000 became ~1.8e19 and aborted the process on Vec::resize,
             // while 0x7fffffff zeroed 2 GiB per connection. Sizes below the 8-byte
-            // request header are equally unusable.
+            // request header are equally unusable. The comparison is done in i64 so
+            // that `declared` can never wrap.
             let declared = i32::from_be_bytes(size_prefix);
             if declared < MIN_REQUEST_BYTES || declared as i64 > MAX_REQUEST_BYTES as i64 {
                 warn!(
@@ -335,6 +392,17 @@ impl KafkaServer {
             }
             stream.read_exact(&mut buffer[..message_size]).await?;
 
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    Some((message_size + 4) as u64),
+                    None,
+                    Some(1),
+                    None,
+                )
+                .await;
+
             console_debug!(
                 status_tx,
                 "Kafka received {} bytes from {}",
@@ -344,340 +412,595 @@ impl KafkaServer {
 
             // TRACE: hex dump, capped — hex::encode doubles the payload, so a
             // maximum-size request would otherwise build a 200 MiB String.
-            if message_size <= MAX_TRACE_HEX_BYTES {
-                console_trace!(
-                    status_tx,
-                    "Kafka raw message (hex): {}",
-                    hex::encode(&buffer[..message_size])
-                );
-            } else {
-                console_trace!(
-                    status_tx,
-                    "Kafka raw message: {} bytes (too large to hex dump; first {} bytes) {}",
-                    message_size,
-                    MAX_TRACE_HEX_BYTES,
-                    hex::encode(&buffer[..MAX_TRACE_HEX_BYTES])
-                );
-            }
-
-            // Parse request header
-            let mut cursor = std::io::Cursor::new(&buffer[..message_size]);
-            let header = match RequestHeader::decode(&mut cursor, 0) {
-                Ok(h) => h,
-                Err(e) => {
-                    console_error!(status_tx, "Failed to parse Kafka request header: {}", e);
-                    continue;
-                }
-            };
-
-            console_debug!(
-                status_tx,
-                "Kafka request: API={:?}, correlation_id={}",
-                header.request_api_key,
-                header.correlation_id
-            );
-
-            // Handle different API keys
-            let response_bytes = match header.request_api_key.try_into() {
-                Ok(ApiKey::ApiVersions) => Self::handle_api_versions(&header, &status_tx).await?,
-                Ok(ApiKey::Metadata) => {
-                    Self::handle_metadata(
-                        &header,
-                        &buffer[..message_size],
-                        &server,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        server_id,
-                        &protocol,
-                        peer_addr,
-                        local_addr,
-                    )
-                    .await?
-                }
-                Ok(ApiKey::Produce) => {
-                    Self::handle_produce(
-                        &header,
-                        &buffer[..message_size],
-                        &server,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        server_id,
-                        &protocol,
-                        peer_addr,
-                        local_addr,
-                    )
-                    .await?
-                }
-                Ok(ApiKey::Fetch) => {
-                    Self::handle_fetch(
-                        &header,
-                        &buffer[..message_size],
-                        &server,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        server_id,
-                        &protocol,
-                        peer_addr,
-                        local_addr,
-                    )
-                    .await?
-                }
-                Ok(ApiKey::OffsetCommit) => {
-                    Self::handle_offset_commit(
-                        &header,
-                        &buffer[..message_size],
-                        &server,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        server_id,
-                        &protocol,
-                        peer_addr,
-                        local_addr,
-                    )
-                    .await?
-                }
-                Ok(other_key) => {
-                    console_debug!(status_tx, "Unsupported Kafka API: {:?}", other_key);
-                    // Return error response
-                    Self::create_error_response(&header, 35 /* UNSUPPORTED_VERSION */)
-                }
-                Err(_) => {
-                    console_debug!(
-                        status_tx,
-                        "Invalid Kafka API key: {}",
-                        header.request_api_key
-                    );
-                    Self::create_error_response(&header, 35)
-                }
-            };
-
-            // Send response
-            let response_size = (response_bytes.len() as i32).to_be_bytes();
-            stream.write_all(&response_size).await?;
-            stream.write_all(&response_bytes).await?;
-
-            console_debug!(
-                status_tx,
-                "Kafka sent {} bytes to {}",
-                response_bytes.len(),
-                peer_addr
-            );
-
+            let hex_len = message_size.min(MAX_TRACE_HEX_BYTES);
             console_trace!(
                 status_tx,
-                "Kafka response (hex): {}",
-                hex::encode(&response_bytes)
+                "Kafka raw request: {} bytes, first {} hex: {}",
+                message_size,
+                hex_len,
+                hex::encode(&buffer[..hex_len])
             );
+
+            // api_key, api_version and correlation_id sit at fixed offsets in every
+            // request header version, so they can be read before choosing a header
+            // version to decode with. message_size >= MIN_REQUEST_BYTES (8) is already
+            // enforced above, so these slices are always in bounds.
+            let api_key_raw = i16::from_be_bytes([buffer[0], buffer[1]]);
+            let api_version = i16::from_be_bytes([buffer[2], buffer[3]]);
+            let correlation_id = i32::from_be_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
+
+            let api_key = match ApiKey::try_from(api_key_raw) {
+                Ok(k) => k,
+                Err(_) => {
+                    error!(
+                        "Kafka client {} sent unknown API key {}; closing connection",
+                        peer_addr, api_key_raw
+                    );
+                    console_error!(
+                        status_tx,
+                        "Kafka client {} sent unknown API key {}; closing connection rather than \
+                         inventing a response body",
+                        peer_addr,
+                        api_key_raw
+                    );
+                    break;
+                }
+            };
+
+            let supported = supported_versions(api_key_raw);
+            let version_ok =
+                matches!(supported, Some((min, max)) if api_version >= min && api_version <= max);
+
+            if !version_ok {
+                if api_key == ApiKey::ApiVersions {
+                    // Kafka's one special case: an ApiVersions request at a version the
+                    // broker does not implement is answered with UNSUPPORTED_VERSION and
+                    // the supported-API table, both encoded at v0, which every client
+                    // knows how to read. That is how clients negotiate downwards.
+                    console_debug!(
+                        status_tx,
+                        "Kafka ApiVersions v{} unsupported; replying at v0 with error {}",
+                        api_version,
+                        ERR_UNSUPPORTED_VERSION
+                    );
+                    let body =
+                        Self::api_versions_response(0, correlation_id, ERR_UNSUPPORTED_VERSION)?;
+                    Self::write_frame(
+                        &mut stream,
+                        &body,
+                        &app_state,
+                        server_id,
+                        connection_id,
+                        &status_tx,
+                        peer_addr,
+                    )
+                    .await?;
+                    continue;
+                }
+                let range = supported
+                    .map(|(min, max)| format!("v{}..=v{}", min, max))
+                    .unwrap_or_else(|| "not implemented".to_string());
+                error!(
+                    "Kafka client {} requested {:?} v{} ({}); closing connection",
+                    peer_addr, api_key, api_version, range
+                );
+                console_error!(
+                    status_tx,
+                    "Kafka client {} requested {:?} v{} which this broker does not implement ({}). \
+                     Closing the connection — a wrong-shaped body would be worse than an error.",
+                    peer_addr,
+                    api_key,
+                    api_version,
+                    range
+                );
+                break;
+            }
+
+            // Decode the header at the version this (api_key, api_version) pair implies,
+            // then continue with the same cursor so the body starts where the header
+            // ended. Hardcoding 0 here left the cursor inside client_id for every real
+            // client and garbled every field after it.
+            let header_version = api_key.request_header_version(api_version);
+            let mut cursor = std::io::Cursor::new(&buffer[..message_size]);
+            let header = match RequestHeader::decode(&mut cursor, header_version) {
+                Ok(h) => h,
+                Err(e) => {
+                    error!(
+                        "Kafka client {}: failed to parse {:?} v{} request header (header v{}): {}",
+                        peer_addr, api_key, api_version, header_version, e
+                    );
+                    console_error!(
+                        status_tx,
+                        "Kafka client {}: unparseable request header for {:?} v{}: {}; closing",
+                        peer_addr,
+                        api_key,
+                        api_version,
+                        e
+                    );
+                    break;
+                }
+            };
+
+            let client_id = header
+                .client_id
+                .as_ref()
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+
+            console_debug!(
+                status_tx,
+                "Kafka request: {:?} v{} correlation_id={} client_id={:?}",
+                api_key,
+                api_version,
+                header.correlation_id,
+                client_id
+            );
+
+            let ctx = RequestCtx {
+                api_version,
+                correlation_id: header.correlation_id,
+                client_id,
+                peer_addr,
+                local_addr,
+                connection_id,
+                server_id,
+            };
+
+            let response_bytes: Option<Vec<u8>> = match api_key {
+                ApiKey::ApiVersions => Some(Self::api_versions_response(
+                    api_version,
+                    header.correlation_id,
+                    ERR_NONE,
+                )?),
+                ApiKey::Metadata => Some(
+                    Self::handle_metadata(
+                        &mut cursor,
+                        &ctx,
+                        &server,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        &protocol,
+                    )
+                    .await?,
+                ),
+                ApiKey::Produce => {
+                    Self::handle_produce(
+                        &mut cursor,
+                        &ctx,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        &protocol,
+                    )
+                    .await?
+                }
+                ApiKey::Fetch => Some(
+                    Self::handle_fetch(
+                        &mut cursor,
+                        &ctx,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        &protocol,
+                    )
+                    .await?,
+                ),
+                ApiKey::OffsetCommit => Some(
+                    Self::handle_offset_commit(
+                        &mut cursor,
+                        &ctx,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        &protocol,
+                    )
+                    .await?,
+                ),
+                // Unreachable: SUPPORTED_APIS gates the match above.
+                other => {
+                    error!("Kafka: no handler for advertised API {:?}; closing", other);
+                    console_error!(
+                        status_tx,
+                        "Kafka: API {:?} is advertised but has no handler; closing connection",
+                        other
+                    );
+                    break;
+                }
+            };
+
+            match response_bytes {
+                Some(body) => {
+                    Self::write_frame(
+                        &mut stream,
+                        &body,
+                        &app_state,
+                        server_id,
+                        connection_id,
+                        &status_tx,
+                        peer_addr,
+                    )
+                    .await?;
+                }
+                None => {
+                    // acks=0 Produce: the producer expects no reply at all.
+                    console_debug!(
+                        status_tx,
+                        "Kafka: no response written for correlation_id={} (acks=0)",
+                        header.correlation_id
+                    );
+                }
+            }
         }
 
         Ok(())
     }
 
-    /// Handle ApiVersions request
-    async fn handle_api_versions(
-        header: &RequestHeader,
+    async fn write_frame(
+        stream: &mut TcpStream,
+        body: &[u8],
+        app_state: &Arc<AppState>,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
         status_tx: &mpsc::UnboundedSender<String>,
+        peer_addr: SocketAddr,
+    ) -> Result<()> {
+        let size = i32::try_from(body.len()).map_err(|_| {
+            anyhow::anyhow!(
+                "Kafka response of {} bytes exceeds the i32 size prefix",
+                body.len()
+            )
+        })?;
+        stream.write_all(&size.to_be_bytes()).await?;
+        stream.write_all(body).await?;
+
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                None,
+                Some((body.len() + 4) as u64),
+                None,
+                Some(1),
+            )
+            .await;
+
+        console_debug!(
+            status_tx,
+            "Kafka sent {} bytes to {}",
+            body.len(),
+            peer_addr
+        );
+        let hex_len = body.len().min(MAX_TRACE_HEX_BYTES);
+        console_trace!(
+            status_tx,
+            "Kafka raw response: {} bytes, first {} hex: {}",
+            body.len(),
+            hex_len,
+            hex::encode(&body[..hex_len])
+        );
+        Ok(())
+    }
+
+    /// ApiVersions is answered by Rust, not the model: it advertises what this *code*
+    /// can parse and encode, which is not a content decision.
+    fn api_versions_response(
+        api_version: i16,
+        correlation_id: i32,
+        error_code: i16,
     ) -> Result<Vec<u8>> {
-        debug!("Handling ApiVersions request");
-        let _ = status_tx.send("[DEBUG] Handling ApiVersions request".to_string());
+        use kafka_protocol::messages::api_versions_response::ApiVersion;
 
-        // Build ApiVersions response with supported APIs
-        let response = ApiVersionsResponse::default();
+        let api_keys: Vec<ApiVersion> = SUPPORTED_APIS
+            .iter()
+            .map(|(key, min, max)| {
+                ApiVersion::default()
+                    .with_api_key(*key)
+                    .with_min_version(*min)
+                    .with_max_version(*max)
+            })
+            .collect();
 
-        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
+        let response = ApiVersionsResponse::default()
+            .with_error_code(error_code)
+            .with_api_keys(api_keys)
+            .with_throttle_time_ms(0);
 
         let mut buf = Vec::new();
-        response_header.encode(&mut buf, 0)?;
-        response.encode(&mut buf, 0)?;
-
+        ResponseHeader::default()
+            .with_correlation_id(correlation_id)
+            .encode(
+                &mut buf,
+                ApiKey::ApiVersions.response_header_version(api_version),
+            )?;
+        response.encode(&mut buf, api_version)?;
         Ok(buf)
     }
 
-    /// Handle Metadata request (with LLM)
+    /// Metadata: the model decides which topics exist and how they are partitioned.
+    /// Rust decides which broker address to advertise, because only Rust knows it.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_metadata(
-        header: &RequestHeader,
-        message: &[u8],
+        cursor: &mut std::io::Cursor<&[u8]>,
+        ctx: &RequestCtx,
         server: &Arc<KafkaServer>,
-        _llm_client: &OllamaClient,
-        _app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
-        _protocol: &Arc<KafkaProtocol>,
-        _peer_addr: SocketAddr,
-        local_addr: SocketAddr,
+        protocol: &Arc<KafkaProtocol>,
     ) -> Result<Vec<u8>> {
         use kafka_protocol::messages::metadata_response::{
             MetadataResponseBroker, MetadataResponsePartition, MetadataResponseTopic,
         };
-        use kafka_protocol::messages::BrokerId;
-        use kafka_protocol::protocol::StrBytes;
 
-        debug!("Handling Metadata request");
-        let _ = status_tx.send("[DEBUG] Handling Metadata request".to_string());
+        let request = MetadataRequest::decode(cursor, ctx.api_version)?;
 
-        // Parse metadata request
-        let mut cursor = std::io::Cursor::new(message);
-        let _ = RequestHeader::decode(&mut cursor, 0)?; // Skip header
-        let request = MetadataRequest::decode(&mut cursor, 0)?;
-
-        // Extract requested topics
+        // `topics: None` means "all topics"; `Some([])` means "no topics".
         let requested_topics: Vec<String> = request
             .topics
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|t| t.name.as_ref().map(|n| n.to_string()))
-            .collect();
+            .as_ref()
+            .map(|ts| {
+                ts.iter()
+                    .filter_map(|t| t.name.as_ref().map(|n| n.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let wants_all_topics = request.topics.is_none();
 
         console_debug!(
             status_tx,
-            "Metadata request for topics: {:?}",
+            "Kafka metadata request: all_topics={}, topics={:?}",
+            wants_all_topics,
             requested_topics
         );
 
-        // Build broker info
-        let broker = MetadataResponseBroker::default()
+        let event = Event::new(
+            &METADATA_REQUEST_EVENT,
+            json!({
+                "requested_topics": requested_topics,
+                "all_topics": wants_all_topics,
+                "client_id": ctx.client_id,
+                "api_version": ctx.api_version,
+            }),
+        );
+
+        let reply = Self::ask_model(
+            &event,
+            "metadata_response",
+            llm_client,
+            app_state,
+            status_tx,
+            ctx,
+            protocol,
+        )
+        .await;
+
+        // Whatever happens, the client needs a reachable broker address or it cannot
+        // proceed. This is the one default in the module and it is transport truth.
+        let default_broker = MetadataResponseBroker::default()
             .with_node_id(BrokerId(server.broker_id))
-            .with_host("localhost".into())
-            .with_port(local_addr.port() as i32);
+            .with_host(StrBytes::from_string(server.advertised_host.clone()))
+            .with_port(ctx.local_addr.port() as i32);
 
-        // Get topics from storage
-        let topics_lock = server.topics.read().await;
-        let mut response_topics = Vec::new();
+        let (brokers, mut response_topics) = match &reply {
+            Reply::Data(data) => {
+                let brokers = data
+                    .get("brokers")
+                    .and_then(|v| v.as_array())
+                    .map(|list| {
+                        list.iter()
+                            .filter_map(|b| {
+                                let host = b.get("host").and_then(|v| v.as_str())?;
+                                let port = b.get("port").and_then(|v| v.as_i64())?;
+                                if !(1..=65535).contains(&port) {
+                                    warn!("Kafka metadata_response: broker port {} out of range, dropped", port);
+                                    return None;
+                                }
+                                let id = b.get("id").and_then(|v| v.as_i64()).unwrap_or(server.broker_id as i64);
+                                Some(
+                                    MetadataResponseBroker::default()
+                                        .with_node_id(BrokerId(id.clamp(0, i32::MAX as i64) as i32))
+                                        .with_host(StrBytes::from_string(host.to_string()))
+                                        .with_port(port as i32),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v: &Vec<_>| !v.is_empty())
+                    .unwrap_or_else(|| {
+                        console_debug!(
+                            status_tx,
+                            "Kafka metadata_response named no usable broker; advertising this server ({}:{})",
+                            server.advertised_host,
+                            ctx.local_addr.port()
+                        );
+                        vec![default_broker.clone()]
+                    });
 
-        if requested_topics.is_empty() {
-            // Return all topics
-            for (topic_name, partitions) in topics_lock.iter() {
-                let mut partition_metadata = Vec::new();
-                for (partition_idx, _records) in partitions.iter().enumerate() {
-                    partition_metadata.push(
-                        MetadataResponsePartition::default()
-                            .with_partition_index(partition_idx as i32)
-                            .with_leader_id(BrokerId(server.broker_id))
-                            .with_replica_nodes(vec![BrokerId(server.broker_id)])
-                            .with_isr_nodes(vec![BrokerId(server.broker_id)])
-                            .with_error_code(0),
-                    );
-                }
+                let mut topics = Vec::new();
+                if let Some(list) = data.get("topics").and_then(|v| v.as_array()) {
+                    for t in list {
+                        let Some(name) = t.get("name").and_then(|v| v.as_str()) else {
+                            console_warn!(
+                                status_tx,
+                                "Kafka metadata_response: topic entry without a 'name' ignored"
+                            );
+                            continue;
+                        };
+                        let topic_error =
+                            clamp_error_code(t.get("error_code").and_then(|v| v.as_i64()));
 
-                response_topics.push(
-                    MetadataResponseTopic::default()
-                        .with_name(Some(StrBytes::from_string(topic_name.clone()).into()))
-                        .with_partitions(partition_metadata)
-                        .with_error_code(0),
-                );
-            }
-        } else {
-            // Return only requested topics
-            for topic_name in &requested_topics {
-                if let Some(partitions) = topics_lock.get(topic_name) {
-                    let mut partition_metadata = Vec::new();
-                    for (partition_idx, _records) in partitions.iter().enumerate() {
-                        partition_metadata.push(
-                            MetadataResponsePartition::default()
-                                .with_partition_index(partition_idx as i32)
-                                .with_leader_id(BrokerId(server.broker_id))
-                                .with_replica_nodes(vec![BrokerId(server.broker_id)])
-                                .with_isr_nodes(vec![BrokerId(server.broker_id)])
-                                .with_error_code(0),
+                        let mut partitions = Vec::new();
+                        if let Some(plist) = t.get("partitions").and_then(|v| v.as_array()) {
+                            for p in plist {
+                                let idx = p.get("partition").and_then(|v| v.as_i64()).unwrap_or(0);
+                                if !(0..=MAX_PARTITIONS as i64).contains(&idx) {
+                                    console_warn!(
+                                        status_tx,
+                                        "Kafka metadata_response: partition index {} for '{}' outside 0..={}, dropped",
+                                        idx,
+                                        name,
+                                        MAX_PARTITIONS
+                                    );
+                                    continue;
+                                }
+                                let leader = p
+                                    .get("leader")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(server.broker_id as i64)
+                                    .clamp(0, i32::MAX as i64)
+                                    as i32;
+                                let replicas: Vec<BrokerId> = p
+                                    .get("replicas")
+                                    .and_then(|v| v.as_array())
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(|x| x.as_i64())
+                                            .map(|x| BrokerId(x.clamp(0, i32::MAX as i64) as i32))
+                                            .collect()
+                                    })
+                                    .filter(|v: &Vec<BrokerId>| !v.is_empty())
+                                    .unwrap_or_else(|| vec![BrokerId(leader)]);
+                                partitions.push(
+                                    MetadataResponsePartition::default()
+                                        .with_partition_index(idx as i32)
+                                        .with_leader_id(BrokerId(leader))
+                                        .with_replica_nodes(replicas.clone())
+                                        .with_isr_nodes(replicas)
+                                        .with_error_code(ERR_NONE),
+                                );
+                            }
+                        }
+
+                        if partitions.is_empty() && topic_error == ERR_NONE {
+                            // A topic with no partitions is unusable to every client.
+                            console_debug!(
+                                status_tx,
+                                "Kafka metadata_response: topic '{}' declared no partitions; assuming a single partition led by broker {}",
+                                name,
+                                server.broker_id
+                            );
+                            partitions.push(
+                                MetadataResponsePartition::default()
+                                    .with_partition_index(0)
+                                    .with_leader_id(BrokerId(server.broker_id))
+                                    .with_replica_nodes(vec![BrokerId(server.broker_id)])
+                                    .with_isr_nodes(vec![BrokerId(server.broker_id)])
+                                    .with_error_code(ERR_NONE),
+                            );
+                        }
+
+                        topics.push(
+                            MetadataResponseTopic::default()
+                                .with_name(Some(StrBytes::from_string(name.to_string()).into()))
+                                .with_partitions(partitions)
+                                .with_error_code(topic_error),
                         );
                     }
-
-                    response_topics.push(
-                        MetadataResponseTopic::default()
-                            .with_name(Some(StrBytes::from_string(topic_name.clone()).into()))
-                            .with_partitions(partition_metadata)
-                            .with_error_code(0),
-                    );
-                } else {
-                    // Topic doesn't exist
-                    response_topics.push(
-                        MetadataResponseTopic::default()
-                            .with_name(Some(StrBytes::from_string(topic_name.clone()).into()))
-                            .with_error_code(3), // Unknown topic
-                    );
                 }
+                (brokers, topics)
+            }
+            Reply::Error(code) => {
+                console_debug!(
+                    status_tx,
+                    "Kafka metadata: model refused with error code {}",
+                    code
+                );
+                (vec![default_broker.clone()], Vec::new())
+            }
+            Reply::NoAnswer => (vec![default_broker.clone()], Vec::new()),
+        };
+
+        // Any topic the client explicitly asked about but the model did not describe is
+        // reported as unknown (or with the model's chosen error code). Silence about a
+        // requested topic must never look like success.
+        let fallback_error = match &reply {
+            Reply::Data(_) => ERR_UNKNOWN_TOPIC_OR_PARTITION,
+            Reply::Error(code) => *code,
+            Reply::NoAnswer => ERR_UNKNOWN_SERVER_ERROR,
+        };
+        for name in &requested_topics {
+            let described = response_topics
+                .iter()
+                .any(|t| t.name.as_ref().map(|n| n.to_string()).as_deref() == Some(name.as_str()));
+            if !described {
+                response_topics.push(
+                    MetadataResponseTopic::default()
+                        .with_name(Some(StrBytes::from_string(name.clone()).into()))
+                        .with_error_code(fallback_error),
+                );
             }
         }
 
+        if matches!(reply, Reply::NoAnswer) && requested_topics.is_empty() {
+            console_warn!(
+                status_tx,
+                "Kafka metadata: no answer from the model and no specific topic was requested; \
+                 replying with the broker list and an empty topic list"
+            );
+        }
+
         info!(
-            "Returning metadata for {} topic(s), {} broker(s)",
-            response_topics.len(),
-            1
+            "Kafka metadata reply: {} broker(s), {} topic(s)",
+            brokers.len(),
+            response_topics.len()
         );
         let _ = status_tx.send(format!(
-            "[INFO] Returning metadata for {} topic(s)",
+            "[INFO] Kafka metadata reply: {} broker(s), {} topic(s)",
+            brokers.len(),
             response_topics.len()
         ));
 
-        // Build response
         let response = MetadataResponse::default()
-            .with_brokers(vec![broker])
-            .with_cluster_id(Some(server.cluster_id.clone().into()))
+            .with_brokers(brokers)
+            .with_cluster_id(Some(StrBytes::from_string(server.cluster_id.clone())))
             .with_controller_id(BrokerId(server.broker_id))
-            .with_topics(response_topics);
-
-        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
+            .with_topics(response_topics)
+            .with_throttle_time_ms(0);
 
         let mut buf = Vec::new();
-        response_header.encode(&mut buf, 0)?;
-        response.encode(&mut buf, 0)?;
-
+        ResponseHeader::default()
+            .with_correlation_id(ctx.correlation_id)
+            .encode(
+                &mut buf,
+                ApiKey::Metadata.response_header_version(ctx.api_version),
+            )?;
+        response.encode(&mut buf, ctx.api_version)?;
         Ok(buf)
     }
 
-    /// Handle Produce request (with LLM)
+    /// Produce: Rust decodes the record batch, the model decides whether it is accepted
+    /// and at what offset. Nothing is stored.
+    ///
+    /// Returns `None` when `acks == 0`, because the producer is not waiting for a reply.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_produce(
-        header: &RequestHeader,
-        message: &[u8],
-        server: &Arc<KafkaServer>,
-        _llm_client: &OllamaClient,
-        _app_state: &Arc<AppState>,
+        cursor: &mut std::io::Cursor<&[u8]>,
+        ctx: &RequestCtx,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
-        _protocol: &Arc<KafkaProtocol>,
-        _peer_addr: SocketAddr,
-        _local_addr: SocketAddr,
-    ) -> Result<Vec<u8>> {
+        protocol: &Arc<KafkaProtocol>,
+    ) -> Result<Option<Vec<u8>>> {
         use kafka_protocol::messages::produce_response::{
             PartitionProduceResponse, TopicProduceResponse,
         };
-        use kafka_protocol::protocol::StrBytes;
 
-        debug!("Handling Produce request");
-        let _ = status_tx.send("[DEBUG] Handling Produce request".to_string());
-
-        // Parse produce request
-        let mut cursor = std::io::Cursor::new(message);
-        let _ = RequestHeader::decode(&mut cursor, 0)?; // Skip header
-        let request = ProduceRequest::decode(&mut cursor, 0)?;
+        let request = ProduceRequest::decode(cursor, ctx.api_version)?;
+        let acks = request.acks;
 
         let mut topic_responses = Vec::new();
-        let mut topics_lock = server.topics.write().await;
+        let mut units = 0usize;
 
-        // Process each topic
         for topic_data in &request.topic_data {
             let topic_name = topic_data.name.to_string();
             let mut partition_responses = Vec::new();
 
-            // Process each partition
             for partition_data in &topic_data.partition_data {
                 let partition_idx = partition_data.index;
 
-                // The index is unvalidated wire input. -1 cast to usize is
-                // usize::MAX, which made the loop below push Vec::new() until the
-                // allocator aborted the process; 2_000_000_000 is a legal i32 that
-                // asks for ~48 GB. Refuse anything outside the supported range with
-                // UNKNOWN_TOPIC_OR_PARTITION (3).
-                if partition_idx < 0 || partition_idx > MAX_PARTITIONS {
-                    warn!(
-                        "Kafka produce for '{}' names out-of-range partition {}",
-                        topic_name, partition_idx
-                    );
-                    console_error!(
+                if !(0..=MAX_PARTITIONS).contains(&partition_idx) {
+                    console_warn!(
                         status_tx,
                         "Kafka produce for '{}' names out-of-range partition {} (0..={}); rejected",
                         topic_name,
@@ -687,103 +1010,176 @@ impl KafkaServer {
                     partition_responses.push(
                         PartitionProduceResponse::default()
                             .with_index(partition_idx)
-                            .with_error_code(3)
+                            .with_error_code(ERR_UNKNOWN_TOPIC_OR_PARTITION)
                             .with_base_offset(-1),
                     );
                     continue;
                 }
 
-                // Auto-create topic if needed
-                let default_partitions = server.default_partitions;
-                let partitions = topics_lock.entry(topic_name.clone()).or_insert_with(|| {
-                    info!(
-                        "Auto-creating topic '{}' with {} partition(s)",
-                        topic_name, default_partitions
+                units += 1;
+                if units > MAX_UNITS_PER_REQUEST {
+                    console_warn!(
+                        status_tx,
+                        "Kafka produce names more than {} topic-partitions in one request; \
+                         remaining ones rejected without consulting the model",
+                        MAX_UNITS_PER_REQUEST
                     );
-                    let _ = status_tx.send(format!("[INFO] Auto-creating topic '{}'", topic_name));
-                    vec![Vec::new(); default_partitions as usize]
-                });
-
-                // Ensure partition exists
-                while partitions.len() <= partition_idx as usize {
-                    partitions.push(Vec::new());
+                    partition_responses.push(
+                        PartitionProduceResponse::default()
+                            .with_index(partition_idx)
+                            .with_error_code(ERR_UNKNOWN_SERVER_ERROR)
+                            .with_base_offset(-1),
+                    );
+                    continue;
                 }
 
-                let partition = &mut partitions[partition_idx as usize];
-
-                // Parse records from batch
-                let mut record_count = 0;
-                if let Some(records_bytes) = &partition_data.records {
-                    // Parse records using RecordBatchDecoder
-                    // Convert to owned Bytes for parsing
-                    let owned_bytes = Bytes::copy_from_slice(records_bytes.as_ref());
-                    let mut records_cursor = std::io::Cursor::new(owned_bytes);
-
-                    match RecordBatchDecoder::decode_with_custom_compression::<
-                        _,
-                        fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>,
-                    >(
-                        &mut records_cursor,
-                        None::<fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>>,
-                    ) {
-                        Ok(decoded_records) => {
-                            debug!(
-                                "Parsed {} record(s) from batch ({} bytes)",
-                                decoded_records.len(),
-                                records_bytes.len()
-                            );
-                            record_count = decoded_records.len();
-
-                            // Store records in partition
-                            let base_offset = partition.len() as i64;
-                            for (idx, record) in decoded_records.into_iter().enumerate() {
-                                partition.push(KafkaRecord {
-                                    offset: base_offset + idx as i64,
-                                    key: record.key.map(|k| k.to_vec()),
-                                    value: record.value.map(|v| v.to_vec()).unwrap_or_default(),
-                                    timestamp: record.timestamp,
-                                });
+                // Decode the batch. A batch we cannot parse is CORRUPT_MESSAGE — it used
+                // to be replaced with an empty placeholder record and acknowledged as
+                // success, which told the producer its data was durable when it had been
+                // silently dropped.
+                let records = match &partition_data.records {
+                    Some(raw) => {
+                        let owned = Bytes::copy_from_slice(raw.as_ref());
+                        let mut rc = std::io::Cursor::new(owned);
+                        match RecordBatchDecoder::decode_with_custom_compression::<
+                            _,
+                            fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>,
+                        >(
+                            &mut rc,
+                            None::<fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>>,
+                        ) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                error!(
+                                    "Kafka produce to '{}' partition {}: unparseable record batch: {}",
+                                    topic_name, partition_idx, e
+                                );
+                                console_error!(
+                                    status_tx,
+                                    "Kafka produce to '{}' partition {}: unparseable record batch ({}); \
+                                     replying CORRUPT_MESSAGE",
+                                    topic_name,
+                                    partition_idx,
+                                    e
+                                );
+                                partition_responses.push(
+                                    PartitionProduceResponse::default()
+                                        .with_index(partition_idx)
+                                        .with_error_code(ERR_CORRUPT_MESSAGE)
+                                        .with_base_offset(-1),
+                                );
+                                continue;
                             }
                         }
-                        Err(e) => {
-                            warn!("Failed to parse record batch: {:?}, storing placeholder", e);
-                            let _ =
-                                status_tx.send(format!("[WARN] Failed to parse records: {:?}", e));
-
-                            // Store a placeholder record on parse failure
-                            let offset = partition.len() as i64;
-                            partition.push(KafkaRecord {
-                                offset,
-                                key: None,
-                                value: vec![],
-                                timestamp: chrono::Utc::now().timestamp_millis(),
-                            });
-                            record_count = 1;
-                        }
                     }
-                }
-
-                // Get base offset (first assigned offset)
-                let base_offset = if partition.is_empty() {
-                    0
-                } else {
-                    partition.len() as i64 - record_count as i64
+                    None => Vec::new(),
                 };
 
-                info!(
-                    "Produced {} record(s) to topic '{}' partition {} at offset {}",
-                    record_count, topic_name, partition_idx, base_offset
+                let event_records: Vec<Value> = records
+                    .iter()
+                    .take(MAX_EVENT_RECORDS)
+                    .map(|r| {
+                        let (key, key_encoding) = r
+                            .key
+                            .as_ref()
+                            .map(|k| encode_field(k, MAX_EVENT_VALUE_BYTES))
+                            .unwrap_or((Value::Null, "utf8"));
+                        let (value, value_encoding) = r
+                            .value
+                            .as_ref()
+                            .map(|v| encode_field(v, MAX_EVENT_VALUE_BYTES))
+                            .unwrap_or((Value::Null, "utf8"));
+                        json!({
+                            "offset": r.offset,
+                            "timestamp": r.timestamp,
+                            "key": key,
+                            "key_encoding": key_encoding,
+                            "value": value,
+                            "value_encoding": value_encoding,
+                        })
+                    })
+                    .collect();
+
+                let first_key = records
+                    .first()
+                    .and_then(|r| r.key.as_ref())
+                    .map(|k| encode_field(k, MAX_EVENT_VALUE_BYTES).0)
+                    .unwrap_or(Value::Null);
+                let first_value = records
+                    .first()
+                    .and_then(|r| r.value.as_ref())
+                    .map(|v| encode_field(v, MAX_EVENT_VALUE_BYTES).0)
+                    .unwrap_or(Value::String(String::new()));
+
+                let event = Event::new(
+                    &PRODUCE_REQUEST_EVENT,
+                    json!({
+                        "topic": topic_name,
+                        "partition": partition_idx,
+                        "record_count": records.len(),
+                        "first_key": first_key,
+                        "first_value_preview": first_value,
+                        "records": event_records,
+                        "acks": acks,
+                        "client_id": ctx.client_id,
+                    }),
                 );
-                let _ = status_tx.send(format!(
-                    "[INFO] Produced {} record(s) to '{}' partition {}",
-                    record_count, topic_name, partition_idx
-                ));
+
+                let reply = Self::ask_model(
+                    &event,
+                    "produce_response",
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    ctx,
+                    protocol,
+                )
+                .await;
+
+                let (error_code, base_offset) = match reply {
+                    Reply::Data(data) => {
+                        let code =
+                            clamp_error_code(data.get("error_code").and_then(|v| v.as_i64()));
+                        let offset = data
+                            .get("offset")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or_else(|| {
+                                if code == ERR_NONE {
+                                    console_warn!(
+                                        status_tx,
+                                        "Kafka produce_response for '{}' partition {} omitted 'offset'; using 0",
+                                        topic_name,
+                                        partition_idx
+                                    );
+                                }
+                                0
+                            });
+                        if code == ERR_NONE {
+                            info!(
+                                "Kafka produce accepted: '{}' partition {} at offset {} ({} record(s))",
+                                topic_name, partition_idx, offset, records.len()
+                            );
+                            let _ = status_tx.send(format!(
+                                "[INFO] Kafka accepted {} record(s) for '{}' partition {} at offset {}",
+                                records.len(),
+                                topic_name,
+                                partition_idx,
+                                offset
+                            ));
+                            (code, offset.max(0))
+                        } else {
+                            (code, -1)
+                        }
+                    }
+                    Reply::Error(code) => (code, -1),
+                    Reply::NoAnswer => (ERR_UNKNOWN_SERVER_ERROR, -1),
+                };
 
                 partition_responses.push(
                     PartitionProduceResponse::default()
                         .with_index(partition_idx)
                         .with_base_offset(base_offset)
-                        .with_error_code(0),
+                        .with_error_code(error_code),
                 );
             }
 
@@ -794,185 +1190,153 @@ impl KafkaServer {
             );
         }
 
-        drop(topics_lock);
+        if acks == 0 {
+            // Fire-and-forget producer: sending a response here would desynchronise it.
+            return Ok(None);
+        }
 
-        // Build response
         let response = ProduceResponse::default()
             .with_responses(topic_responses)
             .with_throttle_time_ms(0);
 
-        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
-
         let mut buf = Vec::new();
-        response_header.encode(&mut buf, 0)?;
-        response.encode(&mut buf, 0)?;
-
-        Ok(buf)
+        ResponseHeader::default()
+            .with_correlation_id(ctx.correlation_id)
+            .encode(
+                &mut buf,
+                ApiKey::Produce.response_header_version(ctx.api_version),
+            )?;
+        response.encode(&mut buf, ctx.api_version)?;
+        Ok(Some(buf))
     }
 
-    /// Handle Fetch request (with LLM)
+    /// Fetch: the model supplies the records. There is no log to read from.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_fetch(
-        header: &RequestHeader,
-        message: &[u8],
-        server: &Arc<KafkaServer>,
-        _llm_client: &OllamaClient,
-        _app_state: &Arc<AppState>,
+        cursor: &mut std::io::Cursor<&[u8]>,
+        ctx: &RequestCtx,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
-        _protocol: &Arc<KafkaProtocol>,
-        _peer_addr: SocketAddr,
-        _local_addr: SocketAddr,
+        protocol: &Arc<KafkaProtocol>,
     ) -> Result<Vec<u8>> {
-        use bytes::Bytes;
         use kafka_protocol::messages::fetch_response::{FetchableTopicResponse, PartitionData};
-        use kafka_protocol::protocol::StrBytes;
 
-        debug!("Handling Fetch request");
-        let _ = status_tx.send("[DEBUG] Handling Fetch request".to_string());
-
-        // Parse fetch request
-        let mut cursor = std::io::Cursor::new(message);
-        let _ = RequestHeader::decode(&mut cursor, 0)?; // Skip header
-        let request = FetchRequest::decode(&mut cursor, 0)?;
+        let request = FetchRequest::decode(cursor, ctx.api_version)?;
+        let request_max_bytes = request.max_bytes;
 
         let mut topic_responses = Vec::new();
-        let topics_lock = server.topics.read().await;
+        let mut units = 0usize;
 
-        // Process each topic
         for topic in &request.topics {
             let topic_name = topic.topic.to_string();
             let mut partition_responses = Vec::new();
 
-            // Process each partition
             for partition in &topic.partitions {
                 let partition_idx = partition.partition;
                 let fetch_offset = partition.fetch_offset;
 
-                // Get topic and partition
-                if let Some(partitions) = topics_lock.get(&topic_name) {
-                    if let Some(records) = partitions.get(partition_idx as usize) {
-                        // Find records starting from fetch_offset
-                        let matching_records: Vec<_> = records
-                            .iter()
-                            .filter(|r| r.offset >= fetch_offset)
-                            .collect();
-
-                        if !matching_records.is_empty() {
-                            let _base_offset = matching_records[0].offset;
-
-                            // Convert stored records to kafka-protocol Record format
-                            let kafka_records: Vec<Record> = matching_records
-                                .iter()
-                                .map(|r| Record {
-                                    transactional: false,
-                                    control: false,
-                                    partition_leader_epoch: 0,
-                                    producer_id: -1,
-                                    producer_epoch: -1,
-                                    timestamp_type:
-                                        kafka_protocol::records::TimestampType::Creation,
-                                    offset: r.offset,
-                                    sequence: 0,
-                                    timestamp: r.timestamp,
-                                    key: r.key.as_ref().map(|k| Bytes::copy_from_slice(k)),
-                                    value: Some(Bytes::copy_from_slice(&r.value)),
-                                    headers: Default::default(),
-                                })
-                                .collect();
-
-                            // Encode records into batch
-                            let mut records_buf = Vec::new();
-                            let encode_options = RecordEncodeOptions {
-                                version: 2, // Use record batch format (version 2)
-                                compression: Compression::None,
-                            };
-
-                            match RecordBatchEncoder::encode_with_custom_compression::<
-                                _,
-                                _,
-                                fn(&mut bytes::BytesMut, &mut Vec<u8>, Compression) -> Result<()>,
-                            >(
-                                &mut records_buf,
-                                &kafka_records,
-                                &encode_options,
-                                None::<
-                                    fn(
-                                        &mut bytes::BytesMut,
-                                        &mut Vec<u8>,
-                                        Compression,
-                                    ) -> Result<()>,
-                                >,
-                            ) {
-                                Ok(_) => {
-                                    debug!(
-                                        "Encoded {} record(s) into {} bytes",
-                                        kafka_records.len(),
-                                        records_buf.len()
-                                    );
-
-                                    info!("Fetched {} record(s) from topic '{}' partition {} starting at offset {}",
-                                          matching_records.len(), topic_name, partition_idx, fetch_offset);
-                                    let _ = status_tx.send(format!(
-                                        "[INFO] Fetched {} record(s) from '{}' partition {}",
-                                        matching_records.len(),
-                                        topic_name,
-                                        partition_idx
-                                    ));
-
-                                    partition_responses.push(
-                                        PartitionData::default()
-                                            .with_partition_index(partition_idx)
-                                            .with_high_watermark(records.len() as i64)
-                                            .with_records(Some(Bytes::from(records_buf)))
-                                            .with_error_code(0),
-                                    );
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to encode records: {:?}, returning empty batch",
-                                        e
-                                    );
-                                    let _ = status_tx
-                                        .send(format!("[WARN] Failed to encode records: {:?}", e));
-
-                                    // Return empty records on encoding failure
-                                    partition_responses.push(
-                                        PartitionData::default()
-                                            .with_partition_index(partition_idx)
-                                            .with_high_watermark(records.len() as i64)
-                                            .with_error_code(0),
-                                    );
-                                }
-                            }
-                        } else {
-                            // No records at this offset
-                            debug!(
-                                "No records at offset {} for topic '{}' partition {}",
-                                fetch_offset, topic_name, partition_idx
-                            );
-                            partition_responses.push(
-                                PartitionData::default()
-                                    .with_partition_index(partition_idx)
-                                    .with_high_watermark(records.len() as i64)
-                                    .with_error_code(0),
-                            );
-                        }
-                    } else {
-                        // Partition doesn't exist
-                        partition_responses.push(
-                            PartitionData::default()
-                                .with_partition_index(partition_idx)
-                                .with_error_code(6), // Invalid partition
-                        );
-                    }
-                } else {
-                    // Topic doesn't exist
+                if !(0..=MAX_PARTITIONS).contains(&partition_idx) {
                     partition_responses.push(
                         PartitionData::default()
                             .with_partition_index(partition_idx)
-                            .with_error_code(3), // Unknown topic
+                            .with_error_code(ERR_UNKNOWN_TOPIC_OR_PARTITION)
+                            .with_records(Some(Bytes::new())),
                     );
+                    continue;
                 }
+
+                units += 1;
+                if units > MAX_UNITS_PER_REQUEST {
+                    console_warn!(
+                        status_tx,
+                        "Kafka fetch names more than {} topic-partitions in one request; \
+                         remaining ones rejected without consulting the model",
+                        MAX_UNITS_PER_REQUEST
+                    );
+                    partition_responses.push(
+                        PartitionData::default()
+                            .with_partition_index(partition_idx)
+                            .with_error_code(ERR_UNKNOWN_SERVER_ERROR)
+                            .with_records(Some(Bytes::new())),
+                    );
+                    continue;
+                }
+
+                let max_bytes = if partition.partition_max_bytes > 0 {
+                    partition.partition_max_bytes
+                } else {
+                    request_max_bytes
+                };
+
+                let event = Event::new(
+                    &FETCH_REQUEST_EVENT,
+                    json!({
+                        "topic": topic_name,
+                        "partition": partition_idx,
+                        "fetch_offset": fetch_offset,
+                        "max_bytes": max_bytes,
+                        "client_id": ctx.client_id,
+                    }),
+                );
+
+                let reply = Self::ask_model(
+                    &event,
+                    "fetch_response",
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    ctx,
+                    protocol,
+                )
+                .await;
+
+                let pd = match reply {
+                    Reply::Data(data) => {
+                        let list = data
+                            .get("records")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        match encode_record_batch(&list, fetch_offset, status_tx) {
+                            Ok((bytes, high_watermark)) => PartitionData::default()
+                                .with_partition_index(partition_idx)
+                                .with_high_watermark(high_watermark)
+                                .with_last_stable_offset(high_watermark)
+                                .with_log_start_offset(0)
+                                .with_records(Some(bytes))
+                                .with_error_code(ERR_NONE),
+                            Err(e) => {
+                                error!(
+                                    "Kafka fetch for '{}' partition {}: could not encode the model's records: {}",
+                                    topic_name, partition_idx, e
+                                );
+                                console_error!(
+                                    status_tx,
+                                    "Kafka fetch for '{}' partition {}: the model's records could not be \
+                                     encoded ({}); replying UNKNOWN_SERVER_ERROR",
+                                    topic_name,
+                                    partition_idx,
+                                    e
+                                );
+                                PartitionData::default()
+                                    .with_partition_index(partition_idx)
+                                    .with_error_code(ERR_UNKNOWN_SERVER_ERROR)
+                                    .with_records(Some(Bytes::new()))
+                            }
+                        }
+                    }
+                    Reply::Error(code) => PartitionData::default()
+                        .with_partition_index(partition_idx)
+                        .with_error_code(code)
+                        .with_records(Some(Bytes::new())),
+                    Reply::NoAnswer => PartitionData::default()
+                        .with_partition_index(partition_idx)
+                        .with_error_code(ERR_UNKNOWN_SERVER_ERROR)
+                        .with_records(Some(Bytes::new())),
+                };
+
+                partition_responses.push(pd);
             }
 
             topic_responses.push(
@@ -982,88 +1346,99 @@ impl KafkaServer {
             );
         }
 
-        drop(topics_lock);
-
-        // Build response
         let response = FetchResponse::default()
             .with_responses(topic_responses)
             .with_throttle_time_ms(0);
 
-        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
-
         let mut buf = Vec::new();
-        response_header.encode(&mut buf, 0)?;
-        response.encode(&mut buf, 0)?;
-
+        ResponseHeader::default()
+            .with_correlation_id(ctx.correlation_id)
+            .encode(
+                &mut buf,
+                ApiKey::Fetch.response_header_version(ctx.api_version),
+            )?;
+        response.encode(&mut buf, ctx.api_version)?;
         Ok(buf)
     }
 
-    /// Handle OffsetCommit request (with LLM)
+    /// OffsetCommit: the model decides whether the commit is accepted. Nothing is stored,
+    /// so a later OffsetFetch would not see it — and OffsetFetch is not implemented.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_offset_commit(
-        header: &RequestHeader,
-        message: &[u8],
-        server: &Arc<KafkaServer>,
-        _llm_client: &OllamaClient,
-        _app_state: &Arc<AppState>,
+        cursor: &mut std::io::Cursor<&[u8]>,
+        ctx: &RequestCtx,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
-        _protocol: &Arc<KafkaProtocol>,
-        _peer_addr: SocketAddr,
-        _local_addr: SocketAddr,
+        protocol: &Arc<KafkaProtocol>,
     ) -> Result<Vec<u8>> {
         use kafka_protocol::messages::offset_commit_response::{
             OffsetCommitResponsePartition, OffsetCommitResponseTopic,
         };
-        use kafka_protocol::protocol::StrBytes;
 
-        debug!("Handling OffsetCommit request");
-        let _ = status_tx.send("[DEBUG] Handling OffsetCommit request".to_string());
-
-        // Parse offset commit request
-        let mut cursor = std::io::Cursor::new(message);
-        let _ = RequestHeader::decode(&mut cursor, 0)?; // Skip header
-        let request = OffsetCommitRequest::decode(&mut cursor, 0)?;
-
+        let request = OffsetCommitRequest::decode(cursor, ctx.api_version)?;
         let group_id = request.group_id.to_string();
+
         let mut topic_responses = Vec::new();
-        let mut offsets_lock = server.consumer_offsets.write().await;
+        let mut units = 0usize;
 
-        // Get or create group
-        let group_offsets = offsets_lock
-            .entry(group_id.clone())
-            .or_insert_with(HashMap::new);
-
-        // Process each topic
         for topic in &request.topics {
             let topic_name = topic.name.to_string();
             let mut partition_responses = Vec::new();
 
-            // Get or create topic
-            let topic_offsets = group_offsets
-                .entry(topic_name.clone())
-                .or_insert_with(HashMap::new);
-
-            // Process each partition
             for partition in &topic.partitions {
                 let partition_idx = partition.partition_index;
-                let committed_offset = partition.committed_offset;
 
-                // Store offset
-                topic_offsets.insert(partition_idx, committed_offset);
+                units += 1;
+                if units > MAX_UNITS_PER_REQUEST {
+                    console_warn!(
+                        status_tx,
+                        "Kafka offset commit names more than {} topic-partitions in one request; \
+                         remaining ones rejected without consulting the model",
+                        MAX_UNITS_PER_REQUEST
+                    );
+                    partition_responses.push(
+                        OffsetCommitResponsePartition::default()
+                            .with_partition_index(partition_idx)
+                            .with_error_code(ERR_UNKNOWN_SERVER_ERROR),
+                    );
+                    continue;
+                }
 
-                info!(
-                    "Consumer group '{}' committed offset {} for topic '{}' partition {}",
-                    group_id, committed_offset, topic_name, partition_idx
+                let event = Event::new(
+                    &OFFSET_COMMIT_REQUEST_EVENT,
+                    json!({
+                        "group_id": group_id,
+                        "topic": topic_name,
+                        "partition": partition_idx,
+                        "offset": partition.committed_offset,
+                        "client_id": ctx.client_id,
+                    }),
                 );
-                let _ = status_tx.send(format!(
-                    "[INFO] Group '{}' committed offset {} for '{}' partition {}",
-                    group_id, committed_offset, topic_name, partition_idx
-                ));
+
+                let reply = Self::ask_model(
+                    &event,
+                    "offset_commit_response",
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    ctx,
+                    protocol,
+                )
+                .await;
+
+                let error_code = match reply {
+                    Reply::Data(data) => {
+                        clamp_error_code(data.get("error_code").and_then(|v| v.as_i64()))
+                    }
+                    Reply::Error(code) => code,
+                    Reply::NoAnswer => ERR_UNKNOWN_SERVER_ERROR,
+                };
 
                 partition_responses.push(
                     OffsetCommitResponsePartition::default()
                         .with_partition_index(partition_idx)
-                        .with_error_code(0),
+                        .with_error_code(error_code),
                 );
             }
 
@@ -1074,31 +1449,284 @@ impl KafkaServer {
             );
         }
 
-        drop(offsets_lock);
-
-        // Build response
         let response = OffsetCommitResponse::default()
             .with_topics(topic_responses)
             .with_throttle_time_ms(0);
 
-        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
-
         let mut buf = Vec::new();
-        response_header.encode(&mut buf, 0)?;
-        response.encode(&mut buf, 0)?;
-
+        ResponseHeader::default()
+            .with_correlation_id(ctx.correlation_id)
+            .encode(
+                &mut buf,
+                ApiKey::OffsetCommit.response_header_version(ctx.api_version),
+            )?;
+        response.encode(&mut buf, ctx.api_version)?;
         Ok(buf)
     }
 
-    /// Create error response
-    fn create_error_response(header: &RequestHeader, error_code: i16) -> Vec<u8> {
-        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
+    /// Raise one event and reduce the returned actions to a single decision.
+    ///
+    /// `call_llm` is the entry point for all three handling modes, so a script or static
+    /// `event_handler` short-circuits the model here exactly as it does for every other
+    /// protocol.
+    async fn ask_model(
+        event: &Event,
+        expected_action: &str,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        ctx: &RequestCtx,
+        protocol: &Arc<KafkaProtocol>,
+    ) -> Reply {
+        let result = call_llm(
+            llm_client,
+            app_state,
+            ctx.server_id,
+            Some(ctx.connection_id),
+            event,
+            protocol.as_ref(),
+        )
+        .await;
 
-        let mut buf = Vec::new();
-        let _ = response_header.encode(&mut buf, 0);
-        // Add error code
-        buf.extend_from_slice(&error_code.to_be_bytes());
+        let execution = match result {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Kafka: handling {} failed: {}", event.id(), e);
+                console_error!(
+                    status_tx,
+                    "Kafka: no answer for {} ({}); replying with UNKNOWN_SERVER_ERROR rather than \
+                     a default",
+                    event.id(),
+                    e
+                );
+                return Reply::NoAnswer;
+            }
+        };
 
-        buf
+        // First recognised action wins, so the model's ordering is respected and an
+        // explicit refusal is never overridden by a later success.
+        for result in execution.protocol_results {
+            if let ActionResult::Custom { name, data } = result {
+                if name == expected_action {
+                    return Reply::Data(data);
+                }
+                if name == "error_response" {
+                    let mut code =
+                        clamp_error_code(data.get("error_code").and_then(|v| v.as_i64()));
+                    if code == ERR_NONE {
+                        // "error_response" with error_code 0 is a contradiction; treating
+                        // it as success would make a refusal indistinguishable from an ack.
+                        console_warn!(
+                            status_tx,
+                            "Kafka: error_response for {} carried error_code 0; using \
+                             UNKNOWN_SERVER_ERROR instead",
+                            event.id()
+                        );
+                        code = ERR_UNKNOWN_SERVER_ERROR;
+                    }
+                    return Reply::Error(code);
+                }
+                debug!(
+                    "Kafka: ignoring action '{}' for {} (expected '{}' or 'error_response')",
+                    name,
+                    event.id(),
+                    expected_action
+                );
+            }
+        }
+
+        console_warn!(
+            status_tx,
+            "Kafka: {} produced no '{}' and no 'error_response'; replying UNKNOWN_SERVER_ERROR",
+            event.id(),
+            expected_action
+        );
+        Reply::NoAnswer
     }
+}
+
+/// Everything a handler needs about the request it is answering, so the handler
+/// signatures stay readable.
+struct RequestCtx {
+    api_version: i16,
+    correlation_id: i32,
+    client_id: String,
+    #[allow(dead_code)]
+    peer_addr: SocketAddr,
+    local_addr: SocketAddr,
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
+}
+
+/// Clamp a model-supplied error code into i16, defaulting to success when absent.
+fn clamp_error_code(v: Option<i64>) -> i16 {
+    match v {
+        Some(c) if c >= i16::MIN as i64 && c <= i16::MAX as i64 => c as i16,
+        Some(_) => ERR_UNKNOWN_SERVER_ERROR,
+        None => ERR_NONE,
+    }
+}
+
+/// Render record bytes for an event, as text when that is faithful and hex otherwise.
+///
+/// Models cannot read base64 and cannot be trusted to notice that a "string" is really
+/// binary, so the encoding is stated explicitly alongside the value — the same shape the
+/// TCP protocol settled on.
+fn encode_field(bytes: &[u8], max_len: usize) -> (Value, &'static str) {
+    let printable = std::str::from_utf8(bytes).ok().filter(|s| {
+        !s.chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+    });
+    match printable {
+        Some(s) => {
+            let truncated = crate::utils::truncate::truncate_for_llm(s, max_len);
+            (Value::String(truncated), "utf8")
+        }
+        None => {
+            let take = bytes.len().min(max_len / 2);
+            (Value::String(hex::encode(&bytes[..take])), "hex")
+        }
+    }
+}
+
+/// Turn one action field into record bytes, honouring the declared encoding.
+///
+/// If a field is documented as accepting hex, the executor has to actually decode it —
+/// anything else puts literal ASCII on the wire.
+fn decode_field(value: Option<&Value>, encoding: &str) -> Result<Option<Vec<u8>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let text = match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    match encoding {
+        "hex" => {
+            let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+            let bytes = hex::decode(&cleaned)
+                .map_err(|e| anyhow::anyhow!("invalid hex in record field: {}", e))?;
+            Ok(Some(bytes))
+        }
+        "utf8" => Ok(Some(text.into_bytes())),
+        other => Err(anyhow::anyhow!(
+            "unknown record encoding '{}' (expected 'utf8' or 'hex')",
+            other
+        )),
+    }
+}
+
+/// Encode the model's records into a v2 record batch.
+///
+/// Returns the encoded batch and the high watermark the client should be told about
+/// (one past the last offset in the batch).
+///
+/// Offsets are made contiguous from the batch's base. Kafka's v2 batch stores per-record
+/// offset *deltas* from the base and the encoder requires `offset - sequence` to be
+/// constant across a batch, so honouring arbitrary gaps would silently split or corrupt
+/// the batch. A model-supplied offset below `fetch_offset` would be discarded by the
+/// consumer, so it is raised to `fetch_offset` and logged.
+fn encode_record_batch(
+    records: &[Value],
+    fetch_offset: i64,
+    status_tx: &mpsc::UnboundedSender<String>,
+) -> Result<(Bytes, i64)> {
+    if records.is_empty() {
+        return Ok((Bytes::new(), fetch_offset.max(0)));
+    }
+
+    if records.len() > MAX_RECORDS_PER_FETCH {
+        console_warn!(
+            status_tx,
+            "Kafka fetch_response contained {} records; only the first {} are returned",
+            records.len(),
+            MAX_RECORDS_PER_FETCH
+        );
+    }
+
+    let base_offset = records
+        .first()
+        .and_then(|r| r.get("offset"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(fetch_offset)
+        .max(fetch_offset.max(0));
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut total_payload = 0usize;
+    let mut out = Vec::new();
+
+    for (idx, r) in records.iter().take(MAX_RECORDS_PER_FETCH).enumerate() {
+        let key_encoding = r
+            .get("key_encoding")
+            .and_then(|v| v.as_str())
+            .or_else(|| r.get("encoding").and_then(|v| v.as_str()))
+            .unwrap_or("utf8");
+        let value_encoding = r
+            .get("value_encoding")
+            .and_then(|v| v.as_str())
+            .or_else(|| r.get("encoding").and_then(|v| v.as_str()))
+            .unwrap_or("utf8");
+
+        let key = decode_field(r.get("key"), key_encoding)?;
+        let value = decode_field(r.get("value"), value_encoding)?;
+
+        total_payload += key.as_ref().map(|k| k.len()).unwrap_or(0)
+            + value.as_ref().map(|v| v.len()).unwrap_or(0);
+        if total_payload > MAX_FETCH_PAYLOAD_BYTES {
+            console_warn!(
+                status_tx,
+                "Kafka fetch_response payload exceeded {} bytes; truncating the batch at {} record(s)",
+                MAX_FETCH_PAYLOAD_BYTES,
+                idx
+            );
+            break;
+        }
+
+        let declared = r.get("offset").and_then(|v| v.as_i64());
+        let offset = base_offset + idx as i64;
+        if let Some(d) = declared {
+            if d != offset {
+                debug!(
+                    "Kafka fetch_response: record offset {} rewritten to {} to keep the batch contiguous",
+                    d, offset
+                );
+            }
+        }
+
+        out.push(Record {
+            transactional: false,
+            control: false,
+            partition_leader_epoch: 0,
+            producer_id: -1,
+            producer_epoch: -1,
+            timestamp_type: TimestampType::Creation,
+            offset,
+            sequence: idx as i32,
+            timestamp: r.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(now),
+            key: key.map(Bytes::from),
+            value: value.map(Bytes::from),
+            headers: Default::default(),
+        });
+    }
+
+    if out.is_empty() {
+        return Ok((Bytes::new(), base_offset));
+    }
+
+    let mut buf = Vec::new();
+    let options = RecordEncodeOptions {
+        version: 2,
+        compression: Compression::None,
+    };
+    RecordBatchEncoder::encode_with_custom_compression::<
+        _,
+        _,
+        fn(&mut bytes::BytesMut, &mut Vec<u8>, Compression) -> Result<()>,
+    >(&mut buf, &out, &options, None)?;
+
+    let high_watermark = base_offset + out.len() as i64;
+    Ok((Bytes::from(buf), high_watermark))
 }

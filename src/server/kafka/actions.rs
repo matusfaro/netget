@@ -1,7 +1,9 @@
 //! Kafka protocol actions and LLM integration
 //!
-//! This module defines the action-based interface for Kafka protocol.
-//! The LLM can control Kafka broker behavior through these actions.
+//! Rust owns the Kafka wire format; the model owns the content. Every event declared
+//! here is emitted by `src/server/kafka/mod.rs`, and every action declared here is
+//! consumed there. ApiVersions is the one request the model never sees — it advertises
+//! what this code can parse, which is not a content decision.
 
 use crate::llm::actions::protocol_trait::{ActionResult, Protocol};
 use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, Server};
@@ -12,11 +14,15 @@ use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
-/// Event: Kafka produce request received
+/// Event: Kafka produce request received.
+///
+/// Emitted once per (topic, partition) in a Produce request, after Rust has decoded and
+/// decompressed the record batch. A batch that cannot be decoded never reaches the
+/// model: the producer gets CORRUPT_MESSAGE.
 pub static PRODUCE_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_produce_request",
-        "Triggered when a Kafka producer sends records to a topic",
+        "Triggered when a Kafka producer sends records to a topic partition",
         json!({
             "type": "produce_response",
             "topic": "orders",
@@ -42,20 +48,43 @@ pub static PRODUCE_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
         Parameter {
             name: "record_count".to_string(),
             type_hint: "number".to_string(),
-            description: "Number of records in batch".to_string(),
+            description: "Number of records in the batch".to_string(),
             required: true,
         },
         Parameter {
             name: "first_key".to_string(),
             type_hint: "string".to_string(),
-            description: "Key of first record (optional)".to_string(),
+            description: "Key of the first record, null if it has none".to_string(),
             required: false,
         },
         Parameter {
             name: "first_value_preview".to_string(),
             type_hint: "string".to_string(),
-            description: "Preview of first record value".to_string(),
+            description: "Value of the first record, truncated for the prompt".to_string(),
             required: true,
+        },
+        Parameter {
+            name: "records".to_string(),
+            type_hint: "array".to_string(),
+            description: "Up to 20 decoded records: [{offset, timestamp, key, key_encoding, \
+                          value, value_encoding}]. `*_encoding` is \"utf8\" when the bytes were \
+                          printable text and \"hex\" when they were not"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "acks".to_string(),
+            type_hint: "number".to_string(),
+            description: "Producer's requested acknowledgement level. With acks=0 the producer \
+                          is not waiting for a reply and no response is sent"
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "client_id from the request header (empty if absent)".to_string(),
+            required: false,
         },
     ])
     .with_log_template(
@@ -68,11 +97,14 @@ pub static PRODUCE_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     )
 });
 
-/// Event: Kafka fetch request received
+/// Event: Kafka fetch request received.
+///
+/// Emitted once per (topic, partition) in a Fetch request. The broker keeps no log, so
+/// the records in the reply are whatever the model, script or static handler supplies.
 pub static FETCH_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_fetch_request",
-        "Triggered when a Kafka consumer requests records from a topic",
+        "Triggered when a Kafka consumer requests records from a topic partition",
         json!({
             "type": "fetch_response",
             "topic": "orders",
@@ -100,14 +132,21 @@ pub static FETCH_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
         Parameter {
             name: "fetch_offset".to_string(),
             type_hint: "number".to_string(),
-            description: "Offset to fetch from".to_string(),
+            description: "Offset the consumer wants to read from. Returned records start here"
+                .to_string(),
             required: true,
         },
         Parameter {
             name: "max_bytes".to_string(),
             type_hint: "number".to_string(),
-            description: "Maximum bytes to return".to_string(),
+            description: "Maximum bytes the consumer will accept for this partition".to_string(),
             required: true,
+        },
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "client_id from the request header (empty if absent)".to_string(),
+            required: false,
         },
     ])
     .with_log_template(
@@ -118,7 +157,11 @@ pub static FETCH_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     )
 });
 
-/// Event: Kafka metadata request received
+/// Event: Kafka metadata request received.
+///
+/// Emitted once per Metadata request. This is the request that decides whether a client
+/// can do anything at all: it must learn which topics exist and which broker leads each
+/// partition.
 pub static METADATA_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_metadata_request",
@@ -135,12 +178,36 @@ pub static METADATA_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
         }),
     )
     .with_actions(vec![metadata_response_action(), error_response_action()])
-    .with_parameters(vec![Parameter {
-        name: "requested_topics".to_string(),
-        type_hint: "array".to_string(),
-        description: "Topics client wants metadata for (empty = all topics)".to_string(),
-        required: false,
-    }])
+    .with_parameters(vec![
+        Parameter {
+            name: "requested_topics".to_string(),
+            type_hint: "array".to_string(),
+            description:
+                "Topic names the client asked about. Any name here that your response \
+                          does not describe is reported to the client as UNKNOWN_TOPIC_OR_PARTITION"
+                    .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "all_topics".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "True when the client asked for every topic rather than named ones"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "client_id from the request header (empty if absent)".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "api_version".to_string(),
+            type_hint: "number".to_string(),
+            description: "Metadata API version the client negotiated".to_string(),
+            required: false,
+        },
+    ])
     .with_log_template(
         LogTemplate::new()
             .with_info("Kafka metadata request")
@@ -149,7 +216,11 @@ pub static METADATA_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     )
 });
 
-/// Event: Kafka offset commit request received
+/// Event: Kafka offset commit request received.
+///
+/// Emitted once per (topic, partition) in an OffsetCommit request. Nothing is stored, and
+/// OffsetFetch is not implemented, so an accepted commit is an acknowledgement and
+/// nothing more.
 pub static OFFSET_COMMIT_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_offset_commit_request",
@@ -187,8 +258,14 @@ pub static OFFSET_COMMIT_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
         Parameter {
             name: "offset".to_string(),
             type_hint: "number".to_string(),
-            description: "Committed offset".to_string(),
+            description: "Offset the consumer wants to commit".to_string(),
             required: true,
+        },
+        Parameter {
+            name: "client_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "client_id from the request header (empty if absent)".to_string(),
+            required: false,
         },
     ])
     .with_log_template(
@@ -208,172 +285,43 @@ impl KafkaProtocol {
     }
 }
 
+impl Default for KafkaProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Helper functions for action definitions
-
-fn publish_message_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "publish_message".to_string(),
-        description: "Publish a message to a Kafka topic from the server side".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "topic".to_string(),
-                type_hint: "string".to_string(),
-                description: "Topic name to publish to".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "key".to_string(),
-                type_hint: "string".to_string(),
-                description: "Message key (optional, for partitioning)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "value".to_string(),
-                type_hint: "string".to_string(),
-                description: "Message value/payload".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "partition".to_string(),
-                type_hint: "number".to_string(),
-                description: "Target partition (optional, defaults to key-based routing)"
-                    .to_string(),
-                required: false,
-            },
-        ],
-        example: json!({
-            "type": "publish_message",
-            "topic": "orders",
-            "key": "order123",
-            "value": "{\"item\": \"laptop\", \"price\": 999}",
-            "partition": 0
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("Kafka publish to {topic}")
-                .with_debug("Kafka publish_message: topic={topic}, key={key}"),
-        ),
-    }
-}
-
-fn create_topic_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "create_topic".to_string(),
-        description: "Create a new Kafka topic".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "topic".to_string(),
-                type_hint: "string".to_string(),
-                description: "Topic name".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "partitions".to_string(),
-                type_hint: "number".to_string(),
-                description: "Number of partitions (default: 1)".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "replication_factor".to_string(),
-                type_hint: "number".to_string(),
-                description: "Replication factor (default: 1)".to_string(),
-                required: false,
-            },
-        ],
-        example: json!({
-            "type": "create_topic",
-            "topic": "orders",
-            "partitions": 3,
-            "replication_factor": 1
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("Kafka create topic {topic}")
-                .with_debug("Kafka create_topic: topic={topic}, partitions={partitions}"),
-        ),
-    }
-}
-
-fn delete_topic_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "delete_topic".to_string(),
-        description: "Delete a Kafka topic".to_string(),
-        parameters: vec![Parameter {
-            name: "topic".to_string(),
-            type_hint: "string".to_string(),
-            description: "Topic name to delete".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "delete_topic",
-            "topic": "orders"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("Kafka delete topic {topic}")
-                .with_debug("Kafka delete_topic: topic={topic}"),
-        ),
-    }
-}
-
-fn set_retention_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "set_retention".to_string(),
-        description: "Set retention policy for a topic".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "topic".to_string(),
-                type_hint: "string".to_string(),
-                description: "Topic name".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "retention_hours".to_string(),
-                type_hint: "number".to_string(),
-                description: "Retention time in hours".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "set_retention",
-            "topic": "orders",
-            "retention_hours": 72
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("Kafka set retention {topic} {retention_hours}h")
-                .with_debug("Kafka set_retention: topic={topic}, hours={retention_hours}"),
-        ),
-    }
-}
 
 fn produce_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "produce_response".to_string(),
-        description: "Respond to a Kafka produce request".to_string(),
+        description: "Answer a Kafka produce request: accept the records at an offset, or \
+                      reject them with an error code"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "topic".to_string(),
                 type_hint: "string".to_string(),
-                description: "Topic name".to_string(),
+                description: "Topic name (echo the topic from the event)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "partition".to_string(),
                 type_hint: "number".to_string(),
-                description: "Partition number".to_string(),
+                description: "Partition number (echo the partition from the event)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "offset".to_string(),
                 type_hint: "number".to_string(),
-                description: "Assigned offset for the record".to_string(),
+                description: "Base offset assigned to the first record in the batch".to_string(),
                 required: true,
             },
             Parameter {
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "Kafka error code (0 = success)".to_string(),
+                description: "Kafka error code; 0 (default) accepts the batch".to_string(),
                 required: false,
             },
         ],
@@ -397,24 +345,31 @@ fn produce_response_action() -> ActionDefinition {
 fn fetch_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "fetch_response".to_string(),
-        description: "Respond to a Kafka fetch request with records".to_string(),
+        description: "Answer a Kafka fetch request with the records the consumer should see. \
+                      An empty array is a valid answer meaning 'nothing new'"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "topic".to_string(),
                 type_hint: "string".to_string(),
-                description: "Topic name".to_string(),
+                description: "Topic name (echo the topic from the event)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "partition".to_string(),
                 type_hint: "number".to_string(),
-                description: "Partition number".to_string(),
+                description: "Partition number (echo the partition from the event)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "records".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of records to return [{offset, key, value}]".to_string(),
+                description: "Records to return: [{offset, key, value, key_encoding, \
+                              value_encoding}]. `key`/`value` are text by default; set \
+                              `value_encoding` to \"hex\" to send raw bytes as a hex string. \
+                              Offsets are made contiguous starting at the first record's offset, \
+                              which is never lower than the request's fetch_offset"
+                    .to_string(),
                 required: true,
             },
         ],
@@ -438,20 +393,27 @@ fn fetch_response_action() -> ActionDefinition {
 fn metadata_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "metadata_response".to_string(),
-        description: "Respond with cluster and topic metadata".to_string(),
+        description: "Answer a Kafka metadata request: which brokers exist and which topics and \
+                      partitions they lead"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "brokers".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of broker info [{id, host, port}]".to_string(),
-                required: true,
+                description: "Brokers [{id, host, port}]. Omit this to advertise this NetGet \
+                              server itself, which is almost always what you want — a client \
+                              cannot connect to a broker address that does not exist"
+                    .to_string(),
+                required: false,
             },
             Parameter {
                 name: "topics".to_string(),
                 type_hint: "array".to_string(),
-                description:
-                    "Array of topics [{name, partitions: [{partition, leader, replicas}]}]"
-                        .to_string(),
+                description: "Topics [{name, partitions: [{partition, leader, replicas}]}]. \
+                              `leader` defaults to this broker's id. A topic listed with no \
+                              partitions is given one partition led by this broker. Any topic \
+                              the client asked about but you omit is reported as unknown"
+                    .to_string(),
                 required: true,
             },
         ],
@@ -476,24 +438,24 @@ fn metadata_response_action() -> ActionDefinition {
 fn offset_commit_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "offset_commit_response".to_string(),
-        description: "Acknowledge offset commit".to_string(),
+        description: "Acknowledge (or reject) an offset commit".to_string(),
         parameters: vec![
             Parameter {
                 name: "topic".to_string(),
                 type_hint: "string".to_string(),
-                description: "Topic name".to_string(),
+                description: "Topic name (echo the topic from the event)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "partition".to_string(),
                 type_hint: "number".to_string(),
-                description: "Partition number".to_string(),
+                description: "Partition number (echo the partition from the event)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "Kafka error code (0 = success)".to_string(),
+                description: "Kafka error code; 0 (default) accepts the commit".to_string(),
                 required: false,
             },
         ],
@@ -514,18 +476,26 @@ fn offset_commit_response_action() -> ActionDefinition {
 fn error_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "error_response".to_string(),
-        description: "Respond with an error".to_string(),
+        description: "Refuse the request. The error code is carried in the correct response type \
+                      for whichever API was called, so the client sees a proper Kafka error \
+                      rather than silence"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "Kafka error code (e.g., 3 = Unknown topic)".to_string(),
+                description: "Kafka error code, e.g. 3 = UNKNOWN_TOPIC_OR_PARTITION, \
+                              -1 = UNKNOWN_SERVER_ERROR. 0 is not accepted here: an error \
+                              response that says success is treated as -1"
+                    .to_string(),
                 required: true,
             },
             Parameter {
                 name: "error_message".to_string(),
                 type_hint: "string".to_string(),
-                description: "Human-readable error description".to_string(),
+                description: "Human-readable description, logged only — Kafka's wire format has \
+                              no place for it in these responses"
+                    .to_string(),
                 required: false,
             },
         ],
@@ -549,58 +519,42 @@ impl Protocol for KafkaProtocol {
             ParameterDefinition {
                 name: "cluster_id".to_string(),
                 type_hint: "string".to_string(),
-                description: "Unique cluster identifier".to_string(),
+                description: "Cluster identifier reported in Metadata responses (v2 and above; \
+                              earlier Metadata versions have no such field)"
+                    .to_string(),
                 required: false,
                 example: json!("netget-kafka-1"),
             },
             ParameterDefinition {
                 name: "broker_id".to_string(),
                 type_hint: "number".to_string(),
-                description: "Broker ID within the cluster".to_string(),
+                description: "Broker ID reported in Metadata, and the default partition leader"
+                    .to_string(),
                 required: false,
                 example: json!(0),
             },
             ParameterDefinition {
-                name: "auto_create_topics".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "Automatically create topics on first produce".to_string(),
+                name: "advertised_host".to_string(),
+                type_hint: "string".to_string(),
+                description: "Hostname advertised to clients in Metadata when the response does \
+                              not name one. Defaults to the bound address, or localhost when \
+                              bound to a wildcard address"
+                    .to_string(),
                 required: false,
-                example: json!(true),
-            },
-            ParameterDefinition {
-                name: "default_partitions".to_string(),
-                type_hint: "number".to_string(),
-                description: "Default partition count for auto-created topics".to_string(),
-                required: false,
-                example: json!(1),
-            },
-            ParameterDefinition {
-                name: "log_retention_hours".to_string(),
-                type_hint: "number".to_string(),
-                description: "Log retention time in hours".to_string(),
-                required: false,
-                example: json!(168),
+                example: json!("localhost"),
             },
         ]
     }
-    /// DEAD CODE, kept as the design for the eventual implementation.
-    ///
-    /// `execute_action` returns an `ActionResult::Custom` for each of these, but
-    /// `src/server/kafka/mod.rs` never inspects `protocol_results`, so no field of any
-    /// of them reaches the wire. Worse, the executor still renders each action's
-    /// `log_template` on success, so the TUI reports e.g. "Kafka publish to orders"
-    /// for something that never happened. Hidden from the LLM by
-    /// `DevelopmentState::Incomplete`.
+
+    /// Kafka is strictly pull-based: a broker cannot push a record to a consumer, it can
+    /// only answer a Fetch. And this broker stores nothing, so there is no topic list to
+    /// create or delete against. There is therefore no useful server-initiated action —
+    /// an earlier version declared `publish_message`, `create_topic`, `delete_topic` and
+    /// `set_retention`, none of which had, or could have, an implementation.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            publish_message_action(),
-            create_topic_action(),
-            delete_topic_action(),
-            set_retention_action(),
-        ]
+        Vec::new()
     }
-    /// DEAD CODE — see [`KafkaProtocol::get_async_actions`]. The broker computes
-    /// every produce/fetch/metadata/offset-commit response in hardcoded Rust.
+
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             produce_response_action(),
@@ -613,9 +567,6 @@ impl Protocol for KafkaProtocol {
     fn protocol_name(&self) -> &'static str {
         "KAFKA"
     }
-    /// DEAD CODE: none of these is ever constructed. `src/server/kafka/mod.rs`
-    /// contains no `Event::new` call, so no handler — script, static or LLM — can be
-    /// triggered by a Kafka request.
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
             PRODUCE_REQUEST_EVENT.clone(),
@@ -634,30 +585,43 @@ impl Protocol for KafkaProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Incomplete)
-            .implementation("kafka-protocol v0.14 wire format, hardcoded broker logic in Rust")
-            .llm_control("None: the LLM is never called and every action below is dead code")
-            .e2e_testing("None: tests assert only that a TCP connection can be opened")
+            .state(DevelopmentState::Experimental)
+            .implementation(
+                "kafka-protocol v0.14 wire format. Implements ApiVersions v0-3 (answered by Rust), \
+                 Metadata v0-8, Produce v0-8, Fetch v0-11, OffsetCommit v0-7",
+            )
+            .llm_control(
+                "Metadata, Produce, Fetch and OffsetCommit responses. The model chooses which \
+                 topics and partitions exist, whether a produce is accepted and at what offset, \
+                 and exactly which records a fetch returns",
+            )
+            .e2e_testing(
+                "Mocked E2E: requests are built and responses decoded with kafka-protocol's own \
+                 client-side codecs, asserting correlation-id echo, ApiVersions negotiation, \
+                 metadata leadership, and a produced record round-tripping back through fetch",
+            )
             .notes(
-                "NOT FUNCTIONAL. ApiVersions replies with an empty supported-API list, so no \
-                 real Kafka client gets past the first request (rdkafka crashes against it). \
-                 Every request and response is decoded and encoded at hardcoded version 0, so \
-                 the client_id present in the v1/v2 headers real clients send is never \
-                 consumed and all body fields after it are misparsed. handle_produce, \
-                 handle_fetch, handle_metadata and handle_offset_commit take the LLM client \
-                 and discard it: all responses come from hardcoded Rust over an in-Rust topic \
-                 and offset store, which also violates the project's no-storage rule. The nine \
-                 actions and four event types declared here are never executed or emitted, so \
-                 instructions, script handlers and static handlers all have no effect. Hidden \
-                 from the LLM until produce/fetch round-trip through the model.",
+                "Supports exactly five API keys: ApiVersions (18) v0-3, Metadata (3) v0-8, \
+                 Produce (0) v0-8, Fetch (1) v0-11, OffsetCommit (8) v0-7. The ceilings sit one \
+                 below each message's first flexible/tagged-field version. Any other API key — \
+                 ListOffsets, FindCoordinator, JoinGroup, SyncGroup, Heartbeat, OffsetFetch, the \
+                 admin APIs — is not advertised and closes the connection with a logged error if \
+                 sent, so consumer groups do not work: a consumer must assign partitions manually \
+                 and fetch from an explicit offset. The broker stores nothing, so a Fetch returns \
+                 only what the model supplies for that request and a committed offset is \
+                 acknowledged but not remembered. When the model returns no usable action the \
+                 client gets UNKNOWN_SERVER_ERROR (-1) in the correct response type, never a \
+                 fabricated success. Not validated against librdkafka or the Java client.",
             )
             .build()
     }
     fn description(&self) -> &'static str {
-        "Apache Kafka broker (incomplete: no client handshake, no LLM control)"
+        "Apache Kafka broker: ApiVersions, Metadata, Produce, Fetch and OffsetCommit, with the \
+         LLM deciding topics, offsets and record contents"
     }
     fn example_prompt(&self) -> &'static str {
-        "Not usable yet: the Kafka broker cannot negotiate with a real client"
+        "Start a Kafka broker on port 9092 with a topic 'orders' with one partition; accept \
+         produces and return the produced records when a consumer fetches"
     }
     fn group_name(&self) -> &'static str {
         "Database"
@@ -667,28 +631,30 @@ impl Protocol for KafkaProtocol {
         use crate::llm::actions::StartupExamples;
 
         StartupExamples::new(
-            // LLM mode: LLM handles all Kafka responses intelligently
+            // LLM mode: the model answers each request
             json!({
                 "type": "open_server",
                 "port": 9092,
                 "base_stack": "kafka",
-                "instruction": "Kafka broker handling produce, fetch, and metadata requests"
+                "instruction": "Kafka broker with a single topic 'orders' with one partition. \
+                                Accept every produce and assign sequential offsets. Return the \
+                                produced records on fetch."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: deterministic responses, no LLM call
             json!({
                 "type": "open_server",
                 "port": 9092,
                 "base_stack": "kafka",
                 "event_handlers": [{
-                    "event_pattern": "kafka_produce_request",
+                    "event_pattern": "kafka_metadata_request",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<kafka_handler>"
+                        "code": "actions = [{'type': 'metadata_response', 'topics': [{'name': 'orders', 'partitions': [{'partition': 0}]}]}]"
                     }
                 }]
             }),
-            // Static mode: Fixed responses
+            // Static mode: fixed responses
             json!({
                 "type": "open_server",
                 "port": 9092,
@@ -699,7 +665,7 @@ impl Protocol for KafkaProtocol {
                         "type": "static",
                         "actions": [{
                             "type": "produce_response",
-                            "topic": "default",
+                            "topic": "orders",
                             "partition": 0,
                             "offset": 0,
                             "error_code": 0
@@ -738,14 +704,8 @@ impl Server for KafkaProtocol {
             .ok_or_else(|| anyhow!("Missing 'type' field in action"))?;
 
         match action_type {
-            // Async actions - return Custom result for async execution
-            "publish_message" | "create_topic" | "delete_topic" | "set_retention" => {
-                Ok(ActionResult::Custom {
-                    name: action_type.to_string(),
-                    data: action,
-                })
-            }
-            // Sync actions - return Custom result for protocol handler
+            // Every one of these is consumed by src/server/kafka/mod.rs, which turns it
+            // into the corresponding Kafka response body.
             "produce_response"
             | "fetch_response"
             | "metadata_response"

@@ -1,181 +1,128 @@
 # Kafka Protocol E2E Test Documentation
 
-## Overview
-
-End-to-end tests for the Kafka broker implementation, verifying core broker functionality using real protocol
-interactions.
-
 **Location**: `tests/server/kafka/e2e_test.rs`
-**Client Library**: rdkafka (to be added to dev-dependencies)
-**Runtime**: ~10-20 seconds
-**LLM Call Budget**: 2-3 calls (target < 10)
+**Runtime**: ~1-2 s
+**LLM calls**: 7 (budget < 10)
+**Client library**: none — see below
 
-## Test Strategy
+## How these tests avoid asserting NetGet against itself
 
-### Consolidated Testing Approach
+A test that feeds NetGet's encoder output to NetGet's decoder proves nothing. There is also
+no usable pure-Rust Kafka client in this workspace: `rdkafka` was removed because it aborts
+in malloc, and adding a dev-dependency would mean editing `Cargo.toml`.
 
-Tests use a single comprehensive server instance per test case to minimize LLM calls:
+So the "client" in these tests is built from `kafka-protocol`'s **client-side** codecs —
+`Encodable` on the request types and `Decodable` on the response types, both generated from
+Apache Kafka's own message schemas. The broker does the opposite: decodes requests, encodes
+responses. Nothing in these tests calls a function `src/server/kafka/` wrote.
 
-- One server startup = 1 LLM call for initial broker logic
-- Simple protocol operations use the generated logic (minimal additional LLM calls)
+`kafka-protocol` is not a dev-dependency, so it is reached through the re-export at the top
+of `src/server/kafka/mod.rs`:
 
-### Test Coverage
-
-#### 1. `test_kafka_broker_startup` - Basic Connectivity
-
-**LLM Calls**: 1 (server startup)
-**Purpose**: Verify broker starts and accepts TCP connections
-**Client Operations**:
-
-- TCP connection to broker port
-- ApiVersions handshake (when rdkafka added)
-
-#### 2. `test_kafka_produce_fetch` - Message Operations (IGNORED - TODO)
-
-**LLM Calls**: 2-3 (server startup + produce/fetch events)
-**Purpose**: Verify produce and fetch operations
-**Client Operations**:
-
-- Create producer
-- Send messages to 'orders' topic
-- Create consumer
-- Fetch messages
-- Verify content matches
-
-#### 3. `test_kafka_metadata` - Metadata Operations (IGNORED - TODO)
-
-**LLM Calls**: 1-2 (server startup + metadata request)
-**Purpose**: Verify metadata responses
-**Client Operations**:
-
-- Request broker metadata
-- Verify broker ID and topics
-- Check partition assignments
-
-## Scripting Mode
-
-**Status**: Not used initially
-**Rationale**: Kafka protocol is complex with binary wire format. Focus on action-based LLM responses first.
-**Future**: Consider scripting for simple produce/fetch patterns once protocol is stable.
-
-## Client Library Details
-
-### rdkafka (Planned)
-
-- **Version**: 0.36+ (to be added to dev-dependencies)
-- **Features**: Producer, consumer, admin client
-- **Usage**: Full Kafka client with all APIs
-- **Async**: Full tokio support
-
-**Installation** (when adding to dev-dependencies):
-
-```toml
-[dev-dependencies]
-rdkafka = "0.36"
+```rust
+use netget::server::kafka::kafka_protocol::messages::{ApiKey, MetadataResponse, ...};
 ```
 
-## Current Status
+**What this validates**: NetGet's framing, request/response header version selection, body
+version selection, API dispatch, event emission, action handling, and the record-batch
+encode/decode round trip.
 
-### Working Tests
+**What it does not validate**: the schemas themselves, and behaviour against a real client's
+state machine. Neither librdkafka nor the Java client has been run against this broker.
 
-- ✅ `test_kafka_broker_startup` - Basic TCP connection test
+## Proof the tests can fail
 
-### Tests Requiring rdkafka
+Both tests were re-run against two deliberate mutations of `mod.rs`:
 
-- ⏸️ `test_kafka_produce_fetch` - Marked `#[ignore]`, needs rdkafka
-- ⏸️ `test_kafka_metadata` - Marked `#[ignore]`, needs rdkafka
+| Mutation | Result |
+|---|---|
+| `let header_version = 0;` (the original bug: hardcoded request header version) | both tests fail; server logs show `client_id=""`, the exact symptom |
+| `encode_field` forced to always return hex | `test_kafka_produce_fetch_roundtrip` fails at the value assertion; the metadata test still passes |
 
-## Known Issues
+The second mutation matters because it fails *only* the test that should fail, which means
+the round-trip assertion is load-bearing rather than incidentally satisfied.
 
-### 1. Incomplete Wire Protocol Implementation
+## Test 1: `test_kafka_api_versions_and_metadata`
 
-**Issue**: Current implementation returns default/empty responses
-**Impact**: Real Kafka clients may not work correctly yet
-**Workaround**: Tests verify basic connectivity only for now
-**Fix**: Complete protocol message construction in mod.rs
+3 LLM calls (startup + 2 metadata events). Seven stages on one server:
 
-### 2. Missing rdkafka Dev Dependency
+1. **ApiVersions v3** — asserts `error_code == 0`, the correlation id echoes, and the
+   advertised table contains exactly the implemented ranges: ApiVersions 0–3, Metadata 0–8,
+   Produce 0–8, Fetch 0–11, OffsetCommit 0–7. Also asserts `ListOffsets` is **absent**,
+   because advertising an API with no handler is worse than not advertising it.
+2. **ApiVersions v9** (unsupported) — hand-encodes the header, then asserts the reply
+   decodes *at v0* with `error_code == 35` and a non-empty api_keys table. This is Kafka's
+   negotiation rule; without the table the client has nothing to step down to.
+3. **Metadata v8 for `orders`** — the mock returns a topic list and deliberately names **no
+   broker**. Asserts `cluster_id == "netget-test"` and `controller_id == 7` (both from
+   `startup_params`, and both gated on Metadata v2/v1 so a v0-only encoder would drop them),
+   exactly one broker whose `node_id == 7` and whose **port equals the server's actual bound
+   port**, and one partition whose `leader_id == 7`. That last pair is the "leadership points
+   back at this server" check.
+4. **Metadata v8 for `ghost`** — a topic the model does not describe. Asserts `error_code == 3`
+   on that topic rather than it being silently absent.
+5. **ListOffsets v1** on a fresh connection — asserts the broker closes the connection
+   (`read` returns 0) rather than answering.
+6. **Hostile length prefixes** `0, 3, -1, i32::MIN, i32::MAX` — each on a fresh connection,
+   each must close cleanly. These are the sign-extension and under-minimum cases that used
+   to abort the process or panic inside a detached `tokio::spawn`.
+7. **ApiVersions again** — proves the broker survived stages 5 and 6.
 
-**Issue**: rdkafka not yet added to dev-dependencies
-**Impact**: Advanced tests are ignored
-**Workaround**: Tests marked `#[ignore]`, basic TCP test still runs
-**Fix**: Add rdkafka to Cargo.toml dev-dependencies
+## Test 2: `test_kafka_produce_fetch_roundtrip`
 
-### 3. No Message Storage Yet
+4 LLM calls (startup + produce + fetch + offset commit).
 
-**Issue**: Server doesn't persist messages in memory
-**Impact**: Fetch operations will return empty
-**Workaround**: Tests verify response structure only
-**Fix**: Implement in-memory message storage in KafkaServer
+The produce and fetch mocks share one `Arc<Mutex<Vec<Value>>>`. The produce mock stores the
+`records` array NetGet decoded off the wire; the fetch mock hands exactly those back as its
+`fetch_response`. The final assertion — that the fetched key and value equal the bytes the
+test originally encoded into the batch — therefore only holds if NetGet's produce-side
+record-batch decoding and its fetch-side record-batch encoding are both correct *and* agree.
 
-## Test Execution
+Also asserted:
 
-### Run Basic Test
+- `base_offset == 42`, the offset **the model chose**, not one Rust computed. Under the old
+  implementation this came from `partition.len()`.
+- The produce event carried `key`/`value` as text with `value_encoding == "utf8"` — no raw
+  bytes and no base64 reach the model.
+- `high_watermark == 43` for one record at offset 42.
+- The fetched record sits at offset 42, the offset the consumer asked from. A batch whose
+  base offset is below `fetch_offset` is discarded by real consumers.
+- The batch decodes with `RecordBatchDecoder` — i.e. CRC, magic byte and offset deltas are
+  all right, not just the field values.
+- OffsetCommit v2 returns `error_code == 0` for the right partition index.
+
+Both tests end with `server.verify_mocks().await?` and `server.stop().await?`.
+
+## Mock notes
+
+- The `on_any()` startup rule is declared **last**. Rules are first-match-wins, and the
+  server instruction contains the word "Kafka", so an `on_instruction_containing("Kafka")`
+  rule placed first would also swallow every event request — the event rules must precede it.
+- The produce/fetch/offset-commit rules use `respond_with_actions_from_event` so they can
+  echo the event's own `topic`, `partition` and `fetch_offset` back. Static action JSON is
+  fine for metadata, which has nothing to echo.
+- `expect_calls` is set on every rule, so an extra or missing model round trip fails the
+  suite rather than passing silently.
+
+## Not covered
+
+- Any real client (librdkafka, Java, kafka-python).
+- Compressed record batches (gzip/snappy/lz4/zstd). The decoder path uses `kafka-protocol`'s
+  built-in codecs and should work; it is untested here.
+- `acks=0`, where the broker deliberately writes no response.
+- The flexible/tagged-field versions above each ceiling — they are refused by design, and
+  only the ApiVersions refusal path is asserted.
+- Consumer groups, which are not implemented at all.
+
+## Running
 
 ```bash
-# Build release binary first
-./cargo-isolated.sh build --release --all-features
-
-# Run basic connectivity test
-./cargo-isolated.sh test --features kafka --test server::kafka::e2e_test -- test_kafka_broker_startup
+./cargo-isolated.sh test --no-default-features --features kafka \
+    --test server -- --test-threads=100 kafka
 ```
-
-### Run All Tests (When rdkafka Added)
-
-```bash
-./cargo-isolated.sh test --features kafka --test server::kafka::e2e_test
-```
-
-### Expected Runtime
-
-- `test_kafka_broker_startup`: ~5-10 seconds (1 LLM call + TCP connect)
-- `test_kafka_produce_fetch`: ~10-15 seconds (when enabled)
-- `test_kafka_metadata`: ~5-10 seconds (when enabled)
-- **Total**: ~20-35 seconds for full suite
-
-## LLM Call Budget Breakdown
-
-| Test                        | Server Startup | Network Events | Total   |
-|-----------------------------|----------------|----------------|---------|
-| `test_kafka_broker_startup` | 1              | 0              | 1       |
-| `test_kafka_produce_fetch`  | 1              | 1-2            | 2-3     |
-| `test_kafka_metadata`       | 1              | 0-1            | 1-2     |
-| **TOTAL**                   | **3**          | **1-3**        | **4-6** |
-
-**Target**: < 10 LLM calls ✅
-
-## Future Enhancements
-
-### Priority 1: Complete Wire Protocol
-
-- Implement full message construction in mod.rs
-- Parse produce/fetch request bodies
-- Build proper metadata/produce/fetch responses
-- Test with real rdkafka client
-
-### Priority 2: Add rdkafka Tests
-
-- Add rdkafka to dev-dependencies
-- Enable ignored tests
-- Test full produce/consume cycle
-- Verify message ordering and offsets
-
-### Priority 3: Advanced Features
-
-- Test consumer groups and offset commits
-- Test topic creation/deletion
-- Test error responses
-- Test large message batches
-
-### Priority 4: Consider Scripting
-
-- Generate Python script for simple produce/fetch
-- Benchmark scripted vs LLM performance
-- Document scripting benefits for Kafka
 
 ## References
 
-- [rdkafka Rust Docs](https://docs.rs/rdkafka/)
 - [Kafka Protocol Guide](https://kafka.apache.org/protocol)
 - Implementation: `src/server/kafka/CLAUDE.md`
-- Test Helper: `tests/server/helpers.rs`
+- Test helpers: `tests/helpers/`
