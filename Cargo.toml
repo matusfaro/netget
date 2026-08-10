@@ -137,8 +137,8 @@ ntp = ["dep:rsntp"]  # NTP client support
 tftp = []  # TFTP (Trivial File Transfer Protocol) server and client - custom implementation, no dependencies
 bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
 bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
-nfc = ["dep:pcsc", "dep:ndef-rs"]  # NFC card emulation server via PC/SC (ISO14443, MIFARE, NFC tags)
-nfc-client = ["dep:pcsc", "dep:ndef-rs"]  # NFC reader/writer client via PC/SC (ISO14443, APDU, NDEF)
+nfc = []  # Virtual NFC tag over a TCP socket (vpcd framing). Needs no PC/SC: the server IS the card, and card emulation via a PC/SC reader is not possible
+nfc-client = ["dep:pcsc"]  # NFC reader/writer client via PC/SC (ISO14443, APDU, NDEF)
 bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
 bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
 bluetooth-ble-beacon = ["bluetooth-ble"]  # BLE beacon (iBeacon, Eddystone)
@@ -178,7 +178,7 @@ redis = ["dep:redis-protocol", "dep:redis"]
 rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots"]  # HTTP proxy (alternate name)
-webdav = ["dav-server", "dep:reqwest_dav"]
+webdav = ["dep:reqwest_dav"]  # dav-server dropped: the server answers DAV verbs directly
 nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
 smb = ["smb-msg"]
@@ -689,7 +689,6 @@ tokio-native-tls = { version = "0.3", optional = true }
 native-tls = { version = "0.2", optional = true }
 
 # WebDAV server
-dav-server = { version = "0.8", optional = true }
 
 # NFS server
 nfsserve = { version = "0.10", optional = true }
@@ -897,7 +896,6 @@ ble-peripheral-rust = { version = "0.2", optional = true }
 # NFC (Near Field Communication) via PC/SC - cross-platform smart card API (Windows/macOS native, Linux pcscd)
 pcsc = { version = "2.9", optional = true }
 # NDEF (NFC Data Exchange Format) message parsing and generation
-ndef-rs = { version = "0.2", optional = true }
 # USB client
 nusb = { version = "0.1", optional = true }
 

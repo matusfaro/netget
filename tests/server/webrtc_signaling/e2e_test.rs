@@ -1,320 +1,199 @@
-//! E2E tests for WebRTC Signaling server
+//! E2E tests for the WebRTC Signaling server
 //!
-//! These tests verify WebRTC Signaling server functionality by spawning the actual NetGet binary
-//! and testing server behavior as a black-box with mocks.
+//! This is a WebSocket SDP relay: a peer sends `register` with a peer id, then `offer`,
+//! `answer`, `ice_candidate` or `relay` frames addressed `to` another peer, and the server
+//! forwards them. Relaying needs no LLM call; the model is consulted only on connect/disconnect.
 //!
-//! Test strategy:
-//! - Mock LLM responses for all server actions
-//! - Test WebSocket connection and registration
-//! - Test message forwarding between peers
-//! - Keep total LLM calls < 10
+//! The previous suite could not fail. Every test started a server, slept, printed a ✅ and
+//! returned — **no peer ever connected** — and none called `verify_mocks()`, so the
+//! `expect_calls(1)` on the peer-connected rules asserted nothing at all. Its own CLAUDE.md said
+//! so outright: "No Real WebSocket Connections: Tests use mocks, don't establish actual
+//! WebSocket connections."
+//!
+//! It also mocked four actions that do not exist — `broadcast_message`, `list_signaling_peers`,
+//! `wait_for_more`, `announcement` — which the server would have rejected as unknown; the
+//! mock-action-name guard is what finally surfaced that. And `"port": "{AVAILABLE_PORT}"` was a
+//! string where a number is required, so `open_server` was rejected as malformed and nothing
+//! started.
+//!
+//! These connect real WebSocket peers and assert on the frames that come back. This protocol has
+//! exactly two actions, `send_signaling_message` and `disconnect_peer`, and nothing else is
+//! mocked here.
 
 #[cfg(all(test, feature = "webrtc"))]
 mod webrtc_signaling_server_tests {
     use crate::helpers::*;
+    use futures::{SinkExt, StreamExt};
     use std::time::Duration;
+    use tokio_tungstenite::tungstenite::Message;
 
-    /// Test WebRTC Signaling server startup
-    /// LLM calls: 1 (server startup)
-    #[tokio::test]
-    async fn test_signaling_server_startup_with_mocks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new("Open WebRTC signaling server for SDP relay")
-            .with_mock(|mock| {
-                mock
-                    // Mock 1: Server startup
-                    .on_any()
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": "{AVAILABLE_PORT}",
-                            "base_stack": "WebRTC Signaling",
-                            "startup_params": {},
-                            "instruction": "Relay SDP messages between WebRTC peers"
-                        }
-                    ]))
+    type PeerSocket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// Read one frame as JSON, failing rather than hanging.
+    async fn next_json(ws: &mut PeerSocket, who: &str) -> E2EResult<serde_json::Value> {
+        let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .map_err(|_| format!("{who}: timed out waiting for a frame"))?
+            .ok_or_else(|| format!("{who}: stream closed unexpectedly"))?
+            .map_err(|e| format!("{who}: {e}"))?;
+        let text = frame.into_text().map_err(|e| e.to_string())?;
+        Ok(serde_json::from_str(&text).map_err(|e| format!("{who}: {e} in {text}"))?)
+    }
+
+    /// Connect a WebSocket peer and register it. The `registered` reply is the assertion.
+    async fn connect_and_register(port: u16, peer_id: &str) -> E2EResult<PeerSocket> {
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .map_err(|e| format!("connect as {peer_id}: {e}"))?;
+
+        ws.send(Message::Text(
+            serde_json::json!({"type": "register", "peer_id": peer_id}).to_string(),
+        ))
+        .await
+        .map_err(|e| format!("register {peer_id}: {e}"))?;
+
+        let json = next_json(&mut ws, peer_id).await?;
+        assert_eq!(json["type"], "registered", "expected `registered`: {json}");
+        assert_eq!(json["peer_id"], peer_id);
+        Ok(ws)
+    }
+
+    /// A signaling server whose peer-connected event is acknowledged with a common action.
+    fn signaling_server(expect_connections: usize) -> NetGetConfig {
+        NetGetConfig::new("Open a WebRTC signaling server and relay between peers").with_mock(
+            move |mock| {
+                mock.on_instruction_containing("signaling")
+                    .respond_with_actions(serde_json::json!([{
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "WebRTC Signaling",
+                        "instruction": "Relay signaling between peers"
+                    }]))
                     .expect_calls(1)
                     .and()
-            });
-
-        let mut server = start_netget_server(server_config).await?;
-
-        // Give server time to start
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        println!("✅ WebRTC Signaling server started successfully");
-
-        // Cleanup
-        server.stop().await?;
-
-        Ok(())
+                    .on_event("webrtc_signaling_peer_connected")
+                    .respond_with_actions(serde_json::json!([{
+                        "type": "append_to_log",
+                        "message": "peer connected"
+                    }]))
+                    .expect_calls(expect_connections)
+                    .and()
+            },
+        )
     }
 
-    /// Test WebRTC Signaling server peer registration
-    /// LLM calls: 2 (server startup + peer connected)
+    /// A peer can register, and the model is told it connected.
     #[tokio::test]
     async fn test_signaling_peer_registration_with_mocks() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Open WebRTC signaling server and track peer registrations")
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_any()
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": "{AVAILABLE_PORT}",
-                                "base_stack": "WebRTC Signaling",
-                                "startup_params": {},
-                                "instruction": "Track peer registrations"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Peer connected event
-                        .on_event("webrtc_signaling_peer_connected")
-                        .and_event_data_contains("peer_id", "alice")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let mut server = start_netget_server(signaling_server(1)).await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let mut server = start_netget_server(server_config).await?;
+        let mut alice = connect_and_register(server.port, "alice").await?;
+        alice.close(None).await.ok();
 
-        // Give server time to start and process registration
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        println!("✅ WebRTC Signaling server handled peer registration (mocked)");
-
-        // Cleanup
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test WebRTC Signaling server message forwarding
-    /// LLM calls: 3 (server startup + 2 peer connections)
+    /// An offer addressed to another peer reaches that peer, body intact.
     #[tokio::test]
     async fn test_signaling_message_forwarding_with_mocks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Open WebRTC signaling server and forward SDP messages between alice and bob",
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": "{AVAILABLE_PORT}",
-                        "base_stack": "WebRTC Signaling",
-                        "startup_params": {},
-                        "instruction": "Forward messages between alice and bob"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Alice connected
-                .on_event("webrtc_signaling_peer_connected")
-                .and_event_data_contains("peer_id", "alice")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Bob connected
-                .on_event("webrtc_signaling_peer_connected")
-                .and_event_data_contains("peer_id", "bob")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
+        let mut server = start_netget_server(signaling_server(2)).await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let mut server = start_netget_server(server_config).await?;
+        let mut alice = connect_and_register(server.port, "alice").await?;
+        let mut bob = connect_and_register(server.port, "bob").await?;
 
-        // Give server time to start and process peer connections
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        alice
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "offer",
+                    "from": "alice",
+                    "to": "bob",
+                    "sdp": {"type": "offer", "sdp": "v=0 test-session"}
+                })
+                .to_string(),
+            ))
+            .await
+            .map_err(|e| e.to_string())?;
 
-        println!("✅ WebRTC Signaling server forwarded messages (mocked)");
+        let json = next_json(&mut bob, "bob").await?;
+        assert_eq!(json["type"], "offer", "got {json}");
+        assert_eq!(json["from"], "alice");
+        assert_eq!(json["to"], "bob");
+        assert_eq!(
+            json["sdp"]["sdp"], "v=0 test-session",
+            "the SDP body must survive the relay unchanged: {json}"
+        );
 
-        // Note: In real mode, the server would forward offer/answer/ICE messages via WebSocket
-        // In mock mode, we verify the LLM tracks both peer connections
-
-        // Cleanup
+        alice.close(None).await.ok();
+        bob.close(None).await.ok();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test WebRTC Signaling server list peers
-    /// LLM calls: 3 (server startup + 2 peer connections)
+    /// A frame addressed to an unknown peer is reported, not silently dropped.
     #[tokio::test]
-    async fn test_signaling_list_peers_with_mocks() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Open WebRTC signaling server and list all connected peers")
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_any()
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": "{AVAILABLE_PORT}",
-                                "base_stack": "WebRTC Signaling",
-                                "startup_params": {},
-                                "instruction": "List connected peers periodically"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: First peer connected
-                        .on_event("webrtc_signaling_peer_connected")
-                        .and_event_data_contains("peer_id", "peer1")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 3: Second peer connected - list peers
-                        .on_event("webrtc_signaling_peer_connected")
-                        .and_event_data_contains("peer_id", "peer2")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "list_signaling_peers"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+    async fn test_signaling_unknown_peer_is_reported() -> E2EResult<()> {
+        let mut server = start_netget_server(signaling_server(1)).await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let mut server = start_netget_server(server_config).await?;
+        let mut alice = connect_and_register(server.port, "alice").await?;
+        alice
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "relay",
+                    "from": "alice",
+                    "to": "nobody",
+                    "data": {"hello": "world"}
+                })
+                .to_string(),
+            ))
+            .await
+            .map_err(|e| e.to_string())?;
 
-        // Give server time to start and process peer list
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let json = next_json(&mut alice, "alice").await?;
+        assert_eq!(
+            json["type"], "error",
+            "an unroutable relay must be reported to the sender: {json}"
+        );
 
-        println!("✅ WebRTC Signaling server listed peers (mocked)");
-
-        // Cleanup
+        alice.close(None).await.ok();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test WebRTC Signaling server peer disconnection
-    /// LLM calls: 3 (server startup + peer connected + peer disconnected)
+    /// Disconnecting releases the peer id, so it can be registered again.
+    ///
+    /// This is the regression guard for the bug that made this protocol relay nothing:
+    /// `register_peer` took ownership of the write half, so the read loop exited immediately and
+    /// ran the disconnect cleanup on the peer it had just registered. With that bug present the
+    /// second registration below would succeed for the wrong reason — but the forwarding test
+    /// above would fail, because no peer stays registered long enough to receive anything.
     #[tokio::test]
     async fn test_signaling_peer_disconnect_with_mocks() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Open WebRTC signaling server and handle peer disconnections")
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_any()
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": "{AVAILABLE_PORT}",
-                                "base_stack": "WebRTC Signaling",
-                                "startup_params": {},
-                                "instruction": "Track peer lifecycle"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Peer connected
-                        .on_event("webrtc_signaling_peer_connected")
-                        .and_event_data_contains("peer_id", "charlie")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 3: Peer disconnected
-                        .on_event("webrtc_signaling_peer_disconnected")
-                        .and_event_data_contains("peer_id", "charlie")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
+        let mut server = start_netget_server(signaling_server(2)).await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let mut server = start_netget_server(server_config).await?;
+        let mut alice = connect_and_register(server.port, "alice").await?;
+        alice.close(None).await.ok();
+        drop(alice);
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Give server time to start and process disconnection
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let mut alice_again = connect_and_register(server.port, "alice").await?;
+        alice_again.close(None).await.ok();
 
-        println!("✅ WebRTC Signaling server handled peer disconnection (mocked)");
-
-        // Cleanup
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        server.verify_mocks().await?;
         server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test WebRTC Signaling server broadcast message
-    /// LLM calls: 3 (server startup + peer connected + broadcast)
-    #[tokio::test]
-    async fn test_signaling_broadcast_with_mocks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Open WebRTC signaling server and broadcast announcements to all peers",
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": "{AVAILABLE_PORT}",
-                        "base_stack": "WebRTC Signaling",
-                        "startup_params": {},
-                        "instruction": "Broadcast server status to all connected peers"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Peer connected
-                .on_event("webrtc_signaling_peer_connected")
-                .and_event_data_contains("peer_id", "viewer")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "broadcast_message",
-                        "message": {
-                            "type": "announcement",
-                            "text": "New peer connected"
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let mut server = start_netget_server(server_config).await?;
-
-        // Give server time to start and broadcast
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        println!("✅ WebRTC Signaling server broadcast message (mocked)");
-
-        // Cleanup
-        server.stop().await?;
-
         Ok(())
     }
 }
