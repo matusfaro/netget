@@ -1,100 +1,57 @@
-# AMQP Client Testing
+# AMQP Client E2E Testing
 
-## Test Strategy
+## Strategy
 
-Black-box testing with real AMQP broker (RabbitMQ or NetGet AMQP server) and LLM-controlled client.
+A mocked NetGet **broker** and a mocked NetGet **client** (lapin) over a real socket. No
+external RabbitMQ, no Docker.
 
-## LLM Call Budget
+| Test | Asserts | LLM calls |
+|---|---|---|
+| `test_amqp_client_connect` | broker's `amqp_connection_open` fires once (protocol header, `Connection.Start`/`Start-Ok` and `Tune`/`Tune-Ok` all crossed the wire); client's `amqp_connected` fires once (the broker's `Connection.Open-Ok` came back) | 4 |
+| `test_amqp_client_protocol_detection` | AMQP is selected from three phrasings; the startup rule is used exactly once | 3 |
 
-**Target**: < 10 LLM calls per test suite
-- **Connection test**: 1-2 calls (connected event, open channel)
-- **Declare operations**: 2-3 calls (queue, exchange, bind)
-- **Publish/consume**: 3-4 calls (publish, consume setup, message processing)
-- **Total**: ~6-9 calls
+**Total: 7 LLM calls, ~5s.** Run:
 
-## Budget Optimization Strategies
-
-1. **Reuse Connection**: Single client across tests
-2. **Batch Declarations**: Group queue/exchange declarations
-3. **Static Actions**: Pre-configure common operations
-4. **Mock Broker**: Use NetGet AMQP server (no external RabbitMQ)
-
-## Test Categories
-
-### 1. Connection Tests
-- Connect to broker
-- Channel creation
-- Connection events
-- **LLM Calls**: 1-2
-
-### 2. Declaration Tests
-- Declare queues (durable, exclusive, auto_delete)
-- Declare exchanges (direct, fanout, topic)
-- Bind queues to exchanges
-- **LLM Calls**: 2-3
-
-### 3. Publishing Tests
-- Publish messages to exchanges
-- Message properties
-- Routing keys
-- **LLM Calls**: 1-2
-
-### 4. Consuming Tests
-- Start consumer on queue
-- Receive messages
-- Acknowledge messages
-- **LLM Calls**: 2-3
-
-## Expected Runtime
-
-**Total**: 30-60 seconds (with Ollama LLM)
-- Broker startup (if using NetGet): 5-10s
-- Client connection: 5-10s
-- Declaration tests: 5-10s
-- Publish/consume: 10-20s
-- Cleanup: 5-10s
-
-## Known Issues
-
-1. **No Local Address**: lapin doesn't expose TCP local_addr (uses placeholder)
-2. **No Publisher Confirms**: Confirm mode not tested
-3. **Limited TLS**: TLS configuration not tested
-4. **Single Channel**: Only one channel per test
-5. **Broker Dependency**: Requires running AMQP broker (or NetGet server)
-
-## Test Fixtures
-
-- **Broker**: NetGet AMQP server (in-process) or external RabbitMQ
-- **Port**: Dynamic (find available port)
-- **Virtual Host**: `/` (default)
-- **Auth**: guest/guest or none
-
-## Example Test
-
-```rust
-#[tokio::test]
-#[cfg(all(test, feature = "amqp"))]
-async fn test_amqp_client_publish() {
-    // Start NetGet AMQP server
-    let server = spawn_amqp_server(/* ... */).await;
-
-    // Start LLM-controlled client
-    let client_id = spawn_amqp_client(server.addr, /* ... */).await;
-
-    // LLM receives connected event, opens channel, declares queue, publishes
-    // Wait for operations to complete
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // Validate message was published (via server logs or consumer)
-    // LLM calls: 2-3 (connected, channel opened, publish)
-}
+```bash
+CARGO_TARGET_DIR=/tmp/clients-target cargo test --no-default-features --features amqp \
+    --test client -- --test-threads=100 amqp
 ```
 
-## Validation
+## What these replaced
 
-Tests validate:
-- Connection establishment (lapin connects successfully)
-- LLM action execution (queues declared, messages published)
-- Message reception (consumer receives messages)
-- Acknowledgment (messages ack'd correctly)
-- Error handling (connection failures, invalid operations)
+`test_amqp_client_connect` could not run at all:
+
+1. The broker rule answered `amqp_connection_received` with `send_amqp_frame`. Neither the
+   event nor the action exists on the rewritten broker (`src/server/amqp/`), whose handshake
+   event is `amqp_connection_open` and whose reply is `amqp_connection_open_ok`. Nothing
+   matched, so the broker never let the client in and `lapin::Connection::connect` never
+   returned.
+2. The client rule answered `amqp_connected` with `wait_for_more`, which is **not an AMQP
+   client action** — the client's entire vocabulary is `open_channel` and `disconnect`
+   (`src/client/amqp/actions.rs`) — so `tests/helpers/mock_action_names.rs` panicked while the
+   test was being configured.
+3. Every `expect_calls` was commented out, so `verify_mocks()` asserted nothing, and the only
+   real assertion was `output_contains("AMQP") || output_contains("connect")`.
+
+An orphan `e2e_test.rs.bak` sitting beside them has been deleted.
+
+## Client-side action vocabulary is narrow, and the narrowing is enforced
+
+`call_llm_for_client` (`src/llm/action_helper.rs`) offers the model **only**
+`protocol.get_async_actions(state)` — no common actions, and nothing from `get_sync_actions`.
+For the AMQP client that is `open_channel` and `disconnect` and nothing else. Anything else a
+mock returns is rejected by the response validator as an unknown action, which surfaces as an
+LLM failure rather than as a clear test error.
+
+`open_channel` currently resolves to `ClientActionResult::Custom` and
+`src/client/amqp/mod.rs` discards the result of the `amqp_connected` call, so no
+`Channel.Open` actually goes out. That is why the assertion is the *event firing*, which
+requires the handshake, rather than a channel appearing on the broker.
+
+## Not covered
+
+Channel open, queue declare, bind, publish, consume and acknowledge from the client side —
+`src/client/amqp/` connects and then only keeps the connection alive, so there is nothing to
+drive. The broker side of all of those is covered by `tests/server/amqp/e2e_test.rs`, which
+drives it with a real lapin client. Also not covered: TLS (5671), SASL beyond PLAIN, publisher
+confirms, and multiple channels.
