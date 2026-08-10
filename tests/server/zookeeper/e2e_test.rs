@@ -69,7 +69,11 @@ struct ConnectResponse {
 }
 
 /// Perform the handshake on `stream` and decode the reply.
-async fn handshake(stream: &mut TcpStream, timeout_ms: i32, session_id: i64) -> E2EResult<ConnectResponse> {
+async fn handshake(
+    stream: &mut TcpStream,
+    timeout_ms: i32,
+    session_id: i64,
+) -> E2EResult<ConnectResponse> {
     stream
         .write_all(&build_connect_request(timeout_ms, session_id))
         .await?;
@@ -253,7 +257,10 @@ async fn test_zookeeper_get_data() -> E2EResult<()> {
         "the client must decode the data we encoded"
     );
     assert_eq!(stat.czxid, 100, "Stat.czxid must carry the handler's zxid");
-    assert_eq!(stat.version, 7, "Stat.version must carry the handler's version");
+    assert_eq!(
+        stat.version, 7,
+        "Stat.version must carry the handler's version"
+    );
     assert_eq!(
         stat.data_length,
         data.len() as i32,
@@ -313,17 +320,14 @@ async fn test_zookeeper_get_children() -> E2EResult<()> {
     )
     .await?;
 
-    let children = tokio::time::timeout(Duration::from_secs(10), zk.get_children("/services", false))
-        .await
-        .map_err(|_| "timed out waiting for getChildren")??;
+    let children =
+        tokio::time::timeout(Duration::from_secs(10), zk.get_children("/services", false))
+            .await
+            .map_err(|_| "timed out waiting for getChildren")??;
 
     assert_eq!(
         children,
-        vec![
-            "web".to_string(),
-            "api".to_string(),
-            "db".to_string()
-        ],
+        vec!["web".to_string(), "api".to_string(), "db".to_string()],
         "the client must decode the child list we encoded, in order"
     );
 
@@ -380,20 +384,14 @@ async fn test_zookeeper_error_response() -> E2EResult<()> {
     )
     .await?;
 
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        zk.get_data("/nonexistent", false),
-    )
-    .await
-    .map_err(|_| "timed out waiting for the NONODE reply")?;
+    let result = tokio::time::timeout(Duration::from_secs(10), zk.get_data("/nonexistent", false))
+        .await
+        .map_err(|_| "timed out waiting for the NONODE reply")?;
 
     match result {
         Err(ZkError::NoNode) => {}
         Err(other) => panic!("expected ZkError::NoNode, got {:?}", other),
-        Ok((data, _)) => panic!(
-            "expected ZkError::NoNode, got {} bytes of data",
-            data.len()
-        ),
+        Ok((data, _)) => panic!("expected ZkError::NoNode, got {} bytes of data", data.len()),
     }
 
     zk.close().await?;

@@ -126,12 +126,9 @@ mod usb_serial_e2e {
 
             let mut payload = vec![0u8; actual_length];
             if !payload.is_empty() {
-                tokio::time::timeout(
-                    Duration::from_secs(5),
-                    self.stream.read_exact(&mut payload),
-                )
-                .await
-                .map_err(|_| "timed out reading the URB transfer buffer")??;
+                tokio::time::timeout(Duration::from_secs(5), self.stream.read_exact(&mut payload))
+                    .await
+                    .map_err(|_| "timed out reading the URB transfer buffer")??;
             }
             Ok(payload)
         }
@@ -211,7 +208,9 @@ mod usb_serial_e2e {
         let mut client = UsbIpClient::attach(server.port).await?;
         server.wait_for_log(LLM_CALL_LOG, 10).await?;
 
-        let banner = client.read_serial_until_data(Duration::from_secs(5)).await?;
+        let banner = client
+            .read_serial_until_data(Duration::from_secs(5))
+            .await?;
         assert_eq!(
             String::from_utf8_lossy(&banner),
             "READY\r\n",
@@ -263,7 +262,9 @@ mod usb_serial_e2e {
 
         client.write_serial(b"PING\n").await?;
 
-        let reply = client.read_serial_until_data(Duration::from_secs(5)).await?;
+        let reply = client
+            .read_serial_until_data(Duration::from_secs(5))
+            .await?;
         assert_eq!(
             String::from_utf8_lossy(&reply),
             "PONG\r\n",
@@ -308,10 +309,17 @@ mod usb_serial_e2e {
         server.wait_for_log(LLM_CALL_LOG, 10).await?;
 
         let coding = client.get_line_coding().await?;
-        assert_eq!(coding.len(), 7, "GET_LINE_CODING returns a 7-byte structure");
+        assert_eq!(
+            coding.len(),
+            7,
+            "GET_LINE_CODING returns a 7-byte structure"
+        );
 
         let baud = u32::from_le_bytes([coding[0], coding[1], coding[2], coding[3]]);
-        assert_eq!(baud, 9600, "the host must see the baud rate the handler set");
+        assert_eq!(
+            baud, 9600,
+            "the host must see the baud rate the handler set"
+        );
         assert_eq!(coding[4], 0, "1 stop bit encodes as 0");
         assert_eq!(coding[5], 0, "no parity encodes as 0");
         assert_eq!(coding[6], 8, "8 data bits");
