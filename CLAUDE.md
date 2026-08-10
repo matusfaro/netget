@@ -26,10 +26,23 @@ Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/proto
   `wireguard`**. `tor_relay` and `openvpn` were rated Stable and neither had ever been
   validated against a real client; both were demoted on inspection.
 - **Beta** — human-reviewed, works against real clients (12 protocols).
-- **Experimental** — LLM-authored, not human-reviewed. This is the overwhelming majority (91).
-- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Now 12:
-  `amqp`, `bgp`, `bluetooth_ble_beacon`, `kafka`, `nfc`, `openvpn`, `turn`, `usb/smartcard`,
-  `vnc`, `webdav`, `webrtc`, `zookeeper`.
+- **Experimental** — LLM-authored or newly implemented, not fully reviewed. The overwhelming
+  majority (~99).
+- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Down to
+  **3**, and each for a reason that is not "unfinished":
+  - `bluetooth_ble_beacon` — **macOS cannot do this at all.** A beacon is its advertising
+    payload, and `CBPeripheralManager.startAdvertising:` accepts only
+    `CBAdvertisementDataLocalNameKey` and `CBAdvertisementDataServiceUUIDsKey`; every other key
+    is documented as ignored. Writing our own CoreBluetooth bindings would change nothing.
+    Linux/BlueZ *can* (`org.bluez.LEAdvertisement1` exposes `ManufacturerData`/`ServiceData`),
+    so this is implementable as a Linux-only path.
+  - `usb/smartcard` — uses `vpicc` rather than USB CCID and needs an external `vpcd` daemon.
+  - `openvpn` — was rated `Stable` and had never been validated against a real client.
+
+Ten protocols left `Incomplete` in August 2026 — `amqp`, `bgp`, `kafka`, `nfc`, `turn`, `vnc`,
+`webdav`, `webrtc`, `usb/serial`, `zookeeper` — each verified against a real client rather than
+a mock echo. Where no real client existed (BGP, Kafka) the wire format was validated against an
+independent codec or RFC-derived literal bytes, and the metadata says which.
 
 Derive these rather than trusting the counts, which drift. **Match the fully-qualified form
 too** — roughly half the protocols write `crate::protocol::metadata::DevelopmentState::X`, and a
