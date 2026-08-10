@@ -1,52 +1,81 @@
 # NFC Server E2E Testing
 
-## Test Strategy
+## Strategy
 
-**Virtual Server Only**: Tests simulate NFC tag behavior without physical hardware.
+The virtual tag binds a TCP socket and speaks the vsmartcard `vpcd` framing (u16 big-endian
+length prefix; a 1-byte frame is a control code, anything longer is an ISO 7816-4 APDU), so a
+test client is about twenty lines: write a length-prefixed frame, read a length-prefixed
+frame. **No reader, no vpcd daemon, no PC/SC** — the test drives the real socket the real
+protocol binds, and asserts the response APDU **bytes**.
 
-### No Hardware Required
+That is the point: a stub cannot pass. Asserting `9000` arrives is not enough on its own, so
+the suite also asserts a body the handler supplied, a status word the handler chose, and two
+status words the *server* must produce on its own.
 
-Since the NFC server is a virtual/simulation server (most PC/SC readers cannot emulate cards), these tests focus on:
-- Virtual tag initialization
-- LLM interaction for tag configuration
-- Action parsing and execution
-- NDEF message construction
+## What `test_nfc_virtual_tag_apdu_exchange` covers
 
-### LLM Call Budget
+| Step | Wire | Asserts |
+|---|---|---|
+| ATR | control frame `04` | the exact ATR the handler set with `set_atr` (not the built-in default) |
+| SELECT by AID | `00 A4 04 00 07 D2760000850101 00` | `nfc_tag_selected` fired and its `9000` reached the reader |
+| READ BINARY | `00 B0 00 00 0F` | `nfc_apdu_received` fired; body is `"Hello NFC!"` then `9000` |
+| VERIFY | `00 20 00 00 06 "123456"` | the handler's refusal `6982` survives verbatim |
+| GET CHALLENGE | `00 84 00 00 08` | handler answers *without* `respond_to_apdu` → tag fails **closed** with `6F00`, never `9000` |
+| truncated APDU | `00 A4 04` | `6700`, produced locally without reaching the handler |
 
-- **Target**: < 5 LLM calls per test suite
-- **Strategy**:
-  - Simple initialization test
-  - Tag configuration test
-  - No complex interactions needed (virtual only)
+The ATR check is what proves `set_atr` is no longer write-only — the mock sets
+`3B8180018050`, which is not the compiled-in default.
 
-### Test Coverage
+The GET CHALLENGE case is the fail-open regression test. The mock returns a valid response
+containing only `show_message`, i.e. the handler answered but produced no APDU response. If
+anyone ever adds a permissive default, that assertion turns red.
 
-1. **Server Initialization**: Virtual tag starts successfully
-2. **ATR Configuration**: Set Answer to Reset
-3. **NDEF Configuration**: Set NDEF message content
-4. **Action Execution**: Test action parsing
+The truncated-APDU case is last on purpose: it must not reach the LLM, so it also pins the
+mock call counts below.
 
-### Runtime
+## LLM call budget
 
-- **Expected**: 10-20 seconds
-- **No hardware needed**: Can run in CI
+**6 calls, one server, one test.**
 
-### Known Issues
+1. top-level instruction → `open_server`
+2. `nfc_server_started` → `set_atr` + `set_ndef_message`
+3. `nfc_tag_selected`
+4. `nfc_apdu_received` (READ BINARY)
+5. `nfc_apdu_received` (VERIFY)
+6. `nfc_apdu_received` (GET CHALLENGE)
 
-- Server is virtual only - no actual RF communication
-- Cannot test with real NFC readers
-- Primarily for code coverage and LLM integration testing
+Each rule carries `.expect_calls(1)` and the test finishes with `server.verify_mocks()`, so an
+extra or missing call fails the test.
 
-### Test Execution
+## Mock rule ordering trap
+
+The first matching rule wins, and on an *event* call `context.instruction` is the **server's**
+instruction (the one passed to `open_server`), not the top-level prompt. So a rule written as
+`on_instruction_containing("NFC")` would swallow every event call if the server instruction
+also contained "NFC".
+
+This suite matches `on_instruction_containing("via NFC")`, a phrase that appears only in the
+top-level prompt; the server instruction is `"Answer APDU commands as a Type 4 tag"`. Keep it
+that way when adding cases.
+
+The three `nfc_apdu_received` rules are disambiguated with
+`.and_event_data_contains("ins", "B0" | "20" | "84")`.
+
+## Running
 
 ```bash
-# Run NFC server tests
-./cargo-isolated.sh test --no-default-features --features nfc --test server::nfc::e2e_test
+./cargo-isolated.sh test --no-default-features --features nfc \
+    --test server -- --test-threads=100 nfc
 ```
 
-### Future Improvements
+**If this fails with `Timeout waiting for netget startup`, re-run before believing it.**
+`target/` is shared, so a concurrent build for a different feature set overwrites
+`target/debug/netget` with a binary that has no `nfc` protocol compiled in; the harness then
+never sees a "listening on" line and times out at 120s. It is contention, not a bug in the
+test. A genuine failure shows a failed assertion within about a second.
 
-- Integration with vsmartcard for real emulation testing
-- Android HCE bridge testing
-- More comprehensive APDU response simulation
+## Not covered
+
+- Interop with a real `pcscd` via `vpcd` in TCP-client mode. Needs vsmartcard installed.
+- Concurrent readers on one tag (the accept loop handles them; nothing asserts it).
+- Extended-length APDUs (`ApduCommand::parse` handles them; no test drives one).

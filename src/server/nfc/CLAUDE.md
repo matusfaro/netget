@@ -1,261 +1,164 @@
-# NFC (Near Field Communication) Virtual Server Implementation
+# NFC (Near Field Communication) Virtual Tag Server
 
-## Important Note
+## What this is
 
-**This is a VIRTUAL/SIMULATION server only.** Its `DevelopmentState` is
-`Incomplete`, so it is hidden from LLM prompts.
+NetGet emulates an **NFC Forum Type 4 tag**. A Type 4 tag is defined as ISO 7816-4 APDU
+exchange over ISO-DEP, so the tag's entire behaviour is "answer command APDUs" — and that
+is something an LLM can do, given a transport.
 
-Most PC/SC readers are **read-only** and cannot emulate NFC tags or cards. This server simulates what an NFC tag would do for testing purposes without requiring special hardware.
+`DevelopmentState` is `Experimental`. `PrivilegeRequirement` is `None`: no reader, device
+node or privileged port is touched.
 
-### What actually runs today
+## Transport: vpcd framing over a bound TCP socket
 
-- **No socket is opened.** `NfcServer::start` returns the requested address
-  without binding, so the address shown for the server is not listening and
-  there is no accept loop and no server task to register.
-- **One event fires: `nfc_server_started`.** It is emitted once at startup and
-  its actions (`set_atr`, `set_ndef_message`) are applied to the in-memory tag.
-- **`nfc_tag_selected` and `nfc_apdu_received` never fire.** Nothing feeds this
-  server APDUs - there is no reader transport, no USB/IP, no HCE bridge - so
-  `respond_to_apdu` is declared vocabulary with no trigger. A handler that emits
-  it gets a warning in the log and on the status panel.
-- **`PrivilegeRequirement::None` is correct**: no reader, device node or
-  privileged port is touched.
+NetGet **binds a TCP socket** and speaks the vsmartcard `vpcd` wire format:
 
-Making the APDU path real means adding a transport (vsmartcard relay, USB/IP
-CCID, or an Android HCE bridge) and driving the tag state from it. Until then
-this protocol is a documentation and prompting exercise.
-
-## Why Virtual?
-
-### Card Emulation Challenges
-
-1. **Hardware Limitations**: Most PC/SC readers (including ACR122U) can only **read** cards, not emulate them
-2. **Special Hardware Needed**:
-   - Smart card simulators (~$100+)
-   - Android devices with HCE (Host Card Emulation)
-   - iOS devices with CoreNFC (iOS apps only)
-   - Specialized NFC emulation hardware
-
-3. **PC/SC API**: Standard PC/SC does not support card emulation mode
-
-### Virtual Server Use Cases
-
-- **Testing NFC client implementations**
-- **Understanding NFC protocols** (APDU commands, NDEF)
-- **Simulating tag responses** without physical tags
-- **Educational purposes**
-- **Protocol development**
-
-## Architecture
-
-### Virtual NFC Tag State
-
-```rust
-struct VirtualNfcTag {
-    atr: String,                         // Answer to Reset
-    uid: String,                         // Tag UID (7 bytes hex)
-    tag_type: String,                    // Tag type (type2, type4, generic)
-    ndef_records: Vec<Value>,            // NDEF message content
-    selected_application: Option<String>, // Current selected AID
-}
+```text
+reader → tag:  u16 big-endian length | payload
+tag → reader:  u16 big-endian length | payload
 ```
 
-### LLM Integration Points
+A payload of exactly **one byte** is a vpcd control code; anything longer is a command APDU.
 
-The LLM controls virtual tag behavior:
+| Code | Meaning | Tag's answer |
+|------|---------|--------------|
+| `00` | power off | none (acknowledged by silence) |
+| `01` | power on | none |
+| `02` | reset | none |
+| `04` | request ATR | one frame containing the configured ATR |
 
-1. **Server Initialization** (Event):
-    - Event: `nfc_server_started`
-    - LLM configures tag properties (ATR, NDEF message)
-    - Virtual tag ready to "respond" to readers
+### Why this transport and not PC/SC
 
-2. **Tag Configuration** (Async Actions):
-    - Action: `set_atr` - Set Answer to Reset bytes
-    - Action: `set_ndef_message` - Set NDEF content
-    - LLM designs tag characteristics
-    - Both are attached to `nfc_server_started` and applied to the tag state
+A PC/SC reader cannot be driven into card-emulation mode — the API has no such call, and the
+hardware (ACR122U and everything like it) only reads. The previous implementation "used PC/SC"
+in name only: it never called the library, bound nothing, and emitted exactly one event.
+Emulating the *tag* needs no RF at all, so the tag is exposed over a socket instead.
 
-3. **APDU Response** (Sync Action - not reachable):
-    - Event: `nfc_apdu_received` - would carry a reader's command
-    - Action: `respond_to_apdu` - LLM provides response data + status
-    - No transport emits this event today, so the action never runs
+### Why vpcd framing and not an ad-hoc one
 
-Every hex field (`atr_hex`, `data_hex`, `sw1`, `sw2`) is decoded when the action
-is executed; a malformed value is an error rather than something logged as if it
-had been accepted.
+1. **In-repo precedent.** `src/server/usb/smartcard/` already speaks exactly this framing
+   (as a vpcd *client*), so the format is not a new invention in this codebase.
+2. **It is a real interop path.** `vpcd`, the vsmartcard ifdhandler, can be configured as a
+   TCP *client* — `DEVICENAME /dev/null:<host>:<port>` in `/etc/reader.conf.d/vpcd` — in
+   which case it connects out to a listening virtual card. A host running `pcscd` then sees
+   this server as a PC/SC reader with a card in it. **This direction has not been tested
+   against a real `pcscd`**; it is why the framing was chosen, not a claim that it works.
+3. **It is trivially drivable without hardware.** A test writes `u16 len + APDU` and reads
+   `u16 len + response`. That is the whole client.
 
-### Startup Parameters
+The alternative — bare APDUs with no framing — cannot express "the reader powered the card
+up and wants the ATR", and cannot delimit two APDUs written in one TCP segment.
 
-- `tag_type`: "type2" (MIFARE), "type4" (ISO14443-4), "generic" (default)
-- `uid`: Tag UID (hex string, auto-generated if not provided)
+## Events — all three fire
 
-## Data Format
+| Event | Fires when | Actions |
+|-------|-----------|---------|
+| `nfc_server_started` | after `bind()`, before the first reader is accepted | `set_atr`, `set_ndef_message` |
+| `nfc_tag_selected` | reader sends `SELECT` by DF name: INS `A4`, P1 `04`, non-empty data | `respond_to_apdu` |
+| `nfc_apdu_received` | every other command APDU, including `SELECT` by file identifier | `respond_to_apdu` |
 
-All NFC data is **structured JSON**:
+Exactly one event — and therefore one handler call — happens per command APDU. A SELECT by
+AID does *not* also raise `nfc_apdu_received`.
 
-### ATR (Answer to Reset)
+The startup event is awaited **before** the accept loop starts, so a reader can never reach
+a tag whose ATR and NDEF records have not been applied yet.
+
+## Event data is structured, not a byte blob
+
+`nfc_apdu_received` carries `ins_name` ("READ_BINARY", "VERIFY", …), `cla`, `ins`, `p1`, `p2`
+as two-hex-digit strings, `lc` and `le` as numbers, and the command data as **`data_hex`
+plus `data_text`** — `data_text` is present only when every byte is printable ASCII. Hex is
+used for `data_hex` deliberately and is called out in the parameter description: the command
+data field of an arbitrary APDU is opaque bytes chosen by the reader, and there is no
+structured form of it to offer. The raw whole-APDU hex blob the old implementation advertised
+(`apdu_hex`) is gone — it was redundant with the parsed fields.
+
+Both APDU events also carry `tag_type`, `uid`, and the `ndef_records` the handler configured
+at startup, so `set_ndef_message` is not write-only: the handler gets its own records back and
+can serve them from `respond_to_apdu`.
+
+## Responding
+
+`respond_to_apdu` takes a body plus a two-byte status word:
 
 ```json
-{
-  "type": "set_atr",
-  "atr_hex": "3B8F8001804F0CA0000003060300030000000068"
-}
+{"type": "respond_to_apdu", "data_text": "Hello NFC!", "sw1": "90", "sw2": "00"}
+{"type": "respond_to_apdu", "data_hex": "D2760000850101", "sw1": "90", "sw2": "00"}
+{"type": "respond_to_apdu", "sw1": "69", "sw2": "82"}
 ```
 
-Default ATR is for NFC Type 4 tag (ISO14443-4).
+`data_text` and `data_hex` are **mutually exclusive** and supplying both is an error. This is
+the same lesson as `send_tcp_data`: `"48656c6c6f"` is simultaneously valid text and valid hex
+and only the sender knows which it meant, so the encoding is declared rather than sniffed.
+`execute_action` normalises `data_text` to hex, so the server has exactly one form to decode,
+and every hex field (`atr_hex`, `data_hex`, `sw1`, `sw2`) is decoded where the action is
+executed — a malformed value is an error, never something logged as if it had been accepted.
+`sw1`/`sw2` must each be exactly one byte.
 
-### NDEF Message
+## Fail closed
 
-```json
-{
-  "type": "set_ndef_message",
-  "records": [
-    {
-      "type": "text",
-      "language": "en",
-      "text": "Hello from virtual NFC tag!"
-    },
-    {
-      "type": "uri",
-      "uri": "https://example.com"
-    }
-  ]
-}
-```
+If the handler errors, returns no `respond_to_apdu`, or returns one that cannot be decoded,
+the tag answers **`6F00`** (ISO 7816-4 "no precise diagnosis") and logs at ERROR. It never
+falls through to `9000`. The model's own refusal (`6982`, `6A82`, `6D00`, …) is therefore
+structurally distinguishable from the model having said nothing — the OAuth2 failure mode in
+the root CLAUDE.md, avoided by construction.
 
-### APDU Response
+The tag always writes *something* back, so a reader is never left hanging on its own timeout.
 
-```json
-{
-  "type": "respond_to_apdu",
-  "data_hex": "D2760000850101",  // Response data
-  "sw1": "90",                    // Status byte 1
-  "sw2": "00"                     // Status byte 2 (90 00 = success)
-}
-```
+## Hostile input
 
-## Virtual vs. Real Implementation
+Everything on this socket is attacker-controlled.
 
-| Aspect | Virtual Server | Real Card Emulation |
-|--------|----------------|---------------------|
-| **Hardware** | None (simulation) | Smart card simulator, HCE device |
-| **Use Case** | Testing, education | Production card emulation |
-| **Network** | N/A (no socket) | N/A (RF communication) |
-| **APDU** | Logged only | Actual RF transmission |
-| **Cost** | Free | $100+ hardware or Android/iOS dev |
+- The length prefix is checked against `MAX_FRAME_LEN` (4096) **before** any read, so a
+  hostile length cannot make the server allocate. An oversized frame closes the connection.
+- A zero-length frame is ignored.
+- `ApduCommand::parse` bounds-checks every index. Short form and extended form are both
+  handled; truncated, over-long and inconsistent APDUs are `Err`, never a panic. A panic in a
+  connection task is silent and would leave the server reporting `Running`.
+- A malformed APDU is answered `6700` locally and **does not reach the handler**, so garbage
+  cannot be used to drive LLM calls.
+
+## No connection state machine, deliberately
+
+Other protocols hand-roll Idle → Processing → Accumulating to stop two LLM calls racing on
+one connection and to reassemble partial reads. Neither problem exists here: the framing is
+explicit, so there is nothing to reassemble, and the next frame is only read after the current
+one has been answered, so a connection can never have two calls in flight.
+
+## Startup parameters
+
+- `tag_type` — `type2`, `type4` (default), `generic`. Reported to the handler in every APDU event.
+- `uid` — hex; a random 7-byte UID is generated when omitted. Also reported in every APDU event.
+
+Both are declared and both are read. Neither is interpreted by the server: nothing here
+answers `FF CA 00 00` (PC/SC GET UID) on the handler's behalf.
+
+## No built-in card logic
+
+There is no file system, no NDEF encoder, no PIN store, no key store. The only state the
+server holds is what the handler put there (`atr`, `ndef_records`) plus the two startup
+parameters. Every APDU is answered by the handler — script, static, or LLM. `usb/smartcard`
+took the opposite approach (a hardcoded file system, a PIN of `123456`, an RSA key); that is
+storage implemented inside a protocol, which the root CLAUDE.md forbids.
 
 ## Limitations
 
-### Not a Real Server
-
-- **No RF communication**: This is not actual NFC/RF
-- **No reader interaction**: Cannot be detected by real NFC readers
-- **Simulation only**: For testing client code logic
-
-### Missing Features
-
-- No actual card emulation API
-- No anti-collision (UID handling)
-- No cryptographic operations (MIFARE keys, DESFire auth)
-- No RF layer simulation
-
-### What This Is Useful For
-
-- ✅ Understanding NFC protocols
-- ✅ Testing NFC client APDU logic
-- ✅ Simulating tag responses
-- ✅ NDEF message construction
-
-### What This Is NOT Useful For
-
-- ❌ Actual card emulation
-- ❌ Interacting with real NFC readers
-- ❌ Production use
-- ❌ Physical NFC testing
-
-## Alternative: Real Card Emulation
-
-If you need real card emulation, consider:
-
-### Option 1: Android HCE (Host Card Emulation)
-
-```java
-// Android HCE Service
-public class MyHceService extends HostApduService {
-    @Override
-    public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {
-        // LLM could control responses via IPC
-        return responseApdu;
-    }
-}
-```
-
-- Requires Android 4.4+
-- Free (use any Android device)
-- LLM could control via Android app + IPC
-
-### Option 2: iOS CoreNFC
-
-```swift
-// iOS NFC reader/writer
-let session = NFCNDEFReaderSession(...)
-// iOS doesn't support card emulation mode
-```
-
-- iOS only supports reader mode, not emulation (as of iOS 16)
-
-### Option 3: Smart Card Simulator Hardware
-
-- Devices like "SimplyTapp" or "CardSimu"
-- Cost: $100-500
-- PC/SC compatible
-- Real card emulation
-
-### Option 4: OpenVPN/PC/SC Relay
-
-Use `vsmartcard` project to relay PC/SC over network:
-```
-Real Reader → PC/SC Relay → Virtual Smart Card → LLM Control
-```
-
-This allows LLM to control a "smart card" that appears to readers.
-
-## Logging
-
-All virtual operations logged with `tracing`:
-
-- **INFO**: Server started, tag configured
-- **DEBUG**: APDU commands received (simulated)
-- **TRACE**: Full APDU hex data
-
-Example:
-```
-[INFO] Virtual NFC tag started: type=type4, UID=04A1B2C3D4E5F6
-[DEBUG] Virtual APDU received (simulated): 00A4040007D276000085010100
-[TRACE] Virtual APDU response: 9000
-```
-
-## Future Enhancements
-
-- **PC/SC Card Emulation API**: If hardware supports it
-- **Android HCE Integration**: Bridge to Android HCE service
-- **vsmartcard Integration**: Use virtual smart card infrastructure
-- **APDU Simulation**: Automatic responses for common commands
-- **NDEF Auto-Response**: Automatically respond to NDEF SELECT/READ
-
-## Known Issues
-
-- This is a simulation only - no actual RF communication
-- Cannot be detected by real NFC readers
-- No APDU source exists at all: `nfc_apdu_received` and `nfc_tag_selected` are
-  never emitted, so `respond_to_apdu` is unreachable
-- The server does not bind a socket; the address it reports is not listening
-- Primarily for educational/testing purposes
+- **No RF.** A phone tapped against a reader will never reach this. Only a reader that speaks
+  vpcd over TCP can.
+- **The pcscd path is untested.** `vpcd` in client mode *should* connect and work; nobody has
+  run it against this server.
+- Frames are capped at 4096 bytes, so extended APDUs beyond that are rejected.
+- No T=0/T=1 transmission layer, no PPS, no anti-collision, no command chaining, no
+  `GET RESPONSE` bookkeeping — the handler sees whatever the reader sent and answers it.
+- One handler call per APDU, so latency is one LLM round-trip per command unless a script or
+  static handler is used. For anything chatty, use a script handler.
+- The `nfc` Cargo feature still pulls `pcsc` and `ndef-rs`. The **server** uses neither;
+  `nfc-client` is the real consumer of `pcsc`. Splitting the feature is a Cargo.toml change
+  outside this module.
 
 ## References
 
-- PC/SC specification: https://pcscworkgroup.com/
-- Android HCE: https://developer.android.com/guide/topics/connectivity/nfc/hce
-- vsmartcard: https://github.com/frankmorgner/vsmartcard
-- NFC Forum: https://nfc-forum.org/
-- ISO 7816-4: Smart card APDU commands
+- ISO/IEC 7816-4 — APDU structure and status words
+- NFC Forum Type 4 Tag Operation Specification
+- vsmartcard / vpcd: https://github.com/frankmorgner/vsmartcard
+- PC/SC Workgroup: https://pcscworkgroup.com/
