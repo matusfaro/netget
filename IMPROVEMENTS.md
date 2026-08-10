@@ -69,6 +69,30 @@ Almost everything mechanical is done. What remains is mostly judgement, not typi
   Claude Code for Web. Recommendation: leave `Incomplete` until someone names a concrete use
   case, then delete.
 
+### Declared dependencies that are never used
+
+Measured 2026-08-10 across the Incomplete protocols. A feature pulls in a library, the library
+is exactly the thing the protocol is failing to do, and `grep` finds no call to it:
+
+| Protocol | Declared dep | Uses in `src/` | What the library would have solved |
+|---|---|---|---|
+| `turn` | `webrtc-turn` | **0** | It ships `allocation/`, `relay/` and `server/`. TURN's stated defect is "no relay socket is ever bound" |
+| `bgp` | `netgauze-bgp-pkt` | **0** | A maintained RFC 4271 codec, while BGP hand-rolls its wire format |
+| `amqp` | `lapin` | 1 (a doc string) | `lapin` is a *client* library, so it could never have implemented a broker — the wrong dependency, not an unused one |
+
+Contrast with the ones that are genuinely wired: `kafka`/`kafka-protocol` (13), `webrtc`/`webrtc`
+(31), `webdav`/`dav-server` (7).
+
+The check is cheap and worth repeating whenever a protocol underdelivers:
+
+```bash
+grep -rn "<crate_name>" src/server/<protocol>/ | grep -v CLAUDE.md | wc -l
+```
+
+Related: `amqp` declares **zero actions and zero events**, so the model cannot participate in it
+at all — a socket that calls `call_llm` once with nothing to say. `kafka` declares four events
+and emits none of them.
+
 ### Patterns worth auditing for
 
 **A mechanism fully built and wired, with nothing flowing through it.** Three bugs this session:
