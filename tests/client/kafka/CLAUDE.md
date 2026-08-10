@@ -1,109 +1,68 @@
 # Kafka Client E2E Tests
 
-## Test Strategy
+## Status: all four tests are `#[ignore]`d, and none of them can run
 
-End-to-end tests for Kafka client using a real Kafka broker. Tests verify producer and consumer functionality with LLM
-control.
+**The Kafka client is not compiled into any build.** `src/client/mod.rs` gates it on
+`#[cfg(all(feature = "kafka", feature = "rdkafka"))]`, and nothing enables `rdkafka`:
+`Cargo.toml` declares it as an optional dependency that no feature depends on, annotated
+`# rdkafka removed - causes malloc crashes`, and lists it among the features excluded from
+`all-protocols`. `client_registry` therefore never registers it, and `open_client` with
+`protocol: "Kafka"` fails at runtime with
 
-## Prerequisites
+> Client protocol 'Kafka' exists but is not compiled into this build (rebuild with --features kafka)
 
-Tests require a running Kafka broker at `localhost:9092`. For CI/local testing:
+— a message that is itself misleading, since `--features kafka` is exactly what was used.
 
-```bash
-# Start Kafka with Docker Compose
-docker-compose up -d kafka
+Measured before this pass: `cargo test --no-default-features --features kafka --test client --
+kafka` gave **1 passed, 3 failed**. The one that passed, `test_kafka_client_protocol_detection`,
+asserted only `client.protocol == "Kafka"` — a string the harness parses out of a log line
+NetGet prints *before* the connect fails. It passed with the client entirely non-functional.
 
-# Or use standalone Kafka Docker container
-docker run -d \
-  --name kafka-test \
-  -p 9092:9092 \
-  -e KAFKA_LISTENERS=PLAINTEXT://localhost:9092 \
-  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
-  apache/kafka:latest
-```
+A second, independent blocker applies to the two consumer tests: NetGet's broker implements
+ApiVersions, Metadata, Produce, Fetch and OffsetCommit only (`src/server/kafka/CLAUDE.md`).
+Consumer groups need FindCoordinator, JoinGroup, SyncGroup and Heartbeat, none of which exist,
+so an rdkafka `StreamConsumer` with a `group_id` cannot join. Those tests need manual partition
+assignment in `src/client/kafka/` before they can pass.
 
-Alternatively, use Redpanda (Kafka-compatible, simpler setup):
+Both fixes are outside this directory. Re-enabling the tests is then a matter of deleting the
+`#[ignore]` attributes.
 
-```bash
-docker run -d \
-  --name redpanda-test \
-  -p 9092:9092 \
-  vectorized/redpanda:latest \
-  redpanda start \
-  --kafka-addr 0.0.0.0:9092 \
-  --advertise-kafka-addr localhost:9092
-```
+## Test shapes (written for the day the client returns)
 
-## LLM Call Budget
+| Test | Assertion that makes it able to fail | LLM calls |
+|---|---|---|
+| `test_kafka_producer_send_message` | broker's `kafka_produce_request` fires once with `topic` = `test-events` | 4 |
+| `test_kafka_consumer_subscribe` | broker's `kafka_fetch_request` fires — a subscribed consumer polls | 4 |
+| `test_kafka_producer_consumer_flow` | broker sees the produce; consumer's `kafka_message_received` carries `Test Flow` | 6 |
+| `test_kafka_client_protocol_detection` | broker's `kafka_metadata_request` fires — the client actually reached it | 3 |
 
-**Target:** < 10 calls
-**Actual:** 6 calls total
+## Mock rot that was fixed along the way
 
-## Tests
+- **`wait_for_more` is not a Kafka client action.** Every `kafka_connected` rule returned it.
+  The client's vocabulary is `produce_message`, `subscribe_topics`, `commit_offset` and
+  `disconnect` (`src/client/kafka/actions.rs`), and `call_llm_for_client` offers the model only
+  `get_async_actions`, with no common actions mixed in. The mocks would have passed
+  `mock_action_names` silently *only because the client is not compiled* — the catalog for an
+  event no compiled protocol declares is empty and the check skips. They will panic the moment
+  `rdkafka` is enabled.
+- **Nothing was asserted on the broker side.** The server mock only answered the startup
+  instruction, so no rule depended on a byte arriving. Every test's real assertion was
+  `output_contains("Kafka")`.
+- `let mut server` / `let mut client` on bindings that are never mutated (`verify_mocks` takes
+  `&self`, `stop` takes `self`) produced six `unused_mut` warnings.
 
-1. **test_kafka_producer_send_message** (1 LLM call)
-    - Start Kafka producer client
-    - Send message to topic 'test-events'
-    - Verify client connection
+## Storage caveat for the flow test
 
-2. **test_kafka_consumer_subscribe** (1 LLM call)
-    - Start Kafka consumer client
-    - Subscribe to topics
-    - Verify subscription
+The broker keeps no storage — the root CLAUDE.md forbids protocols from implementing it — so a
+produced record is **not** replayed to a later fetch. The `fetch_response` in
+`test_kafka_producer_consumer_flow` restates the payload; the producer-side assertion is the
+`kafka_produce_request` arriving, not the broker relaying anything.
 
-3. **test_kafka_producer_consumer_flow** (2 LLM calls)
-    - Start consumer first (subscribe to topic)
-    - Start producer and send message
-    - Verify producer sends successfully
-    - Note: Consumer receive verification is non-deterministic due to offset/timing
-
-4. **test_kafka_client_protocol_detection** (1 LLM call)
-    - Verify Kafka protocol is correctly detected
-    - Check client metadata
-
-## Runtime
-
-**Expected:** < 30 seconds (with Kafka already running)
-**Breakdown:**
-
-- Kafka producer connection: ~2 seconds
-- Kafka consumer connection: ~2 seconds
-- Producer-consumer flow: ~6 seconds
-- Protocol detection: ~1 second
-
-## Running Tests
+## Running
 
 ```bash
-# Build with Kafka feature
-./cargo-isolated.sh build --no-default-features --features kafka
-
-# Run Kafka client tests
-./cargo-isolated.sh test --no-default-features --features kafka --test client::kafka::e2e_test
-
-# Run specific test
-./cargo-isolated.sh test --no-default-features --features kafka --test client::kafka::e2e_test -- test_kafka_producer_send_message
+CARGO_TARGET_DIR=/tmp/clients-target cargo test --no-default-features --features kafka \
+    --test client -- --test-threads=100 kafka          # 4 ignored
+CARGO_TARGET_DIR=/tmp/clients-target cargo test --no-default-features --features kafka \
+    --test client -- --test-threads=100 --ignored kafka # will fail until rdkafka is back
 ```
-
-## Known Issues
-
-1. **Consumer Lag** - Consumer might not receive messages immediately due to offset/timing
-2. **Topic Creation** - Topics are auto-created but may take time to appear
-3. **Connection Timeout** - Tests may fail if Kafka broker is not ready
-4. **Partition Assignment** - Consumer group rebalancing can cause delays
-
-## Test Efficiency
-
-- **Reusing Kafka Broker** - All tests use same Kafka instance (external)
-- **Minimal LLM Calls** - Each test uses 1-2 LLM calls max
-- **Fast Execution** - Tests complete in < 30 seconds
-- **No Heavy Operations** - No large message batches or complex queries
-
-## Future Enhancements
-
-- Add integration test with message verification (producer → consumer)
-- Test consumer offset commit functionality
-- Test dynamic topic subscription
-- Test error handling (broker disconnection)
-- Test high-throughput scenarios
-- Test consumer group rebalancing
-- Test transactional producers
