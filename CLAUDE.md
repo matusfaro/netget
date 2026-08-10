@@ -449,6 +449,25 @@ Assume other agents work in this repo concurrently.
 
   **`git add -u` counts.** It stages every tracked modification in the tree, which during
   parallel work is everyone's. The `-u` flag reads as narrower than `-A` and is not.
+
+- **Staging explicit paths is NOT enough — pass the paths to `git commit` too.** This is the
+  fourth incident and the subtlest: `git add <paths> && git commit -m ...` stages what you
+  listed and then commits **the whole index**, including anything another agent staged and had
+  not yet committed. In August 2026 that swept a *deletion* of `src/server/usb/smartcard/crypto.rs`
+  — staged by an agent mid-edit — into an unrelated BGP-client commit, leaving HEAD referencing
+  a module whose file was gone. It took a follow-up revert to repair.
+
+  Use the pathspec form, which commits only those paths regardless of what else is staged:
+
+  ```bash
+  git add <paths> && git commit <paths> -m "..."     # or: git commit -- <paths>
+  ```
+
+  And check before you commit, because the index is shared state:
+
+  ```bash
+  git diff --cached --name-only     # must list only your files
+  ```
 - **Shared files** (`Cargo.toml`, both registries, `server/mod.rs`, `client/mod.rs`, both test
   `mod.rs` files, `state/server.rs`): use `Edit`, add incrementally, never overwrite wholesale.
 - **Pause and report** if you hit an error in code you did not modify. It is almost always
