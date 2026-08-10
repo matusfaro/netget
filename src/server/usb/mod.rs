@@ -9,7 +9,7 @@
 //! - usb-serial: CDC ACM Serial device
 //! - usb-msc: Mass Storage Class device (flash drive/disk)
 //! - usb-fido2: FIDO2/U2F Security Key device
-//! - usb-smartcard: Smart Card (CCID) device via vsmartcard
+//! - usb-smartcard: Smart Card (CCID) device over USB/IP (no external daemon)
 //!
 //! The separate `usb` feature is the USB *client* (`nusb`) in `src/client/usb`,
 //! not a server, and does not build anything in this module.

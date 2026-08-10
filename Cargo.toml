@@ -235,7 +235,7 @@ usb-msc = ["usb-common", "memmap2"]  # USB Mass Storage Class virtual device (fl
 # Without it this feature only compiled when some other enabled feature happened to
 # turn ring/std on via feature unification.
 usb-fido2 = ["usb-common", "ring", "ring/std", "serde_cbor"]  # USB FIDO2/U2F Security Key virtual device
-usb-smartcard = ["usb-common", "dep:rsa", "dep:sha2"]  # USB Smart Card (CCID) virtual device via vsmartcard (with RSA crypto support)
+usb-smartcard = ["usb-common"]  # Virtual USB CCID smart card reader over USB/IP. rsa/sha2 dropped with crypto.rs: the handler owns every response APDU, so the protocol holds no keys
 usb = ["dep:nusb"]  # USB client for connecting to USB devices
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
@@ -910,7 +910,6 @@ ring = { version = "0.17", optional = true }  # ECDSA P-256 cryptography for FID
 serde_cbor = { version = "0.11", optional = true }  # CBOR encoding for CTAP2
 
 # USB Smart Card dependencies
-rsa = { version = "0.9", optional = true, features = ["sha2"] }  # RSA cryptography for smart cards
 # sha2 already defined above for wireguard/tor
 
 # Embedded LLM inference (llama.cpp bindings)
