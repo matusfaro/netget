@@ -1,127 +1,165 @@
 # WebDAV Protocol Implementation
 
-**Status**: `DevelopmentState::Incomplete` — hidden from the LLM by
-`ProtocolMetadataV2::is_available_to_llm()`.
+**Status**: `DevelopmentState::Experimental` — one human review pass, verified against a real
+WebDAV client library (`reqwest_dav`), not just against status codes.
 
-WebDAV (RFC 4918) over HTTP/1.1. `dav-server` v0.8 parses the methods, `MemFs` answers them,
-`hyper` carries them. Default port 8080 (the code has no default of its own — the caller
-picks the port; 8080 is what every example uses). Port 80 would be privileged, but nothing
-in this protocol binds it by default, so `privilege_requirement` is `None`.
+WebDAV (RFC 4918) over HTTP/1.1. `hyper` v1.0 carries the requests; this module answers the
+DAV methods itself and generates the `DAV:multistatus` XML. **There is no filesystem** — the
+LLM supplies every directory listing, every file body and the status of every write. Default
+port in the examples is 8080; the caller picks it, and `privilege_requirement` is `None`
+because nothing here binds a port below 1024 by default.
 
-## Why it is Incomplete
+## The storage decision
 
-Two structural reasons, either of which is disqualifying on its own.
+The previous implementation handed every request to `dav_server::memfs::MemFs`, a real
+read/write filesystem inside the process, and dropped the `OllamaClient` on startup so the
+server instruction was read by nobody. Both are gone. Two replacements were possible:
 
-### 1. The LLM is never consulted
+1. **Implement `dav_server::fs::DavFileSystem` against the model.** Rejected. `dav-server`
+   calls `metadata()` for the target and again for *every* directory entry, then `open()` and
+   `read_bytes()` separately — so a model-backed `DavFileSystem` costs a round-trip per
+   *property*, not per request, which no LLM call budget survives. It also cannot express the
+   status codes WebDAV needs: `FsError` has no way to say 405, 409 or 507, and RFC 4918 makes
+   the distinction between 201 and 204 on `PUT` load-bearing.
+2. **Answer the verbs directly.** Chosen. One model round-trip per request, and the model
+   picks the status code itself.
 
-`WebDavServer::spawn_with_llm_actions` (`src/server/webdav/mod.rs`) takes the `OllamaClient`
-as `_llm_client` and drops it. Grep the directory: there is no `Event::new`, no `EventType`,
-no `call_llm`. `get_event_types()` is not implemented, so it returns the trait default (empty).
+`dav-server` is therefore no longer used by this protocol. It is still listed as an optional
+dependency of the `webdav` feature in `Cargo.toml` (`webdav = ["dav-server", "dep:reqwest_dav"]`)
+and now compiles for nothing — dropping it is a `Cargo.toml` change and was left to whoever
+owns that file. `reqwest_dav` is still needed: the WebDAV *client* protocol uses it, and so do
+these tests.
 
-The practical consequence: a user writes `open_server { base_stack: "webdav", instruction:
-"serve /documents/readme.txt containing 'hello'" }`, the server starts, and the instruction is
-read by nobody. `GET /documents/readme.txt` returns 404 because MemFs is empty. There is no
-error and no warning at the point the instruction is ignored — only the startup WARN added in
-`spawn_with_llm_actions`.
+## What the model sees and controls
 
-### 2. It implements storage
+**Event**: `webdav_request`, one per request.
 
-`MemFs::new()` is a real read/write filesystem inside the process. `PUT /a.txt` stores bytes
-in it; `GET /a.txt` returns them; `MKCOL`, `DELETE`, `COPY`, `MOVE` and `PROPFIND` all operate
-on it. This is precisely the storage a protocol is forbidden to implement — the project rule
-is that the LLM supplies every file, every directory entry and every property, the way MySQL
-has no tables and NFS has no disk.
+| Field | Notes |
+|---|---|
+| `method` | uppercased: `PROPFIND`, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `COPY`, `MOVE`, `PROPPATCH`, `POST` |
+| `path` | percent-decoded, no query string. The model echoes this into `send_webdav_listing` |
+| `depth` | `Depth` header, present only when sent: `"0"`, `"1"`, `"infinity"` |
+| `destination` | `Destination` header of a COPY/MOVE, reduced to a path |
+| `overwrite` | `Overwrite` header, `"T"` or `"F"` |
+| `headers` | all request headers, names lowercased |
+| `body` | request body decoded as UTF-8 **lossily** (PUT content, PROPFIND/PROPPATCH XML) |
+| `body_bytes` | body size before decoding |
+| `body_is_binary` | present and `true` only when the body was not valid UTF-8 |
 
-So WebDAV is not a NetGet protocol that happens to be unfinished; it is a stock in-memory
-WebDAV server with NetGet's connection accounting bolted on.
+**Actions** (all sync; there are no async actions — WebDAV is purely reactive):
 
-## Actions
+| Action | Produces | Key parameters |
+|---|---|---|
+| `send_webdav_listing` | `207 Multi-Status` + generated XML | `path` (required, echo the event's), `entries[]` of `{name, is_collection, size, content_type, last_modified}`, `is_collection`, `size`, `content_type`, `last_modified` |
+| `send_webdav_file` | `200` + text body | `content` (required), `content_type`, `status` |
+| `send_webdav_status` | any status, optional body | `status` (required), `body`, `headers` |
 
-**None.** `get_async_actions()` and `get_sync_actions()` both return an empty vector, and
-`execute_action()` returns an error for every input.
+All three are attached to `webdav_request` via `.with_actions(...)`, so the model actually sees
+them — the defect that silently disabled seventeen protocols does not apply here, and
+`tests/event_action_declarations_test.rs` covers it.
 
-Six actions used to be declared here — `read_file`, `create_file`, `create_directory`,
-`delete_resource`, `list_directory`, `get_properties`. They were removed rather than kept as
-documentation of intent, because they were worse than absent:
+Nothing carries raw bytes or base64: a listing is structured entries and the XML is generated
+from them, and file content is a string.
 
-- No event advertised them, so `call_llm` could never offer them to the model (the model's
-  tool list comes from `event.event_type.actions`, and there are no event types).
-- Every executor arm read `path`, discarded it into `_path`, and returned
-  `ActionResult::NoAction`. A static handler naming one would have parsed, "succeeded", and
-  changed nothing on the wire.
-- `get_startup_examples()` advertised a `send_webdav_response` action and a `webdav_request`
-  event pattern. Neither has ever existed anywhere in the codebase.
+### Failure behavior — fails closed
 
-The startup examples still contain a `webdav_request` pattern because
-`tests/startup_examples_validation_test.rs` requires a script handler and a static handler in
-every protocol's examples. They are annotated in the source as never-firing.
+Three distinguishable outcomes, deliberately:
 
-## Events
+- **Model refuses** → whatever status it chose (`403`, `404`, `412`, `423`…).
+- **Model answers with no `send_webdav_*` action** → `503 Service Unavailable`, logged at
+  ERROR. This is the fail-open trap OAuth2 fell into and is closed here: silence is never
+  consent, and 503 is outside the set the model can pick, so a capture or an access log always
+  tells the two apart.
+- **LLM call fails** → `500`.
 
-**None.** No `EventType` is declared, so nothing can be scripted, nothing can be statically
-handled, and nothing reaches the model.
+An out-of-range status becomes 500 rather than a panic, and a header hyper cannot represent
+(CR/LF injection, i.e. response splitting) is dropped individually.
+
+## Methods answered without the model
+
+`OPTIONS`, `LOCK` and `UNLOCK` never raise `webdav_request`. They are handshakes with no
+content to decide:
+
+- `OPTIONS` → `200`, `Allow:` listing every method, `DAV: 1, 2`, `MS-Author-Via: DAV`.
+- `LOCK` → `200` with a `lockdiscovery` body and a fresh `opaquelocktoken:` UUID. **The lock is
+  synthetic and never enforced** — nothing in this protocol consults it. It exists because
+  macOS Finder and the Windows WebDAV redirector refuse to write without one.
+- `UNLOCK` → `204`.
+
+Every response, including the model-driven ones, carries `DAV: 1, 2` — clients decide whether a
+server speaks WebDAV from that header, not from the body.
 
 ## Architecture
 
 ```
-TCP accept  ->  hyper http1::serve_connection  ->  service_fn  ->  DavHandler::handle  ->  MemFs
+TCP accept -> hyper http1::serve_connection -> service_fn
+   -> extract_request (percent-decode path, buffer body)
+   -> OPTIONS/LOCK/UNLOCK answered here
+   -> Event::new(WEBDAV_REQUEST_EVENT) -> call_llm -> build_webdav_response
 ```
 
-Connection accounting (`add_connection_to_server` / `close_connection_on_server`) is real and
-correct: one `ConnectionState` per TCP connection, closed when `serve_connection` returns.
-Nothing else about the request is recorded — no method, no path, no status.
+Handling-mode priority is the generic one: script handler → static handler → LLM. Script and
+static handlers cost no LLM call, and static handlers can reach the event with
+`{{event.path}}` interpolation, which is what makes a deterministic read-only share practical.
 
-The accept loop's `JoinHandle` is registered with `AppState::register_server_task()`, so
-`stop_server` releases the socket. Per-connection tasks are not tracked (project-wide
-limitation), so in-flight requests are not cancelled by `stop_server`.
-
-`FakeLs` answers `LOCK`/`UNLOCK` so clients that demand locking will proceed, but no lock is
-ever enforced.
-
-## Fixed in this pass
-
-- **Bind failure was invisible.** The listener was created with
-  `tokio::net::TcpListener::bind` *inside* the spawned accept task; on failure the task logged
-  and returned while `spawn_with_llm_actions` had already answered `Ok(listen_addr)`. The
-  server showed `Running` with no socket bound. The bind now happens before the spawn and
-  propagates with `?`.
-- **Port 0 was reported as 0.** The function returned the requested `listen_addr` rather than
-  the listener's `local_addr()`, so a caller asking for an ephemeral port was told the port was
-  0. It now returns the real bound address.
-- **`listener.local_addr().unwrap()`** inside the accept task removed along with it.
+- The listener is bound **before** the accept task is spawned and the error propagates with
+  `?`, so a bind failure reaches `server_startup` as `ServerStatus::Error` instead of a
+  phantom `Running`. `local_addr()` is returned, so port 0 reports the port the kernel chose.
+- The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
+  `stop_server` releases the socket. Per-connection tasks are not tracked (project-wide
+  limitation), so in-flight requests are not cancelled.
+- One `ConnectionId` per TCP connection, closed when `serve_connection` returns.
+  `bytes_*`/`packets_*`/`last_activity` are maintained per request on every exit path,
+  including the ones that never reach the model. One "packet" is one HTTP message and the byte
+  counts are message bodies only — hyper has parsed the request line and headers away by then.
+  `last_activity` is not cosmetic: `ServerInstance::cleanup_old_connections` evicts anything
+  idle for 10s, and WebDAV clients hold keep-alive connections open between bursts.
 
 ## Limitations
 
-- No LLM control of any kind (above).
-- In-memory only; everything is lost when the server stops.
-- No authentication, no HTTPS.
-- Locks accepted but never enforced.
-- No DAV versioning extensions.
-- macOS Finder and the Windows WebDAV redirector both probe for behaviours (`OPTIONS` headers,
-  `LOCK` semantics, specific dead properties) that this server does not implement; `curl` and
-  `cadaver` work.
-
-## Making it real
-
-The work is to implement `dav_server::fs::DavFileSystem` against the LLM and delete `MemFs`.
-`src/server/nfs/` is the worked example of the same idea: `LlmNfsFileSystem` implements
-`NFSFileSystem`, and every trait method builds an event, calls `call_llm`, and reads a
-response action. WebDAV needs the same shape, plus `DavFile`, `DavDirEntry` and `DavMetaData`
-implementations, and one event type (`webdav_request`, carrying method/path/depth) advertising
-the response actions via `.with_actions(...)`.
-
-Until that exists, keep the state at `Incomplete`. Promoting it back to `Experimental` while
-`MemFs` is still in `spawn_with_llm_actions` would put a protocol in front of the model that
-cannot obey it.
+- **No storage, by design.** A `PUT` is remembered only if the model chooses to remember it
+  (server memory, or a script handler that keeps its own state). A `GET` after a `PUT` returns
+  whatever the model says, which may not be what was written.
+- Text content only. `send_webdav_file` writes UTF-8; images and archives cannot be served, and
+  a non-UTF-8 `PUT` body reaches the model only as a lossy decoding.
+- Request bodies are fully buffered with no size cap before the LLM call.
+- Locks accepted, never enforced. No authentication. No TLS. No `Range` support (the model can
+  set `206` and a partial body, but nothing parses the `Range` header for it).
+- `PROPPATCH` can be answered but no dead property is stored; `PROPFIND` returns a fixed
+  property set (`displayname`, `getlastmodified`, `resourcetype`, `getcontentlength`,
+  `getcontenttype`) regardless of what the client's `<D:prop>` asked for.
+- No DAV versioning (RFC 3253), no `Depth: infinity` expansion beyond what the model lists.
 
 ## Testing
 
-`tests/server/webdav/test.rs` — four tests (start, PROPFIND, PUT, MKCOL). They pass, and it is
-worth understanding what they prove: they exercise `dav-server` and `MemFs`. Every mock in
-them matches on the startup instruction only; none matches an event, because there are no
-events. `PUT` returns 201 because MemFs created the file.
+`tests/server/webdav/test.rs` — three mocked E2E tests driven by `reqwest_dav`, 9 LLM calls
+total. See `tests/server/webdav/CLAUDE.md`.
+
+```bash
+./cargo-isolated.sh test --no-default-features --features webdav \
+    --test server -- --test-threads=100 webdav
+```
+
+## Example prompts
+
+```
+listen on port 8080 using webdav stack
+The share root holds a documents folder and readme.txt containing "Hello from NetGet"
+Accept PUT (201 for a new path, 204 to overwrite) and remember what was written
+```
+
+Deterministic read-only share with no LLM call per request:
+
+```json
+"event_handlers": [{
+  "event_pattern": "webdav_request",
+  "handler": { "type": "static", "actions": [
+    { "type": "send_webdav_status", "status": 404, "body": "Not Found" }
+  ]}
+}]
+```
 
 ## References
 
 - [RFC 4918: WebDAV](https://tools.ietf.org/html/rfc4918)
-- [dav-server](https://docs.rs/dav-server)
+- [reqwest_dav](https://docs.rs/reqwest_dav) — the client the tests drive
