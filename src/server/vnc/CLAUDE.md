@@ -1,131 +1,164 @@
 # VNC Protocol Implementation
 
-**Status**: `DevelopmentState::Incomplete` — hidden from the LLM by
-`ProtocolMetadataV2::is_available_to_llm()`.
+**Status**: `DevelopmentState::Experimental` — LLM-authored, not human-reviewed against a
+graphical viewer, but every declared event fires, every declared action is reachable, and the
+E2E suite decodes real pixels off the wire.
 
-RFB 3.8 (RFC 6143) over TCP, default port 5900 — not privileged, so
-`privilege_requirement` is `None`. The protocol handshake is real and works against real
-viewers. Nothing above the handshake is LLM-controlled.
+RFB 3.8 (RFC 6143) over TCP, default port 5900 — not privileged, so `privilege_requirement`
+is `None`.
 
-## Why it is Incomplete
+## Hand-written RFB, not a crate
 
-`VncServer::spawn_with_llm_actions` takes the `OllamaClient` as `_llm_client` and drops it.
-Grep the directory: no `Event::new`, no `EventType`, no `call_llm`. `get_event_types()` is not
-implemented, so it returns the empty trait default.
+The `vnc` feature declares no dependencies beyond what `src/display/` already pulls in, and
+that is deliberate. The *server* half of RFB 3.8 is a 12-byte version exchange, a one-byte
+security negotiation, ClientInit/ServerInit, and seven fixed-length client messages. The Rust
+VNC crates that exist are viewers (client side, with their own event loops) or bindings to
+libvncserver, which would add a C system dependency to `dist` builds for maybe 200 lines of
+framing. Hand-rolling is defensible here in a way it is not for, say, BGP: the state machine is
+linear, every client message has a fixed length or a length prefix, and the whole thing is
+covered by an RFB client written directly against the RFC in `tests/server/vnc/test.rs`.
 
-Every `FramebufferUpdateRequest` is answered by `send_test_framebuffer` with a hardcoded
-red/green gradient. Ask for "a blue background with white text saying Hello" and you get the
-gradient. Key events, pointer events and clipboard text are logged at DEBUG/TRACE and dropped.
+## What the LLM controls
 
-This is the same shape as the TURN demotion: the transport works, the feature does not. A user
-reading `Experimental` alongside `llm_control: "Framebuffer content, authentication, input
-events"` — the previous metadata — would reasonably expect the model to be driving the
-display. It never was.
+Rust owns the protocol, the framebuffer and the pixel encoding. The model owns **what is on
+screen** and how the screen reacts to input. It never sees or produces pixels: it answers with
+structured drawing commands, and `crate::display::DisplayCanvas` (tiny-skia + cosmic-text)
+rasterises them.
 
-## Actions
+### Events — all four fire
 
-**None.** `get_async_actions()` and `get_sync_actions()` both return empty, and
-`execute_action()` returns an error for every input.
+| Event | Raised when | Actions offered |
+|---|---|---|
+| `vnc_framebuffer_update_request` | a **non-incremental** FramebufferUpdateRequest arrives | render, no_change, disconnect |
+| `vnc_key_event` | any KeyEvent, press or release | render, no_change, set_clipboard, disconnect |
+| `vnc_pointer_event` | a PointerEvent whose **button mask changed** | render, no_change, disconnect |
+| `vnc_client_cut_text` | ClientCutText arrives | set_clipboard, render, no_change, disconnect |
 
-Five actions used to be declared: `vnc_auth_success`, `vnc_auth_deny`, `vnc_render_display`,
-`send_framebuffer_update`, `disconnect_vnc_client`. All were unreachable — no event advertised
-them (there are no events) and the connection loop never calls `execute_action` — and three of
-the five returned `NoAction` even if they had been reached. `vnc_render_display` advertised
-"Render display content in response to update request" and did nothing at all.
+Two events are deliberately *not* raised on every matching message, because raising them would
+spend one model round-trip per poll or per pixel of mouse travel:
 
-## Events
+- **Incremental update requests** are held open, which is what RFB is for: the request means
+  "tell me when something changes", and the server may answer whenever it likes. A held request
+  is answered by the next event that redraws. A viewer that has an idle screen therefore costs
+  nothing.
+- **Pointer movement with no button change** is dual-logged at DEBUG and dropped. A viewer emits
+  a PointerEvent per pixel of travel.
 
-**None.** Four `&'static str` constants (`VNC_AUTH_REQUEST_EVENT`, `VNC_UPDATE_REQUEST_EVENT`,
-`VNC_KEY_EVENT`, `VNC_POINTER_EVENT`) used to sit at the top of `actions.rs`. They were plain
-strings, not `EventType`s, and nothing referenced them. Removed.
+Both are visible in the TUI/MCP status stream, so input is never silently invisible — the old
+implementation logged PointerEvent at `trace!` only, which meant the only client input this
+protocol receives did not appear where somebody watching a session would look.
 
-## What works
+### Actions
 
-- **ProtocolVersion / Security / SecurityResult / ClientInit / ServerInit** — full RFB 3.8
-  handshake, verified by the custom client in `tests/server/vnc/test.rs` and by real viewers.
-- **Security type "None" (1) only.** Any client that connects is admitted. There is no
-  VNC-Auth (type 2) and no password. `update_vnc_connection_auth(..., true, None)` is called
-  unconditionally after the handshake — it records "authenticated", it does not decide it.
-- **FramebufferUpdate, Raw encoding** — correct message framing, 32-bit BGRX pixels matching
-  the announced pixel format.
-- **Connection accounting** — one `ConnectionState` per connection, removed on disconnect.
-- The accept loop's `JoinHandle` is registered via `AppState::register_server_task()`, so
-  `stop_server` releases the socket.
+| Action | Effect |
+|---|---|
+| `vnc_render_display` | `commands` array → rasterised → sent as one Raw rectangle |
+| `vnc_no_change` | screen left alone; an incremental request stays held |
+| `vnc_set_clipboard` | RFB ServerCutText pushed to the client |
+| `vnc_disconnect_client` | connection closed |
 
-## The rendering half that exists
+There are **no async (user-triggered) actions**. The server keeps no registry of live
+connections, so an async action would have nothing to address; declaring one would be a promise
+the code does not keep.
 
-`crate::display` (`src/display/`) is complete and protocol-agnostic: `DisplayCanvas::new(w, h)`
-plus `add_commands(Vec<DisplayCommand>)` plus `render()` produces an RGBA buffer via tiny-skia,
-and `DisplayCommand` is an externally-tagged serde enum (`{"DrawText": {...}}`) that
-deserializes straight from LLM JSON. `VncServer::send_framebuffer_update` already renders such
-a buffer and ships it as a Raw rectangle.
+`commands` are flat, `type`-tagged objects — `background`, `clear`, `rectangle`, `text`, `line`,
+`circle`, `window`, `button`, `textbox`, `ascii_art` — not the externally-tagged
+`DisplayCommand` serde shape (`{"DrawText": {...}}`), which models produce badly.
+`actions::parse_display_commands` translates, and rejects anything it does not understand rather
+than silently dropping it: a screen half-drawn because one command was skipped is
+indistinguishable from one the model meant.
 
-**It has no caller.** That is the whole gap.
+Colours accept `#rgb`, `#rrggbb`, `#rrggbbaa`, 18 colour names, or `{"r":…,"g":…,"b":…,"a":…}`.
 
-## Making it real
+## Fail-closed behaviour
 
-1. Declare an `EventType` for `vnc_framebuffer_update_request` carrying `incremental`, `x`,
-   `y`, `width`, `height`, and — critically — attach the render action with
-   `.with_actions(vec![VNC_RENDER_DISPLAY_ACTION.clone()])`. Without that the model is handed
-   no protocol vocabulary and can only fail (`EventType::has_no_usable_actions`).
-2. In the message-type-3 arm of `message_loop`, build the event and `call_llm(...)` so script
-   and static handlers get their chance before the model does.
-3. Deserialize the returned `commands` array into `Vec<DisplayCommand>` and call
-   `send_framebuffer_update`. Keep `send_test_framebuffer` as the fallback when the LLM call
-   fails, so a viewer never hangs waiting for a frame that will not come.
-4. Optionally raise `vnc_key_event` / `vnc_pointer_event` as informational events declared with
-   `.with_no_actions()`.
+The three outcomes of an event are kept structurally distinct (`Decision` in `mod.rs`):
 
-**Note before doing this**: `tests/server/vnc/test.rs` currently asserts
-`expect_calls(1)` on a startup-instruction mock and documents "FramebufferUpdateRequest: 0 LLM
-calls". Adding a per-request LLM call changes that budget, so the test and
-`tests/server/vnc/CLAUDE.md` must be updated in the same change.
+- **redraw** — the model decided what is on screen.
+- **`vnc_no_change`** — the model explicitly decided to leave it alone. The previous screen
+  stands, and a *full* request is still answered with it.
+- **no usable answer** — an LLM error, a batch where every action failed, or an action list with
+  nothing this protocol can execute. The client gets a **placeholder screen**
+  (`PLACEHOLDER_BACKGROUND`, an on-screen diagnostic line) and a WARN on both the log and the
+  status stream.
 
-## Fixed in this pass
+Silence is not an option on a full update request: RFB has no "no answer" reply, so a client
+that asked for the whole screen and receives nothing waits forever. Equating "no answer" with
+"nothing changed" would be exactly the fail-open shape that bit OAuth2.
 
-- **Framebuffer write was one awaited `write_u8` per byte** — 1,920,000 awaited writes per
-  800x600 frame, each a syscall on an unbuffered socket, all while holding the write lock. The
-  frame is now serialized into one `Vec<u8>` and written with a single `write_all`.
-- **The requested region was echoed back as the rectangle size.** A client could request a
-  65535x65535 region and the server would try to produce it, contradicting the 800x600 it had
-  announced in ServerInit. The full announced framebuffer is now always sent (RFB permits the
-  server to choose the rectangle), via the new `FRAMEBUFFER_WIDTH`/`FRAMEBUFFER_HEIGHT`
-  constants.
-- **ClientCutText allocated from a client-controlled u32.** `vec![0u8; length as usize]` ran
-  before any payload was read, so a 7-byte message could request a 4 GiB allocation. Capped at
-  `MAX_CUT_TEXT_LEN` (1 MiB); over the cap the connection is closed.
-- **The accept loop spun on error.** `Err` logged and continued, so a persistent accept failure
-  (EMFILE, socket closed underneath) burned a core forever. It now breaks, like every other
-  TCP protocol here.
-- **Startup is honest.** A WARN goes to both the log and the status channel saying the
-  instruction is ignored and the display is a fixed test pattern.
+## Startup parameters
+
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `width` | number | 800 | 16–4096, and `width * height` ≤ 3840×2160 |
+| `height` | number | 600 | as above |
+| `desktop_name` | string | `NetGet VNC` | shown in the viewer's title bar |
+
+All three are read in `Server::spawn`; nothing is declared that is not read, and nothing is read
+that is not declared. Validation happens before `add_server`, so a bad value is a clean error.
+
+## Attacker-controlled input
+
+Everything a client or a model can send is bounds-checked before it is allocated or indexed:
+
+- `ClientCutText` length is capped at `MAX_CUT_TEXT_LEN` (1 MiB) **before** the buffer is
+  allocated — the length is a client-controlled u32, so without the cap a nine-byte message asks
+  for 4 GiB.
+- The requested update region is ignored entirely; the announced framebuffer is always sent, so
+  a client cannot ask for a 65535×65535 rectangle.
+- An unknown client message type closes the connection. Its length is unknown, so the stream
+  cannot be resynchronised; continuing would read the message body as message types.
+- Display commands are capped at 256 per render, 4 levels of window nesting, 4096 bytes per
+  string, 65535 per coordinate. No `unwrap()` on anything parsed from the network or the model.
+- `ClientCutText` is decoded byte-per-character as Latin-1, which cannot fail, so malformed
+  input cannot abort the connection task.
+- Rendering runs on `spawn_blocking`, so a panic inside tiny-skia surfaces as an error on the
+  connection instead of silently killing the task while the server still reports `Running`.
+
+## Wire details
+
+- **Security**: type `None` (1) only. Any client that connects is admitted; there is no VNC-Auth
+  and no password. `update_vnc_connection_auth(..., true, None)` records "authenticated", it
+  does not decide it. A client that picks any other type gets a SecurityResult failure *with*
+  the RFB 3.8 reason string.
+- **Encoding**: Raw only, one rectangle covering the whole framebuffer, 32bpp BGRX matching
+  ServerInit. Every update is `width * height * 4` bytes uncompressed.
+- **Frames are serialised into one `Vec<u8>` and written with a single `write_all`.** This used
+  to be one awaited `write_u8` per byte — 1.9 million awaited syscalls per 800×600 frame, all
+  while holding the write lock.
+- The accept loop breaks on error rather than spinning, and its `JoinHandle` is registered via
+  `AppState::register_server_task()` so `stop_server` releases the socket.
+- A connection is removed from the server view on every exit path, including a failed handshake.
 
 ## Limitations
 
-- No LLM control of anything (above).
-- Framebuffer fixed at 800x600; no startup parameter, no resize, no `DesktopSize`
-  pseudo-encoding.
-- `SetPixelFormat` is parsed and ignored — the server always sends 32bpp BGRX, so a client
-  that negotiates 8- or 16-bit colour renders garbage.
-- `SetEncodings` is parsed and ignored — Raw only. No CopyRect, RRE, Hextile, ZRLE or Tight,
-  and no compression, so every frame is width x height x 4 bytes on the wire.
-- No incremental updates: `incremental=1` gets the same full frame.
-- No VNC-Auth, no TLS, no VeNCrypt.
-- Clipboard is one-way and discarded; no `ServerCutText`.
-- Each connection is independent; there is no shared framebuffer and the shared-flag in
-  ClientInit is read and ignored.
+- No VNC-Auth (type 2), no TLS, no VeNCrypt.
+- `SetPixelFormat` is parsed and ignored — a client that negotiates 8- or 16-bit colour renders
+  garbage.
+- `SetEncodings` is parsed and ignored — no CopyRect, RRE, Hextile, ZRLE or Tight, and no
+  compression.
+- No `DesktopSize` pseudo-encoding: the framebuffer size is fixed at startup.
+- Updates are always full-screen; there is no damage tracking, so `vnc_render_display` costs a
+  whole frame on the wire even for a one-pixel change.
+- One connection is handled strictly sequentially — a model call for one message completes
+  before the next is read. RFB messages are small and the socket buffers them, but input that
+  arrives during a call is delayed by it.
+- Each connection has its own framebuffer; the ClientInit shared flag is read and ignored.
+- Two model round-trips per keystroke (press and release) unless a script or static handler is
+  used. Prefer a script handler for anything deterministic.
 
 ## Manual verification
 
 ```bash
 ./cargo-isolated.sh run --no-default-features --features vnc --release
-# then: "listen on port 5900 via vnc"
-vncviewer localhost:5900     # or Screen Sharing on macOS, TigerVNC, RealVNC
+# then: "listen on port 5900 via vnc showing a dark blue desktop with the text Hello"
+vncviewer localhost:5900     # or TigerVNC / RealVNC
 ```
 
-Expect: connection succeeds without a password, an 800x600 window, a gradient (red increasing
-left-to-right, green top-to-bottom, blue constant at 128). Keystrokes and mouse movement appear
-in `netget.log` at DEBUG/TRACE and change nothing on screen. That is the whole feature set.
+Expect an 800×600 window whose contents are whatever the model drew, a placeholder screen
+reading `NetGet VNC: …` if the model failed to answer, and `VNC KeyEvent:` /
+`VNC PointerEvent:` lines in the status panel. macOS Screen Sharing negotiates VNC-Auth and
+will not connect.
 
 ## References
 

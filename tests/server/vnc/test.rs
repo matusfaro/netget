@@ -1,14 +1,23 @@
-//! End-to-end VNC tests for NetGet
+//! End-to-end VNC tests.
 //!
-//! These tests spawn the actual NetGet binary with VNC prompts
-//! and validate the RFB protocol implementation using a simple VNC client.
+//! Every test drives the real `netget` binary with a real RFB 3.8 client implemented below and
+//! asserts protocol-level results: the ServerInit geometry and pixel format, and the *decoded
+//! pixels* of a FramebufferUpdate against what the mocked model asked for. There is no Rust
+//! crate implementing an RFB client that is usable here (the maintained ones are viewers with
+//! their own event loops), so the client is hand-rolled — it is roughly 150 lines, and it is
+//! the only way to prove the bytes on the wire mean what the server claims.
 
 #![cfg(feature = "vnc")]
 
-use super::super::helpers::{self, E2EResult};
+use super::super::helpers::{self, E2EResult, NetGetConfig};
+use netget::server::vnc::PLACEHOLDER_BACKGROUND;
+use serde_json::json;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+
+/// How long any single server response may take, including one mocked LLM round-trip.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// One Raw-encoded rectangle out of a FramebufferUpdate.
 struct VncRect {
@@ -24,105 +33,119 @@ impl VncRect {
     /// The BGRX quad at (x, y) within this rectangle.
     fn pixel(&self, x: u16, y: u16) -> [u8; 4] {
         let offset = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
+        assert!(
+            offset + 4 <= self.pixels.len(),
+            "pixel ({x},{y}) is outside the {}x{} rectangle",
+            self.width,
+            self.height
+        );
         self.pixels[offset..offset + 4]
             .try_into()
             .expect("four bytes per pixel")
     }
+
+    /// The RGB triple at (x, y), decoded from the announced BGRX layout.
+    fn rgb(&self, x: u16, y: u16) -> (u8, u8, u8) {
+        let [b, g, r, _] = self.pixel(x, y);
+        (r, g, b)
+    }
 }
 
-/// Simple VNC/RFB client for testing
+/// What the server sent us.
+enum ServerMessage {
+    FramebufferUpdate(Vec<VncRect>),
+    CutText(String),
+}
+
+/// Geometry and pixel format read out of ServerInit.
+struct ServerInit {
+    width: u16,
+    height: u16,
+    bits_per_pixel: u8,
+    depth: u8,
+    big_endian: bool,
+    true_color: bool,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    name: String,
+}
+
+/// Minimal RFB 3.8 client.
 struct VncClient {
     stream: TcpStream,
 }
 
 impl VncClient {
-    /// Connect to a VNC server
-    async fn connect(addr: &str) -> E2EResult<Self> {
-        let stream = TcpStream::connect(addr).await?;
+    async fn connect(port: u16) -> E2EResult<Self> {
+        let stream = TcpStream::connect(format!("127.0.0.1:{port}")).await?;
         Ok(Self { stream })
     }
 
-    /// Perform RFB handshake
+    /// ProtocolVersion, security-type negotiation and SecurityResult.
     async fn handshake(&mut self) -> E2EResult<()> {
-        // 1. Receive ProtocolVersion (12 bytes: "RFB 003.008\n")
-        let mut version = vec![0u8; 12];
+        let mut version = [0u8; 12];
         self.stream.read_exact(&mut version).await?;
-        let version_str = String::from_utf8_lossy(&version);
-        println!("  Server version: {}", version_str.trim());
-
-        assert!(
-            version_str.starts_with("RFB "),
-            "Expected RFB version, got: {}",
-            version_str
-        );
-
-        // 2. Send ProtocolVersion back (RFB 003.008)
+        let version_str = String::from_utf8_lossy(&version).to_string();
+        if version_str != "RFB 003.008\n" {
+            return Err(format!("expected RFB 003.008, got {version_str:?}").into());
+        }
         self.stream.write_all(b"RFB 003.008\n").await?;
 
-        // 3. Receive security types
         let num_security_types = self.stream.read_u8().await?;
-        println!("  Security types offered: {}", num_security_types);
-
         if num_security_types == 0 {
-            // Connection failed, read reason
             let reason_length = self.stream.read_u32().await?;
             let mut reason = vec![0u8; reason_length as usize];
             self.stream.read_exact(&mut reason).await?;
-            return Err(format!("Connection failed: {}", String::from_utf8_lossy(&reason)).into());
+            return Err(format!("connection failed: {}", String::from_utf8_lossy(&reason)).into());
         }
-
         let mut security_types = vec![0u8; num_security_types as usize];
         self.stream.read_exact(&mut security_types).await?;
-        println!("  Security types: {:?}", security_types);
+        if !security_types.contains(&1) {
+            return Err(
+                format!("server did not offer security type None: {security_types:?}").into(),
+            );
+        }
+        self.stream.write_u8(1).await?;
 
-        // 4. Choose security type (1 = None)
-        let chosen_security = if security_types.contains(&1) {
-            1 // None (no authentication)
-        } else {
-            security_types[0] // Just pick the first one
-        };
-        self.stream.write_u8(chosen_security).await?;
-        println!("  Chose security type: {}", chosen_security);
-
-        // 5. Receive SecurityResult
         let security_result = self.stream.read_u32().await?;
         if security_result != 0 {
-            return Err(format!("Security handshake failed: {}", security_result).into());
+            return Err(format!("SecurityResult was {security_result}, expected 0").into());
         }
-        println!("  ✓ Security handshake successful");
-
         Ok(())
     }
 
-    /// Send ClientInit and receive ServerInit
-    async fn initialize(&mut self) -> E2EResult<(u16, u16)> {
-        // 6. Send ClientInit (shared-flag = 1)
-        self.stream.write_u8(1).await?; // Shared connection
+    /// ClientInit, then decode ServerInit.
+    async fn initialize(&mut self) -> E2EResult<ServerInit> {
+        self.stream.write_u8(1).await?; // shared flag
 
-        // 7. Receive ServerInit
         let width = self.stream.read_u16().await?;
         let height = self.stream.read_u16().await?;
-        println!("  Framebuffer size: {}x{}", width, height);
 
-        // Read pixel format (16 bytes)
-        let mut pixel_format = vec![0u8; 16];
+        let mut pixel_format = [0u8; 16];
         self.stream.read_exact(&mut pixel_format).await?;
 
-        let bits_per_pixel = pixel_format[0];
-        let depth = pixel_format[1];
-        println!("  Pixel format: {} bpp, depth {}", bits_per_pixel, depth);
-
-        // Read name
         let name_length = self.stream.read_u32().await?;
+        if name_length > 4096 {
+            return Err(format!("implausible desktop name length {name_length}").into());
+        }
         let mut name = vec![0u8; name_length as usize];
         self.stream.read_exact(&mut name).await?;
-        println!("  Server name: {}", String::from_utf8_lossy(&name));
 
-        println!("  ✓ Initialization complete");
-        Ok((width, height))
+        Ok(ServerInit {
+            width,
+            height,
+            bits_per_pixel: pixel_format[0],
+            depth: pixel_format[1],
+            big_endian: pixel_format[2] != 0,
+            true_color: pixel_format[3] != 0,
+            red_shift: pixel_format[10],
+            green_shift: pixel_format[11],
+            blue_shift: pixel_format[12],
+            name: String::from_utf8_lossy(&name).to_string(),
+        })
     }
 
-    /// Request a framebuffer update
     async fn request_framebuffer_update(
         &mut self,
         incremental: bool,
@@ -131,362 +154,424 @@ impl VncClient {
         width: u16,
         height: u16,
     ) -> E2EResult<()> {
-        // FramebufferUpdateRequest message
-        self.stream.write_u8(3).await?; // Message type
-        self.stream
-            .write_u8(if incremental { 1 } else { 0 })
-            .await?;
-        self.stream.write_u16(x).await?;
-        self.stream.write_u16(y).await?;
-        self.stream.write_u16(width).await?;
-        self.stream.write_u16(height).await?;
+        let mut message = vec![3u8, u8::from(incremental)];
+        message.extend_from_slice(&x.to_be_bytes());
+        message.extend_from_slice(&y.to_be_bytes());
+        message.extend_from_slice(&width.to_be_bytes());
+        message.extend_from_slice(&height.to_be_bytes());
+        self.stream.write_all(&message).await?;
         Ok(())
     }
 
-    /// Read a framebuffer update, returning every rectangle it carried.
-    ///
-    /// Any deviation from the RFB wire format is an error rather than a printed note: a
-    /// client that shrugs at a malformed update cannot tell a working server from a broken
-    /// one, which is exactly how this suite used to pass.
-    async fn read_framebuffer_update(&mut self) -> E2EResult<Vec<VncRect>> {
-        // Read message type (should be 0 for FramebufferUpdate)
-        let message_type = self.stream.read_u8().await?;
-        if message_type != 0 {
-            return Err(format!("Expected FramebufferUpdate (0), got: {}", message_type).into());
-        }
-
-        // Padding
-        let _ = self.stream.read_u8().await?;
-
-        // Number of rectangles
-        let num_rectangles = self.stream.read_u16().await?;
-        println!("  Receiving {} rectangle(s)", num_rectangles);
-
-        let mut rects = Vec::new();
-
-        for i in 0..num_rectangles {
-            // Rectangle header
-            let x = self.stream.read_u16().await?;
-            let y = self.stream.read_u16().await?;
-            let width = self.stream.read_u16().await?;
-            let height = self.stream.read_u16().await?;
-            let encoding = self.stream.read_i32().await?;
-
-            println!(
-                "  Rectangle {}: {}x{} at ({}, {}), encoding {}",
-                i + 1,
-                width,
-                height,
-                x,
-                y,
-                encoding
-            );
-
-            // Only Raw (0) is implemented by this server. Anything else means the stream has
-            // desynchronised or the server changed, and we must not guess at the length.
-            if encoding != 0 {
-                return Err(format!(
-                    "rectangle {} used encoding {}, but only Raw (0) is supported",
-                    i + 1,
-                    encoding
-                )
-                .into());
-            }
-
-            let data_size = (width as usize) * (height as usize) * 4; // 32-bit BGRX
-            let mut pixels = vec![0u8; data_size];
-            self.stream.read_exact(&mut pixels).await?;
-            println!("  ✓ Received {} bytes of pixel data", data_size);
-
-            rects.push(VncRect {
-                x,
-                y,
-                width,
-                height,
-                pixels,
-            });
-        }
-
-        Ok(rects)
-    }
-
-    /// Send a key event
-    async fn send_key_event(&mut self, down: bool, key: u32) -> E2EResult<()> {
-        self.stream.write_u8(4).await?; // Message type
-        self.stream.write_u8(if down { 1 } else { 0 }).await?;
-        self.stream.write_u16(0).await?; // Padding
-        self.stream.write_u32(key).await?;
+    async fn send_key_event(&mut self, down: bool, keysym: u32) -> E2EResult<()> {
+        let mut message = vec![4u8, u8::from(down), 0, 0];
+        message.extend_from_slice(&keysym.to_be_bytes());
+        self.stream.write_all(&message).await?;
         Ok(())
     }
 
-    /// Send a pointer event
     async fn send_pointer_event(&mut self, button_mask: u8, x: u16, y: u16) -> E2EResult<()> {
-        self.stream.write_u8(5).await?; // Message type
-        self.stream.write_u8(button_mask).await?;
-        self.stream.write_u16(x).await?;
-        self.stream.write_u16(y).await?;
+        let mut message = vec![5u8, button_mask];
+        message.extend_from_slice(&x.to_be_bytes());
+        message.extend_from_slice(&y.to_be_bytes());
+        self.stream.write_all(&message).await?;
         Ok(())
+    }
+
+    async fn send_cut_text(&mut self, text: &str) -> E2EResult<()> {
+        let bytes = text.as_bytes();
+        let mut message = vec![6u8, 0, 0, 0];
+        message.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        message.extend_from_slice(bytes);
+        self.stream.write_all(&message).await?;
+        Ok(())
+    }
+
+    /// Read one server-to-client message, failing on anything malformed.
+    ///
+    /// Any deviation from the RFB wire format is an error rather than a printed note: a client
+    /// that shrugs at a malformed update cannot tell a working server from a broken one, which
+    /// is how this suite used to pass.
+    async fn read_message(&mut self) -> E2EResult<ServerMessage> {
+        let message_type = self.stream.read_u8().await?;
+        match message_type {
+            0 => {
+                let _padding = self.stream.read_u8().await?;
+                let num_rectangles = self.stream.read_u16().await?;
+                let mut rects = Vec::new();
+                for i in 0..num_rectangles {
+                    let x = self.stream.read_u16().await?;
+                    let y = self.stream.read_u16().await?;
+                    let width = self.stream.read_u16().await?;
+                    let height = self.stream.read_u16().await?;
+                    let encoding = self.stream.read_i32().await?;
+                    // Only Raw (0) is implemented by this server. Anything else means the
+                    // stream desynchronised, and we must not guess at the payload length.
+                    if encoding != 0 {
+                        return Err(format!(
+                            "rectangle {} used encoding {encoding}, but only Raw (0) is supported",
+                            i + 1
+                        )
+                        .into());
+                    }
+                    let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
+                    self.stream.read_exact(&mut pixels).await?;
+                    rects.push(VncRect {
+                        x,
+                        y,
+                        width,
+                        height,
+                        pixels,
+                    });
+                }
+                Ok(ServerMessage::FramebufferUpdate(rects))
+            }
+            3 => {
+                let mut padding = [0u8; 3];
+                self.stream.read_exact(&mut padding).await?;
+                let length = self.stream.read_u32().await?;
+                if length > 1 << 20 {
+                    return Err(format!("implausible ServerCutText length {length}").into());
+                }
+                let mut text = vec![0u8; length as usize];
+                self.stream.read_exact(&mut text).await?;
+                // ServerCutText is Latin-1 on the wire.
+                Ok(ServerMessage::CutText(
+                    text.iter().map(|&b| b as char).collect(),
+                ))
+            }
+            other => Err(format!("unexpected server message type {other}").into()),
+        }
+    }
+
+    /// Read the single Raw rectangle of a full-screen FramebufferUpdate.
+    async fn read_full_update(&mut self, context: &str) -> E2EResult<VncRect> {
+        let message = tokio::time::timeout(RESPONSE_TIMEOUT, self.read_message())
+            .await
+            .map_err(|_| format!("timed out waiting for a FramebufferUpdate ({context})"))??;
+        match message {
+            ServerMessage::FramebufferUpdate(mut rects) => {
+                if rects.len() != 1 {
+                    return Err(format!(
+                        "expected exactly one Raw rectangle ({context}), got {}",
+                        rects.len()
+                    )
+                    .into());
+                }
+                Ok(rects.remove(0))
+            }
+            ServerMessage::CutText(text) => Err(format!(
+                "expected a FramebufferUpdate ({context}), got ServerCutText {text:?}"
+            )
+            .into()),
+        }
+    }
+
+    async fn read_cut_text(&mut self, context: &str) -> E2EResult<String> {
+        let message = tokio::time::timeout(RESPONSE_TIMEOUT, self.read_message())
+            .await
+            .map_err(|_| format!("timed out waiting for ServerCutText ({context})"))??;
+        match message {
+            ServerMessage::CutText(text) => Ok(text),
+            ServerMessage::FramebufferUpdate(rects) => Err(format!(
+                "expected ServerCutText ({context}) but the server sent a FramebufferUpdate with \
+                 {} rectangle(s) — it answered an event it should have left alone",
+                rects.len()
+            )
+            .into()),
+        }
     }
 }
 
-#[tokio::test]
-async fn test_vnc_handshake() -> E2EResult<()> {
-    println!("\n=== E2E Test: VNC RFB Handshake ===");
-
-    use crate::helpers::NetGetConfig;
-
-    // PROMPT: Tell the LLM to start a VNC server
-    let prompt =
-        "listen on port {AVAILABLE_PORT} via vnc. Accept all connections without authentication. \
-        Use 800x600 framebuffer.";
-
-    let config = NetGetConfig::new(prompt).with_mock(|mock| {
-        mock.on_instruction_containing("vnc")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "VNC",
-                    "instruction": "VNC server 800x600 framebuffer"
-                }
-            ]))
-            .expect_calls(1)
-            .and()
-    });
-
-    // Start the server
-    let mut server = helpers::start_netget_server(config).await?;
-    println!("Server started on port {}", server.port);
-
-    // VALIDATION: Connect and perform RFB handshake
-    println!("Connecting to VNC server...");
-    let mut client = VncClient::connect(&format!("127.0.0.1:{}", server.port)).await?;
-    println!("✓ TCP connected");
-
-    // Perform handshake
-    client.handshake().await?;
-    println!("✓ RFB handshake complete");
-
-    // Initialize connection
-    let (width, height) = client.initialize().await?;
-    assert_eq!(width, 800, "Expected 800 width");
-    assert_eq!(height, 600, "Expected 600 height");
-    println!("✓ VNC connection initialized");
-
-    // Verify mocks
-    server.verify_mocks().await?;
-    server.stop().await?;
-    println!("=== Test completed ===\n");
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_vnc_framebuffer_update() -> E2EResult<()> {
-    println!("\n=== E2E Test: VNC Framebuffer Update ===");
-
-    use crate::helpers::NetGetConfig;
-
-    // The framebuffer size is fixed in the server (800x600) and no prompt can change it, so
-    // the prompt does not pretend otherwise; the assertions below read the size out of
-    // ServerInit rather than assuming one.
-    let prompt = "listen on port {AVAILABLE_PORT} via vnc. Accept all connections. \
-        When client requests framebuffer update, send a test pattern.";
-
-    let config = NetGetConfig::new(prompt).with_mock(|mock| {
-        mock.on_instruction_containing("vnc")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "VNC",
-                    "instruction": "VNC server with test pattern framebuffer"
-                }
-            ]))
-            .expect_calls(1)
-            .and()
-    });
-
-    // Start the server
-    let mut server = helpers::start_netget_server(config).await?;
-    println!("Server started on port {}", server.port);
-
-    // VALIDATION: Connect and request framebuffer update
-    println!("Connecting to VNC server...");
-    let mut client = VncClient::connect(&format!("127.0.0.1:{}", server.port)).await?;
-    println!("✓ TCP connected");
-
-    // Perform handshake and initialize
-    client.handshake().await?;
-    let (width, height) = client.initialize().await?;
-    println!("  Framebuffer: {}x{}", width, height);
-
-    // Request framebuffer update
-    println!("Requesting framebuffer update...");
-    client
-        .request_framebuffer_update(false, 0, 0, width, height)
-        .await?;
-
-    // The old version swallowed both an error and a timeout with a printed "this may be
-    // expected", so it could not fail no matter what the server sent. A missing or
-    // malformed update is now the failure it is.
-    let rects = tokio::time::timeout(Duration::from_secs(10), client.read_framebuffer_update())
-        .await
-        .map_err(|_| "timed out waiting for a FramebufferUpdate")??;
-
+/// Assert a rectangle covers the whole announced framebuffer.
+///
+/// RFB lets the server answer with any rectangle, and this one deliberately answers with its
+/// own framebuffer rather than the extent the client asked for, so the comparison is against
+/// ServerInit, not against the request.
+fn assert_full_frame(rect: &VncRect, init: &ServerInit, context: &str) {
     assert_eq!(
-        rects.len(),
-        1,
-        "the server sends the whole framebuffer as a single Raw rectangle"
+        (rect.x, rect.y),
+        (0, 0),
+        "{context}: update must start at the origin"
     );
-    let rect = &rects[0];
-
-    // RFB lets the server answer with any rectangle, and this one deliberately answers with
-    // its own fixed framebuffer rather than the extent the client asked for — so assert the
-    // rectangle matches ServerInit, not the request.
-    assert_eq!((rect.x, rect.y), (0, 0), "update must start at the origin");
     assert_eq!(
         (rect.width, rect.height),
-        (width, height),
-        "the rectangle must cover the framebuffer announced in ServerInit"
+        (init.width, init.height),
+        "{context}: the rectangle must cover the framebuffer announced in ServerInit"
     );
     assert_eq!(
         rect.pixels.len(),
-        (width as usize) * (height as usize) * 4,
-        "Raw encoding must carry exactly 4 bytes per pixel"
+        (init.width as usize) * (init.height as usize) * 4,
+        "{context}: Raw encoding must carry exactly 4 bytes per pixel"
     );
-
-    // The server's fixed pattern is a gradient: blue is constant at 128, red rises with x
-    // and green with y, in BGRX order. Sampling three corners proves the bytes are the
-    // pattern in the right channel order, not merely the right *count* of bytes.
-    let [b, g, r, _] = rect.pixel(0, 0);
-    assert_eq!(
-        (b, g, r),
-        (128, 0, 0),
-        "top-left must be the gradient origin"
-    );
-
-    let [b, g, r, _] = rect.pixel(width - 1, 0);
-    assert_eq!(b, 128, "blue is constant across the gradient");
-    assert_eq!(g, 0, "green must not vary along x");
-    assert!(r > 250, "red must rise to full scale along x, got {r}");
-
-    let [b, g, r, _] = rect.pixel(0, height - 1);
-    assert_eq!(b, 128, "blue is constant across the gradient");
-    assert!(g > 250, "green must rise to full scale along y, got {g}");
-    assert_eq!(r, 0, "red must not vary along y");
-
-    println!("✓ Framebuffer gradient decoded and verified");
-
-    // Verify mocks
-    server.verify_mocks().await?;
-    server.stop().await?;
-    println!("=== Test completed ===\n");
-    Ok(())
 }
 
+/// The RFB handshake, ServerInit geometry from the `width`/`height` startup parameters, and the
+/// pixel format the server promises to send.
 #[tokio::test]
-async fn test_vnc_input_events() -> E2EResult<()> {
-    println!("\n=== E2E Test: VNC Input Events ===");
-
-    use crate::helpers::NetGetConfig;
-
-    // PROMPT: Tell the LLM to start a VNC server that accepts input
-    let prompt = "listen on port {AVAILABLE_PORT} via vnc. Accept all connections. \
-        Log keyboard and mouse events from the client.";
-
-    let config = NetGetConfig::new(prompt).with_mock(|mock| {
-        mock.on_instruction_containing("vnc")
-            .respond_with_actions(serde_json::json!([
-                {
+async fn test_vnc_handshake_and_server_init() -> E2EResult<()> {
+    let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via vnc with a 640x480 screen")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("vnc")
+                .respond_with_actions(json!([{
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "VNC",
-                    "instruction": "VNC server with input logging"
-                }
-            ]))
+                    "startup_params": {
+                        "width": 640,
+                        "height": 480,
+                        "desktop_name": "NetGet Test Desktop"
+                    },
+                    "instruction": "Show a plain screen"
+                }]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
+
+    let mut client = VncClient::connect(server.port).await?;
+    client.handshake().await?;
+    let init = client.initialize().await?;
+
+    // Geometry comes from the startup parameters, not from a constant.
+    assert_eq!(
+        (init.width, init.height),
+        (640, 480),
+        "ServerInit must announce the requested framebuffer size"
+    );
+    assert_eq!(init.name, "NetGet Test Desktop");
+
+    // The pixel format is the contract for every rectangle that follows: 32bpp little-endian
+    // BGRX. A test that skipped this could not tell a correct frame from a byte-swapped one.
+    assert_eq!(init.bits_per_pixel, 32, "server sends 32 bits per pixel");
+    assert_eq!(init.depth, 24, "colour depth is 24");
+    assert!(!init.big_endian, "server sends little-endian pixels");
+    assert!(init.true_color, "server sends true colour");
+    assert_eq!(
+        (init.red_shift, init.green_shift, init.blue_shift),
+        (16, 8, 0),
+        "shifts must describe BGRX byte order"
+    );
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// The whole feature: the model draws the screen, input events reach the model, incremental
+/// requests are held open until something changes, and clipboard text flows both ways.
+///
+/// LLM calls: 7 (startup, one full update, key down, key up, button press, cut text, second
+/// full update). Pointer *movement* deliberately costs none.
+#[tokio::test]
+async fn test_vnc_llm_draws_screen_and_handles_input() -> E2EResult<()> {
+    // Screen A: the first frame, drawn in answer to the first full update request.
+    let screen_a_bg = (32, 64, 96);
+    let screen_a_box = (240, 80, 40);
+    // Screen B: drawn in answer to a key press, proving key events reach the model *and* that
+    // a held incremental request is answered by the resulting redraw.
+    let screen_b_bg = (12, 120, 60);
+
+    let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via vnc").with_mock(|mock| {
+        // Event rules come first: rules are matched in order, and a rule keyed on the
+        // instruction would otherwise answer network events with `open_server`.
+        mock.on_event("vnc_framebuffer_update_request")
+            .and_event_data_contains("first_request", "true")
+            .respond_with_actions(json!([{
+                "type": "vnc_render_display",
+                "commands": [
+                    {"type": "background", "color": "#204060"},
+                    {"type": "rectangle", "x": 100, "y": 100, "width": 200, "height": 120,
+                     "color": "#f05028", "filled": true}
+                ]
+            }]))
+            .expect_calls(1)
+            .and()
+            .on_event("vnc_framebuffer_update_request")
+            .and_event_data_contains("first_request", "false")
+            .respond_with_actions(json!([{"type": "vnc_no_change"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("vnc_key_event")
+            .and_event_data_contains("down", "true")
+            .respond_with_actions(json!([{
+                "type": "vnc_render_display",
+                "commands": [{"type": "background", "color": "#0c783c"}]
+            }]))
+            .expect_calls(1)
+            .and()
+            .on_event("vnc_key_event")
+            .and_event_data_contains("down", "false")
+            .respond_with_actions(json!([{"type": "vnc_no_change"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("vnc_pointer_event")
+            .respond_with_actions(json!([{"type": "vnc_no_change"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("vnc_client_cut_text")
+            .respond_with_actions(json!([{
+                "type": "vnc_set_clipboard",
+                "text": "netget acknowledges"
+            }]))
+            .expect_calls(1)
+            .and()
+            .on_instruction_containing("vnc")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "VNC",
+                "instruction": "Draw the screen the tests ask for"
+            }]))
             .expect_calls(1)
             .and()
     });
 
-    // Start the server
-    let mut server = helpers::start_netget_server(config).await?;
-    println!("Server started on port {}", server.port);
+    let server = helpers::start_netget_server(config).await?;
 
-    // VALIDATION: Connect and send input events
-    println!("Connecting to VNC server...");
-    let mut client = VncClient::connect(&format!("127.0.0.1:{}", server.port)).await?;
-    println!("✓ TCP connected");
-
-    // Perform handshake and initialize
+    let mut client = VncClient::connect(server.port).await?;
     client.handshake().await?;
-    let (width, height) = client.initialize().await?;
+    let init = client.initialize().await?;
 
-    // Send keyboard event (key 'a' = 97)
-    println!("Sending keyboard event (key 'a')...");
-    client.send_key_event(true, 97).await?;
-    client.send_key_event(false, 97).await?;
-    println!("✓ Keyboard events sent");
+    // ---- 1. A full update request is answered by the model's drawing ----
+    client
+        .request_framebuffer_update(false, 0, 0, init.width, init.height)
+        .await?;
+    let frame = client.read_full_update("first full update").await?;
+    assert_full_frame(&frame, &init, "first full update");
+    assert_eq!(
+        frame.rgb(10, 10),
+        screen_a_bg,
+        "the background must be the colour the model asked for, in the announced BGRX order"
+    );
+    assert_eq!(
+        frame.rgb(200, 160),
+        screen_a_box,
+        "the rectangle the model asked for must be rasterised where it asked for it"
+    );
+    assert_eq!(
+        frame.rgb(90, 90),
+        screen_a_bg,
+        "just outside the rectangle must still be the background"
+    );
 
-    // Send mouse event (move to 100, 100)
-    println!("Sending mouse event (move to 100, 100)...");
-    client.send_pointer_event(0, 100, 100).await?;
-    println!("✓ Mouse event sent");
+    // ---- 2. An incremental request is held open while nothing changes ----
+    client
+        .request_framebuffer_update(true, 0, 0, init.width, init.height)
+        .await?;
 
-    // Send mouse click event (left button = 1)
-    println!("Sending mouse click event...");
-    client.send_pointer_event(1, 100, 100).await?;
-    client.send_pointer_event(0, 100, 100).await?;
-    println!("✓ Mouse click events sent");
+    // ---- 3. A key press redraws, which answers the held request ----
+    client.send_key_event(true, 97).await?; // 'a'
+    let frame = client.read_full_update("after key press").await?;
+    assert_full_frame(&frame, &init, "after key press");
+    assert_eq!(
+        frame.rgb(10, 10),
+        screen_b_bg,
+        "the key press must have reached the model and redrawn the screen"
+    );
 
-    // Give server time to process events
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // ---- 4. Input the model answers with vnc_no_change sends nothing ----
+    client.send_key_event(false, 97).await?; // key release -> no_change
+    client.send_pointer_event(0, 400, 300).await?; // movement -> no model call at all
+    client.send_pointer_event(1, 400, 300).await?; // button press -> no_change
 
-    // The KeyEvent handler reports on `status_tx` at DEBUG, so its absence is a real
-    // regression, not something to note and continue past. (PointerEvent is `trace!`-only
-    // and does not reach this stream, so it is checked structurally instead, below.)
+    // ---- 5. Clipboard: client -> model -> client ----
+    client.send_cut_text("copied on the client").await?;
+    // If any of step 4 had produced a frame it would arrive here first, and this read fails
+    // with exactly that complaint.
+    let clipboard = client.read_cut_text("after ClientCutText").await?;
+    assert_eq!(
+        clipboard, "netget acknowledges",
+        "the server must push the clipboard text the model chose"
+    );
+
+    // ---- 6. A full request must be answered even when nothing changed ----
+    client
+        .request_framebuffer_update(false, 0, 0, init.width, init.height)
+        .await?;
+    let frame = client.read_full_update("second full update").await?;
+    assert_full_frame(&frame, &init, "second full update");
+    assert_eq!(
+        frame.rgb(10, 10),
+        screen_b_bg,
+        "vnc_no_change must resend the last screen, not a blank or placeholder one"
+    );
+
     let output = server.get_output().await;
     assert!(
         output
             .iter()
-            .any(|line| line.contains("VNC KeyEvent: down=true, key=97")),
-        "server must report the key press it received; output was:\n{}",
+            .any(|line| line.contains("VNC PointerEvent: move to 400,300")),
+        "pointer movement must still be reported even though it costs no model call; output \
+         was:\n{}",
         output.join("\n")
     );
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// When the model answers with nothing this protocol can use, the client gets the placeholder
+/// screen — not silence, and not a screen that looks like content.
+///
+/// RFB has no "no answer" reply, so a client that asked for a full update and receives nothing
+/// waits forever. Fail-closed here means saying so on screen.
+#[tokio::test]
+async fn test_vnc_placeholder_when_model_gives_no_usable_answer() -> E2EResult<()> {
+    let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via vnc").with_mock(|mock| {
+        mock.on_event("vnc_framebuffer_update_request")
+            // A valid action, but not one that draws anything: the model answered without
+            // deciding what is on screen.
+            .respond_with_actions(json!([{
+                "type": "show_message",
+                "message": "I do not know what to draw"
+            }]))
+            .expect_calls(1)
+            .and()
+            .on_instruction_containing("vnc")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "VNC",
+                "instruction": "Draw something"
+            }]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = helpers::start_netget_server(config).await?;
+
+    let mut client = VncClient::connect(server.port).await?;
+    client.handshake().await?;
+    let init = client.initialize().await?;
+
+    client
+        .request_framebuffer_update(false, 0, 0, init.width, init.height)
+        .await?;
+    let frame = client.read_full_update("placeholder").await?;
+    assert_full_frame(&frame, &init, "placeholder");
+    assert_eq!(
+        frame.rgb(5, 5),
+        (
+            PLACEHOLDER_BACKGROUND.r,
+            PLACEHOLDER_BACKGROUND.g,
+            PLACEHOLDER_BACKGROUND.b
+        ),
+        "a client must get the placeholder screen when no answer usable by VNC arrived"
+    );
+
+    let output = server.get_output().await;
     assert!(
         output
             .iter()
-            .any(|line| line.contains("VNC KeyEvent: down=false, key=97")),
-        "server must report the key release it received"
+            .any(|line| line.contains("produced no usable action")),
+        "the server must report that the event went unanswered; output was:\n{}",
+        output.join("\n")
     );
-    println!("✓ Server logged keyboard events");
 
-    // The stronger check for the pointer events: each RFB message has a fixed length, so a
-    // server that mis-parsed any of the five messages above would leave the stream
-    // misaligned and read the next request's bytes as a message type. Asking for a
-    // framebuffer now and getting a well-formed update back proves every one of them was
-    // consumed at exactly the right length.
-    println!("Requesting a framebuffer update to prove the stream stayed in frame...");
-    client
-        .request_framebuffer_update(false, 0, 0, width, height)
-        .await?;
-    let rects = tokio::time::timeout(Duration::from_secs(10), client.read_framebuffer_update())
-        .await
-        .map_err(|_| "timed out; the input events likely desynchronised the RFB stream")??;
-    assert_eq!(
-        rects.len(),
-        1,
-        "expected one Raw rectangle after the events"
-    );
-    assert_eq!(
-        (rects[0].width, rects[0].height),
-        (width, height),
-        "the update after the input events must still cover the framebuffer"
-    );
-    println!("✓ RFB stream still in frame after keyboard and pointer events");
-
-    // Verify mocks
     server.verify_mocks().await?;
     server.stop().await?;
-    println!("=== Test completed ===\n");
     Ok(())
 }

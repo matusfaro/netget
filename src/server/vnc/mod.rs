@@ -1,29 +1,35 @@
-//! VNC (Virtual Network Computing) server — RFB 3.8.
+//! VNC (Virtual Network Computing) server — RFB 3.8 (RFC 6143) over TCP.
 //!
-//! **This protocol is `DevelopmentState::Incomplete` and hidden from the LLM.** The
-//! handshake, the ServerInit and the framebuffer wire format are real and work against real
-//! viewers, but nothing here is LLM-controlled: `spawn_with_llm_actions` drops the
-//! `OllamaClient`, no `Event` is constructed, `call_llm` is never called, and every
-//! `FramebufferUpdateRequest` is answered by `send_test_framebuffer` with a hardcoded
-//! gradient. Key events, pointer events and clipboard text are logged and discarded. The
-//! server instruction the user wrote is read by nobody.
+//! Hand-written RFB rather than a crate: the server half of RFB 3.8 is a version exchange, a
+//! security-type negotiation, ClientInit/ServerInit and seven fixed-length client messages, and
+//! no maintained Rust crate implements the *server* side. See `src/server/vnc/CLAUDE.md`.
 //!
-//! `send_framebuffer_update` below renders `DisplayCommand`s through
-//! `crate::display::DisplayCanvas` and is the function an LLM integration would call — it has
-//! no caller today. See `src/server/vnc/CLAUDE.md` for what wiring it up requires.
+//! Rust owns the protocol, the framebuffer and the pixel encoding; the LLM owns what is on
+//! screen. Four events are raised from the message loop — `vnc_framebuffer_update_request`,
+//! `vnc_key_event`, `vnc_pointer_event` and `vnc_client_cut_text` — and the model answers with
+//! structured drawing commands (never pixels), clipboard text, "nothing changed", or a
+//! disconnect. `crate::display::DisplayCanvas` rasterises the commands; this module encodes the
+//! result as a Raw-encoded rectangle.
 //!
-//! Security is "None" (type 1) only: any client that connects is admitted. There is no
-//! VNC-Auth and no password.
+//! Security is "None" (type 1) only: any client that connects is admitted. There is no VNC-Auth
+//! and no password.
 
 pub mod actions;
 
-use crate::display::{DisplayCanvas, DisplayCommand};
+use crate::display::{Color, DisplayCanvas, DisplayCommand};
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_info};
-use anyhow::{anyhow, Result};
+use crate::{console_debug, console_info, console_warn};
+use actions::{
+    VncProtocol, RESULT_CLIPBOARD, RESULT_DISPLAY, RESULT_NO_CHANGE, VNC_CLIENT_CUT_TEXT_EVENT,
+    VNC_FRAMEBUFFER_UPDATE_REQUEST_EVENT, VNC_KEY_EVENT, VNC_POINTER_EVENT,
+};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -31,29 +37,35 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-/// VNC server that uses LLM to control display and authentication
+/// VNC server whose display contents are decided by the LLM.
 pub struct VncServer;
 
-/// RFB protocol version
+/// RFB protocol version this server speaks.
 const RFB_VERSION: &[u8] = b"RFB 003.008\n";
 
-/// Framebuffer size announced in ServerInit and used for every update.
-///
-/// Fixed: there is no startup parameter for it and no way for the LLM to change it. The size a
-/// client asks for in a FramebufferUpdateRequest is deliberately ignored — RFB lets the server
-/// answer with any rectangle, and answering with the client's requested extent (as this code
-/// used to) both contradicts the announced size and lets a client ask for a 65535x65535
-/// region.
-const FRAMEBUFFER_WIDTH: u16 = 800;
-const FRAMEBUFFER_HEIGHT: u16 = 600;
+/// Default desktop name announced in ServerInit.
+const DEFAULT_DESKTOP_NAME: &str = "NetGet VNC";
 
 /// Largest ClientCutText payload accepted, in bytes.
 ///
-/// The length field is a client-controlled u32, and the buffer for it is allocated before a
-/// single byte is read; without a cap a four-byte header asks for a 4 GiB allocation.
+/// The length field is a client-controlled u32 and the buffer for it is allocated before a
+/// single byte of payload is read; without a cap a nine-byte message asks for a 4 GiB
+/// allocation.
 const MAX_CUT_TEXT_LEN: u32 = 1 << 20;
 
-/// Security types
+/// Background of the placeholder screen.
+///
+/// The placeholder is what a client sees when the model gave no usable answer — an LLM error, a
+/// batch in which every action failed, or an empty action list. It is deliberately *not* the
+/// same as any screen the model can ask for by accident, and it is deliberately not silence:
+/// RFB has no way to say "no answer", so a client left waiting on a full update request simply
+/// hangs. `tests/server/vnc/test.rs` asserts this exact colour on the no-answer path.
+pub const PLACEHOLDER_BACKGROUND: Color = Color::rgb(24, 26, 34);
+
+/// Foreground of the placeholder screen's diagnostic line.
+const PLACEHOLDER_FOREGROUND: Color = Color::rgb(203, 213, 225);
+
+/// Security types offered in the handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum SecurityType {
@@ -76,7 +88,7 @@ pub struct VncPixelFormat {
 }
 
 impl VncPixelFormat {
-    /// Default 32-bit RGB888 format
+    /// The only format this server sends: 32bpp little-endian BGRX.
     pub fn default_rgb888() -> Self {
         Self {
             bits_per_pixel: 32,
@@ -93,30 +105,78 @@ impl VncPixelFormat {
     }
 }
 
+/// What the model said in answer to one event.
+///
+/// The three outcomes are kept apart on purpose. `redraw` is a decision to change the screen,
+/// `no_change` is an explicit decision to leave it alone, and `no_answer` is the model failing
+/// to say anything usable. Collapsing the last two — treating silence as "nothing changed" —
+/// is the fail-open shape this codebase has been bitten by before: a viewer would sit on a
+/// blank window with no indication that the model never answered.
+#[derive(Default)]
+struct Decision {
+    redraw: Option<Vec<DisplayCommand>>,
+    clipboard: Vec<String>,
+    no_change: bool,
+    close: bool,
+    /// Why no usable answer arrived, if none did.
+    no_answer: Option<String>,
+}
+
+/// Per-connection state for one VNC client.
+struct VncConnection {
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
+    width: u16,
+    height: u16,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    protocol: VncProtocol,
+    status_tx: mpsc::UnboundedSender<String>,
+    write_half: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    /// Most recently rendered frame, BGRX, `width * height * 4` bytes.
+    last_frame: Option<Vec<u8>>,
+    /// True when `last_frame` has changed since the client last received it.
+    dirty: bool,
+    /// True while the client has a FramebufferUpdateRequest this server has not answered.
+    pending_request: bool,
+    /// False until the first framebuffer request has been answered.
+    answered_first_request: bool,
+    /// Button mask carried by the previous PointerEvent, to detect press/release.
+    last_button_mask: u8,
+}
+
 impl VncServer {
-    /// Spawn VNC server with LLM integration
+    /// Spawn the VNC server.
+    ///
+    /// `width`/`height` are validated by `actions::validate_framebuffer_size` before this is
+    /// called, so they are within `MIN_FRAMEBUFFER_DIMENSION..=MAX_FRAMEBUFFER_DIMENSION`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        width: u16,
+        height: u16,
+        desktop_name: Option<String>,
     ) -> Result<SocketAddr> {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
+        let desktop_name =
+            Arc::new(desktop_name.unwrap_or_else(|| DEFAULT_DESKTOP_NAME.to_string()));
 
+        // Keep the address at the end of this line: the E2E harness parses the port out of
+        // everything after the last "on ".
         console_info!(status_tx, "VNC server listening on {}", local_addr);
-        warn!(
-            "VNC is Incomplete: clients see a fixed {}x{} gradient, the LLM is never consulted \
-             and the server instruction is ignored",
-            FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
+        console_debug!(
+            status_tx,
+            "VNC framebuffer {}x{}, desktop name '{}'",
+            width,
+            height,
+            desktop_name
         );
-        let _ = status_tx.send(format!(
-            "[WARN] VNC is Incomplete: clients see a fixed {}x{} test pattern, the server \
-             instruction is ignored",
-            FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
-        ));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -128,6 +188,8 @@ impl VncServer {
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
+                        let llm_clone = llm_client.clone();
+                        let name_clone = desktop_name.clone();
 
                         info!("VNC client connected from {}", remote_addr);
                         let _ = status_clone
@@ -142,6 +204,10 @@ impl VncServer {
                                 server_id,
                                 state_clone,
                                 status_clone,
+                                llm_clone,
+                                width,
+                                height,
+                                &name_clone,
                             )
                             .await
                             {
@@ -169,7 +235,8 @@ impl VncServer {
         Ok(local_addr)
     }
 
-    /// Handle a single VNC connection
+    /// Handle a single VNC connection: handshake, init, then the message loop.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_connection(
         stream: TcpStream,
         connection_id: ConnectionId,
@@ -178,11 +245,14 @@ impl VncServer {
         server_id: crate::state::ServerId,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+        width: u16,
+        height: u16,
+        desktop_name: &str,
     ) -> Result<()> {
-        let (read_half, write_half) = tokio::io::split(stream);
-        let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
+        let (mut read_half, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
 
-        // Add connection to server state
         let now = std::time::Instant::now();
         let conn_state = ConnectionState {
             id: connection_id,
@@ -202,45 +272,60 @@ impl VncServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Perform RFB handshake (authentication always succeeds for now)
-        let mut read_half = read_half;
-        Self::perform_handshake(&mut read_half, &write_half_arc, connection_id, &status_tx).await?;
+        let result = async {
+            Self::perform_handshake(&mut read_half, &write_half, &status_tx).await?;
 
-        console_debug!(
-            status_tx,
-            "VNC authentication successful for {}",
-            remote_addr
-        );
+            console_debug!(status_tx, "VNC handshake complete for {}", remote_addr);
+            app_state
+                .update_vnc_connection_auth(server_id, connection_id, true, None)
+                .await;
 
-        // Update connection state
-        app_state
-            .update_vnc_connection_auth(server_id, connection_id, true, None)
-            .await;
-
-        // Handle client initialization
-        Self::handle_client_init(&mut read_half, &write_half_arc, connection_id, &status_tx)
+            Self::handle_client_init(
+                &mut read_half,
+                &write_half,
+                &status_tx,
+                width,
+                height,
+                desktop_name,
+            )
             .await?;
 
-        // Main message loop
-        Self::message_loop(
-            read_half,
-            write_half_arc,
-            connection_id,
-            server_id,
-            app_state,
-            status_tx,
-        )
-        .await
+            let mut connection = VncConnection {
+                connection_id,
+                server_id,
+                width,
+                height,
+                app_state: app_state.clone(),
+                llm_client,
+                protocol: VncProtocol::new(),
+                status_tx: status_tx.clone(),
+                write_half: write_half.clone(),
+                last_frame: None,
+                dirty: false,
+                pending_request: false,
+                answered_first_request: false,
+                last_button_mask: 0,
+            };
+            connection.message_loop(read_half).await
+        }
+        .await;
+
+        // Always drop the connection from the server view, whatever went wrong above; the
+        // TUI otherwise shows a connection that no longer exists.
+        app_state
+            .remove_connection_from_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        result
     }
 
-    /// Perform RFB protocol handshake
+    /// RFB 3.8 handshake: ProtocolVersion, security types, SecurityResult.
     async fn perform_handshake(
         read_half: &mut tokio::io::ReadHalf<TcpStream>,
         write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
-        _connection_id: ConnectionId,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        // 1. Send protocol version
         {
             let mut writer = write_half.lock().await;
             writer.write_all(RFB_VERSION).await?;
@@ -251,16 +336,13 @@ impl VncServer {
             String::from_utf8_lossy(RFB_VERSION).trim()
         );
 
-        // 2. Receive client protocol version
-        let mut client_version = vec![0u8; 12];
+        let mut client_version = [0u8; 12];
         read_half.read_exact(&mut client_version).await?;
         trace!(
             "Received client version: {}",
             String::from_utf8_lossy(&client_version).trim()
         );
 
-        // 3. Send security types
-        // We offer: None (1) - no authentication required
         {
             let mut writer = write_half.lock().await;
             writer.write_u8(1).await?; // Number of security types
@@ -269,11 +351,9 @@ impl VncServer {
         }
         trace!("Sent security types: [None]");
 
-        // 4. Receive client's chosen security type
         let chosen_security = read_half.read_u8().await?;
         trace!("Client chose security type: {}", chosen_security);
 
-        // 5. For "None" security, send SecurityResult OK
         if chosen_security == SecurityType::None as u8 {
             let mut writer = write_half.lock().await;
             writer.write_u32(0).await?; // 0 = OK
@@ -282,82 +362,77 @@ impl VncServer {
             let _ = status_tx.send("[DEBUG] VNC client authenticated".to_string());
             Ok(())
         } else {
-            // Unsupported security type
+            // RFB 3.8 requires a reason string after a failed SecurityResult.
+            let reason = b"only security type 1 (None) is supported";
             let mut writer = write_half.lock().await;
             writer.write_u32(1).await?; // 1 = Failed
+            writer.write_u32(reason.len() as u32).await?;
+            writer.write_all(reason).await?;
             writer.flush().await?;
-            Err(anyhow!("Unsupported security type"))
+            Err(anyhow!(
+                "client requested unsupported security type {chosen_security}"
+            ))
         }
     }
 
-    /// Handle client initialization messages
+    /// ClientInit (shared flag) then ServerInit (geometry, pixel format, desktop name).
     async fn handle_client_init(
         read_half: &mut tokio::io::ReadHalf<TcpStream>,
         write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
-        _connection_id: ConnectionId,
         status_tx: &mpsc::UnboundedSender<String>,
+        width: u16,
+        height: u16,
+        desktop_name: &str,
     ) -> Result<()> {
-        // 6. Receive ClientInit (shared-flag)
         let shared_flag = read_half.read_u8().await?;
         trace!("Client shared flag: {}", shared_flag);
 
-        // 7. Send ServerInit
-        let framebuffer_width = FRAMEBUFFER_WIDTH;
-        let framebuffer_height = FRAMEBUFFER_HEIGHT;
         let pixel_format = VncPixelFormat::default_rgb888();
-        let name = b"NetGet VNC Server";
+        let name = desktop_name.as_bytes();
 
-        let mut writer = write_half.lock().await;
+        let mut message = Vec::with_capacity(24 + name.len());
+        message.extend_from_slice(&width.to_be_bytes());
+        message.extend_from_slice(&height.to_be_bytes());
+        message.push(pixel_format.bits_per_pixel);
+        message.push(pixel_format.depth);
+        message.push(u8::from(pixel_format.big_endian));
+        message.push(u8::from(pixel_format.true_color));
+        message.extend_from_slice(&pixel_format.red_max.to_be_bytes());
+        message.extend_from_slice(&pixel_format.green_max.to_be_bytes());
+        message.extend_from_slice(&pixel_format.blue_max.to_be_bytes());
+        message.push(pixel_format.red_shift);
+        message.push(pixel_format.green_shift);
+        message.push(pixel_format.blue_shift);
+        message.extend_from_slice(&[0, 0, 0]); // Padding
+        message.extend_from_slice(&(name.len() as u32).to_be_bytes());
+        message.extend_from_slice(name);
 
-        // Framebuffer width and height
-        writer.write_u16(framebuffer_width).await?;
-        writer.write_u16(framebuffer_height).await?;
-
-        // Pixel format (16 bytes)
-        writer.write_u8(pixel_format.bits_per_pixel).await?;
-        writer.write_u8(pixel_format.depth).await?;
-        writer
-            .write_u8(if pixel_format.big_endian { 1 } else { 0 })
-            .await?;
-        writer
-            .write_u8(if pixel_format.true_color { 1 } else { 0 })
-            .await?;
-        writer.write_u16(pixel_format.red_max).await?;
-        writer.write_u16(pixel_format.green_max).await?;
-        writer.write_u16(pixel_format.blue_max).await?;
-        writer.write_u8(pixel_format.red_shift).await?;
-        writer.write_u8(pixel_format.green_shift).await?;
-        writer.write_u8(pixel_format.blue_shift).await?;
-        writer.write_all(&[0, 0, 0]).await?; // Padding
-
-        // Name
-        writer.write_u32(name.len() as u32).await?;
-        writer.write_all(name).await?;
-        writer.flush().await?;
+        {
+            let mut writer = write_half.lock().await;
+            writer.write_all(&message).await?;
+            writer.flush().await?;
+        }
 
         debug!(
-            "Sent ServerInit: {}x{}, {}",
-            framebuffer_width,
-            framebuffer_height,
-            String::from_utf8_lossy(name)
+            "Sent ServerInit: {}x{}, name '{}'",
+            width, height, desktop_name
         );
         let _ = status_tx.send(format!(
-            "[DEBUG] VNC initialized: {}x{} framebuffer",
-            framebuffer_width, framebuffer_height
+            "[DEBUG] VNC initialized: {}x{} framebuffer '{}'",
+            width, height, desktop_name
         ));
 
         Ok(())
     }
+}
 
-    /// Main message loop handling client messages
-    async fn message_loop(
-        mut read_half: tokio::io::ReadHalf<TcpStream>,
-        write_half: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
-        connection_id: ConnectionId,
-        server_id: crate::state::ServerId,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+impl VncConnection {
+    /// Main client-message loop.
+    ///
+    /// One connection is handled strictly sequentially: a model call for one message finishes
+    /// before the next message is read. RFB client messages are small and the socket buffers
+    /// them, so nothing is lost; the cost is latency on input that arrives during a call.
+    async fn message_loop(&mut self, mut read_half: tokio::io::ReadHalf<TcpStream>) -> Result<()> {
         loop {
             let message_type = match read_half.read_u8().await {
                 Ok(t) => t,
@@ -370,31 +445,33 @@ impl VncServer {
 
             trace!("Received message type: {}", message_type);
 
-            match message_type {
+            let keep_going = match message_type {
                 0 => {
                     // SetPixelFormat. Read and discarded: the server always sends 32bpp BGRX,
                     // so a client that requests anything else will render garbage.
-                    let mut buf = vec![0u8; 19]; // 3 padding + 16 pixel format
+                    let mut buf = [0u8; 19]; // 3 padding + 16 pixel format
                     read_half.read_exact(&mut buf).await?;
                     trace!("SetPixelFormat received (ignored, server always sends 32bpp BGRX)");
+                    true
                 }
                 2 => {
-                    // SetEncodings
-                    let _ = read_half.read_u8().await?; // Padding
+                    // SetEncodings. Raw is the only encoding this server produces, and RFB
+                    // requires every client to support it, so the list is parsed for framing
+                    // and discarded.
+                    let _padding = read_half.read_u8().await?;
                     let num_encodings = read_half.read_u16().await?;
                     for _ in 0..num_encodings {
                         let _ = read_half.read_i32().await?;
                     }
                     trace!("SetEncodings received: {} encodings", num_encodings);
+                    true
                 }
                 3 => {
-                    // FramebufferUpdateRequest
                     let incremental = read_half.read_u8().await? != 0;
                     let x = read_half.read_u16().await?;
                     let y = read_half.read_u16().await?;
                     let width = read_half.read_u16().await?;
                     let height = read_half.read_u16().await?;
-
                     trace!(
                         "FramebufferUpdateRequest: incremental={}, x={}, y={}, w={}, h={}",
                         incremental,
@@ -403,155 +480,558 @@ impl VncServer {
                         width,
                         height
                     );
-
-                    // Always the same hardcoded gradient: the LLM is never consulted. The
-                    // requested region is ignored and the full announced framebuffer is sent.
-                    Self::send_test_framebuffer(&write_half).await?;
+                    self.handle_update_request(incremental).await?
                 }
                 4 => {
-                    // KeyEvent
                     let down = read_half.read_u8().await? != 0;
-                    let _ = read_half.read_u16().await?; // Padding
-                    let key = read_half.read_u32().await?;
-
-                    // Logged and discarded: there is no event and no LLM call.
-                    debug!("KeyEvent: down={}, key={}", down, key);
-                    let _ =
-                        status_tx.send(format!("[DEBUG] VNC KeyEvent: down={}, key={}", down, key));
+                    let _padding = read_half.read_u16().await?;
+                    let keysym = read_half.read_u32().await?;
+                    self.handle_key_event(down, keysym).await?
                 }
                 5 => {
-                    // PointerEvent
                     let button_mask = read_half.read_u8().await?;
                     let x = read_half.read_u16().await?;
                     let y = read_half.read_u16().await?;
-
-                    // Logged and discarded, like KeyEvent above: there is no event and
-                    // no LLM call. Dual-logged so pointer input is visible in the TUI
-                    // and over MCP — it was trace!-only, so the only client input this
-                    // protocol receives was invisible in exactly the place someone
-                    // watching a VNC session would look.
-                    debug!("PointerEvent: buttons={}, x={}, y={}", button_mask, x, y);
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] VNC PointerEvent: buttons={}, x={}, y={}",
-                        button_mask, x, y
-                    ));
+                    self.handle_pointer_event(button_mask, x, y).await?
                 }
                 6 => {
-                    // ClientCutText
-                    let _ = read_half.read_u8().await?; // Padding
-                    let _ = read_half.read_u16().await?; // Padding
+                    let _padding = read_half.read_u8().await?;
+                    let _padding = read_half.read_u16().await?;
                     let length = read_half.read_u32().await?;
                     if length > MAX_CUT_TEXT_LEN {
                         // The buffer used to be allocated straight from this client-controlled
-                        // u32, so a 7-byte message could ask for a 4 GiB allocation.
-                        warn!(
+                        // u32, so a nine-byte message could ask for a 4 GiB allocation.
+                        console_warn!(
+                            self.status_tx,
                             "VNC ClientCutText length {} exceeds {} byte cap, closing connection",
-                            length, MAX_CUT_TEXT_LEN
+                            length,
+                            MAX_CUT_TEXT_LEN
                         );
-                        let _ = status_tx.send(format!(
-                            "[WARN] VNC ClientCutText length {} exceeds cap, closing connection",
-                            length
-                        ));
-                        break;
+                        false
+                    } else {
+                        let mut text = vec![0u8; length as usize];
+                        read_half.read_exact(&mut text).await?;
+                        self.handle_cut_text(&text).await?
                     }
-                    let mut text = vec![0u8; length as usize];
-                    read_half.read_exact(&mut text).await?;
-                    trace!("ClientCutText: {}", String::from_utf8_lossy(&text));
                 }
-                _ => {
-                    warn!("Unknown VNC message type: {}", message_type);
+                other => {
+                    // The message length is unknown, so the stream cannot be resynchronised:
+                    // continuing would read this message's body as message types. Close.
+                    console_warn!(
+                        self.status_tx,
+                        "VNC client sent unknown message type {}, closing connection",
+                        other
+                    );
+                    false
                 }
+            };
+
+            if !keep_going {
+                break;
             }
         }
-
-        // Remove connection from state
-        app_state
-            .remove_connection_from_server(server_id, connection_id)
-            .await;
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         Ok(())
     }
 
-    /// Build the RFB FramebufferUpdate header for a single full-framebuffer Raw rectangle.
-    fn framebuffer_update_header(width: u16, height: u16) -> Vec<u8> {
-        let mut header = Vec::with_capacity(16);
-        header.push(0); // Message type: FramebufferUpdate
-        header.push(0); // Padding
-        header.extend_from_slice(&1u16.to_be_bytes()); // Number of rectangles
-        header.extend_from_slice(&0u16.to_be_bytes()); // X position
-        header.extend_from_slice(&0u16.to_be_bytes()); // Y position
-        header.extend_from_slice(&width.to_be_bytes());
-        header.extend_from_slice(&height.to_be_bytes());
-        header.extend_from_slice(&0i32.to_be_bytes()); // Encoding: Raw
-        header
-    }
+    // ------------------------------------------------------------------
+    // Event handling
+    // ------------------------------------------------------------------
 
-    /// Send the hardcoded gradient. This is what every client sees: the LLM is never asked.
-    async fn send_test_framebuffer(
-        write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
-    ) -> Result<()> {
-        let width = FRAMEBUFFER_WIDTH;
-        let height = FRAMEBUFFER_HEIGHT;
-
-        // Serialize the whole frame before taking the lock. This used to be one awaited
-        // `write_u8` per byte - 1.9 million awaits for an 800x600 frame, each one a separate
-        // syscall on an unbuffered socket - while holding the write lock throughout.
-        let mut frame = Self::framebuffer_update_header(width, height);
-        frame.reserve(width as usize * height as usize * 4);
-        for y in 0..height {
-            for x in 0..width {
-                let r = ((x as f32 / width as f32) * 255.0) as u8;
-                let g = ((y as f32 / height as f32) * 255.0) as u8;
-                let b = 128u8;
-                frame.extend_from_slice(&[b, g, r, 0]); // BGRX, matching ServerInit
-            }
-        }
-
-        let mut writer = write_half.lock().await;
-        writer.write_all(&frame).await?;
-        writer.flush().await?;
-        trace!("Sent test framebuffer: {}x{}", width, height);
-
-        Ok(())
-    }
-
-    /// Render `DisplayCommand`s and ship them as a Raw-encoded framebuffer update.
+    /// A FramebufferUpdateRequest arrived.
     ///
-    /// **This function has no caller.** It is the half of the LLM integration that exists: an
-    /// integration would build a `vnc_framebuffer_update_request` event, call `call_llm`,
-    /// deserialize the returned command array into `Vec<DisplayCommand>`, and call this.
-    /// Nothing does that today, which is why the protocol is `Incomplete`.
-    pub async fn send_framebuffer_update(
-        write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
-        width: u16,
-        height: u16,
-        commands: Vec<DisplayCommand>,
-        status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        // Render display commands to image buffer
-        let mut canvas = DisplayCanvas::new(width as u32, height as u32);
-        canvas.add_commands(commands);
-        let image_buffer = canvas.render();
+    /// Non-incremental requests ("send me the whole screen") consult the model. Incremental
+    /// ones ("tell me when something changes") do not: RFB permits the server to hold such a
+    /// request open until the screen actually changes, and answering each one with a model
+    /// call would spend a round-trip per poll on an idle desktop. A held request is answered
+    /// by the next event that redraws.
+    async fn handle_update_request(&mut self, incremental: bool) -> Result<bool> {
+        self.pending_request = true;
 
-        debug!("Rendered framebuffer: {}x{}", width, height);
-        let _ = status_tx.send(format!(
-            "[DEBUG] Rendered VNC framebuffer: {}x{}",
-            width, height
-        ));
-
-        // Serialize before locking, for the same reason as send_test_framebuffer.
-        let mut frame = Self::framebuffer_update_header(width, height);
-        frame.reserve(width as usize * height as usize * 4);
-        for pixel in image_buffer.pixels() {
-            frame.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 0]); // BGRX
+        if incremental && self.answered_first_request {
+            if self.dirty {
+                self.send_pending_frame(false).await?;
+            } else {
+                trace!(
+                    "VNC incremental request held open for {} (screen unchanged)",
+                    self.connection_id
+                );
+            }
+            return Ok(true);
         }
 
-        let mut writer = write_half.lock().await;
-        writer.write_all(&frame).await?;
-        writer.flush().await?;
-        trace!("Sent framebuffer update: {}x{}", width, height);
+        let event = Event::new(
+            &VNC_FRAMEBUFFER_UPDATE_REQUEST_EVENT,
+            serde_json::json!({
+                "width": self.width,
+                "height": self.height,
+                "first_request": !self.answered_first_request,
+            }),
+        );
+        let decision = self.consult(&event).await;
+        let close = self
+            .apply(decision, "the model gave no screen to draw")
+            .await?;
 
+        // A full update request must be answered: RFB has no "nothing to send" reply, so a
+        // client that asked for the whole screen and gets nothing waits forever.
+        self.send_pending_frame(true).await?;
+        self.answered_first_request = true;
+
+        Ok(!close)
+    }
+
+    /// A key went down or up.
+    async fn handle_key_event(&mut self, down: bool, keysym: u32) -> Result<bool> {
+        let key_name = keysym_name(keysym);
+        console_debug!(
+            self.status_tx,
+            "VNC KeyEvent: down={}, key={}, keysym={}",
+            down,
+            key_name,
+            keysym
+        );
+
+        let event = Event::new(
+            &VNC_KEY_EVENT,
+            serde_json::json!({
+                "down": down,
+                "keysym": keysym,
+                "key": key_name,
+            }),
+        );
+        let decision = self.consult(&event).await;
+        let close = self
+            .apply(decision, "the model gave no screen to draw for this key")
+            .await?;
+        self.send_pending_frame(false).await?;
+        Ok(!close)
+    }
+
+    /// A pointer message arrived.
+    ///
+    /// Only a change in the button mask raises `vnc_pointer_event`. A viewer emits a
+    /// PointerEvent for every pixel of mouse travel, and one model round-trip per pixel is not
+    /// a feature; movement is dual-logged instead so it is still visible in the TUI and over
+    /// MCP, which is where somebody watching a session would look.
+    async fn handle_pointer_event(&mut self, button_mask: u8, x: u16, y: u16) -> Result<bool> {
+        let previous = self.last_button_mask;
+        self.last_button_mask = button_mask;
+
+        if button_mask == previous {
+            console_debug!(
+                self.status_tx,
+                "VNC PointerEvent: move to {},{} (buttons={:#04b})",
+                x,
+                y,
+                button_mask
+            );
+            return Ok(true);
+        }
+
+        let pressed = button_mask.count_ones() > previous.count_ones();
+        console_debug!(
+            self.status_tx,
+            "VNC PointerEvent: {} at {},{} (buttons={:#04b})",
+            if pressed { "press" } else { "release" },
+            x,
+            y,
+            button_mask
+        );
+
+        let event = Event::new(
+            &VNC_POINTER_EVENT,
+            serde_json::json!({
+                "x": x,
+                "y": y,
+                "pressed": pressed,
+                "buttons": button_names(button_mask),
+                "button_mask": button_mask,
+            }),
+        );
+        let decision = self.consult(&event).await;
+        let close = self
+            .apply(decision, "the model gave no screen to draw for this click")
+            .await?;
+        self.send_pending_frame(false).await?;
+        Ok(!close)
+    }
+
+    /// The client sent us its clipboard.
+    async fn handle_cut_text(&mut self, raw: &[u8]) -> Result<bool> {
+        // RFB says ClientCutText is Latin-1. Decoding byte-per-character can never fail, which
+        // matters: this is attacker-controlled input and must not be able to abort the task.
+        let text: String = raw.iter().map(|&b| b as char).collect();
+        console_debug!(
+            self.status_tx,
+            "VNC ClientCutText: {} bytes from {}",
+            raw.len(),
+            self.connection_id
+        );
+        trace!("VNC ClientCutText payload: {:?}", text);
+
+        let event = Event::new(
+            &VNC_CLIENT_CUT_TEXT_EVENT,
+            serde_json::json!({ "text": text }),
+        );
+        let decision = self.consult(&event).await;
+        // Clipboard text needs no screen: an event that only produced clipboard output is a
+        // complete answer, so no placeholder is drawn for it.
+        let close = self.apply(decision, "").await?;
+        self.send_pending_frame(false).await?;
+        Ok(!close)
+    }
+
+    // ------------------------------------------------------------------
+    // LLM plumbing
+    // ------------------------------------------------------------------
+
+    /// Ask the event handlers (script → static → LLM) what to do about `event`.
+    ///
+    /// Never returns an error: a failure here has to leave the connection alive so the caller
+    /// can put a placeholder on screen. The reason is carried in `Decision::no_answer`.
+    async fn consult(&self, event: &Event) -> Decision {
+        let mut decision = Decision::default();
+
+        let execution = match call_llm(
+            &self.llm_client,
+            &self.app_state,
+            self.server_id,
+            Some(self.connection_id),
+            event,
+            &self.protocol,
+        )
+        .await
+        {
+            Ok(execution) => execution,
+            Err(e) => {
+                warn!("VNC event {} was not answered: {}", event.event_type.id, e);
+                let _ = self.status_tx.send(format!(
+                    "[WARN] VNC {} not answered: {}",
+                    event.event_type.id, e
+                ));
+                decision.no_answer = Some(e.to_string());
+                return decision;
+            }
+        };
+
+        for message in execution.messages {
+            let _ = self.status_tx.send(message);
+        }
+
+        // Flatten `Multiple` so a batched answer is not silently ignored.
+        let mut flattened = Vec::with_capacity(execution.protocol_results.len());
+        flatten_results(execution.protocol_results, &mut flattened);
+
+        let mut saw_result = false;
+        for result in flattened {
+            match result {
+                ActionResult::Custom { name, data } if name == RESULT_DISPLAY => {
+                    saw_result = true;
+                    match serde_json::from_value::<Vec<DisplayCommand>>(
+                        data.get("commands").cloned().unwrap_or_default(),
+                    ) {
+                        Ok(commands) => decision.redraw = Some(commands),
+                        Err(e) => {
+                            // The action executor already validated this JSON, so reaching
+                            // here means the two disagree — a bug worth shouting about.
+                            error!("VNC render result could not be decoded: {}", e);
+                            decision.no_answer =
+                                Some(format!("render result could not be decoded: {e}"));
+                        }
+                    }
+                }
+                ActionResult::Custom { name, .. } if name == RESULT_NO_CHANGE => {
+                    saw_result = true;
+                    decision.no_change = true;
+                }
+                ActionResult::Custom { name, data } if name == RESULT_CLIPBOARD => {
+                    saw_result = true;
+                    if let Some(text) = data.get("text").and_then(|v| v.as_str()) {
+                        decision.clipboard.push(text.to_string());
+                    }
+                }
+                ActionResult::CloseConnection => {
+                    saw_result = true;
+                    decision.close = true;
+                }
+                ActionResult::NoAction => {}
+                other => {
+                    warn!("VNC ignoring unexpected action result: {:?}", other);
+                }
+            }
+        }
+
+        if !saw_result && decision.no_answer.is_none() {
+            let detail = if execution.failures.is_empty() {
+                "no protocol action was returned".to_string()
+            } else {
+                execution
+                    .failures
+                    .iter()
+                    .map(|f| format!("{}: {}", f.action, f.error))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            };
+            warn!(
+                "VNC event {} produced no usable action ({})",
+                event.event_type.id, detail
+            );
+            let _ = self.status_tx.send(format!(
+                "[WARN] VNC {} produced no usable action ({})",
+                event.event_type.id, detail
+            ));
+            decision.no_answer = Some(detail);
+        }
+
+        decision
+    }
+
+    /// Apply a decision: render, push clipboard text, or draw the placeholder.
+    ///
+    /// Returns true when the connection should close. `no_answer_reason` empty means this event
+    /// does not need a screen, so a missing render is not a failure.
+    async fn apply(&mut self, decision: Decision, no_answer_reason: &str) -> Result<bool> {
+        for text in &decision.clipboard {
+            self.send_server_cut_text(text).await?;
+        }
+
+        if let Some(commands) = decision.redraw {
+            let pixels = render_frame(self.width, self.height, commands).await?;
+            self.store_frame(pixels);
+        } else if decision.no_change {
+            trace!(
+                "VNC screen held unchanged for {} by explicit decision",
+                self.connection_id
+            );
+        } else if decision.no_answer.is_some() && !no_answer_reason.is_empty() {
+            // Structurally distinct from `vnc_no_change`: the model saying "leave the screen
+            // alone" keeps whatever is there, while no answer at all puts a placeholder up
+            // that says so.
+            let pixels = render_frame(
+                self.width,
+                self.height,
+                placeholder_commands(self.height, no_answer_reason),
+            )
+            .await?;
+            self.store_frame(pixels);
+        }
+
+        Ok(decision.close)
+    }
+
+    /// Record a freshly rendered frame as the current screen.
+    fn store_frame(&mut self, pixels: Vec<u8>) {
+        self.last_frame = Some(pixels);
+        self.dirty = true;
+    }
+
+    /// Answer an outstanding FramebufferUpdateRequest, if there is one.
+    ///
+    /// `force` answers even when nothing changed, which a non-incremental request requires.
+    /// Otherwise an unchanged screen leaves the request open, exactly as a real VNC server
+    /// does, and it is answered by the next redraw.
+    async fn send_pending_frame(&mut self, force: bool) -> Result<()> {
+        if !self.pending_request || !(force || self.dirty) {
+            return Ok(());
+        }
+
+        if self.last_frame.is_none() {
+            // Nothing has ever been drawn and the client is waiting on a full update.
+            let pixels = render_frame(
+                self.width,
+                self.height,
+                placeholder_commands(self.height, "no screen has been drawn yet"),
+            )
+            .await?;
+            self.store_frame(pixels);
+        }
+
+        let Some(pixels) = self.last_frame.as_ref() else {
+            return Ok(());
+        };
+
+        let mut frame = framebuffer_update_header(self.width, self.height);
+        frame.extend_from_slice(pixels);
+
+        {
+            let mut writer = self.write_half.lock().await;
+            writer.write_all(&frame).await?;
+            writer.flush().await?;
+        }
+
+        self.pending_request = false;
+        self.dirty = false;
+        console_debug!(
+            self.status_tx,
+            "VNC sent {}x{} framebuffer update ({} bytes) to {}",
+            self.width,
+            self.height,
+            frame.len(),
+            self.connection_id
+        );
         Ok(())
     }
+
+    /// Push text to the client's clipboard (RFB ServerCutText, message type 3).
+    async fn send_server_cut_text(&self, text: &str) -> Result<()> {
+        // RFB ServerCutText is Latin-1; anything outside it has no representation on the wire.
+        let latin1: Vec<u8> = text
+            .chars()
+            .map(|c| if (c as u32) <= 0xFF { c as u8 } else { b'?' })
+            .collect();
+
+        let mut message = Vec::with_capacity(8 + latin1.len());
+        message.push(3); // ServerCutText
+        message.extend_from_slice(&[0, 0, 0]); // Padding
+        message.extend_from_slice(&(latin1.len() as u32).to_be_bytes());
+        message.extend_from_slice(&latin1);
+
+        let mut writer = self.write_half.lock().await;
+        writer.write_all(&message).await?;
+        writer.flush().await?;
+        console_debug!(
+            self.status_tx,
+            "VNC sent {} bytes of clipboard text to {}",
+            latin1.len(),
+            self.connection_id
+        );
+        Ok(())
+    }
+}
+
+/// Flatten nested [`ActionResult::Multiple`] into a single ordered list.
+fn flatten_results(results: Vec<ActionResult>, out: &mut Vec<ActionResult>) {
+    for result in results {
+        match result {
+            ActionResult::Multiple(inner) => flatten_results(inner, out),
+            other => out.push(other),
+        }
+    }
+}
+
+/// The RFB FramebufferUpdate header for a single full-framebuffer Raw rectangle.
+///
+/// The client's requested region is deliberately not echoed back: RFB lets the server answer
+/// with any rectangle, and answering with the client's extent (as this code used to) both
+/// contradicts the size announced in ServerInit and lets a client ask for 65535x65535.
+fn framebuffer_update_header(width: u16, height: u16) -> Vec<u8> {
+    let mut header = Vec::with_capacity(16);
+    header.push(0); // Message type: FramebufferUpdate
+    header.push(0); // Padding
+    header.extend_from_slice(&1u16.to_be_bytes()); // Number of rectangles
+    header.extend_from_slice(&0u16.to_be_bytes()); // X position
+    header.extend_from_slice(&0u16.to_be_bytes()); // Y position
+    header.extend_from_slice(&width.to_be_bytes());
+    header.extend_from_slice(&height.to_be_bytes());
+    header.extend_from_slice(&0i32.to_be_bytes()); // Encoding: Raw
+    header
+}
+
+/// Rasterise display commands into the BGRX pixel payload of a Raw rectangle.
+///
+/// Rendering is CPU-bound (tiny-skia, plus font shaping on the first text draw), so it runs on
+/// the blocking pool rather than stalling a tokio worker. A panic inside the canvas surfaces
+/// here as an error instead of silently killing the connection task.
+async fn render_frame(width: u16, height: u16, commands: Vec<DisplayCommand>) -> Result<Vec<u8>> {
+    let (w, h) = (width as u32, height as u32);
+    let pixels = tokio::task::spawn_blocking(move || {
+        let mut canvas = DisplayCanvas::new(w, h);
+        canvas.add_commands(commands);
+        let image = canvas.render();
+        let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+        for pixel in image.pixels() {
+            out.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 0]); // BGRX
+        }
+        out
+    })
+    .await
+    .context("VNC framebuffer rendering failed")?;
+
+    debug!("Rendered VNC framebuffer: {}x{}", width, height);
+    Ok(pixels)
+}
+
+/// The screen shown when no usable answer arrived.
+fn placeholder_commands(height: u16, reason: &str) -> Vec<DisplayCommand> {
+    vec![
+        DisplayCommand::SetBackground {
+            color: PLACEHOLDER_BACKGROUND,
+        },
+        DisplayCommand::DrawText {
+            x: 24,
+            y: (height / 2) as u32,
+            text: format!("NetGet VNC: {reason}"),
+            font_size: 18,
+            color: PLACEHOLDER_FOREGROUND,
+        },
+    ]
+}
+
+/// Names of the buttons held in an RFB button mask.
+fn button_names(mask: u8) -> Vec<&'static str> {
+    const NAMES: [&str; 5] = ["left", "middle", "right", "scroll_up", "scroll_down"];
+    NAMES
+        .iter()
+        .enumerate()
+        .filter(|(bit, _)| mask & (1 << bit) != 0)
+        .map(|(_, name)| *name)
+        .collect()
+}
+
+/// Human-readable name for an X11 keysym, so the model never has to decode one.
+fn keysym_name(keysym: u32) -> String {
+    // Printable ASCII and Latin-1 keysyms are the character itself.
+    if (0x20..=0x7E).contains(&keysym) || (0xA0..=0xFF).contains(&keysym) {
+        if let Some(c) = char::from_u32(keysym) {
+            return c.to_string();
+        }
+    }
+    // Unicode keysyms: 0x01000000 + code point.
+    if (0x01000100..=0x0110FFFF).contains(&keysym) {
+        if let Some(c) = char::from_u32(keysym - 0x01000000) {
+            return c.to_string();
+        }
+    }
+    // Function keys F1-F35 are contiguous from 0xFFBE.
+    if (0xFFBE..=0xFFE0).contains(&keysym) {
+        return format!("F{}", keysym - 0xFFBD);
+    }
+    match keysym {
+        0xFF08 => "BackSpace",
+        0xFF09 => "Tab",
+        0xFF0A => "Linefeed",
+        0xFF0B => "Clear",
+        0xFF0D => "Return",
+        0xFF13 => "Pause",
+        0xFF14 => "Scroll_Lock",
+        0xFF15 => "Sys_Req",
+        0xFF1B => "Escape",
+        0xFF50 => "Home",
+        0xFF51 => "Left",
+        0xFF52 => "Up",
+        0xFF53 => "Right",
+        0xFF54 => "Down",
+        0xFF55 => "Page_Up",
+        0xFF56 => "Page_Down",
+        0xFF57 => "End",
+        0xFF58 => "Begin",
+        0xFF63 => "Insert",
+        0xFF7F => "Num_Lock",
+        0xFF8D => "KP_Enter",
+        0xFFE1 => "Shift_L",
+        0xFFE2 => "Shift_R",
+        0xFFE3 => "Control_L",
+        0xFFE4 => "Control_R",
+        0xFFE5 => "Caps_Lock",
+        0xFFE7 => "Meta_L",
+        0xFFE8 => "Meta_R",
+        0xFFE9 => "Alt_L",
+        0xFFEA => "Alt_R",
+        0xFFEB => "Super_L",
+        0xFFEC => "Super_R",
+        0xFFFF => "Delete",
+        _ => return format!("keysym_{keysym:#x}"),
+    }
+    .to_string()
 }

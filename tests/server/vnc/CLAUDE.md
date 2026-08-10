@@ -1,80 +1,101 @@
 # VNC Protocol E2E Tests
 
-## Test Overview
+Three tests in `test.rs`, all driving the real `netget` binary over RFB 3.8 with a client
+implemented in the test file. There is no usable Rust VNC *client* crate (the maintained ones
+are viewers with their own event loops), so the client is written directly against RFC 6143 —
+about 150 lines, and the only way to prove the bytes on the wire mean what the server claims.
 
-Three tests in `test.rs` driving the VNC server over RFB 3.8 with a custom client (`VncClient`)
-implemented in the test file. There is no suitable Rust VNC client library.
+## Test strategy
 
-## Test Strategy
+**Assert decoded pixels, not byte counts.** The mocked model asks for a specific background and
+a specific rectangle, and the test decodes the Raw payload and compares the RGB it finds at
+chosen coordinates. That is what proves the whole path: structured commands → `DisplayCanvas` →
+BGRX in the announced channel order. Swapping the byte order in `render_frame` fails two of the
+three tests.
 
-**A malformed or missing update is a failure, not a note.** `test_vnc_framebuffer_update` used to
-swallow both an error and a timeout with a printed "this may be expected", so it could not fail no
-matter what the server sent; `test_vnc_input_events` asserted nothing at all.
-`read_framebuffer_update` now returns `Err` on any deviation from the wire format — a client that
-shrugs at a malformed update cannot tell a working server from a broken one.
+**Assert the pixel format, not just the geometry.** `ServerInit` is the contract for every
+rectangle that follows; a test that read only width and height could not tell a correct frame
+from a byte-swapped one.
 
-**Assert pixels, not byte counts.** The server's fixed pattern is a gradient in BGRX order: blue
-constant at 128, red rising with x, green rising with y. Sampling three corners proves the bytes are
-the pattern in the right channel order, not merely the right *count* of bytes.
+**A missing or malformed message is a failure, not a note.** `read_message` returns `Err` on any
+deviation from the wire format, and every read is wrapped in a 15 s timeout. This suite used to
+swallow both an error and a timeout with a printed "this may be expected", so it could not fail
+no matter what the server sent.
 
-**Framebuffer size comes from ServerInit.** It is fixed at 800x600 in the server and no prompt
-changes it, so the tests read the size off the wire rather than assuming one — and the update
-rectangle is compared to ServerInit's extent, not to the extent the client requested (RFB lets the
-server answer with any rectangle, and this one answers with its whole framebuffer).
+**Silence is asserted structurally.** Steps that must produce *no* server output are followed by
+a read that expects something else: if `vnc_no_change` wrongly emitted a frame, the read of the
+ServerCutText finds a FramebufferUpdate first and says so. TCP ordering makes this exact.
 
-**Only Raw encoding.** `read_framebuffer_update` rejects any other encoding rather than guessing at
-the payload length, which would desynchronise the stream and produce a confusing later failure.
+**Geometry comes from the wire.** `test_vnc_handshake_and_server_init` passes `width`/`height`
+through `startup_params` and reads them back out of ServerInit, so the test would fail if the
+parameters were declared and ignored.
 
-## LLM Call Budget
+## LLM call budget
 
-**Total: 3** — one startup per test. The RFB handshake, the test-pattern framebuffer, and input
-event logging all happen without consulting the model. Each rule is `expect_calls(1)`.
+**Total: 10.**
 
-## Test Cases
+| Test | Calls |
+|---|---|
+| `test_vnc_handshake_and_server_init` | 1 (startup) |
+| `test_vnc_llm_draws_screen_and_handles_input` | 7 |
+| `test_vnc_placeholder_when_model_gives_no_usable_answer` | 2 |
 
-### 1. `test_vnc_handshake`
+Every rule is `expect_calls(1)`, so a call the server should not have made fails the run. That
+is how the two throttles are tested: an incremental request that is held open and a pointer
+*move* both cost zero calls, and any regression that made them consult the model would push a
+rule over its expected count.
 
-Full RFB 3.8 negotiation: server ProtocolVersion starts with `RFB `, security type None (1) is
-offered and accepted, SecurityResult is 0, ClientInit/ServerInit yields **800x600**.
+**Event rules are registered before the instruction rule.** Rules match in order, and
+`on_instruction_containing("vnc")` would otherwise answer a network event with `open_server`.
 
-### 2. `test_vnc_framebuffer_update`
+## Test cases
 
-Requests a full update and requires exactly one Raw rectangle at the origin covering ServerInit's
-extent, with exactly 4 bytes per pixel. Then samples the gradient:
+### 1. `test_vnc_handshake_and_server_init`
 
-- `(0, 0)` → b=128, g=0, r=0
-- `(width-1, 0)` → b=128, g=0, r > 250
-- `(0, height-1)` → b=128, g > 250, r=0
+Full RFB 3.8 negotiation: version is exactly `RFB 003.008\n`, security type None (1) is offered
+and accepted, SecurityResult is 0. Then ServerInit must report the 640×480 requested through
+`startup_params`, the desktop name, and 32bpp / depth 24 / little-endian / true colour with
+shifts 16-8-0.
 
-### 3. `test_vnc_input_events`
+### 2. `test_vnc_llm_draws_screen_and_handles_input`
 
-Sends KeyEvent press and release for keysym 97, a PointerEvent move, and a click press/release.
+The whole feature in one connection:
 
-- The KeyEvent handler reports on `status_tx` at DEBUG, so the test requires both
-  `VNC KeyEvent: down=true, key=97` and `down=false, key=97` in the server output. Absence is a
-  regression, not something to note and continue past.
-- PointerEvent is `trace!`-only and never reaches that stream, so it is checked **structurally**:
-  each RFB client message has a fixed length, so a server that mis-parsed any of the five messages
-  would leave the stream misaligned and read the next request's bytes as a message type. Asking for
-  another framebuffer afterwards and getting a well-formed update back proves every one of them was
-  consumed at exactly the right length.
+1. Full update request → the model draws screen A. Assert the rectangle covers ServerInit's
+   extent, the background RGB at (10,10), the rectangle's colour at (200,160), and the
+   background again just outside it at (90,90).
+2. Incremental request → held open, no call, no bytes.
+3. KeyEvent press → the model draws screen B, which **answers the held request**. Assert the new
+   background arrives.
+4. KeyEvent release → `vnc_no_change`. PointerEvent move → no call at all. PointerEvent press →
+   `vnc_no_change`. None of these may put anything on the wire.
+5. ClientCutText → the model answers `vnc_set_clipboard`; assert the ServerCutText text. This
+   read is also what proves step 4 sent nothing.
+6. Full update request → `vnc_no_change`, and the server must still answer, with screen B.
+7. Assert the status stream carried the pointer *movement* even though it cost no model call.
 
-## Expected Runtime
+### 3. `test_vnc_placeholder_when_model_gives_no_usable_answer`
 
-~1.5s for the whole suite against the mock harness.
+The mock answers the framebuffer event with `show_message` — a valid action that draws nothing.
+The client must receive the placeholder screen (`netget::server::vnc::PLACEHOLDER_BACKGROUND`,
+compared against the decoded pixel) and the server must report `produced no usable action`.
+This is the fail-closed path: RFB has no "no answer" reply, so silence would hang the viewer,
+and a screen that looked like content would hide the failure.
 
-## Not Covered
+## Expected runtime
 
-Compressed encodings (Hextile, ZRLE, Tight), incremental updates, SetPixelFormat, SetEncodings,
-ClientCutText, Bell, VNC authentication (type 2), and LLM-generated framebuffer content — input
-events are logged but never forwarded to the model.
+~1.5 s for the whole suite against the mock harness.
 
-## Manual Testing
+## Not covered
+
+VNC authentication (type 2), compressed encodings, `SetPixelFormat` honouring, damage-tracked
+partial updates, `vnc_disconnect_client`, multiple simultaneous clients, and a real graphical
+viewer (none is installed in this environment; macOS Screen Sharing requires VNC-Auth).
+
+## Manual testing
 
 ```bash
 ./cargo-isolated.sh run --no-default-features --features vnc --release
-# prompt: "listen on port 5900 via vnc"
+# prompt: "listen on port 5900 via vnc showing a dark blue desktop with the text Hello"
 vncviewer localhost:5900
 ```
-
-Expect the gradient described above and `VNC KeyEvent:` lines in the status panel.
