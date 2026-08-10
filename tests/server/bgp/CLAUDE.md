@@ -1,507 +1,123 @@
-# BGP E2E Tests
+# BGP Server Tests
 
-## Test Overview
+Two files, two different jobs.
 
-Tests BGP server functionality by establishing BGP peering sessions using raw TCP clients. Tests verify session
-establishment, message exchange, and error handling.
+| File | Kind | Needs a NetGet process | Runtime |
+|---|---|---|---|
+| `test.rs` | Wire-format conformance. Pure functions, no socket, no model. | no | milliseconds |
+| `e2e_test.rs` | Full socket path against a mocked model. | yes | ~6s total |
 
-**Protocol Status**: Alpha (fully implemented, needs extensive testing)
-**Test Focus**: BGP FSM state transitions and message exchange
-
-## Test Strategy
-
-### Comprehensive Peering Tests
-
-Tests cover full BGP session lifecycle:
-
-- **4 test functions** covering peering establishment, error handling, keepalives, graceful shutdown
-- Each test uses real BGP message construction (manual, no library)
-- Tests verify FSM state transitions (Connect → OpenSent → OpenConfirm → Established)
-
-### TCP-Based Testing
-
-BGP runs on TCP port 179, tests use tokio TcpStream:
-
-- Connect to server
-- Send/receive BGP messages
-- Verify responses match protocol spec
-
-### No Routing Table Testing
-
-Tests focus on **protocol operations**, not routing:
-
-- Peering establishment ✅
-- Message exchange ✅
-- Route advertisements ❌ (no RIB)
-- Best path selection ❌ (no routing table)
-
-## LLM Call Budget
-
-### Per-Test Breakdown
-
-1. **test_bgp_peering_establishment**: 3 LLM calls
-    - Server startup: 1 call
-    - OPEN message received: 1 call (LLM decides response)
-    - KEEPALIVE received: 1 call (LLM sends KEEPALIVE back)
-
-2. **test_bgp_notification_on_error**: 2 LLM calls
-    - Server startup: 1 call
-    - Invalid OPEN received: 1 call (LLM may send NOTIFICATION)
-
-3. **test_bgp_keepalive_exchange**: 3 LLM calls
-    - Server startup: 1 call
-    - First OPEN: 1 call
-    - Additional KEEPALIVE: 1 call (optional)
-
-4. **test_bgp_graceful_shutdown**: 3 LLM calls
-    - Server startup: 1 call
-    - OPEN: 1 call
-    - NOTIFICATION (Cease): 1 call (LLM logs graceful shutdown)
-
-**Total: 11 LLM calls** (slightly over 10, but acceptable for complex protocol)
-
-### Why More Calls?
-
-BGP is connection-oriented with state machine:
-
-- Each protocol message may trigger LLM consultation
-- LLM controls routing decisions
-- Tests verify LLM correctly handles protocol flow
-
-### Optimization Opportunity
-
-Future optimization: Use scripting mode for deterministic responses:
-
-```rust
-let config = ServerConfig::new(prompt)
-    .with_no_scripts(false);  // Enable scripting
-```
-
-Could reduce to ~4 LLM calls (1 per test startup).
-
-## Scripting Usage
-
-**Scripting: Not currently used** - Tests use action-based responses.
-
-**Future**: Enable scripting for faster, deterministic tests:
-
-- Server startup generates script handling OPEN/KEEPALIVE exchange
-- Reduces LLM calls from 11 to 4
-
-## Client Library
-
-### Manual BGP Message Construction
-
-**Why manual**: No Rust BGP client library suitable for testing.
-
-**What we implement**:
-
-- BGP message construction (OPEN, KEEPALIVE, NOTIFICATION)
-- BGP message parsing (read and validate responses)
-- Message type detection
-
-### BGP Message Format
-
-**Header (19 bytes)**:
-
-```
-| Marker (16 bytes, all 0xFF) |
-| Length (2 bytes) | Type (1 byte) |
-```
-
-**OPEN Message**:
-
-```
-| Header (19) | Version (1) | My AS (2) | Hold Time (2) |
-| BGP Identifier (4) | Opt Params Len (1) | Opt Params (variable) |
-```
-
-**KEEPALIVE Message**: Just header (19 bytes)
-
-**NOTIFICATION Message**:
-
-```
-| Header (19) | Error Code (1) | Error Subcode (1) | Data (variable) |
-```
-
-### Message Builders
-
-```rust
-fn build_bgp_open(my_as: u16, hold_time: u16, router_id: [u8; 4]) -> Vec<u8> {
-    let mut msg = Vec::new();
-    msg.extend_from_slice(&[0xff; 16]);  // Marker
-    msg.extend_from_slice(&[0, 0]);  // Length placeholder
-    msg.push(1);  // Type = OPEN
-    msg.push(4);  // Version
-    msg.extend_from_slice(&my_as.to_be_bytes());
-    msg.extend_from_slice(&hold_time.to_be_bytes());
-    msg.extend_from_slice(&router_id);
-    msg.push(0);  // Opt params len
-    let msg_len = msg.len() as u16;
-    msg[16..18].copy_from_slice(&msg_len.to_be_bytes());
-    msg
-}
-```
-
-### Message Parsing
-
-```rust
-async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
-    let mut marker = [0u8; 16];
-    stream.read_exact(&mut marker).await?;
-    assert_eq!(marker, [0xff; 16]);  // Validate marker
-
-    let mut length_bytes = [0u8; 2];
-    stream.read_exact(&mut length_bytes).await?;
-    let length = u16::from_be_bytes(length_bytes);
-
-    let mut msg_type = [0u8; 1];
-    stream.read_exact(&mut msg_type).await?;
-
-    let body_len = (length - 19) as usize;
-    let mut body = vec![0u8; body_len];
-    if body_len > 0 {
-        stream.read_exact(&mut body).await?;
-    }
-
-    Ok((msg_type[0], body))
-}
-```
-
-## Expected Runtime
-
-**Model**: qwen3-coder:30b (or configured model)
-**Runtime**: ~45-60 seconds for full test suite (with 120s timeouts)
-**Breakdown**:
-
-- Server startup: 2-5 seconds per test (4 tests)
-- TCP connection: <1 second per test
-- LLM calls: 2-5 seconds each (~11 calls total)
-- Message exchange: 1-3 seconds per message
-
-**Slower because**: Multiple LLM calls per test for protocol state machine.
-
-## Failure Rate
-
-**Medium** (10-15%) - LLM may choose unexpected responses.
-
-**Known variability**:
-
-- LLM may send OPEN instead of NOTIFICATION on error
-- LLM may not respond to additional KEEPALIVEs
-- Timing-sensitive (120s timeout to accommodate slow LLM)
-
-**Not flaky** - Deterministic for given LLM model/prompt.
-
-## Test Cases
-
-### 1. test_bgp_peering_establishment
-
-**What it tests**:
-
-- Full BGP peering establishment (Connect → Established)
-- OPEN exchange
-- KEEPALIVE exchange
-- FSM state transitions
-
-**Message flow**:
-
-1. Client → Server: OPEN (AS 65000, router ID 192.168.1.100)
-2. Server → Client: OPEN (AS 65001, router ID 192.168.1.1)
-3. Client → Server: KEEPALIVE (acknowledge OPEN)
-4. Server → Client: KEEPALIVE (establish peering)
-
-**Assertions**:
-
-```rust
-assert_eq!(msg_type, BGP_MSG_OPEN);
-assert_eq!(version, 4);
-assert_eq!(peer_as, 65001);
-assert!(hold_time > 0);
-```
-
-**Expected output**:
-
-```
-[INFO] BGP server listening on 0.0.0.0:XXXXX
-→ BGP connection conn_12345 from 127.0.0.1:XXXXX
-[INFO] BGP OPEN received: version=4, AS=65000, hold_time=180, router_id=192.168.1.100
-[INFO] BGP OPEN sent: AS=65001, hold_time=180s
-[DEBUG] BGP session transitioned to OpenConfirm
-[DEBUG] BGP KEEPALIVE received
-✓ BGP session conn_12345 established with AS65000
-[TRACE] BGP KEEPALIVE sent
-```
-
-### 2. test_bgp_notification_on_error
-
-**What it tests**:
-
-- Error handling with NOTIFICATION
-- Invalid OPEN version detection (version 3 instead of 4)
-- Graceful connection closure
-
-**Message flow**:
-
-1. Client → Server: OPEN (invalid version 3)
-2. Server → Client: NOTIFICATION (error code 2, subcode 1) **or** OPEN (LLM chooses to accept)
-
-**Assertions**: Flexible - accepts NOTIFICATION or OPEN or connection close.
-
-**Expected output** (if NOTIFICATION sent):
-
-```
-[ERROR] BGP invalid message: Unsupported BGP version: 3
-[ERROR] BGP NOTIFICATION sent: code=2, subcode=1
-```
-
-**Expected output** (if LLM accepts):
-
-```
-[INFO] BGP OPEN received: version=3, AS=65000 (accepted despite invalid version)
-```
-
-### 3. test_bgp_keepalive_exchange
-
-**What it tests**:
-
-- Peering establishment
-- Additional KEEPALIVE exchange (session maintenance)
-
-**Message flow**:
-
-1. Establish peering (OPEN + KEEPALIVE)
-2. Client → Server: Additional KEEPALIVE
-3. Server → Client: KEEPALIVE response (or no response, both acceptable)
-
-**Expected behavior**: Server handles additional KEEPALIVEs gracefully.
-
-**Expected output**:
-
-```
-✓ Peering established
-[DEBUG] BGP KEEPALIVE received
-✓ Received KEEPALIVE response (or no response, acceptable)
-```
-
-### 4. test_bgp_graceful_shutdown
-
-**What it tests**:
-
-- Graceful shutdown with NOTIFICATION (Cease)
-- Proper connection cleanup
-
-**Message flow**:
-
-1. Establish peering (OPEN + KEEPALIVE)
-2. Client → Server: NOTIFICATION (error code 6, subcode 0, Cease)
-3. Server: Closes connection or sends NOTIFICATION back
-
-**Expected behavior**: Server acknowledges shutdown and closes connection.
-
-**Expected output**:
-
-```
-✓ Peering established
-[ERROR] BGP NOTIFICATION received: code=6, subcode=0
-✓ Server acknowledged with NOTIFICATION (or connection closed gracefully)
-```
-
-## Known Issues
-
-### No Route Testing
-
-**Issue**: Tests don't verify route advertisements or RIB management.
-
-**Why**: BGP server doesn't implement routing table.
-
-**Future**: If RIB implemented, add route tests:
-
-```rust
-#[tokio::test]
-async fn test_bgp_route_advertisement() {
-    // Send UPDATE with route
-    // Verify server stores in RIB
-    // Verify re-advertisement to other peers
-}
-```
-
-### LLM Response Variability
-
-**Issue**: LLM may choose different responses (e.g., accept invalid OPEN vs send NOTIFICATION).
-
-**Why**: LLM has flexibility in protocol implementation.
-
-**Acceptable**: Tests use flexible assertions to handle multiple valid responses.
-
-### No Multi-Peer Testing
-
-**Issue**: Tests only cover single peer per server.
-
-**Why**: No route propagation between peers (no RIB).
-
-**Future**: Add multi-peer tests when RIB implemented.
-
-### Hold Timer Not Enforced
-
-**Issue**: Server doesn't enforce hold timer (no timeout logic).
-
-**Why**: Not implemented yet.
-
-**Future**: Add hold timer expiration tests:
-
-```rust
-#[tokio::test]
-async fn test_bgp_hold_timer_expiration() {
-    // Establish peering
-    // Wait longer than hold_time
-    // Verify server sends NOTIFICATION and closes
-}
-```
-
-## Running Tests
-
-### Prerequisites
+Both are declared in `tests/server/mod.rs` under `#[cfg(feature = "bgp")]`. 29 tests, all passing.
 
 ```bash
-# Build release binary with all features
-./cargo-isolated.sh build --release --all-features
+./cargo-isolated.sh test --no-default-features --features bgp --test server -- --test-threads=100 bgp
 ```
 
-### Run Tests
+## What these tests are actually for
 
-```bash
-# Run BGP E2E tests
-./cargo-isolated.sh test --features bgp --test server::bgp::e2e_test
+BGP's failure mode is not a crash. It is emitting bytes that look right, that the implementation
+happily parses back, and that every real router silently drops. OSPF in this repo did exactly
+that for years with a wrong checksum while its docs claimed router interoperability.
 
-# Run with output
-./cargo-isolated.sh test --features bgp --test server::bgp::e2e_test -- --nocapture
+**No BGP daemon (`bgpd`, `bird`, `bird2`, `frr`, `gobgp`) is installed on the development
+machine.** Nothing here has been peered against a real implementation. Read every claim below
+with that caveat.
 
-# Run specific test
-./cargo-isolated.sh test --features bgp --test server::bgp::e2e_test -- test_bgp_peering_establishment
-```
+Since NetGet encodes with `netgauze-bgp-pkt`, a test that encodes with netgauze and decodes with
+netgauze establishes nothing about RFC conformance — only that netgauze agrees with itself. So
+`test.rs` uses two layers and is explicit about which one carries the weight:
 
-### Expected Output
+1. **RFC-derived literal bytes (the real oracle).** Every expected vector is written octet by
+   octet from RFC 4271 sections 4.1-4.5 and RFC 6793 section 4, with the field decode in a
+   comment on each line. These come from neither implementation. If NetGet and netgauze were
+   wrong in the same way, these would still fail.
+2. **Inbound parsing of hand-written messages (a genuine cross-check).** The same hand-derived
+   vectors go into the receive path and the decoded fields are asserted. The input is not
+   NetGet's output, so this direction really does compare two independent readings of the spec.
 
-```
-running 4 tests
-test e2e_bgp::test_bgp_peering_establishment ... ok
-test e2e_bgp::test_bgp_notification_on_error ... ok
-test e2e_bgp::test_bgp_keepalive_exchange ... ok
-test e2e_bgp::test_bgp_graceful_shutdown ... ok
+When you add a case, write the expected bytes from the RFC. Do **not** capture what the code
+currently produces — that turns the suite into a change detector and loses the only property
+that makes it worth having.
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 52.34s
-```
+## `test.rs` — conformance
 
-### Handling Timeouts
+Reaches the implementation through two public seams:
 
-Tests use 120-second timeouts to accommodate slow LLM:
+- `BgpProtocol::execute_action(...)` → `ActionResult::Custom { name: "bgp_message", data }`
+- `netget::server::bgp::wire::{encode_intent, decode, parse_header, update_to_json}`
 
-```rust
-let (msg_type, body) = timeout(
-    Duration::from_secs(120),
-    read_bgp_message(&mut client)
-).await??;
-```
+That is the same pair the session uses, so the tests exercise the production path rather than a
+parallel one. `wire.rs` is `pub` for this reason.
 
-If tests timeout, increase timeout or check Ollama performance.
+Covered:
 
-## Use Cases
+- **Header framing** — marker, the `[19, 4096]` bound, and the per-type minimums. Length 18 is
+  tested specifically because `len - 19` underflows without it; 4097 because the length field is
+  otherwise an attacker-chosen allocation.
+- **OPEN** — byte-exact, with the four-octet AS capability; and the AS_TRANS form for an ASN
+  above 65535, which additionally asserts the old truncated value (AS 60416 for 4200000000) does
+  not appear anywhere in the output.
+- **KEEPALIVE, NOTIFICATION** — byte-exact. The NOTIFICATION case asserts `"00b4"` reaches the
+  wire as two octets and that the four ASCII characters do **not**, because the parameter is
+  documented as hex and the executor has to actually decode it.
+- **UPDATE** — byte-exact in both AS_PATH widths, plus the AS4_PATH form, withdrawal-only (no
+  path attributes at all), prefix length in bits with host bits masked, `/0`, an empty AS_PATH
+  as a zero-length attribute rather than an absent one, and refusal above 4096 octets.
+- **Inbound** — OPEN with and without capabilities, UPDATE in both widths, withdrawal,
+  End-of-RIB, and the `(code, subcode)` each malformed input earns: 2/1 bad version, 2/6 bad
+  hold time, 2/3 bad BGP identifier, 1/1 bad marker.
+- **Action validation** — every rejection asserts the *message* names the offending field, so a
+  handler gets a usable error instead of silence.
+- **Round-trip** — everything NetGet emits reparses, which catches a length field that disagrees
+  with the body it precedes.
 
-### Protocol Learning
+## `e2e_test.rs` — session
 
-Tests demonstrate:
+Six tests, **16 mocked LLM calls total** (6 startups, 5 `bgp_open`, 4 `bgp_established`, 1
+`bgp_update`; two tests deliberately expect zero or one event call). Over the ~10 guideline because
+each test needs its own server to isolate a distinct session outcome, and reusing one would mean
+several peers racing on shared mock counters.
 
-- BGP session establishment
-- FSM state transitions
-- Message exchange patterns
+| Test | Asserts |
+|---|---|
+| `session_establishes_and_delivers_routes` | OPEN → KEEPALIVE → Established → UPDATE, all four byte-exact. The point of the protocol. |
+| `two_octet_peer_gets_two_octet_as_path` | Same action, peer without the capability, byte-exact two-octet AS_PATH. |
+| `invalid_open_is_refused_without_consulting_the_model` | Version 3 earns NOTIFICATION 2/1 and the `bgp_open` mock is `expect_at_most(0)`. |
+| `model_can_refuse_to_peer` | `send_bgp_notification` yields NOTIFICATION 6/5 and no OPEN. |
+| `keepalive_cadence_and_hold_timer_expiry` | With hold 3, unsolicited keepalives arrive, then NOTIFICATION 4/0. |
+| `peer_update_is_decoded_into_structured_event` | Mock matches on `nlri`, `next_hop` and `as_path`, so a regression to a hex blob fails it. |
 
-### BGP Client Testing
+`expect_at_most(0)` is how "the model must not be asked" is expressed; there is no
+`expect_never`. `and_event_data_contains` is how event-shape regressions are caught — the mock
+simply never fires and `verify_mocks` reports it.
 
-Use NetGet BGP server to test BGP client implementations:
+Every test ends with `server.verify_mocks().await?`. Without it the test asserts nothing about
+the model interaction.
 
-- Verify OPEN handling
-- Test NOTIFICATION error cases
-- Validate KEEPALIVE behavior
+### Timing
 
-### NOT for Production Routing
+`LLM_TIMEOUT` is 60s, not the 120s the old suite used, because the mock answers immediately and a
+two-minute timeout only makes a hang expensive to discover. The hold-timer test negotiates a
+3-second hold (the RFC minimum) so expiry is observable in seconds rather than three minutes.
 
-BGP server should **not** be used for production routing:
+## History
 
-- No routing table
-- No best path selection
-- No route filtering
-- No policy enforcement
+This directory previously held **eight tests that were four tests duplicated** — `test.rs` and
+`e2e_test.rs` declared the same four function names with near-identical bodies. Three of the four
+could not fail: `test_bgp_notification_on_error`, `test_bgp_keepalive_exchange` and
+`test_bgp_graceful_shutdown` each accepted every outcome, including a timeout, and printed a ✓
+either way. `test.rs` was rebuilt as the conformance suite rather than deleted, and the four E2E
+tests were rewritten with assertions that can fail.
 
-## Future Improvements
+The suite was mutation-checked afterwards. Dropping the post-OPEN KEEPALIVE, disabling
+hold-timer expiry and forcing four-octet AS_PATH regardless of negotiation each made the
+corresponding tests fail; a fourth mutation, removing the host-bit mask in
+`wire::ipv4_unicast`, did **not** fail anything, because netgauze masks on write as well. That
+mask is therefore defence in depth, not the thing the test is pinning.
 
-### Routing Table Implementation
+## Not covered
 
-Add RIB (Routing Information Base):
-
-```rust
-#[tokio::test]
-async fn test_bgp_route_storage() {
-    let server = start_server("maintain routing table").await;
-    // Send UPDATE
-    // Query RIB
-    // Verify route stored
-}
-```
-
-### Path Attributes Parsing
-
-Parse UPDATE message path attributes:
-
-```rust
-#[tokio::test]
-async fn test_bgp_update_parsing() {
-    // Send UPDATE with AS_PATH, NEXT_HOP, etc.
-    // Verify server extracts attributes
-    // Verify LLM receives structured data
-}
-```
-
-### Multi-Peer Tests
-
-Test route propagation between peers:
-
-```rust
-#[tokio::test]
-async fn test_bgp_multi_peer() {
-    // Connect peer A and peer B
-    // A sends UPDATE
-    // Verify server propagates to B
-}
-```
-
-### Scripting Mode
-
-Enable scripting for faster tests:
-
-```rust
-let config = ServerConfig::new(prompt).with_no_scripts(false);
-```
-
-Generate script for deterministic OPEN/KEEPALIVE responses.
-
-### 32-bit AS Numbers
-
-Add 32-bit AS support (RFC 6793):
-
-```rust
-#[tokio::test]
-async fn test_bgp_32bit_as() {
-    let server = start_server("support 32-bit AS numbers").await;
-    // Send OPEN with AS 4200000000
-    // Verify server accepts
-}
-```
-
-## References
-
-- [RFC 4271 - BGP-4](https://datatracker.ietf.org/doc/html/rfc4271)
-- [RFC 6793 - 32-bit AS Numbers](https://datatracker.ietf.org/doc/html/rfc6793)
-- [BGP FSM](https://www.rfc-editor.org/rfc/rfc4271.html#section-8.2)
-- [BGP Message Formats](https://www.rfc-editor.org/rfc/rfc4271.html#section-4)
-- [NetGet BGP Implementation](../../../src/server/bgp/CLAUDE.md)
+Interoperability with a live daemon. Multi-peer anything (there is no RIB, so there is nothing to
+propagate). IPv6 and MP-BGP on the send path — inbound MP_REACH/MP_UNREACH parse but are reported
+by name only. Route refresh beyond "does not tear the session down". Graceful restart, add-path,
+extended messages.

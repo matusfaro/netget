@@ -1,548 +1,614 @@
-//! E2E tests for BGP server
+//! E2E tests for the BGP server.
 //!
-//! These tests spawn the NetGet binary and test BGP protocol operations
-//! using raw TCP clients to send/receive BGP messages.
+//! These drive a real NetGet process over a real TCP socket with a mocked model, and assert on
+//! the exact bytes that come back. Where an expected message is fully determined by the mocked
+//! action, it is written out octet by octet from RFC 4271 rather than compared against
+//! something NetGet produced — see `tests/server/bgp/test.rs` for why that distinction matters.
+//!
+//! No BGP daemon is installed on the development machine, so none of this is a substitute for
+//! peering against BIRD or FRR. What it does cover is the whole path: socket, framing, OPEN
+//! validation, negotiation, the FSM, the model round-trip, and route delivery.
 
-#[cfg(all(test, feature = "bgp", feature = "bgp"))]
+#[cfg(all(test, feature = "bgp"))]
 mod e2e_bgp {
     use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::time::{timeout, Duration};
 
-    // BGP message types
     const BGP_MSG_OPEN: u8 = 1;
     const BGP_MSG_UPDATE: u8 = 2;
     const BGP_MSG_NOTIFICATION: u8 = 3;
     const BGP_MSG_KEEPALIVE: u8 = 4;
 
-    // BGP message marker
     const BGP_MARKER: [u8; 16] = [0xff; 16];
 
-    /// Helper to build a BGP OPEN message
-    fn build_bgp_open(my_as: u16, hold_time: u16, router_id: [u8; 4]) -> Vec<u8> {
+    /// How long to wait for a message that depends on a model round-trip.
+    const LLM_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// Build an OPEN (RFC 4271 section 4.2).
+    ///
+    /// `four_octet_as` adds the RFC 6793 capability, which is what decides whether NetGet may
+    /// send four-octet ASNs in AS_PATH. Both cases are exercised below.
+    fn build_bgp_open(
+        my_as: u16,
+        hold_time: u16,
+        router_id: [u8; 4],
+        four_octet_as: Option<u32>,
+    ) -> Vec<u8> {
+        let mut params = Vec::new();
+        if let Some(asn) = four_octet_as {
+            params.push(0x02); // Optional Parameter type 2: Capabilities
+            params.push(0x06); // parameter length
+            params.push(0x41); // capability code 65: four-octet AS
+            params.push(0x04); // capability length
+            params.extend_from_slice(&asn.to_be_bytes());
+        }
+
         let mut msg = Vec::new();
-
-        // Marker (16 bytes of 0xFF)
         msg.extend_from_slice(&BGP_MARKER);
-
-        // Length placeholder (will be filled below)
-        msg.extend_from_slice(&[0, 0]);
-
-        // Type = OPEN (1)
+        msg.extend_from_slice(&[0, 0]); // length, patched below
         msg.push(BGP_MSG_OPEN);
-
-        // Version (4)
-        msg.push(4);
-
-        // My AS (16-bit)
+        msg.push(4); // version
         msg.extend_from_slice(&my_as.to_be_bytes());
-
-        // Hold Time
         msg.extend_from_slice(&hold_time.to_be_bytes());
-
-        // BGP Identifier (Router ID)
         msg.extend_from_slice(&router_id);
+        msg.push(params.len() as u8);
+        msg.extend_from_slice(&params);
 
-        // Optional Parameters Length (0 for simplicity)
-        msg.push(0);
-
-        // Update length field
         let msg_len = msg.len() as u16;
         msg[16..18].copy_from_slice(&msg_len.to_be_bytes());
-
         msg
     }
 
-    /// Helper to build a BGP KEEPALIVE message
     fn build_bgp_keepalive() -> Vec<u8> {
         let mut msg = Vec::new();
-
-        // Marker
         msg.extend_from_slice(&BGP_MARKER);
-
-        // Length (19 bytes for KEEPALIVE)
         msg.extend_from_slice(&19u16.to_be_bytes());
-
-        // Type = KEEPALIVE (4)
         msg.push(BGP_MSG_KEEPALIVE);
-
         msg
     }
 
-    /// Helper to build a BGP NOTIFICATION message
     fn build_bgp_notification(error_code: u8, error_subcode: u8, data: &[u8]) -> Vec<u8> {
         let mut msg = Vec::new();
-
-        // Marker
         msg.extend_from_slice(&BGP_MARKER);
-
-        // Length placeholder
         msg.extend_from_slice(&[0, 0]);
-
-        // Type = NOTIFICATION (3)
         msg.push(BGP_MSG_NOTIFICATION);
-
-        // Error Code
         msg.push(error_code);
-
-        // Error Subcode
         msg.push(error_subcode);
-
-        // Data
         msg.extend_from_slice(data);
-
-        // Update length field
         let msg_len = msg.len() as u16;
         msg[16..18].copy_from_slice(&msg_len.to_be_bytes());
-
         msg
     }
 
-    /// Helper to read a BGP message from stream
-    async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
-        // Read marker (16 bytes)
-        let mut marker = [0u8; 16];
-        stream.read_exact(&mut marker).await?;
+    /// Announce 192.0.2.0/24 via 198.51.100.1 from AS 65000, two-octet AS_PATH.
+    fn build_bgp_update_announcing_test_net() -> Vec<u8> {
+        #[rustfmt::skip]
+        let body: Vec<u8> = vec![
+            0x00, 0x00,                               // Withdrawn Routes Length
+            0x00, 0x12,                               // Total Path Attribute Length = 18
+            0x40, 0x01, 0x01, 0x00,                   // ORIGIN IGP
+            0x40, 0x02, 0x04, 0x02, 0x01, 0xFD, 0xE8, // AS_PATH AS_SEQUENCE [65000]
+            0x40, 0x03, 0x04, 198, 51, 100, 1,        // NEXT_HOP 198.51.100.1
+            0x18, 192, 0, 2,                          // NLRI 192.0.2.0/24
+        ];
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&BGP_MARKER);
+        msg.extend_from_slice(&((19 + body.len()) as u16).to_be_bytes());
+        msg.push(BGP_MSG_UPDATE);
+        msg.extend_from_slice(&body);
+        msg
+    }
 
-        // Verify marker
-        if marker != BGP_MARKER {
+    /// Read one framed BGP message, returning `(type, whole message including header)`.
+    async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
+        let mut header = [0u8; 19];
+        stream.read_exact(&mut header).await?;
+        if header[..16] != BGP_MARKER {
             return Err("Invalid BGP marker".into());
         }
-
-        // Read length (2 bytes)
-        let mut length_bytes = [0u8; 2];
-        stream.read_exact(&mut length_bytes).await?;
-        let length = u16::from_be_bytes(length_bytes);
-
-        // Verify minimum length
-        if length < 19 {
-            return Err(format!("BGP message too short: {}", length).into());
+        let length = u16::from_be_bytes([header[16], header[17]]) as usize;
+        if !(19..=4096).contains(&length) {
+            return Err(format!("BGP message length {length} out of range").into());
         }
-
-        // Read message type
-        let mut msg_type = [0u8; 1];
-        stream.read_exact(&mut msg_type).await?;
-
-        // Read remaining message body
-        let body_len = (length - 19) as usize;
-        let mut body = vec![0u8; body_len];
-        if body_len > 0 {
-            stream.read_exact(&mut body).await?;
+        let mut full = vec![0u8; length];
+        full[..19].copy_from_slice(&header);
+        if length > 19 {
+            stream.read_exact(&mut full[19..]).await?;
         }
-
-        Ok((msg_type[0], body))
+        Ok((header[18], full))
     }
 
-    /// Helper to parse BGP OPEN message body
-    fn parse_bgp_open(body: &[u8]) -> E2EResult<(u8, u16, u16, [u8; 4])> {
-        if body.len() < 9 {
-            return Err("OPEN message body too short".into());
-        }
-
-        let version = body[0];
-        let my_as = u16::from_be_bytes([body[1], body[2]]);
-        let hold_time = u16::from_be_bytes([body[3], body[4]]);
-        let router_id = [body[5], body[6], body[7], body[8]];
-
-        Ok((version, my_as, hold_time, router_id))
+    /// Startup mock shared by every test here.
+    fn startup_actions() -> serde_json::Value {
+        serde_json::json!([{
+            "type": "open_server",
+            "port": 0,
+            "base_stack": "BGP",
+            "instruction": "BGP router AS 65001, router ID 192.168.1.1",
+            "startup_params": { "as_number": 65001, "router_id": "192.168.1.1" }
+        }])
     }
 
+    /// The whole point of the protocol: a peer establishes a session and receives routes.
+    ///
+    /// Also pins the two session steps that were missing before. NetGet now sends a KEEPALIVE
+    /// straight after its OPEN, which RFC 4271 section 8.2.2 requires to reach OpenConfirm and
+    /// which a peer that waits for it before sending its own would otherwise deadlock on. And
+    /// reaching Established raises `bgp_established`, the event a handler answers with routes.
     #[tokio::test]
-    async fn test_bgp_peering_establishment() -> E2EResult<()> {
-        println!("\n=== Test: BGP Peering Establishment ===");
-
+    async fn test_bgp_session_establishes_and_delivers_routes() -> E2EResult<()> {
         let prompt = "listen on port 0 via bgp. You are AS 65001 with router ID 192.168.1.1. \
-             When you receive an OPEN message from a peer, validate it and respond with your own OPEN message. \
-             After receiving a KEEPALIVE, send a KEEPALIVE back to complete the peering. \
-             Transition to Established state.";
+             Peer with anyone and advertise 10.0.0.0/24 once the session is up.";
 
         let config = NetGetConfig::new(prompt).with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("bgp")
+            mock.on_instruction_containing("bgp")
                 .and_instruction_containing("AS 65001")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 65001, router ID 192.168.1.1"
-                    }
-                ]))
+                .respond_with_actions(startup_actions())
                 .expect_calls(1)
                 .and()
-                // Mock 2: OPEN message received (bgp_open_received event)
                 .on_event("bgp_open")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65001,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.1"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65001,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_established")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_update",
+                    "nlri": ["10.0.0.0/24"],
+                    "next_hop": "192.168.1.1",
+                    "as_path": [65001],
+                    "origin": "IGP"
+                }]))
                 .expect_calls(1)
                 .and()
         });
 
-        let mut server = start_netget_server(config).await?;
-
-        // Wait a bit for server to be ready
+        let server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Connect to BGP server
-        println!("  [TEST] Connecting to BGP server on port {}", server.port);
         let mut client = timeout(
             Duration::from_secs(5),
             TcpStream::connect(format!("127.0.0.1:{}", server.port)),
         )
         .await??;
 
-        // Send OPEN message from client (AS 65000, router ID 192.168.1.100)
-        println!("  [TEST] Sending OPEN message to server");
-        let open_msg = build_bgp_open(65000, 180, [192, 168, 1, 100]);
-        client.write_all(&open_msg).await?;
+        // Peer speaks four-octet AS, so NetGet must answer in kind and may use four-octet
+        // ASNs in AS_PATH.
+        client
+            .write_all(&build_bgp_open(65000, 180, [192, 168, 1, 100], Some(65000)))
+            .await?;
         client.flush().await?;
 
-        // Read server's OPEN response
-        println!("  [TEST] Reading OPEN response from server");
-        let (msg_type, body) =
-            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
+        // 1. The server's OPEN, fully determined: AS 65001, hold 180, id 192.168.1.1, plus the
+        //    four-octet AS capability NetGet always advertises.
+        let (msg_type, open) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_OPEN, "expected OPEN, got type {msg_type}");
 
-        assert_eq!(
-            msg_type, BGP_MSG_OPEN,
-            "Expected OPEN message, got type {}",
-            msg_type
-        );
+        #[rustfmt::skip]
+        let expected_open: Vec<u8> = [
+            BGP_MARKER.as_slice(),
+            &[
+                0x00, 0x25,             // length 37
+                0x01,                   // OPEN
+                0x04,                   // version 4
+                0xFD, 0xE9,             // My Autonomous System = 65001
+                0x00, 0xB4,             // Hold Time = 180
+                192, 168, 1, 1,         // BGP Identifier
+                0x08,                   // Optional Parameters Length
+                0x02, 0x06,             // Capabilities parameter, length 6
+                0x41, 0x04,             // four-octet AS capability
+                0x00, 0x00, 0xFD, 0xE9, // AS 65001
+            ],
+        ]
+        .concat();
+        assert_eq!(open, expected_open, "server OPEN does not match RFC 4271");
 
-        // Parse OPEN message
-        let (version, peer_as, hold_time, router_id) = parse_bgp_open(&body)?;
-        println!(
-            "  [TEST] Received OPEN: version={}, AS={}, hold_time={}, router_id={}.{}.{}.{}",
-            version, peer_as, hold_time, router_id[0], router_id[1], router_id[2], router_id[3]
-        );
-
-        assert_eq!(version, 4, "BGP version should be 4");
-        assert_eq!(peer_as, 65001, "Peer AS should be 65001");
-        assert!(hold_time > 0, "Hold time should be greater than 0");
-
-        // Send KEEPALIVE to acknowledge OPEN
-        println!("  [TEST] Sending KEEPALIVE to acknowledge OPEN");
-        let keepalive_msg = build_bgp_keepalive();
-        client.write_all(&keepalive_msg).await?;
-        client.flush().await?;
-
-        // Read server's KEEPALIVE response
-        println!("  [TEST] Reading KEEPALIVE response from server");
-        let (msg_type, _body) =
-            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
-
+        // 2. The KEEPALIVE that completes our side of the OPEN exchange. Reading it here is the
+        //    assertion: before this change nothing was sent until the peer spoke again.
+        let (msg_type, keepalive) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
         assert_eq!(
             msg_type, BGP_MSG_KEEPALIVE,
-            "Expected KEEPALIVE message, got type {}",
-            msg_type
+            "RFC 4271 8.2.2 requires a KEEPALIVE right after our OPEN, got type {msg_type}"
         );
-        println!("  [TEST] ✓ BGP peering established successfully");
+        assert_eq!(keepalive.len(), 19);
 
-        // Verify mock expectations were met
-        server.verify_mocks().await?;
-
-        server.stop().await?;
-        println!("  [TEST] ✓ Test completed successfully\n");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_bgp_notification_on_error() -> E2EResult<()> {
-        println!("\n=== Test: BGP NOTIFICATION on Error ===");
-
-        let prompt = "listen on port 0 via bgp. You are AS 65001. \
-             If you receive an invalid OPEN message (e.g., wrong version), \
-             send a NOTIFICATION message with error code 2 (OPEN Message Error), subcode 1 (Unsupported Version Number).";
-
-        let config = NetGetConfig::new(prompt).with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("bgp")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 65001"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Invalid OPEN received (bgp_open_received event)
-                // LLM may choose to send NOTIFICATION or accept the invalid version
-                .on_event("bgp_open")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_notification",
-                        "error_code": 2,
-                        "error_subcode": 1,
-                        "data": ""
-                    }
-                ]))
-                .expect_at_most(1) // May or may not be called depending on validation
-                .and()
-        });
-
-        let mut server = start_netget_server(config).await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        println!("  [TEST] Connecting to BGP server");
-        let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
-
-        // Send OPEN message with wrong version (version 3 instead of 4)
-        println!("  [TEST] Sending OPEN with invalid version");
-        let mut open_msg = build_bgp_open(65000, 180, [192, 168, 1, 100]);
-        open_msg[19] = 3; // Change version from 4 to 3
-
-        client.write_all(&open_msg).await?;
+        // 3. Our KEEPALIVE takes the session to Established, which raises bgp_established.
+        client.write_all(&build_bgp_keepalive()).await?;
         client.flush().await?;
 
-        // Read response - should be NOTIFICATION
-        println!("  [TEST] Reading response from server");
-        let read_result = timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await;
-
-        match read_result {
-            Ok(Ok((msg_type, body))) => {
-                // Server may send NOTIFICATION or its own OPEN - both are acceptable
-                if msg_type == BGP_MSG_NOTIFICATION {
-                    println!("  [TEST] ✓ Received NOTIFICATION message");
-                    if body.len() >= 2 {
-                        let error_code = body[0];
-                        let error_subcode = body[1];
-                        println!(
-                            "  [TEST]   Error code: {}, subcode: {}",
-                            error_code, error_subcode
-                        );
-                    }
-                } else if msg_type == BGP_MSG_OPEN {
-                    println!("  [TEST] ✓ Received OPEN message (LLM may choose to accept invalid version)");
-                } else {
-                    println!("  [TEST] ! Received unexpected message type: {}", msg_type);
-                }
-            }
-            Ok(Err(e)) => {
-                println!(
-                    "  [TEST] ✓ Connection closed (acceptable error handling): {}",
-                    e
-                );
-            }
-            Err(_) => {
-                println!("  [TEST] ✓ Timeout (acceptable - connection may have been closed)");
-            }
-        }
-
-        // Verify mock expectations were met
-        server.verify_mocks().await?;
-
-        server.stop().await?;
-        println!("  [TEST] ✓ Test completed successfully\n");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
-        println!("\n=== Test: BGP KEEPALIVE Exchange ===");
-
-        let prompt = "listen on port 0 via bgp. You are AS 65001. \
-             Establish BGP peering normally. After peering is established, \
-             respond to KEEPALIVE messages with KEEPALIVE messages.";
-
-        let config = NetGetConfig::new(prompt).with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("bgp")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 65001"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: OPEN received - respond with OPEN
-                .on_event("bgp_open")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65001,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.1"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let mut server = start_netget_server(config).await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        println!("  [TEST] Connecting and establishing BGP peering");
-        let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
-
-        // Send OPEN
-        let open_msg = build_bgp_open(65000, 180, [192, 168, 1, 100]);
-        client.write_all(&open_msg).await?;
-        client.flush().await?;
-
-        // Read server's OPEN
-        let (_msg_type, _body) =
-            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
-
-        // Send KEEPALIVE
-        let keepalive_msg = build_bgp_keepalive();
-        client.write_all(&keepalive_msg).await?;
-        client.flush().await?;
-
-        // Read server's KEEPALIVE
-        let (msg_type, _body) =
-            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
-
+        // 4. Routes arrive. Every field is fixed by the mocked action, so this is an exact
+        //    comparison against bytes derived from RFC 4271 section 4.3.
+        let (msg_type, update) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
         assert_eq!(
-            msg_type, BGP_MSG_KEEPALIVE,
-            "Expected KEEPALIVE after peering"
+            msg_type, BGP_MSG_UPDATE,
+            "expected the advertised routes as an UPDATE, got type {msg_type}"
         );
-        println!("  [TEST] ✓ Peering established");
 
-        // Now send another KEEPALIVE
-        println!("  [TEST] Sending additional KEEPALIVE");
-        client.write_all(&keepalive_msg).await?;
-        client.flush().await?;
+        #[rustfmt::skip]
+        let expected_update: Vec<u8> = [
+            BGP_MARKER.as_slice(),
+            &[
+                0x00, 0x2F,             // length 47
+                0x02,                   // UPDATE
+                0x00, 0x00,             // Withdrawn Routes Length = 0
+                0x00, 0x14,             // Total Path Attribute Length = 20
+                0x40, 0x01, 0x01, 0x00, // ORIGIN IGP
+                // AS_PATH: four-octet, because the peer advertised the capability
+                0x40, 0x02, 0x06, 0x02, 0x01, 0x00, 0x00, 0xFD, 0xE9,
+                0x40, 0x03, 0x04, 192, 168, 1, 1, // NEXT_HOP
+                0x18, 10, 0, 0,         // NLRI 10.0.0.0/24, length in bits
+            ],
+        ]
+        .concat();
+        assert_eq!(update, expected_update, "advertised route is malformed");
 
-        // Server should respond with KEEPALIVE (or no response is also acceptable)
-        let read_result = timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await;
-
-        match read_result {
-            Ok(Ok((msg_type, _))) => {
-                if msg_type == BGP_MSG_KEEPALIVE {
-                    println!("  [TEST] ✓ Received KEEPALIVE response");
-                } else {
-                    println!("  [TEST] ✓ Received message type: {}", msg_type);
-                }
-            }
-            _ => {
-                println!("  [TEST] ✓ No immediate response (acceptable for KEEPALIVE)");
-            }
-        }
-
-        // Verify mock expectations were met
         server.verify_mocks().await?;
-
         server.stop().await?;
-        println!("  [TEST] ✓ Test completed successfully\n");
-
         Ok(())
     }
 
+    /// A peer without the four-octet AS capability must be sent a two-octet AS_PATH (RFC 6793).
+    /// Getting this wrong earns NOTIFICATION 3/11 from a real router, and the encoder cannot
+    /// know it from the action alone — only the session knows what was negotiated.
     #[tokio::test]
-    async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
-        println!("\n=== Test: BGP Graceful Shutdown ===");
-
-        let prompt = "listen on port 0 via bgp. You are AS 65001. \
-             Establish BGP peering normally. If you receive a NOTIFICATION with error code 6 (Cease), \
-             acknowledge it by closing the connection gracefully.";
+    async fn test_bgp_two_octet_peer_gets_two_octet_as_path() -> E2EResult<()> {
+        let prompt = "listen on port 0 via bgp. You are AS 65001 with router ID 192.168.1.1. \
+             Peer with legacy routers.";
 
         let config = NetGetConfig::new(prompt).with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("bgp")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 65001"
-                    }
-                ]))
+            mock.on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(startup_actions())
                 .expect_calls(1)
                 .and()
-                // Mock 2: OPEN received - respond with OPEN
                 .on_event("bgp_open")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65001,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.1"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65001,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_established")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_update",
+                    "nlri": ["10.0.0.0/24"],
+                    "next_hop": "192.168.1.1",
+                    "as_path": [65001],
+                    "origin": "IGP"
+                }]))
                 .expect_calls(1)
                 .and()
         });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        println!("  [TEST] Establishing BGP peering");
         let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
-
-        // Establish peering
-        let open_msg = build_bgp_open(65000, 180, [192, 168, 1, 100]);
-        client.write_all(&open_msg).await?;
+        // No capabilities at all: a two-octet-only speaker.
+        client
+            .write_all(&build_bgp_open(65000, 180, [192, 168, 1, 100], None))
+            .await?;
         client.flush().await?;
 
-        let (_msg_type, _body) =
-            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
+        let (msg_type, _) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_OPEN);
+        let (msg_type, _) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_KEEPALIVE);
 
-        let keepalive_msg = build_bgp_keepalive();
-        client.write_all(&keepalive_msg).await?;
+        client.write_all(&build_bgp_keepalive()).await?;
         client.flush().await?;
 
-        let (_msg_type, _body) =
-            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
+        let (msg_type, update) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_UPDATE);
 
-        println!("  [TEST] ✓ Peering established");
+        #[rustfmt::skip]
+        let expected_update: Vec<u8> = [
+            BGP_MARKER.as_slice(),
+            &[
+                0x00, 0x2D,             // length 45: two octets shorter than the asn4 form
+                0x02,
+                0x00, 0x00,
+                0x00, 0x12,             // Total Path Attribute Length = 18
+                0x40, 0x01, 0x01, 0x00, // ORIGIN IGP
+                0x40, 0x02, 0x04, 0x02, 0x01, 0xFD, 0xE9, // AS_PATH, TWO-octet 65001
+                0x40, 0x03, 0x04, 192, 168, 1, 1,
+                0x18, 10, 0, 0,
+            ],
+        ]
+        .concat();
+        assert_eq!(
+            update, expected_update,
+            "a peer without the four-octet AS capability was sent four-octet ASNs"
+        );
 
-        // Send NOTIFICATION (Cease)
-        println!("  [TEST] Sending NOTIFICATION (Cease) to gracefully shut down");
-        let notification_msg = build_bgp_notification(6, 0, &[]);
-        client.write_all(&notification_msg).await?;
+        server.verify_mocks().await?;
+        server.stop().await?;
+        Ok(())
+    }
+
+    /// An OPEN NetGet cannot accept is refused in Rust, before the model is consulted.
+    ///
+    /// The old behaviour asked the model what to do about a version-3 OPEN and accepted every
+    /// outcome, including sending it an OPEN back. Protocol validity is not a policy question.
+    #[tokio::test]
+    async fn test_bgp_invalid_open_is_refused_without_consulting_the_model() -> E2EResult<()> {
+        let prompt = "listen on port 0 via bgp. You are AS 65001 with router ID 192.168.1.1.";
+
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(startup_actions())
+                .expect_calls(1)
+                .and()
+                // If this fires at all, an invalid OPEN reached the model.
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65001,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
+                .expect_at_most(0)
+                .and()
+        });
+
+        let server = start_netget_server(config).await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+        let mut open = build_bgp_open(65000, 180, [192, 168, 1, 100], None);
+        open[19] = 3; // version 3
+        client.write_all(&open).await?;
         client.flush().await?;
 
-        // Server should close the connection or send NOTIFICATION back
-        let read_result = timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await;
+        let (msg_type, msg) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(
+            msg_type, BGP_MSG_NOTIFICATION,
+            "a version-3 OPEN must earn a NOTIFICATION, got type {msg_type}"
+        );
+        // RFC 4271 section 6.2: OPEN Message Error / Unsupported Version Number.
+        assert_eq!(
+            (msg[19], msg[20]),
+            (2, 1),
+            "expected NOTIFICATION 2/1, got {}/{}",
+            msg[19],
+            msg[20]
+        );
 
-        match read_result {
-            Ok(Ok((BGP_MSG_NOTIFICATION, _))) => {
-                println!("  [TEST] ✓ Server acknowledged with NOTIFICATION");
-            }
-            Ok(Err(_)) | Err(_) => {
-                println!("  [TEST] ✓ Connection closed gracefully");
-            }
-            Ok(Ok((msg_type, _))) => {
-                println!("  [TEST] ! Received unexpected message type: {}", msg_type);
+        // And the session ends rather than lingering.
+        let mut scratch = [0u8; 1];
+        let closed = timeout(Duration::from_secs(10), client.read(&mut scratch)).await;
+        assert!(
+            matches!(closed, Ok(Ok(0))),
+            "connection should close after NOTIFICATION, got {closed:?}"
+        );
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+        Ok(())
+    }
+
+    /// The model's refusal to peer is honoured, and is structurally distinct from silence:
+    /// a NOTIFICATION goes out and no OPEN ever does.
+    #[tokio::test]
+    async fn test_bgp_model_can_refuse_to_peer() -> E2EResult<()> {
+        let prompt = "listen on port 0 via bgp. You are AS 65001 with router ID 192.168.1.1. \
+             Refuse to peer with AS 65000.";
+
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(startup_actions())
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_open")
+                .and_event_data_contains("peer_as", "65000")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_notification",
+                    "error_code": 6,
+                    "error_subcode": 5
+                }]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let server = start_netget_server(config).await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+        client
+            .write_all(&build_bgp_open(65000, 180, [192, 168, 1, 100], None))
+            .await?;
+        client.flush().await?;
+
+        let (msg_type, msg) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(
+            msg_type, BGP_MSG_NOTIFICATION,
+            "refusal must be a NOTIFICATION, not an OPEN, got type {msg_type}"
+        );
+        // Cease / Connection Rejected.
+        assert_eq!((msg[19], msg[20]), (6, 5));
+        assert_eq!(msg.len(), 21, "no diagnostic data was requested");
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+        Ok(())
+    }
+
+    /// Keepalives go out on their own at hold/3, and a peer that stops talking is dropped.
+    ///
+    /// Both were absent: nothing was ever sent unless the peer spoke first, so a peer waiting
+    /// for keepalives would time NetGet out, and a peer that went silent held the socket
+    /// forever. A hold time of 3 seconds is the RFC 4271 minimum, which puts keepalives at one
+    /// second and expiry at three, so this runs in a few seconds rather than three minutes.
+    #[tokio::test]
+    async fn test_bgp_keepalive_cadence_and_hold_timer_expiry() -> E2EResult<()> {
+        let prompt = "listen on port 0 via bgp. You are AS 65001 with router ID 192.168.1.1.";
+
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(startup_actions())
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65001,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_established")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let server = start_netget_server(config).await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+        // Propose the minimum hold time; the negotiated value is min(180, 3) = 3.
+        client
+            .write_all(&build_bgp_open(65000, 3, [192, 168, 1, 100], None))
+            .await?;
+        client.flush().await?;
+
+        let (msg_type, open) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_OPEN);
+        // The Hold Time field carries our *proposal*, which the handler set to 180. RFC 4271
+        // section 4.2 does not ask a speaker to pre-negotiate it; both sides independently take
+        // the minimum. So the observable proof of negotiation is not this field but the timing
+        // below: the session must run on 3 seconds, not 180.
+        assert_eq!(u16::from_be_bytes([open[22], open[23]]), 180);
+
+        let (msg_type, _) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_KEEPALIVE);
+
+        client.write_all(&build_bgp_keepalive()).await?;
+        client.flush().await?;
+
+        // Now go silent. Expect unsolicited keepalives, then the hold timer to fire. The peer
+        // sent nothing after its own KEEPALIVE, so expiry is due about three seconds later.
+        let mut unsolicited_keepalives = 0;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "hold timer never fired after {unsolicited_keepalives} keepalives"
+            );
+            let (msg_type, msg) = timeout(remaining, read_bgp_message(&mut client)).await??;
+            match msg_type {
+                BGP_MSG_KEEPALIVE => unsolicited_keepalives += 1,
+                BGP_MSG_NOTIFICATION => {
+                    // RFC 4271 section 6.5: Hold Timer Expired, subcode 0.
+                    assert_eq!(
+                        (msg[19], msg[20]),
+                        (4, 0),
+                        "expected NOTIFICATION 4/0, got {}/{}",
+                        msg[19],
+                        msg[20]
+                    );
+                    assert!(
+                        unsolicited_keepalives >= 1,
+                        "no keepalive was sent before the hold timer fired; the cadence is missing"
+                    );
+                    break;
+                }
+                other => panic!("unexpected message type {other} while idle"),
             }
         }
 
-        // Verify mock expectations were met
         server.verify_mocks().await?;
-
         server.stop().await?;
-        println!("  [TEST] ✓ Test completed successfully\n");
+        Ok(())
+    }
 
+    /// A peer's UPDATE is decoded into named fields before it reaches the model.
+    ///
+    /// The body used to be handed over as `hex::encode(body)`, which no model can act on. The
+    /// mock matches on `nlri`, so this test fails if the event data regresses to a blob.
+    #[tokio::test]
+    async fn test_bgp_peer_update_is_decoded_into_structured_event() -> E2EResult<()> {
+        let prompt = "listen on port 0 via bgp. You are AS 65001 with router ID 192.168.1.1. \
+             Peer and log the routes you learn.";
+
+        let config = NetGetConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(startup_actions())
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65001,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_established")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
+                .expect_calls(1)
+                .and()
+                // Matching on the decoded prefix, next hop and AS path: if any of the three is
+                // missing or wrong this rule never fires and verify_mocks fails.
+                .on_event("bgp_update")
+                .and_event_data_contains("nlri", "192.0.2.0/24")
+                .and_event_data_contains("next_hop", "198.51.100.1")
+                .and_event_data_contains("as_path", "65000")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let server = start_netget_server(config).await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+        client
+            .write_all(&build_bgp_open(65000, 180, [192, 168, 1, 100], None))
+            .await?;
+        client.flush().await?;
+
+        let (msg_type, _) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_OPEN);
+        let (msg_type, _) = timeout(LLM_TIMEOUT, read_bgp_message(&mut client)).await??;
+        assert_eq!(msg_type, BGP_MSG_KEEPALIVE);
+
+        client.write_all(&build_bgp_keepalive()).await?;
+        client.flush().await?;
+        client
+            .write_all(&build_bgp_update_announcing_test_net())
+            .await?;
+        client.flush().await?;
+
+        // Then shut the session down cleanly. RFC 4271 forbids answering a NOTIFICATION, so
+        // the correct observable outcome is the socket closing with nothing written back.
+        client.write_all(&build_bgp_notification(6, 2, &[])).await?;
+        client.flush().await?;
+
+        let mut scratch = [0u8; 1];
+        let closed = timeout(Duration::from_secs(30), client.read(&mut scratch)).await;
+        assert!(
+            matches!(closed, Ok(Ok(0))),
+            "a NOTIFICATION must close the session without a reply, got {closed:?}"
+        );
+
+        server.verify_mocks().await?;
+        server.stop().await?;
         Ok(())
     }
 }
