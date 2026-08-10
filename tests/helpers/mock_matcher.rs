@@ -154,10 +154,26 @@ impl EventTypeMatcher {
 
 impl MockMatcher for EventTypeMatcher {
     fn matches(&self, context: &LlmContext) -> bool {
+        // `"*"` is a catch-all for any network event.
+        //
+        // It used to be compared literally, so a rule written as `.on_event("*")` matched
+        // nothing at all. That reads as a deliberate catch-all and silently was not one --
+        // the rule never fired, and a test relying on it asserted nothing about the event
+        // path. Same shape as the other "cannot fail" tests found this week, except here it
+        // was the harness itself.
+        //
+        // Note it matches only when an event is present: a user-input turn carries
+        // `event_type: None` and must not be swallowed by an event rule.
+        if self.event_type == "*" {
+            return context.event_type.is_some();
+        }
         context.event_type.as_ref() == Some(&self.event_type)
     }
 
     fn describe(&self) -> String {
+        if self.event_type == "*" {
+            return "event_type=* (any network event)".to_string();
+        }
         format!("event_type={}", self.event_type)
     }
 }
