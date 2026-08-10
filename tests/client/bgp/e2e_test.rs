@@ -1,390 +1,230 @@
-//! E2E tests for BGP client
+//! E2E tests for the BGP client
 //!
-//! These tests verify BGP client functionality by spawning the actual NetGet binary
-//! and testing client behavior as a black-box.
-//! Test strategy: Use netget binary to start BGP server + client, < 10 LLM calls total.
+//! A mocked NetGet **server** speaks BGP to a mocked NetGet **client** over a real socket.
+//! Every assertion is an event that only fires if bytes crossed the wire and parsed:
+//!
+//! * the server's `bgp_open` fires only if the client's OPEN arrived and decoded;
+//! * the client's `bgp_connected` fires only if the server's OPEN *and* KEEPALIVE arrived and
+//!   the session reached Established;
+//! * the client's `bgp_update_received` with `nlri` matching fires only if the server's UPDATE
+//!   arrived and was decoded into structured fields.
+//!
+//! ## What these replace
+//!
+//! The previous three tests could not pass and could not fail for a useful reason:
+//!
+//! 1. Every rule mocked `bgp_open_received` and `bgp_keepalive_received`. Neither event has
+//!    ever existed on the rewritten BGP server, whose events are `bgp_open`,
+//!    `bgp_established`, `bgp_update` and `bgp_notification`. No rule matched.
+//! 2. The client rules answered `bgp_connected` with `send_bgp_open`, which is a *server*
+//!    action. The BGP client cannot execute it, so `mock_action_names` panics while the test
+//!    is being configured.
+//! 3. Every assertion was `output_contains("BGP")` — satisfied by a log line saying the
+//!    connection had failed.
 
 #[cfg(all(test, feature = "bgp"))]
 mod bgp_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
 
-    /// Test BGP client connection to BGP server
-    /// LLM calls: 2 (server startup, client connection)
+    /// Full session, then routes: the server advertises 10.0.0.0/24 once the peer is up and the
+    /// client must decode it into structured fields.
+    ///
+    /// LLM calls: 6 (server startup + bgp_open + bgp_established, client startup +
+    /// bgp_connected + bgp_update_received).
     #[tokio::test]
-    async fn test_bgp_client_connect_to_server() -> E2EResult<()> {
-        // Start a BGP server on port 179 (or available port)
+    async fn test_bgp_client_establishes_session_and_receives_routes() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Start BGP server on port {AVAILABLE_PORT} with AS 65000 and router ID 192.168.1.1. Accept connections and respond to OPEN messages."
+            "Start BGP server on port {AVAILABLE_PORT} with AS 65000 and router ID 192.168.1.1. \
+             Advertise 10.0.0.0/24 to any peer that comes up.",
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("Start BGP server")
+            mock.on_instruction_containing("Start BGP server")
                 .and_instruction_containing("AS 65000")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 65000, router ID 192.168.1.1"
-                    }
-                ]))
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BGP",
+                    "instruction": "BGP router AS 65000, advertise 10.0.0.0/24 once established",
+                    "startup_params": { "as_number": 65000, "router_id": "192.168.1.1" }
+                }]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: OPEN received from client - respond with OPEN
-                .on_event("bgp_open_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65000,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.1"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
+                // Fires only when the client's OPEN arrived and parsed. Accepting the peer
+                // sends our OPEN back.
+                .on_event("bgp_open")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65000,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: KEEPALIVE from client - respond with KEEPALIVE
-                .on_event("bgp_keepalive_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_keepalive"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_at_most(1)  // Client may or may not send KEEPALIVE in this test
+                // Fires only when the client's KEEPALIVE arrived, i.e. the session is up.
+                .on_event("bgp_established")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_update",
+                    "nlri": ["10.0.0.0/24"],
+                    "next_hop": "192.168.1.1",
+                    "as_path": [65000],
+                    "origin": "IGP"
+                }]))
+                .expect_calls(1)
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        // Give server time to start
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Start a BGP client that connects to this server
+        let remote = format!("127.0.0.1:{}", server.port);
         let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via BGP with AS 65001 and router ID 192.168.1.100. Establish BGP session.",
-            server.port
+            "Connect to {remote} via BGP with AS 65001 and router ID 192.168.1.100. \
+             Establish the session and report any routes the peer announces."
         ))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup (user command)
-                .on_instruction_containing("Connect to")
+        .with_mock(move |mock| {
+            mock.on_instruction_containing("Connect to")
                 .and_instruction_containing("BGP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": format!("127.0.0.1:{}", server.port),
-                        "protocol": "BGP",
-                        "instruction": "Establish BGP session with AS 65001",
-                        "startup_params": {
-                            "local_as": 65001,
-                            "router_id": "192.168.1.100",
-                            "hold_time": 180
-                        }
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_client",
+                    "remote_addr": remote,
+                    "protocol": "BGP",
+                    "instruction": "Establish BGP session with AS 65001 and report routes",
+                    "startup_params": {
+                        "local_as": 65001,
+                        "router_id": "192.168.1.100",
+                        "hold_time": 180
                     }
-                ]))
+                }]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Connected - send OPEN
+                // Established: the peer's OPEN and KEEPALIVE both arrived.
                 .on_event("bgp_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65001,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.100"
-                    }
-                ]))
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: OPEN received from server
-                .on_event("bgp_open_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_at_most(1)  // May receive server's OPEN
+                // The assertion that matters: the UPDATE arrived and reached the handler as
+                // decoded fields. This used to be delivered as `update_data_hex`, so matching
+                // on `nlri` would have found nothing.
+                .on_event("bgp_update_received")
+                .and_event_data_contains("nlri", "10.0.0.0/24")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
+                .expect_calls(1)
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and establish session
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        // Verify client output shows connection
-        let output = client.get_output().await;
-        assert!(
-            client.output_contains("connected").await || client.output_contains("OPEN").await,
-            "Client should show BGP connection or OPEN message. Output: {:?}",
-            output
-        );
-
-        println!("✅ BGP client connected to server successfully");
-
-        // Verify mock expectations were met
-        server.verify_mocks().await?;
-        client.verify_mocks().await?;
-
-        // Cleanup
-        server.stop().await?;
-        client.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test BGP client session establishment
-    /// LLM calls: 3 (server startup, client connection, session handling)
-    #[tokio::test]
-    async fn test_bgp_client_session_establishment() -> E2EResult<()> {
-        // Start BGP server
-        let server_config = NetGetConfig::new(
-            "Start BGP server on port {AVAILABLE_PORT} with AS 65000 and router ID 192.168.1.1. Complete OPEN handshake."
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Start BGP server")
-                .and_instruction_containing("AS 65000")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 65000, router ID 192.168.1.1"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: OPEN received - respond with OPEN
-                .on_event("bgp_open_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65000,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.1"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: KEEPALIVE received - respond with KEEPALIVE
-                .on_event("bgp_keepalive_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_keepalive"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_at_most(1)
-                .and()
-        });
-
-        let mut server = start_netget_server(server_config).await?;
-
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        // Client connects and establishes session
-        let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via BGP. Establish session with AS 65001 and router ID 192.168.1.100. Wait for session to be established.",
-            server.port
-        ))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                .on_instruction_containing("Connect to")
-                .and_instruction_containing("BGP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": format!("127.0.0.1:{}", server.port),
-                        "protocol": "BGP",
-                        "instruction": "Establish BGP session with AS 65001",
-                        "startup_params": {
-                            "local_as": 65001,
-                            "router_id": "192.168.1.100"
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Connected - send OPEN
-                .on_event("bgp_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 65001,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.100"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: OPEN received - send KEEPALIVE
-                .on_event("bgp_open_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_keepalive"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: KEEPALIVE received from server
-                .on_event("bgp_keepalive_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_at_most(1)
-                .and()
-        });
-
-        let mut client = start_netget_client(client_config).await?;
-
-        // Wait for session establishment (OPEN + KEEPALIVE exchange)
+        // OPEN -> OPEN -> KEEPALIVE -> KEEPALIVE -> UPDATE, with an LLM round trip at three of
+        // those steps.
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Verify protocol
         assert_eq!(client.protocol, "BGP", "Client should be BGP protocol");
 
-        // Verify output shows session activity
-        let output = client.get_output().await;
-        assert!(
-            client.output_contains("BGP").await,
-            "Client should show BGP activity. Output: {:?}",
-            output
-        );
+        println!("✅ BGP client established a session and decoded the peer's routes");
 
-        println!("✅ BGP client session established");
-
-        // Verify mock expectations were met
         server.verify_mocks().await?;
-        client.verify_mocks().await?;
-
-        // Cleanup
         server.stop().await?;
+
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
     }
 
-    /// Test BGP client with custom AS and router ID
-    /// LLM calls: 2 (server startup, client with params)
+    /// A 32-bit ASN survives the OPEN.
+    ///
+    /// This is the regression test for the defect the server half had fixed and the client
+    /// still carried: `local_as as u16` turned AS 4200000000 into AS 60416 — a different,
+    /// entirely valid-looking ASN, with no four-octet-AS capability and no diagnostic. The
+    /// server's `bgp_open` event reports `peer_as` from the peer's capability, so this rule
+    /// matches only if the real ASN travelled; against the old client it would have seen
+    /// 60416 and the rule would never fire.
+    ///
+    /// LLM calls: 5 (server startup + bgp_open + bgp_established, client startup +
+    /// bgp_connected).
     #[tokio::test]
-    async fn test_bgp_client_custom_params() -> E2EResult<()> {
-        // Start BGP server
+    async fn test_bgp_client_sends_four_octet_asn() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Start BGP server on port {AVAILABLE_PORT} with AS 64512. Accept BGP connections.",
+            "Start BGP server on port {AVAILABLE_PORT} with AS 65000 and router ID 192.168.1.1. \
+             Peer with four-octet AS neighbours.",
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Start BGP server")
-                .and_instruction_containing("AS 64512")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BGP",
-                        "instruction": "BGP router AS 64512"
-                    }
-                ]))
+            mock.on_instruction_containing("Start BGP server")
+                .and_instruction_containing("AS 65000")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "BGP",
+                    "instruction": "BGP router AS 65000, accept four-octet AS peers",
+                    "startup_params": { "as_number": 65000, "router_id": "192.168.1.1" }
+                }]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: OPEN received - respond with OPEN
-                .on_event("bgp_open_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 64512,
-                        "hold_time": 180,
-                        "router_id": "192.168.1.1"
-                    },
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_at_most(1)
+                // 4200000000 truncated to 16 bits is 60416, so this never matches a client
+                // that puts `local_as as u16` on the wire.
+                .on_event("bgp_open")
+                .and_event_data_contains("peer_as", "4200000000")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "send_bgp_open",
+                    "my_as": 65000,
+                    "hold_time": 180,
+                    "router_id": "192.168.1.1"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("bgp_established")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
+                .expect_calls(1)
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client with custom AS and router ID
+        let remote = format!("127.0.0.1:{}", server.port);
         let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via BGP. Use AS 64513 and router ID 10.0.0.1.",
-            server.port
+            "Connect to {remote} via BGP using four-octet AS 4200000000 and router ID 10.0.0.1."
         ))
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Client startup
-                .on_instruction_containing("Connect to")
+        .with_mock(move |mock| {
+            mock.on_instruction_containing("Connect to")
                 .and_instruction_containing("BGP")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": format!("127.0.0.1:{}", server.port),
-                        "protocol": "BGP",
-                        "instruction": "Connect with AS 64513",
-                        "startup_params": {
-                            "local_as": 64513,
-                            "router_id": "10.0.0.1",
-                            "hold_time": 120
-                        }
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_client",
+                    "remote_addr": remote,
+                    "protocol": "BGP",
+                    "instruction": "Peer as AS 4200000000",
+                    "startup_params": {
+                        "local_as": 4200000000u32,
+                        "router_id": "10.0.0.1",
+                        "hold_time": 180
                     }
-                ]))
+                }]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Connected - send OPEN with custom params
+                // The session still reaches Established, so the AS_TRANS substitution in the
+                // two-octet field is accepted rather than merely tolerated.
                 .on_event("bgp_connected")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_open",
-                        "my_as": 64513,
-                        "hold_time": 120,
-                        "router_id": "10.0.0.1"
-                    }
-                ]))
+                .and_event_data_contains("peer_supports_four_octet_as", "true")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
                 .expect_calls(1)
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
-        // Verify connection
-        assert!(
-            client.output_contains("BGP").await || client.output_contains("connected").await,
-            "Client should show BGP connection with custom params"
-        );
+        assert_eq!(client.protocol, "BGP", "Client should be BGP protocol");
 
-        println!("✅ BGP client with custom AS/router ID");
+        println!("✅ BGP client advertised its real 32-bit ASN");
 
-        // Verify mock expectations were met
         server.verify_mocks().await?;
-        client.verify_mocks().await?;
-
-        // Cleanup
         server.stop().await?;
+
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

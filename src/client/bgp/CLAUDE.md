@@ -1,268 +1,107 @@
 # BGP Client Implementation
 
-## Overview
+BGP-4 (RFC 4271) monitoring client. It establishes a session with a peer and reports what the
+peer says; it maintains no RIB and announces no routes.
 
-This BGP client connects to BGP peers to query routing information in passive monitoring mode. It implements RFC 4271 (
-Border Gateway Protocol 4) for session establishment and message exchange, but focuses on querying and monitoring rather
-than active route announcement.
+**Status**: `Experimental`. **Port**: connects to TCP 179 by convention; no privilege needed.
+**Stack**: `ETH>IP>TCP>BGP`.
+**Spec**: [RFC 4271](https://datatracker.ietf.org/doc/html/rfc4271),
+[RFC 6793](https://datatracker.ietf.org/doc/html/rfc6793) (four-octet AS).
 
-## Library Choices
+## Wire format: shared with the server, not reimplemented
 
-- **Manual Protocol Implementation**: BGP wire protocol is implemented manually for full LLM control
-- **No External BGP Library**: Uses raw TCP sockets with custom message encoding/decoding
-- **Standard Library Only**: Relies on Tokio for async I/O, no specialized BGP crates needed
+Every byte is encoded and decoded by **`src/server/bgp/wire.rs`**, which wraps
+`netgauze-bgp-pkt`. Both halves live behind the same `bgp` Cargo feature, so `use
+crate::server::bgp::wire` needs no additional gating and there is no second copy to keep in
+sync. Read that module's header comment for why netgauze rather than a hand-rolled codec, and
+for why KEEPALIVE and NOTIFICATION are deliberately hand-encoded there.
 
-### Why Manual Implementation?
+This client used to hand-roll its own encoder and decoder, and it still carried the defects the
+server half had already had fixed:
 
-The BGP client uses a manual implementation rather than an existing BGP library because:
+| Was | Now |
+|---|---|
+| `&header_buf[0..16] != &BGP_MARKER` — sliced before any length check | `wire::parse_header` takes a `[u8; 19]`, so the bound is in the type; it also rejects a length outside `[19, 4096]` and below the per-type minimum *before* a body buffer is allocated |
+| `local_as as u16` — AS 4200000000 became AS 60416, a different valid-looking ASN, with no capability and no diagnostic | `wire::build_open` puts AS_TRANS (23456) in the two-octet field and the real ASN in capability 65 (RFC 6793) |
+| Peer ASN read from the two-octet field only, so a four-octet peer was recorded as AS 23456 | `open.my_asn4()` — the capability value when the peer sent one |
+| AS_PATH always decoded as two-octet | The negotiated `peer_asn4` is threaded into `wire::decode` |
+| UPDATE delivered to the model as `update_data_hex` | `wire::update_to_json` — `nlri`, `withdrawn_routes`, `origin`, `next_hop`, `as_path`, `path_attributes`, `end_of_rib` |
+| Established declared as soon as *we* sent a KEEPALIVE | Established on the peer's KEEPALIVE, per RFC 4271 §8.2.2 |
+| No keepalive cadence: one was sent only in reply to one | A ticker at `ceil(hold/3)` seconds, started at Established and aborted when the read loop ends |
+| `send_notification` defaulted a missing `error_code` to 6 (Cease) | The parameter is required and range-checked; a malformed action is a failed action, not an invented teardown |
+| `disconnect` closed the socket while its own description promised a Cease NOTIFICATION | Sends NOTIFICATION 6/2 (Administrative Shutdown), then closes — `ClientActionResult::Multiple`, which the executor used to log and discard |
+| The LLM call held the `ClientData` mutex across the await, and the success arm reacquired it | Memory is copied out and the guard dropped before the call |
 
-1. **LLM Control**: Full control over message construction and FSM state transitions
-2. **Query Mode**: Only needs OPEN, KEEPALIVE, UPDATE, and NOTIFICATION handling
-3. **Simplicity**: BGP message format is straightforward (fixed header + variable body)
-4. **Learning**: Peer routing information without implementing full routing table (RIB)
+That last one is a latent deadlock rather than a live one: `call_llm_for_client` hardcodes
+`memory_updates: None` (`src/llm/action_helper.rs`), so the reacquiring arm is unreachable
+today. It would deadlock the read loop the moment client memory updates are implemented.
 
-## Architecture
+## Session
 
-### Connection Model
-
-The BGP client follows a standard TCP-based connection model:
-
-```
-User → open_client → TCP connection → BGP OPEN → BGP session established
-                                          ↓
-                                    LLM Integration
-```
-
-### BGP Session States
-
-The client implements a simplified BGP FSM (Finite State Machine):
-
-1. **Connect**: TCP connection established
-2. **OpenSent**: Sent BGP OPEN message
-3. **OpenConfirm**: Received peer's OPEN, sent KEEPALIVE
-4. **Established**: Session established, can exchange UPDATEs
-
-### Message Flow
-
-```
-Client                           Peer
-  |                               |
-  |--- TCP SYN ------------------>|
-  |<-- TCP SYN-ACK ---------------|
-  |--- TCP ACK ------------------>|
-  |                               |
-  |--- BGP OPEN ----------------->|  (local_as, router_id, hold_time)
-  |<-- BGP OPEN ------------------|  (peer_as, peer_router_id, hold_time)
-  |--- BGP KEEPALIVE ------------>|
-  |<-- BGP KEEPALIVE -------------|
-  |                               |
-  |<-- BGP UPDATE ----------------|  (routing updates)
-  |<-- BGP UPDATE ----------------|
-  |<-- BGP KEEPALIVE -------------|
-  |--- BGP KEEPALIVE ------------>|
-  |                               |
-  |--- BGP NOTIFICATION --------->|  (disconnect)
-  |<-- TCP FIN -------------------|
+```text
+TCP connect  -> our OPEN                     -> OpenSent
+peer OPEN    -> validate, negotiate, KEEPALIVE -> OpenConfirm
+peer KEEPALIVE                                -> Established -> bgp_connected
+peer UPDATE                                   -> bgp_update_received
+peer NOTIFICATION                             -> bgp_notification_received, close (never answered)
 ```
 
-### LLM Integration
+### Negotiation
 
-The client uses a state machine to prevent concurrent LLM calls:
+- **Hold time**: `min(ours, theirs)`; zero on either side disables both timers. Keepalives go
+  at `ceil(hold/3)` seconds, minimum one.
+- **Four-octet AS**: the capability is always advertised with the real ASN. The peer's real
+  ASN comes from *its* capability when present, and the peer's support decides how AS_PATH in
+  an inbound UPDATE is decoded.
 
-- **Idle**: No LLM processing, ready to handle events
-- **Processing**: LLM is analyzing an event
-- **Accumulating**: LLM is busy, queuing events
+Protocol validity is decided in Rust and never delegated to the model: AS 0, a hold time
+between 1 and 2 seconds, a bad version and an invalid BGP Identifier all earn a NOTIFICATION
+without a model call.
 
-Events trigger LLM calls:
+## Events and actions
 
-- `bgp_connected` - Peer session established (after OPEN handshake)
-- `bgp_update_received` - Route announcement/withdrawal received
-- `bgp_notification_received` - Error notification received
+| Event | Fires | Reply path |
+|---|---|---|
+| `bgp_connected` | session reached Established | `wait_for_more`, `send_keepalive`, `send_notification`, `disconnect` — all reach the socket |
+| `bgp_update_received` | peer announced or withdrew routes | none: this client cannot answer an UPDATE, and returned actions are logged as discarded rather than silently dropped |
+| `bgp_notification_received` | peer is tearing down | none; RFC 4271 forbids answering a NOTIFICATION |
 
-The LLM can respond with actions:
+`get_async_actions` and `get_sync_actions` return the same list. That is not laziness:
+`call_llm_for_client` builds the model's tool list from **`get_async_actions` alone**, so an
+action declared only in `get_sync_actions` is never offered and, because the client path
+advertises no common actions either, is rejected as unknown if the model returns it anyway.
+`wait_for_more` was in exactly that position.
 
-- `send_keepalive` - Send KEEPALIVE message
-- `send_notification` - Send NOTIFICATION and close
-- `disconnect` - Gracefully close connection
-- `wait_for_more` - Wait for more messages
+## Startup parameters
 
-### Connection State Management
+| Name | Default | Validation |
+|---|---|---|
+| `local_as` | 65000 | 1-4294967295; 0 rejected. Above 65535 travels in the four-octet-AS capability |
+| `router_id` | 192.168.1.100 | IPv4 dotted quad, not 0.0.0.0 |
+| `hold_time` | 180 | 0 (timers off) or >= 3, at most 65535 |
 
-Per-client state tracked:
-
-```rust
-struct ClientData {
-    state: ConnectionState,        // Idle/Processing/Accumulating
-    bgp_state: BgpState,            // Connect/OpenSent/OpenConfirm/Established
-    queued_data: Vec<u8>,           // Queued events during Processing
-    memory: String,                 // LLM conversation memory
-    peer_as: Option<u32>,           // Peer AS number
-    peer_router_id: Option<String>, // Peer router ID
-    hold_time: u16,                 // Negotiated hold time
-}
-```
-
-### Read Loop
-
-The read loop handles incoming BGP messages:
-
-1. Read BGP header (19 bytes): marker (16) + length (2) + type (1)
-2. Validate marker (all 0xFF)
-3. Parse message type (OPEN, KEEPALIVE, UPDATE, NOTIFICATION)
-4. Read message body (length - 19 bytes)
-5. Handle message based on type
-6. Call LLM with appropriate event
-7. Execute LLM-generated actions
-
-### Logging
-
-Dual logging strategy:
-
-- **Tracing macros**: `info!()`, `debug!()`, `trace!()`, `error!()` → `netget.log`
-- **Status channel**: `status_tx.send()` → TUI display
-
-Log levels:
-
-- `ERROR`: Protocol violations, connection errors
-- `INFO`: Session establishment, state transitions
-- `DEBUG`: KEEPALIVE messages, state changes
-- `TRACE`: Raw message types, byte counts
-
-## BGP Message Format
-
-All BGP messages use a common header:
-
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                                                               |
-+                         Marker (16 bytes)                     +
-|                          (all ones)                           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          Length               |      Type     |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-### OPEN Message
-
-Sent immediately after TCP connection:
-
-```
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| Version (4) | My AS (16-bit) | Hold Time  |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          BGP Identifier (Router ID)       |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| Opt Param Len (0) |
-+-+-+-+-+-+-+-+-+-+-+
-```
-
-### KEEPALIVE Message
-
-Just the header, no body (19 bytes total).
-
-### UPDATE Message
-
-Contains withdrawn routes, path attributes, and NLRI (Network Layer Reachability Information). The client receives these
-but does not parse them fully - it passes the hex-encoded data to the LLM for analysis.
-
-### NOTIFICATION Message
-
-Contains error code and subcode:
-
-```
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| Error Code | Error Subcode  |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          Data (variable)    |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-## Startup Parameters
-
-The client accepts these startup parameters:
-
-- `local_as` (integer, optional): Local AS number (default: 65000, private ASN)
-- `router_id` (string, optional): BGP router ID in IPv4 format (default: "192.168.1.100")
-- `hold_time` (integer, optional): BGP hold time in seconds (default: 180)
-
-Example:
-
-```json
-{
-  "local_as": 65001,
-  "router_id": "192.168.1.50",
-  "hold_time": 120
-}
-```
-
-## Use Cases
-
-This BGP client is designed for:
-
-1. **Route Monitoring**: Query peer for advertised routes
-2. **AS Path Analysis**: Analyze routing paths through UPDATE messages
-3. **BGP Debugging**: Test BGP peer behavior
-4. **Route Learning**: Passive learning of routing information
-5. **Network Reconnaissance**: Discover network topology via BGP
-
-**NOT designed for:**
-
-- Active route announcement (use BGP server for that)
-- Full routing table (RIB) maintenance
-- Route propagation to other peers
-- Production BGP peering
+All three are validated before the TCP connect, so a bad value fails the `open_client` with a
+message naming the parameter rather than becoming a different valid-looking value on the wire.
 
 ## Limitations
 
-1. **No RIB**: Client does not maintain a Routing Information Base
-2. **No Route Filtering**: Accepts all UPDATE messages from peer
-3. **No BGP Extensions**: No support for capabilities negotiation, route refresh, etc.
-4. **Simplified FSM**: Only 4 states (full BGP FSM has 6)
-5. **16-bit AS Numbers**: AS numbers truncated to 16-bit (no 32-bit ASN support)
-6. **No Authentication**: No MD5 or TCP-AO authentication support
-7. **Query Mode Only**: Passive monitoring, not active routing
-
-## Security Considerations
-
-- **Privileged Port**: BGP uses port 179, may require elevated privileges to bind (client typically connects, not binds)
-- **AS Number Spoofing**: Client can use fake AS number for monitoring (use private ASNs 64512-65534)
-- **Route Injection**: This client does not announce routes, only receives them
-- **Denial of Service**: No protection against malicious UPDATE flooding
-
-## Error Handling
-
-BGP errors are handled via NOTIFICATION messages:
-
-- **Protocol Violations**: Invalid marker, bad message length, unsupported version
-- **Connection Errors**: Unexpected EOF, read/write failures
-- **FSM Errors**: Messages received in wrong state
-
-All errors result in connection termination and client status update to `Error(message)`.
-
-## Performance
-
-- **Memory**: Minimal, no route storage
-- **CPU**: Low, simple message parsing
-- **Network**: Depends on peer's UPDATE frequency
-- **LLM Calls**: 1 call per event (OPEN, UPDATE, NOTIFICATION)
+1. **No RIB** and no route announcement — use the BGP server for that.
+2. **No hold-timer enforcement.** Keepalives are *sent* at the negotiated cadence, but a peer
+   that goes silent is only noticed when TCP notices. The server half enforces this; adding it
+   here needs a shutdown `Notify` so the ticker can interrupt a blocked `read_exact`.
+3. **No route filtering**: every UPDATE is reported.
+4. **Route refresh** is not advertised and an inbound ROUTE-REFRESH is ignored (there is no RIB
+   to re-advertise from). Graceful restart and add-path are not implemented.
+5. **MP-BGP** (RFC 4760) parses — netgauze handles it — but MP_REACH/MP_UNREACH are reported by
+   attribute name only, not projected into a shape a model can reason about.
+6. **No authentication**: no TCP-MD5 or TCP-AO.
+7. **Never peered against a real daemon.** No `bgpd`/`bird`/`frr`/`gobgp` is installed on the
+   development machine; the E2E tests drive NetGet's own BGP server.
 
 ## Testing
 
-See `tests/client/bgp/CLAUDE.md` for testing strategy.
-
-## Future Enhancements
-
-Potential improvements (not currently implemented):
-
-1. **Route Parsing**: Parse UPDATE messages into prefix/AS path/attributes
-2. **BGP Capabilities**: Support capabilities negotiation
-3. **32-bit ASN**: Support 4-byte AS numbers
-4. **Route Refresh**: Request route table from peer
-5. **Graceful Restart**: Maintain routes during restart
-6. **BGP Authentication**: MD5 or TCP-AO support
-7. **Route Filtering**: Filter UPDATE messages by prefix/AS path
+`tests/client/bgp/` — see its CLAUDE.md. Two mocked E2E tests, both of which drive a mocked
+NetGet BGP server over a real socket.
 
 ## References
 

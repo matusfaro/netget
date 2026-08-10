@@ -12,10 +12,16 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 /// BGP client connected event
+///
+/// Fires when the session reaches Established, i.e. after the peer's OPEN *and* its KEEPALIVE
+/// have both been seen. It used to fire on the OPEN alone, which announced a session the peer
+/// had not yet confirmed.
 pub static BGP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_connected",
-        "BGP client successfully connected to BGP peer and completed OPEN handshake",
+        "BGP session with the peer reached Established (OPEN and KEEPALIVE both exchanged). \
+         This client announces no routes; reply with wait_for_more to keep monitoring, or \
+         send_notification to tear the session down.",
         json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
@@ -28,7 +34,9 @@ pub static BGP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "peer_as".to_string(),
             type_hint: "number".to_string(),
-            description: "Peer AS number".to_string(),
+            description: "Peer AS number. Taken from the peer's four-octet-AS capability when \
+                          it advertised one, so values above 65535 are reported truthfully."
+                .to_string(),
             required: true,
         },
         Parameter {
@@ -40,47 +48,106 @@ pub static BGP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "hold_time".to_string(),
             type_hint: "number".to_string(),
-            description: "Negotiated hold time in seconds".to_string(),
+            description: "Negotiated hold time in seconds (the smaller of the two proposals; \
+                          0 means both timers are disabled)"
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_supports_four_octet_as".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether the peer advertised RFC 6793 four-octet AS support".to_string(),
             required: true,
         },
     ])
+    .with_actions(bgp_client_response_actions())
 });
 
 /// BGP UPDATE message received event
+///
+/// The body is decoded field by field. It used to be delivered as `update_data_hex`, a raw hex
+/// blob no model can act on and which the root CLAUDE.md forbids in event data.
 pub static BGP_CLIENT_UPDATE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_update_received",
-        "BGP UPDATE message received from peer (route announcement or withdrawal)",
-        json!({"type": "send_keepalive"}),
+        "BGP UPDATE received from the peer, decoded into withdrawn_routes, nlri, origin, \
+         next_hop, as_path and the full path_attributes list. This client is a monitor and \
+         cannot answer an UPDATE on the wire; record what matters with set_memory or \
+         append_to_log.",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
-            name: "update_data_hex".to_string(),
-            type_hint: "string".to_string(),
-            description: "Raw UPDATE message data (as hex string)".to_string(),
+            name: "nlri".to_string(),
+            type_hint: "array".to_string(),
+            description: "Announced prefixes in CIDR form, e.g. [\"10.0.0.0/24\"]".to_string(),
             required: true,
         },
         Parameter {
-            name: "update_length".to_string(),
-            type_hint: "number".to_string(),
-            description: "Length of UPDATE message in bytes".to_string(),
+            name: "withdrawn_routes".to_string(),
+            type_hint: "array".to_string(),
+            description: "Withdrawn prefixes in CIDR form".to_string(),
             required: true,
         },
+        Parameter {
+            name: "next_hop".to_string(),
+            type_hint: "string".to_string(),
+            description: "NEXT_HOP attribute, or null when the UPDATE only withdraws".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "as_path".to_string(),
+            type_hint: "array".to_string(),
+            description: "AS_PATH as a list of AS numbers".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "origin".to_string(),
+            type_hint: "string".to_string(),
+            description: "ORIGIN attribute: IGP, EGP or Incomplete".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "path_attributes".to_string(),
+            type_hint: "array".to_string(),
+            description: "Every path attribute, each with its type_name and flags".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "end_of_rib".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "True when this is an End-of-RIB marker (RFC 4724)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_as".to_string(),
+            type_hint: "number".to_string(),
+            description: "AS number of the peer that sent this UPDATE".to_string(),
+            required: false,
+        },
     ])
+    .with_no_actions()
 });
 
 /// BGP NOTIFICATION message received event
 pub static BGP_CLIENT_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_notification_received",
-        "BGP NOTIFICATION message received from peer (error, connection will close)",
+        "BGP NOTIFICATION received from the peer. RFC 4271 forbids answering one, so the \
+         session closes regardless of what is returned and nothing is written to the socket.",
         json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
             name: "error_code".to_string(),
             type_hint: "number".to_string(),
-            description: "BGP error code".to_string(),
+            description: "BGP error code (RFC 4271 section 6)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "error_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Human-readable error name, e.g. \"OPEN Message Error\"".to_string(),
             required: true,
         },
         Parameter {
@@ -90,13 +157,91 @@ pub static BGP_CLIENT_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
             required: true,
         },
         Parameter {
-            name: "error_data_hex".to_string(),
+            name: "error_subcode_name".to_string(),
             type_hint: "string".to_string(),
-            description: "Error data (as hex string)".to_string(),
+            description: "Human-readable subcode name, e.g. \"Bad Peer AS\"".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "peer_as".to_string(),
+            type_hint: "number".to_string(),
+            description: "AS number of the peer, if its OPEN was seen".to_string(),
             required: false,
         },
     ])
+    .with_no_actions()
 });
+
+/// Everything a BGP client handler can answer a session event with.
+///
+/// One list, used for both the async and the sync set. `call_llm_for_client`
+/// (`src/llm/action_helper.rs`) builds the model's tool list from `get_async_actions` alone,
+/// so an action that lives only in `get_sync_actions` is never offered — which is what
+/// happened to `wait_for_more` here.
+fn bgp_client_response_actions() -> Vec<ActionDefinition> {
+    vec![
+        ActionDefinition {
+            name: "send_keepalive".to_string(),
+            description: "Send a BGP KEEPALIVE to the peer. Routine keepalives are already \
+                          sent automatically at a third of the negotiated hold time; use this \
+                          only to send an extra one."
+                .to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "send_keepalive"
+            }),
+            log_template: None,
+        },
+        ActionDefinition {
+            name: "send_notification".to_string(),
+            description: "Send a BGP NOTIFICATION. RFC 4271 requires the peer to close the \
+                          session on receipt, so this ends the peering."
+                .to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "error_code".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "BGP error code, 1-6 (1 Message Header, 2 OPEN, 3 UPDATE, \
+                                  4 Hold Timer Expired, 5 FSM, 6 Cease)"
+                        .to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "error_subcode".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "BGP error subcode (default 0 = unspecified)".to_string(),
+                    required: false,
+                },
+            ],
+            example: json!({
+                "type": "send_notification",
+                "error_code": 6,
+                "error_subcode": 2
+            }),
+            log_template: None,
+        },
+        ActionDefinition {
+            name: "disconnect".to_string(),
+            description: "Close the session gracefully: send NOTIFICATION 6/2 (Cease / \
+                          Administrative Shutdown), then close the TCP connection."
+                .to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "disconnect"
+            }),
+            log_template: None,
+        },
+        ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Do nothing and keep monitoring the session".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+            log_template: None,
+        },
+    ]
+}
 
 /// BGP client protocol action handler
 pub struct BgpClientProtocol;
@@ -107,76 +252,19 @@ impl BgpClientProtocol {
     }
 }
 
+impl Default for BgpClientProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Implement Protocol trait (common functionality)
 impl Protocol for BgpClientProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_keepalive".to_string(),
-                description: "Send BGP KEEPALIVE message to peer".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "send_keepalive"
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "send_notification".to_string(),
-                description: "Send BGP NOTIFICATION message and close connection".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "error_code".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "BGP error code (6 = Cease)".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "error_subcode".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "BGP error subcode".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "send_notification",
-                    "error_code": 6,
-                    "error_subcode": 0
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from BGP peer (sends NOTIFICATION with Cease)".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-                log_template: None,
-            },
-        ]
+        bgp_client_response_actions()
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_keepalive".to_string(),
-                description: "Send BGP KEEPALIVE message in response to received message"
-                    .to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "send_keepalive"
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more BGP messages before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-                log_template: None,
-            },
-        ]
+        bgp_client_response_actions()
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
@@ -233,10 +321,17 @@ impl Protocol for BgpClientProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::None)
-            .implementation("Manual BGP-4 query client (RFC 4271)")
+            .implementation(
+                "BGP-4 query client (RFC 4271, RFC 6793) over netgauze-bgp-pkt, \
+                             sharing src/server/bgp/wire.rs with the BGP server",
+            )
             .llm_control("Session establishment, route monitoring")
             .e2e_testing("NetGet BGP server")
-            .notes("Query mode only, no active route announcement, no RIB")
+            .notes(
+                "Query mode only, no active route announcement, no RIB. Four-octet ASNs \
+                    are advertised and parsed; the client sends keepalives at a third of the \
+                    negotiated hold time but does not enforce its own hold timer.",
+            )
             .build()
     }
     fn group_name(&self) -> &'static str {
@@ -331,61 +426,61 @@ impl Client for BgpClientProtocol {
             .await
         })
     }
+    /// Turn an action into bytes.
+    ///
+    /// Every message is built by [`crate::server::bgp::wire`], the same codec the BGP server
+    /// uses, rather than by assembling a marker and a length by hand here.
     fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        use crate::server::bgp::wire;
+
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_keepalive" => {
-                // Build BGP KEEPALIVE message
-                let mut msg = Vec::new();
-
-                // Marker (16 bytes of 0xFF)
-                msg.extend_from_slice(&[0xff; 16]);
-
-                // Length (19 bytes for KEEPALIVE)
-                msg.extend_from_slice(&19u16.to_be_bytes());
-
-                // Type = KEEPALIVE (4)
-                msg.push(4);
-
-                Ok(ClientActionResult::SendData(msg))
-            }
+            "send_keepalive" => Ok(ClientActionResult::SendData(wire::encode_keepalive())),
             "send_notification" => {
-                let error_code = action
+                // No default. A NOTIFICATION ends the session, and inventing a Cease for an
+                // action that forgot to say why would make an unusable answer look deliberate.
+                let error_code_raw = action
                     .get("error_code")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(6) as u8; // 6 = Cease
+                    .context("send_notification requires error_code (1-6, see RFC 4271 §6)")?;
+                let error_code = u8::try_from(error_code_raw)
+                    .ok()
+                    .filter(|c| (1..=6).contains(c))
+                    .with_context(|| {
+                        format!("send_notification error_code must be 1-6, got {error_code_raw}")
+                    })?;
 
-                let error_subcode = action
+                let error_subcode_raw = action
                     .get("error_subcode")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u8;
+                    .unwrap_or(0);
+                let error_subcode = u8::try_from(error_subcode_raw).with_context(|| {
+                    format!(
+                        "send_notification error_subcode must be 0-255, got {error_subcode_raw}"
+                    )
+                })?;
 
-                // Build BGP NOTIFICATION message
-                let mut msg = Vec::new();
-
-                // Marker
-                msg.extend_from_slice(&[0xff; 16]);
-
-                // Length placeholder
-                let msg_len = 19 + 2; // header + error_code + error_subcode
-                msg.extend_from_slice(&(msg_len as u16).to_be_bytes());
-
-                // Type = NOTIFICATION (3)
-                msg.push(3);
-
-                // Error Code
-                msg.push(error_code);
-
-                // Error Subcode
-                msg.push(error_subcode);
-
-                Ok(ClientActionResult::SendData(msg))
+                Ok(ClientActionResult::SendData(wire::encode_notification(
+                    error_code,
+                    error_subcode,
+                    &[],
+                )?))
             }
-            "disconnect" => Ok(ClientActionResult::Disconnect),
+            // RFC 4271 §6.7: a peer that is going away says so. Closing the socket without a
+            // NOTIFICATION leaves the peer to discover it from the TCP FIN. The description
+            // has always promised the Cease; only now is it actually sent.
+            "disconnect" => Ok(ClientActionResult::Multiple(vec![
+                ClientActionResult::SendData(wire::encode_notification(
+                    wire::ERR_CEASE,
+                    2, // Administrative Shutdown
+                    &[],
+                )?),
+                ClientActionResult::Disconnect,
+            ])),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!(
                 "Unknown BGP client action: {}",
