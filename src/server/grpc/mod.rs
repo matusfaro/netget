@@ -129,6 +129,66 @@ impl GrpcStatus {
     }
 }
 
+/// The gRPC status a failed handler call must be reported as.
+///
+/// `UNAVAILABLE` (14) when the failure was the LLM backend being saturated, `INTERNAL` (13)
+/// otherwise. The distinction is what gRPC client retry policies key on: `UNAVAILABLE` is in
+/// the default retryable set and is the code a `grpc-service-config` `retryableStatusCodes`
+/// list names, while `INTERNAL` is explicitly *not* retryable. Reporting a transient
+/// rate-limiter refusal as `INTERNAL` converts a backlog that clears in seconds into a hard
+/// application error for every caller.
+///
+/// Both are non-zero and both travel through `grpc_error_response`, which sends an empty body,
+/// so neither can be mistaken for the `grpc-status: 0` + encoded message a success carries.
+///
+/// `pub` so `tests/` can exercise the classification directly — the project forbids
+/// `#[cfg(test)]` modules in `src/`, and driving the rate limiter to refusal through a spawned
+/// binary needs bounds the E2E harness cannot set.
+#[cfg(feature = "grpc")]
+pub fn grpc_status_for_llm_failure(err: &anyhow::Error) -> GrpcStatus {
+    if crate::llm::is_overload_error(err) {
+        GrpcStatus::Unavailable
+    } else {
+        GrpcStatus::Internal
+    }
+}
+
+/// Reduce a status message to the visible-ASCII subset `grpc-message` can carry.
+///
+/// `HeaderValue` accepts only visible ASCII, and these messages come from LLM output and
+/// `anyhow` chains — netget's own LLM errors begin with a literal `✗`, and multi-line `anyhow`
+/// context chains are routine. Substitution rather than rejection: a mangled character is a far
+/// better outcome than a discarded explanation, which is what the static fallback in
+/// `grpc_error_response` amounts to. Capped at 512 characters because a status message is a
+/// diagnostic, not a payload, and everything is ASCII by then so the cut cannot split a
+/// codepoint.
+#[cfg(feature = "grpc")]
+fn header_safe(message: &str) -> String {
+    let mut out = String::with_capacity(message.len().min(512));
+    let mut last_was_space = false;
+    for c in message.chars() {
+        let c = if (' '..='~').contains(&c) { c } else { ' ' };
+        if c == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+        if out.chars().count() >= 512 {
+            break;
+        }
+        out.push(c);
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        "internal error".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// A handler failure carrying the gRPC status it should be reported as.
 #[cfg(feature = "grpc")]
 struct GrpcFailure {
@@ -149,7 +209,11 @@ impl GrpcFailure {
 #[cfg(feature = "grpc")]
 impl From<anyhow::Error> for GrpcFailure {
     fn from(e: anyhow::Error) -> Self {
-        Self::new(GrpcStatus::Internal, e.to_string())
+        // Classify here too, not only at the explicit call site: `?` on an anyhow error is
+        // reachable from several places in this module and an overload must never be reported
+        // as a non-retryable INTERNAL just because it took the implicit path.
+        let status = grpc_status_for_llm_failure(&e);
+        Self::new(status, e.to_string())
     }
 }
 
@@ -689,7 +753,13 @@ impl DynamicGrpcService {
     ///   newline in a model's error text made `Builder::body` return `Err` and panicked the
     ///   connection task — skipping the connection cleanup that runs after `serve_connection`
     ///   and leaving the entry permanently `Active`.
+    ///
+    /// The message is now put through [`header_safe`] first, so the caller keeps the
+    /// explanation instead of the static fallback. That fallback had become the *common* case
+    /// rather than the last resort: netget's own LLM error strings begin with a literal `✗`, so
+    /// every backend failure reached the client with its reason replaced by "internal error".
     fn grpc_error_response(status: GrpcStatus, message: &str) -> Response<Full<Bytes>> {
+        let message = &header_safe(message);
         let mut res = Response::new(Full::new(Bytes::new()));
         *res.status_mut() = StatusCode::OK;
         let headers = res.headers_mut();
@@ -784,7 +854,12 @@ impl DynamicGrpcService {
             }),
         );
 
-        // Call LLM
+        // Call LLM.
+        //
+        // A failure here is answered, never swallowed: the caller gets a non-zero grpc-status
+        // with an empty body, which no client can confuse with the encoded response message a
+        // success carries. `UNAVAILABLE` when the backend was merely saturated so a retry
+        // policy can act on it, `INTERNAL` otherwise.
         let execution_result = call_llm(
             &self.llm_client,
             &self.app_state,
@@ -794,7 +869,20 @@ impl DynamicGrpcService {
             self.protocol.as_ref(),
         )
         .await
-        .context("LLM call failed")?;
+        .map_err(|e| {
+            let status = grpc_status_for_llm_failure(&e);
+            console_error!(
+                self.status_tx,
+                "gRPC {}/{} could not be answered: the handler failed ({}). Replying \
+                 grpc-status {} ({:?}); no response message is being invented.",
+                service_name,
+                method_name,
+                e,
+                status as i32,
+                status
+            );
+            GrpcFailure::new(status, format!("netget gRPC: handler unavailable: {}", e))
+        })?;
 
         // Process action results
         for protocol_result in execution_result.protocol_results {

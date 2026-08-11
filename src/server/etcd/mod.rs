@@ -110,6 +110,60 @@ const GRPC_RESOURCE_EXHAUSTED: i32 = 8;
 const GRPC_UNIMPLEMENTED: i32 = 12;
 #[cfg(feature = "etcd")]
 const GRPC_INTERNAL: i32 = 13;
+#[cfg(feature = "etcd")]
+const GRPC_UNAVAILABLE: i32 = 14;
+
+/// The gRPC status a failed handler call must be reported as.
+///
+/// `14 UNAVAILABLE` when the failure was the LLM backend being saturated, `13 INTERNAL`
+/// otherwise. The distinction is not cosmetic: `UNAVAILABLE` is in gRPC's default set of
+/// retryable codes and is what a `grpc-service-config` `retryableStatusCodes` list keys on,
+/// while `INTERNAL` is explicitly *not* retryable. Reporting a transient rate-limiter refusal
+/// as `INTERNAL` turns a backlog that would clear in seconds into a hard application error for
+/// every caller — and for etcd in particular, into a failed lock acquisition that no client
+/// will retry.
+///
+/// Neither code can be confused with success: both are non-zero, and `grpc_status_reply`
+/// carries no message body at all, so there is no shape here that an empty-but-OK Range
+/// response could be mistaken for.
+///
+/// `pub` so `tests/` can exercise the classification directly — the project forbids
+/// `#[cfg(test)]` modules in `src/`, and driving the rate limiter to refusal through a spawned
+/// binary needs bounds the E2E harness cannot set.
+#[cfg(feature = "etcd")]
+pub fn grpc_status_for_llm_failure(err: &anyhow::Error) -> i32 {
+    if crate::llm::is_overload_error(err) {
+        GRPC_UNAVAILABLE
+    } else {
+        GRPC_INTERNAL
+    }
+}
+
+/// Build the client-visible failure for a handler call that could not be made, logging it on
+/// both channels first. Never returns anything a client could read as an answer.
+#[cfg(feature = "etcd")]
+fn llm_failure(
+    status_tx: &mpsc::UnboundedSender<String>,
+    method: &str,
+    e: anyhow::Error,
+) -> GrpcFailure {
+    let status = grpc_status_for_llm_failure(&e);
+    let name = if status == GRPC_UNAVAILABLE {
+        "UNAVAILABLE"
+    } else {
+        "INTERNAL"
+    };
+    console_error!(
+        status_tx,
+        "etcd {} could not be answered: the handler failed ({}). Replying grpc-status {} \
+         ({}); no key-value data is being invented.",
+        method,
+        e,
+        status,
+        name
+    );
+    GrpcFailure::new(status, format!("netget etcd: handler unavailable: {}", e))
+}
 
 /// A failure to be reported to the client as a gRPC status rather than as a transport error.
 #[cfg(feature = "etcd")]
@@ -143,7 +197,11 @@ impl GrpcFailure {
 #[cfg(feature = "etcd")]
 impl From<anyhow::Error> for GrpcFailure {
     fn from(e: anyhow::Error) -> Self {
-        Self::new(GRPC_INTERNAL, e.to_string())
+        // Classify here too, not only at the explicit call sites: `?` on an anyhow error is
+        // reachable from several places in this module and an overload must never be reported
+        // as a non-retryable INTERNAL just because it took the implicit path.
+        let status = grpc_status_for_llm_failure(&e);
+        Self::new(status, e.to_string())
     }
 }
 
@@ -193,14 +251,55 @@ fn take_etcd_error(
     None
 }
 
+/// Reduce a status message to the visible-ASCII subset `grpc-message` can carry.
+///
+/// `HeaderValue` accepts only visible ASCII, and these messages come from LLM output and
+/// `anyhow` chains — netget's own LLM errors begin with a literal `✗`, and multi-line `anyhow`
+/// context chains are routine. Without this the reply fell back to a static `"internal error"`
+/// and the caller lost the reason entirely, which is how the fail-closed status came back
+/// carrying nothing an operator could act on.
+///
+/// Substitution rather than rejection: a mangled character is a far better outcome than a
+/// discarded explanation. Capped at 512 characters because a status message is a diagnostic,
+/// not a payload, and every character here is ASCII by then so the cut cannot split a
+/// codepoint.
+#[cfg(feature = "etcd")]
+fn header_safe(message: &str) -> String {
+    let mut out = String::with_capacity(message.len().min(512));
+    let mut last_was_space = false;
+    for c in message.chars() {
+        let c = if (' '..='~').contains(&c) { c } else { ' ' };
+        if c == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+        if out.chars().count() >= 512 {
+            break;
+        }
+        out.push(c);
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        "internal error".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Build a body-less gRPC reply carrying a status code.
 ///
 /// `HeaderValue::from_str` can fail: `message` originates in LLM output and `anyhow` chains,
 /// either of which may contain non-ASCII or control characters that are illegal in a header
-/// value. Falling back rather than unwrapping keeps a stray "✗" in a model's error message
-/// from panicking the connection task.
+/// value. It is put through [`header_safe`] first so the caller keeps the explanation, and the
+/// fallback below stays as a last resort rather than the common case — it used to be the common
+/// case, because netget's own LLM error strings start with `✗`.
 #[cfg(feature = "etcd")]
 fn grpc_status_reply(status: i32, message: &str) -> Response<Full<Bytes>> {
+    let message = &header_safe(message);
     let mut res = Response::new(Full::new(Bytes::new()));
     *res.status_mut() = StatusCode::OK;
     let headers = res.headers_mut();
@@ -544,7 +643,8 @@ impl EtcdServer {
             &event,
             protocol.as_ref(),
         )
-        .await?;
+        .await
+        .map_err(|e| llm_failure(&status_tx, "Range", e))?;
 
         if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
             return Err(failure);
@@ -652,7 +752,8 @@ impl EtcdServer {
             &event,
             protocol.as_ref(),
         )
-        .await?;
+        .await
+        .map_err(|e| llm_failure(&status_tx, "Put", e))?;
 
         // Display messages from LLM
         for message in &execution_result.messages {
@@ -750,7 +851,8 @@ impl EtcdServer {
             &event,
             protocol.as_ref(),
         )
-        .await?;
+        .await
+        .map_err(|e| llm_failure(&status_tx, "DeleteRange", e))?;
 
         // Display messages from LLM
         for message in &execution_result.messages {
@@ -873,7 +975,8 @@ impl EtcdServer {
             &event,
             protocol.as_ref(),
         )
-        .await?;
+        .await
+        .map_err(|e| llm_failure(&status_tx, "Txn", e))?;
 
         for message in &execution_result.messages {
             console_info!(status_tx, "{}", message);
