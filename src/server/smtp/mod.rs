@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::console_debug;
 #[cfg(feature = "smtp")]
@@ -249,13 +249,38 @@ impl SmtpSession {
                     }
                 }
                 Err(e) => {
-                    // Without this the peer just waits: nothing is written and the loop
-                    // silently goes back to reading.
+                    // Answer 451 rather than writing nothing. SMTP has a whole 4xx class
+                    // meaning "temporary, retry later" (RFC 5321 §4.2.1), which is exactly
+                    // what an unavailable backend is, and a client that gets one requeues the
+                    // message instead of blocking until its own timeout and then bouncing it.
+                    //
+                    // It also fails closed: a 4xx is never mistaken for acceptance, so an
+                    // outage cannot silently look like a delivered message.
                     error!(
                         "SMTP connection {} got no response for {:?}: {:#}",
                         connection_id, command, e
                     );
                     let _ = status_tx.send(format!("[ERROR] SMTP LLM error: {:#}", e));
+
+                    // 4.3.2 is "system not accepting network messages" (RFC 3463), which is
+                    // the truthful enhanced code for capacity exhaustion; 4.3.0 covers the
+                    // rest.
+                    let reply: &[u8] = if crate::llm::is_overload_error(&e) {
+                        warn!(
+                            "SMTP 451 on connection {}: LLM capacity exhausted",
+                            connection_id
+                        );
+                        b"451 4.3.2 Backend at capacity, try again later\r\n"
+                    } else {
+                        b"451 4.3.0 Temporary local error, try again later\r\n"
+                    };
+                    write_half.write_all(reply).await?;
+                    write_half.flush().await?;
+                    console_debug!(
+                        status_tx,
+                        "SMTP sent: {}",
+                        String::from_utf8_lossy(reply).trim()
+                    );
                 }
             }
         }
@@ -304,13 +329,36 @@ impl SmtpSession {
                 }
             }
             Err(e) => {
-                // Previously swallowed by `if let Ok(..)`. The peer gets no 220 banner and sits
-                // there until its own timeout, so at least say why in the log.
+                // No banner means no session. RFC 5321 §3.1 gives a server exactly this way
+                // to decline one: a 421 greeting, after which the connection closes. Writing
+                // nothing (the previous behaviour) left the peer waiting for a 220 until its
+                // own timeout, with no way to tell an overloaded server from a black hole.
                 error!(
-                    "SMTP greeting for connection {} failed, no banner sent: {:#}",
+                    "SMTP greeting for connection {} failed: {:#}",
                     connection_id, e
                 );
                 let _ = _status_tx.send(format!("[ERROR] SMTP greeting failed: {:#}", e));
+
+                let reply: &[u8] = if crate::llm::is_overload_error(&e) {
+                    warn!(
+                        "SMTP 421 on connection {}: LLM capacity exhausted",
+                        connection_id
+                    );
+                    b"421 4.3.2 Service not available, backend at capacity\r\n"
+                } else {
+                    b"421 4.3.0 Service not available, closing transmission channel\r\n"
+                };
+                stream.write_all(reply).await?;
+                stream.flush().await?;
+                let _ = _status_tx.send(format!(
+                    "→ SMTP {} to connection {}",
+                    String::from_utf8_lossy(reply).trim(),
+                    connection_id
+                ));
+
+                // Propagate so handle_session stops before the command loop: after a 421 the
+                // only thing the server may do is close.
+                anyhow::bail!("SMTP greeting unavailable: {e:#}");
             }
         }
 

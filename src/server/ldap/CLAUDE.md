@@ -128,6 +128,15 @@ its own timeout: bind defaults to invalidCredentials, search to an empty but suc
 set, and add/modify/delete to unwillingToPerform. A model that returns `close_connection` with
 no response closes the connection; one that returns nothing gets the default plus a WARN.
 
+**A model *failure* is answered differently from a model *silence*.** The defaults above all
+describe an outcome the directory chose, and the search default is a **success** — resultCode 0
+with no entries, which a client reads as "nothing matched". Returning one of those when the
+backend is unreachable misreports an outage as a decision. So when `call_llm` returns `Err`,
+`respond_via_llm` answers `unavailable` (52), or `busy` (51) when
+`crate::llm::is_overload_error` says the failure was capacity exhaustion, encoded under the
+response tag matching the request. Neither is ever a success. Covered by
+`tests/server/ldap/llm_failure_test.rs`.
+
 Bind success is now read structurally from the encoded BindResponse (`bind_succeeded`) rather
 than by scanning the byte stream for `0x61`, which any DN or diagnostic message containing that
 byte could fool.

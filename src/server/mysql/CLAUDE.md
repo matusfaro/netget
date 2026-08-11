@@ -58,8 +58,13 @@ back. Verified: `mysql_error_response` with 1146 arrives as
 ### Failure behavior
 
 - **No response action** → empty OK packet, logged at WARN.
-- **LLM call fails** → ERR packet `1105 netget: <error>`. (It used to send an
-  empty OK, which the client could not distinguish from success.)
+- **LLM call fails** → ERR packet `1105` / SQLSTATE `HY000`, message
+  `netget: <error>`. (It used to send an empty OK, which the client could not
+  distinguish from success.) When `crate::llm::is_overload_error` says the
+  failure was capacity exhaustion the code is `1205`
+  (`ER_LOCK_WAIT_TIMEOUT`, also `HY000`) instead — the code drivers already
+  treat as transient and safe to retry, rather than 1105's permanent server
+  fault. Covered by `tests/server/mysql/llm_failure_test.rs`.
 - **More than 4096 live prepared statements on one connection** →
   `ER_MAX_PREPARED_STMT_COUNT_REACHED`. The map is only pruned by
   `COM_STMT_CLOSE`, so without the cap a PREPARE loop would grow it unbounded.

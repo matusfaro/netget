@@ -469,15 +469,35 @@ impl MysqlHandler {
                 )
             }
             Err(e) => {
-                // Report the failure as a MySQL error instead of a silent empty OK, so the
-                // client sees something rather than an unexplained success.
-                error!("LLM error for MySQL query: {}", e);
-                results
-                    .error(
-                        ErrorKind::ER_UNKNOWN_ERROR,
-                        format!("netget: {}", e).as_bytes(),
+                // Report the failure as a MySQL ERR packet instead of a silent empty OK, so
+                // the client sees something rather than an unexplained success. The ERR packet
+                // carries the error number and the SQLSTATE that goes with it, which is what
+                // lets a driver classify the failure instead of guessing from a message.
+                //
+                // Overload gets 1205 (SQLSTATE HY000), the code every MySQL driver already
+                // treats as "transient, safe to retry", rather than 1105 which reads as a
+                // permanent server fault.
+                let overloaded = crate::llm::is_overload_error(&e);
+                error!(
+                    "LLM error for MySQL query on connection {} (overload={}): {}",
+                    self.connection_id, overloaded, e
+                );
+                let (kind, message) = if overloaded {
+                    warn!(
+                        "MySQL connection {}: LLM capacity exhausted, replying 1205",
+                        self.connection_id
+                    );
+                    (
+                        ErrorKind::ER_LOCK_WAIT_TIMEOUT,
+                        format!("netget: backend at capacity, retry: {}", e),
                     )
-                    .await
+                } else {
+                    (ErrorKind::ER_UNKNOWN_ERROR, format!("netget: {}", e))
+                };
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] MySQL replying with error: {}", message));
+                results.error(kind, message.as_bytes()).await
             }
         }
     }

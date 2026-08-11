@@ -53,7 +53,12 @@ Row handling, as implemented in `build_row_outcome`:
 
 - **No response action** → an empty result set for a statement starting with
   `SELECT`, otherwise the tag `OK`. Logged at WARN.
-- **LLM call fails** → `ERROR XX000 netget: <error>`.
+- **LLM call fails** → `ERROR XX000 netget: <error>`, or `ERROR 53300`
+  (`too_many_connections`, class 53 "insufficient resources") when
+  `crate::llm::is_overload_error` says the failure was capacity exhaustion.
+  Drivers classify 53300 as transient and XX000 as a fault, so an outage does
+  not read as a permanent error — and neither reads as success. Covered by
+  `tests/server/postgresql/llm_failure_test.rs`.
 - **Action result the handler does not recognise** → logged at WARN and skipped.
 
 ## The extended query protocol

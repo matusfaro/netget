@@ -285,12 +285,22 @@ impl LdapSession {
 
     /// Run one LLM round-trip for `event` and turn the result into a session step.
     ///
-    /// `default` is what the peer gets when the model fails or returns nothing usable - never
-    /// silence, because a client with no response simply hangs until its own timeout.
+    /// `default` is what the peer gets when the model returns nothing usable - never silence,
+    /// because a client with no response simply hangs until its own timeout.
+    ///
+    /// A model *failure* is answered differently, with `unavailable` (52) or `busy` (51) under
+    /// `response_tag`. The distinction matters: the per-operation defaults describe an outcome
+    /// the directory chose (invalidCredentials for a bind, an empty result set for a search),
+    /// and returning one of those for a backend outage would misreport an outage as a decision.
+    /// `unavailable` is the RFC 4511 code for "this server is not able to answer right now",
+    /// and unlike the search default it is never a success, so a failure can never be mistaken
+    /// for an empty-but-valid answer.
     async fn respond_via_llm(
         &mut self,
         event: crate::protocol::Event,
         default: Vec<u8>,
+        msg_id: i32,
+        response_tag: u8,
     ) -> SessionStep {
         let execution_result = match call_llm(
             &self.llm_client,
@@ -304,11 +314,34 @@ impl LdapSession {
         {
             Ok(result) => result,
             Err(e) => {
-                error!("LDAP LLM call failed: {}", e);
+                error!(
+                    "LDAP LLM call failed on connection {} (msg_id {}): {}",
+                    self.connection_id, msg_id, e
+                );
                 let _ = self
                     .status_tx
                     .send(format!("[ERROR] LDAP LLM call failed: {}", e));
-                return SessionStep::Respond(default);
+
+                // busy (51) says "retry shortly", unavailable (52) says "I am down".
+                let (code, diagnostic) = if crate::llm::is_overload_error(&e) {
+                    warn!(
+                        "LDAP busy on connection {}: LLM capacity exhausted",
+                        self.connection_id
+                    );
+                    (RESULT_BUSY, "Server busy, retry later")
+                } else {
+                    (RESULT_UNAVAILABLE, "Server unavailable")
+                };
+                let _ = self.status_tx.send(format!(
+                    "→ LDAP result {} ({}) for msg_id {}",
+                    code, diagnostic, msg_id
+                ));
+                return SessionStep::Respond(encode_ldap_result(
+                    msg_id,
+                    response_tag,
+                    code,
+                    diagnostic,
+                ));
             }
         };
 
@@ -394,7 +427,9 @@ impl LdapSession {
         // encoded bytes back out of the response, which is what this used to do.
         let default =
             encode_bind_response(msg_id, RESULT_INVALID_CREDENTIALS, "Invalid credentials");
-        let step = self.respond_via_llm(event, default).await;
+        let step = self
+            .respond_via_llm(event, default, msg_id, RESPONSE_BIND)
+            .await;
 
         if let SessionStep::Respond(ref response) | SessionStep::RespondAndClose(ref response) =
             step
@@ -491,7 +526,9 @@ impl LdapSession {
         // all hangs, and a failure code here would look like a directory error rather than an
         // empty search.
         let default = encode_search_done(msg_id, RESULT_SUCCESS, "");
-        Ok(self.respond_via_llm(event, default).await)
+        Ok(self
+            .respond_via_llm(event, default, msg_id, RESPONSE_SEARCH_DONE)
+            .await)
     }
 
     async fn handle_add_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
@@ -531,7 +568,9 @@ impl LdapSession {
             RESULT_UNWILLING_TO_PERFORM,
             "No response from server policy",
         );
-        Ok(self.respond_via_llm(event, default).await)
+        Ok(self
+            .respond_via_llm(event, default, msg_id, RESPONSE_ADD)
+            .await)
     }
 
     async fn handle_modify_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
@@ -594,7 +633,9 @@ impl LdapSession {
             RESULT_UNWILLING_TO_PERFORM,
             "No response from server policy",
         );
-        Ok(self.respond_via_llm(event, default).await)
+        Ok(self
+            .respond_via_llm(event, default, msg_id, RESPONSE_MODIFY)
+            .await)
     }
 
     async fn handle_delete_request(&mut self, msg_id: i32, data: &[u8]) -> Result<SessionStep> {
@@ -622,7 +663,9 @@ impl LdapSession {
             RESULT_UNWILLING_TO_PERFORM,
             "No response from server policy",
         );
-        Ok(self.respond_via_llm(event, default).await)
+        Ok(self
+            .respond_via_llm(event, default, msg_id, RESPONSE_DELETE)
+            .await)
     }
 
     async fn handle_unbind_request(&mut self) -> Result<SessionStep> {
@@ -741,6 +784,10 @@ const RESULT_SUCCESS: u8 = 0;
 const RESULT_PROTOCOL_ERROR: u8 = 2;
 #[cfg(feature = "ldap")]
 const RESULT_INVALID_CREDENTIALS: u8 = 49;
+#[cfg(feature = "ldap")]
+const RESULT_BUSY: u8 = 51;
+#[cfg(feature = "ldap")]
+const RESULT_UNAVAILABLE: u8 = 52;
 #[cfg(feature = "ldap")]
 const RESULT_UNWILLING_TO_PERFORM: u8 = 53;
 

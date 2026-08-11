@@ -35,6 +35,22 @@ async fn test_smtp_greeting() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // The greeting itself is an `smtp_command` event. This mock used to be missing,
+            // so the LLM call failed, the server wrote nothing, and the test's read timed out
+            // into the tolerant "Note: No greeting received" arm below - i.e. it passed while
+            // asserting nothing. The server now answers a failed greeting with 421, which made
+            // that hole visible. Mock the greeting so the test measures what it claims to.
+            .on_event("smtp_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_smtp_greeting",
+                    "hostname": "mail.example.com",
+                    "message": "ESMTP Service Ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
     });
 
     let server = helpers::start_netget_server(config).await?;
@@ -62,15 +78,11 @@ async fn test_smtp_greeting() -> E2EResult<()> {
             );
             println!("✓ SMTP greeting (220) verified");
         }
-        Ok(Ok(_)) => {
-            println!("Note: Connection closed without greeting");
-        }
-        Ok(Err(e)) => {
-            println!("Note: Read error: {}", e);
-        }
-        Err(_) => {
-            println!("Note: No greeting received (timeout)");
-        }
+        // These used to be tolerated with a printed note, which is how the greeting could go
+        // missing entirely without failing anything.
+        Ok(Ok(_)) => panic!("Connection closed without an SMTP greeting"),
+        Ok(Err(e)) => panic!("Read error while waiting for the SMTP greeting: {e}"),
+        Err(_) => panic!("No SMTP greeting within 10s"),
     }
 
     server.verify_mocks().await?;

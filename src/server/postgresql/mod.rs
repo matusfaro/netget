@@ -282,12 +282,38 @@ impl PostgresqlHandler {
         )
         .await
         .map_err(|e| {
-            error!("LLM error for PostgreSQL query: {}", e);
-            let _ = self.status_tx.send(format!("[ERROR] PostgreSQL: {}", e));
+            // An ErrorResponse carrying a SQLSTATE, not silence: a client that gets nothing
+            // back sits in its own read until it times out, and cannot tell an unavailable
+            // backend from a slow query.
+            //
+            // Overload is reported as 53300 (too_many_connections, class 53 "insufficient
+            // resources"), which drivers classify as transient; everything else stays XX000
+            // (internal_error). The two are deliberately distinguishable — an outage must not
+            // look like a permanent fault, and neither may look like success.
+            let overloaded = crate::llm::is_overload_error(&e);
+            error!(
+                "LLM error for PostgreSQL query on connection {} (overload={}): {}",
+                self.connection_id, overloaded, e
+            );
+            let (code, message) = if overloaded {
+                warn!(
+                    "PostgreSQL connection {}: LLM capacity exhausted, replying 53300",
+                    self.connection_id
+                );
+                (
+                    "53300",
+                    format!("netget: backend at capacity, retry: {}", e),
+                )
+            } else {
+                ("XX000", format!("netget: {}", e))
+            };
+            let _ = self
+                .status_tx
+                .send(format!("[ERROR] PostgreSQL {}: {}", code, message));
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_string(),
-                "XX000".to_string(),
-                format!("netget: {}", e),
+                code.to_string(),
+                message,
             )))
         })?;
 

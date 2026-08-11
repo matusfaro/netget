@@ -36,9 +36,22 @@ messages.
 
 ### Error Handling
 
-If the LLM call for a command fails, nothing is written and the peer waits until its own
-timeout. That is logged at ERROR on both the tracing and status channels rather than being
-swallowed, so the silence is at least explained in `netget.log`.
+A failed handler call is answered with a 4xx, never with silence and never with a 2xx. SMTP
+already has the vocabulary for "the backend is unavailable, come back later" (RFC 5321 §4.2.1),
+and a sending MTA that gets one requeues the message instead of bouncing it:
+
+| Failure | Reply | Then |
+|---|---|---|
+| greeting (`CONNECTION_ESTABLISHED`) | `421 4.3.0` (`4.3.2` on overload) | session closes, per RFC 5321 §3.1 |
+| any later command | `451 4.3.0` (`4.3.2` on overload) | session stays open |
+
+The enhanced code splits the two cases apart: 4.3.2 ("system not accepting network messages")
+is used when `crate::llm::is_overload_error` says the failure was capacity exhaustion, 4.3.0
+otherwise. Both are refusals — a failure must never be able to look like acceptance, or an
+outage would silently report mail as delivered.
+
+Both are still logged at ERROR on the tracing and status channels. Covered by
+`tests/server/smtp/llm_failure_test.rs`.
 
 ### Session Management
 
