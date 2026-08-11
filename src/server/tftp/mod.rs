@@ -15,7 +15,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::TftpProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
+use crate::{console_debug, console_error, console_trace};
 use actions::{
     TFTP_ACK_RECEIVED_EVENT, TFTP_DATA_BLOCK_EVENT, TFTP_READ_REQUEST_EVENT,
     TFTP_WRITE_REQUEST_EVENT,
@@ -437,17 +437,19 @@ impl TftpServer {
                 }
             }
             Err(e) => {
-                error!("TFTP LLM error for RRQ: {}", e);
-                let _ = status_tx.send(format!("[ERROR] TFTP LLM error: {}", e));
-
-                // Send ERROR packet
-                let error_packet = Self::build_error_packet(0, "Internal error");
-                let _ = transfer_socket.send_to(&error_packet, peer_addr).await;
-
-                transfers.lock().await.remove(&transfer_id);
-                app_state
-                    .close_connection_on_server(server_id, connection_id)
-                    .await;
+                Self::fail_transfer_on_llm_error(
+                    &transfer_socket,
+                    peer_addr,
+                    transfer_id,
+                    "read request",
+                    &e,
+                    server_id,
+                    connection_id,
+                    &app_state,
+                    &status_tx,
+                    &transfers,
+                )
+                .await;
             }
         }
 
@@ -584,11 +586,22 @@ impl TftpServer {
                                         }
                                     }
                                     Err(e) => {
-                                        error!("TFTP LLM error during transfer: {}", e);
-                                        transfers.lock().await.remove(&transfer_id);
-                                        app_state
-                                            .close_connection_on_server(server_id, connection_id)
-                                            .await;
+                                        // Mid-transfer failure: the client is waiting for
+                                        // the next DATA block, so it gets an ERROR packet
+                                        // instead of nothing.
+                                        Self::fail_transfer_on_llm_error(
+                                            &socket,
+                                            peer_addr,
+                                            transfer_id,
+                                            "read transfer",
+                                            &e,
+                                            server_id,
+                                            connection_id,
+                                            &app_state,
+                                            &status_tx,
+                                            &transfers,
+                                        )
+                                        .await;
                                     }
                                 }
                             }
@@ -858,16 +871,19 @@ impl TftpServer {
                 }
             }
             Err(e) => {
-                error!("TFTP LLM error for WRQ: {}", e);
-                let _ = status_tx.send(format!("[ERROR] TFTP LLM error: {}", e));
-
-                let error_packet = Self::build_error_packet(0, "Internal error");
-                let _ = transfer_socket.send_to(&error_packet, peer_addr).await;
-
-                transfers.lock().await.remove(&transfer_id);
-                app_state
-                    .close_connection_on_server(server_id, connection_id)
-                    .await;
+                Self::fail_transfer_on_llm_error(
+                    &transfer_socket,
+                    peer_addr,
+                    transfer_id,
+                    "write request",
+                    &e,
+                    server_id,
+                    connection_id,
+                    &app_state,
+                    &status_tx,
+                    &transfers,
+                )
+                .await;
             }
         }
 
@@ -1014,11 +1030,22 @@ impl TftpServer {
                             }
                         }
                         Err(e) => {
-                            error!("TFTP LLM error during write: {}", e);
-                            transfers.lock().await.remove(&transfer_id);
-                            app_state
-                                .close_connection_on_server(server_id, connection_id)
-                                .await;
+                            // The client is waiting for an ACK for the block it just
+                            // sent; answer with ERROR rather than leaving it to retransmit
+                            // into a socket nobody is reading any more.
+                            Self::fail_transfer_on_llm_error(
+                                &socket,
+                                peer_addr,
+                                transfer_id,
+                                "write data block",
+                                &e,
+                                server_id,
+                                connection_id,
+                                &app_state,
+                                &status_tx,
+                                &transfers,
+                            )
+                            .await;
                             break;
                         }
                     }
@@ -1061,6 +1088,82 @@ impl TftpServer {
             String::from_utf8_lossy(&data[null_positions[0] + 1..null_positions[1]]).to_string();
 
         Ok((filename, mode))
+    }
+
+    /// Build the ERROR packet a client gets when the LLM call behind a transfer fails.
+    ///
+    /// RFC 1350 defines error codes 0-7 and none of them means "try again", so both cases
+    /// use code 0 ("Not defined, see error message") and the message says which. The
+    /// packet is never a plausible-looking DATA or ACK: an LLM outage must not be
+    /// indistinguishable from a successful transfer.
+    fn llm_failure_error_packet(err: &anyhow::Error) -> Vec<u8> {
+        if crate::llm::is_overload_error(err) {
+            Self::build_error_packet(0, "Server overloaded, retry later")
+        } else {
+            Self::build_error_packet(0, "Internal error: LLM backend failure")
+        }
+    }
+
+    /// Answer an LLM failure with an ERROR packet and tear the transfer down.
+    ///
+    /// Every LLM call in a TFTP transfer routes its error branch through here. Two of the
+    /// four used to write nothing at all, so the client sat in `recvfrom` until its own
+    /// retransmit/timeout logic gave up with no indication of what went wrong - a partial
+    /// transfer that simply stopped, which for a PXE boot looks like a corrupt image.
+    #[allow(clippy::too_many_arguments)]
+    async fn fail_transfer_on_llm_error(
+        socket: &UdpSocket,
+        peer_addr: SocketAddr,
+        transfer_id: TransferId,
+        stage: &str,
+        err: &anyhow::Error,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        transfers: &Arc<Mutex<HashMap<TransferId, TftpTransfer>>>,
+    ) {
+        console_error!(
+            status_tx,
+            "TFTP LLM error during {} for {}: {} - sending ERROR and ending transfer",
+            stage,
+            peer_addr,
+            err
+        );
+
+        let packet = Self::llm_failure_error_packet(err);
+        match socket.send_to(&packet, peer_addr).await {
+            Ok(sent) => {
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        None,
+                        Some(sent as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
+                console_trace!(
+                    status_tx,
+                    "TFTP sent ERROR packet (hex): {}",
+                    hex::encode(&packet)
+                );
+            }
+            Err(send_err) => {
+                console_error!(
+                    status_tx,
+                    "TFTP failed to deliver ERROR packet to {}: {}",
+                    peer_addr,
+                    send_err
+                );
+            }
+        }
+
+        transfers.lock().await.remove(&transfer_id);
+        app_state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
     }
 
     /// Build TFTP ERROR packet

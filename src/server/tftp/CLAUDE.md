@@ -188,6 +188,30 @@ Parameters:
   - 7: No such user
 - `error_message` (required) - Human-readable error message
 
+### When the LLM call itself fails
+
+All four LLM call sites (`tftp_read_request`, `tftp_ack_received`, `tftp_write_request`,
+`tftp_data_block`) answer with an ERROR packet (opcode 5) and end the transfer. Two of them
+- the mid-transfer ones, `continue_read_transfer` and `receive_write_data` - used to write
+nothing at all, so a client that had already received block N, or had just sent a DATA
+block, sat in `recvfrom` until its own retransmit logic gave up. A transfer that simply
+stops is worse than one that fails: for a PXE boot it looks like a corrupt image.
+
+RFC 1350 defines error codes 0-7 and none of them means "try again", so both cases use code
+0 ("Not defined, see error message") and the message says which:
+
+| Condition | Message |
+|---|---|
+| `crate::llm::is_overload_error` is true | `Server overloaded, retry later` |
+| any other LLM failure | `Internal error: LLM backend failure` |
+
+Everything routes through `fail_transfer_on_llm_error`, which logs at ERROR via
+`console_error!` (tracing + status stream), sends the packet, removes the transfer from the
+map and closes the connection - so no transfer state or connection entry leaks. It never
+sends a plausible-looking DATA or ACK: an outage must not be indistinguishable from a
+successful transfer. `tests/server/tftp/llm_failure_test.rs` covers all three failure points
+against real UDP sockets.
+
 ### Example LLM Responses
 
 **Read Request**:
