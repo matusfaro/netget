@@ -176,8 +176,86 @@ impl ProtocolDependency {
     }
 }
 
+/// Ask the dynamic linker whether this process can load a library.
+///
+/// This is the honest form of the question. A filesystem search answers "is there a
+/// file with this name in one of the directories I guessed", which on modern macOS is
+/// **always no** for a system library: since Big Sur the system libraries ship only
+/// inside the dyld shared cache and `/usr/lib/libpcap.dylib` does not exist on disk,
+/// even though `dlopen("libpcap.dylib")` succeeds and every binary on the machine links
+/// against it. `dlopen` consults the cache, honours `DYLD_*`/`LD_LIBRARY_PATH`, and
+/// resolves whatever the loader would resolve at link time — which is precisely the
+/// property a dependency check is trying to establish.
+///
+/// The handle is released immediately; the point is the answer, not the library.
+#[cfg(unix)]
+fn dlopen_succeeds(soname: &str) -> bool {
+    let Ok(cname) = std::ffi::CString::new(soname) else {
+        return false;
+    };
+
+    // SAFETY: `cname` is a valid NUL-terminated C string that outlives the call, and
+    // the returned handle is closed immediately. `RTLD_LOCAL` keeps the symbols out of
+    // the global namespace so a probe cannot change how later symbol lookups resolve.
+    unsafe {
+        let handle = libc::dlopen(cname.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        if handle.is_null() {
+            false
+        } else {
+            libc::dlclose(handle);
+            true
+        }
+    }
+}
+
+/// The names to try with the dynamic linker, most conventional first.
+///
+/// Linux only carries the unversioned `lib<name>.so` symlink when the `-dev` package is
+/// installed, so the versioned sonames are tried too — a runtime-only install is still
+/// a library this process can load.
+#[cfg(unix)]
+fn library_candidates(name: &str) -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        vec![
+            format!("lib{}.dylib", name),
+            format!("{}.dylib", name),
+            format!("/usr/lib/lib{}.dylib", name),
+            format!("/opt/homebrew/lib/lib{}.dylib", name),
+            format!("/usr/local/lib/lib{}.dylib", name),
+        ]
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        vec![
+            format!("lib{}.so", name),
+            format!("lib{}.so.1", name),
+            format!("lib{}.so.0", name),
+            format!("lib{}.so.2", name),
+        ]
+    }
+}
+
 /// Check if a system library is available
 fn check_system_library(name: &str) -> bool {
+    // Ask the dynamic linker first on every Unix. This is the only probe that is
+    // correct on macOS at all (see `dlopen_succeeds`), and on Linux it subsumes the
+    // ldconfig search for the common case while also honouring LD_LIBRARY_PATH.
+    #[cfg(unix)]
+    {
+        for candidate in library_candidates(name) {
+            if dlopen_succeeds(&candidate) {
+                debug!("dlopen({}) succeeded - lib{} is loadable", candidate, name);
+                return true;
+            }
+        }
+        debug!(
+            "dlopen found no loadable lib{}; falling back to platform probes",
+            name
+        );
+    }
+
     // Try to use ldconfig to check if library is available
     #[cfg(target_os = "linux")]
     {
@@ -212,19 +290,15 @@ fn check_system_library(name: &str) -> bool {
 
     #[cfg(target_os = "macos")]
     {
-        // On macOS, try to find the library using dyld
-        let output = Command::new("find")
-            .args(["/usr/lib", "/usr/local/lib", "/opt/homebrew/lib"])
-            .args(["-name", &format!("lib{}.dylib", name)])
-            .output();
-
-        if let Ok(output) = output {
-            let found = !output.stdout.is_empty();
-            debug!("Checking for lib{} on macOS: found={}", name, found);
-            return found;
-        }
-
-        // Fallback: try pkg-config
+        // No filesystem search here on purpose. The previous implementation ran
+        // `find /usr/lib /usr/local/lib /opt/homebrew/lib -name lib<name>.dylib`, which
+        // returns nothing for every library that ships in the dyld shared cache — so
+        // libpcap, which is present and links fine on this platform, was reported
+        // missing, and any protocol declaring SystemLibrary("pcap") would have been
+        // refused at startup on exactly the OS where it works.
+        //
+        // dlopen above is the real test. pkg-config is kept only as a last resort for
+        // a Homebrew-only library whose dylib name does not follow the convention.
         let pkg_config_output = Command::new("pkg-config")
             .arg("--exists")
             .arg(name)
