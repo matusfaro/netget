@@ -120,6 +120,8 @@ pub mod mqtt;
 pub mod mssql;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(all(feature = "named_pipe", unix))]
+pub mod named_pipe;
 #[cfg(feature = "nfc")]
 pub mod nfc;
 #[cfg(feature = "nfs")]

@@ -125,6 +125,7 @@ portable-base = [
 
 tcp = []
 socket_file = []  # Unix domain socket server & client for IPC (Unix/Linux/macOS only, gated with #[cfg(unix)]), no extra deps
+named_pipe = []  # POSIX named pipe (mkfifo FIFO) server, impersonates an OS-level IPC endpoint (Unix only, #[cfg(unix)]), no extra deps
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "urlencoding"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 pypi = ["http", "urlencoding"]  # PyPI (Python Package Index) uses HTTP and URL encoding for search (PEP 503 Simple Repository API)
@@ -308,6 +309,8 @@ dist = [
     "wireguard",
     "openvpn",
     "icmp",
+    # Unix-only OS-IPC endpoint impersonation; #[cfg(unix)], safe on all dist (Linux) targets
+    "named_pipe",
 ]
 # macOS ships CoreBluetooth, PC/SC, and libpcap with the OS, so these are safe to bundle.
 dist-darwin = [
@@ -435,6 +438,7 @@ dist-windows = [
 all-protocols = [
     "tcp",
     "socket_file",
+    "named_pipe",
     "http",
     "http2",
     "quic",

@@ -69,6 +69,13 @@ pub use socket_file::actions::SocketFileProtocol;
 #[cfg(all(feature = "socket_file", unix))]
 pub use socket_file::SocketFileServer;
 
+#[cfg(all(feature = "named_pipe", unix))]
+pub mod named_pipe;
+#[cfg(all(feature = "named_pipe", unix))]
+pub use named_pipe::actions::NamedPipeProtocol;
+#[cfg(all(feature = "named_pipe", unix))]
+pub use named_pipe::NamedPipeServer;
+
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]

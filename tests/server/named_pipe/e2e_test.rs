@@ -1,0 +1,88 @@
+//! End-to-end tests for the named pipe (POSIX FIFO) server.
+//!
+//! These spawn the real NetGet binary and validate behaviour against a *real, independent* FIFO
+//! peer: the test itself opens the FIFO paths with `std::fs` and writes/reads bytes, exactly as a
+//! shell `echo > fifo` / `cat fifo` would. No NetGet-against-NetGet.
+//!
+//! Platform: Unix/Linux/macOS only.
+#![cfg(all(feature = "named_pipe", unix))]
+
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
+use std::io::{Read, Write};
+use std::time::Duration;
+
+const IN_FIFO: &str = "./tmp/netget-test-fifo.in";
+const OUT_FIFO: &str = "./tmp/netget-test-fifo.out";
+
+/// Round-trip: a real writer writes to the input FIFO, the mocked LLM answers with
+/// write_named_pipe_data, and a real reader reads the model's bytes off the response FIFO.
+#[tokio::test]
+async fn test_named_pipe_request_response() -> E2EResult<()> {
+    let _ = std::fs::create_dir_all("./tmp");
+    let _ = std::fs::remove_file(IN_FIFO);
+    let _ = std::fs::remove_file(OUT_FIFO);
+
+    let prompt = "Create a named pipe FIFO server. Read from netget-test-fifo.in and, for each \
+                  write, answer PONG on netget-test-fifo.out";
+
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("named pipe")
+            .and_instruction_containing("netget-test-fifo")
+            .respond_with_actions(serde_json::json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "NAMED_PIPE",
+                "instruction": "Answer PONG for each write",
+                "startup_params": {
+                    "pipe_path": IN_FIFO,
+                    "response_pipe_path": OUT_FIFO
+                }
+            }]))
+            .expect_calls(1)
+            .and()
+            .on_event("named_pipe_data_received")
+            .and_event_data_contains("data", "PING")
+            .respond_with_actions(serde_json::json!([{
+                "type": "write_named_pipe_data",
+                "data": "PONG\n"
+            }]))
+            .expect_calls(1)
+            .and()
+    }))
+    .await?;
+
+    // Give the server time to mkfifo + open both FIFOs.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    // Real independent peer: open the FIFOs with std::fs and drive them. FIFO opens block on
+    // peer availability, and reads block on data, so run them on a blocking thread under a timeout.
+    let response = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::task::spawn_blocking(|| -> std::io::Result<String> {
+            // Writer opens the input FIFO (server holds it open, so this returns immediately).
+            let mut writer = std::fs::OpenOptions::new().write(true).open(IN_FIFO)?;
+            writer.write_all(b"PING\n")?;
+            writer.flush()?;
+
+            // Reader opens the response FIFO and reads the model's bytes.
+            let mut reader = std::fs::OpenOptions::new().read(true).open(OUT_FIFO)?;
+            let mut buf = [0u8; 64];
+            let n = reader.read(&mut buf)?;
+            Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+        }),
+    )
+    .await
+    .map_err(|_| "Timed out waiting for FIFO round-trip")???;
+
+    assert!(
+        response.contains("PONG"),
+        "Response FIFO should carry PONG, got: {response:?}"
+    );
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+
+    let _ = std::fs::remove_file(IN_FIFO);
+    let _ = std::fs::remove_file(OUT_FIFO);
+    Ok(())
+}
