@@ -83,8 +83,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     },
                 ],
                 example: json!({
-                    "type": "dht_query",
-                    "query_type": "ping",
+                    "type": "dht_ping",
                     "node_id": "abcdefghij0123456789",
                     "transaction_id": "aa"
                 }),
@@ -114,8 +113,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     },
                 ],
                 example: json!({
-                    "type": "dht_query",
-                    "query_type": "find_node",
+                    "type": "dht_find_node",
                     "node_id": "abcdefghij0123456789",
                     "target": "mnopqrstuv0123456789",
                     "transaction_id": "aa"
@@ -146,8 +144,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     },
                 ],
                 example: json!({
-                    "type": "dht_query",
-                    "query_type": "get_peers",
+                    "type": "dht_get_peers",
                     "node_id": "abcdefghij0123456789",
                     "info_hash": "0123456789abcdefghij",
                     "transaction_id": "aa"
@@ -178,8 +175,7 @@ impl Protocol for TorrentDhtClientProtocol {
                     },
                 ],
                 example: json!({
-                    "type": "dht_query",
-                    "query_type": "announce_peer",
+                    "type": "dht_announce_peer",
                     "node_id": "abcdefghij0123456789",
                     "info_hash": "0123456789abcdefghij",
                     "transaction_id": "aa"
@@ -307,6 +303,35 @@ impl Client for TorrentDhtClientProtocol {
             .get("type")
             .and_then(|v| v.as_str())
             .context("Missing 'type' field in action")?;
+
+        // The four query actions are what `get_async_actions()` advertises, but this match
+        // used to accept only `dht_query` — a name declared nowhere. So a model that used a
+        // tool name (`dht_ping`) was rejected as an unknown action, and only a model that
+        // copied the *example* verbatim, which contradicted the action's own name by saying
+        // `{"type": "dht_query", "query_type": "ping"}`, happened to work. Translate the
+        // advertised name into the wire query type here; `dht_query` stays accepted so a
+        // caller that learned the old shape still works.
+        let query_type = match action_type {
+            "dht_ping" => Some("ping"),
+            "dht_find_node" => Some("find_node"),
+            "dht_get_peers" => Some("get_peers"),
+            "dht_announce_peer" => Some("announce_peer"),
+            _ => None,
+        };
+
+        if let Some(query_type) = query_type {
+            let mut data = action;
+            let obj = data
+                .as_object_mut()
+                .context("DHT action must be a JSON object")?;
+            // An explicit query_type is honoured, so `dht_query` semantics are unchanged.
+            obj.entry("query_type")
+                .or_insert_with(|| serde_json::Value::String(query_type.to_string()));
+            return Ok(ClientActionResult::Custom {
+                name: "dht_query".to_string(),
+                data,
+            });
+        }
 
         match action_type {
             "dht_query" => Ok(ClientActionResult::Custom {

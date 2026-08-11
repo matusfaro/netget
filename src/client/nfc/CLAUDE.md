@@ -66,11 +66,14 @@ The LLM has full control over NFC reader operations:
     - Event: `nfc_readers_listed` with available readers
     - LLM can choose specific reader
 
-2. **Card Detection** (Async Action):
-    - Action: `connect_card` with optional timeout
-    - Waits for card/tag to be presented to reader
+2. **Card Detection** (at connect time):
+    - `connect()` selects the reader and waits for a card itself
     - Event: `nfc_card_detected` with ATR (Answer to Reset)
     - LLM learns card type from ATR
+    - There is deliberately **no** `connect_card` or `list_readers` action. Both were once
+      advertised and neither had an arm in `execute_action`, so both came back "Unknown action
+      type" and cost the model a retry. Reader enumeration and explicit card connection are
+      worth adding, but they need PC/SC work in `mod.rs` first.
 
 3. **APDU Commands** (Sync Action):
     - Action: `send_apdu` (structured) or `send_apdu_raw` (hex string)

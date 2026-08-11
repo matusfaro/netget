@@ -154,26 +154,19 @@ impl UsbClientProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for UsbClientProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "list_usb_devices".to_string(),
-                description: "List all connected USB devices".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "list_usb_devices"
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "detach_device".to_string(),
-                description: "Detach from the USB device and close connection".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "detach_device"
-                }),
-                log_template: None,
-            },
-        ]
+        // `list_usb_devices` used to be advertised here and could not run: `execute_action`
+        // below has no arm for it, so it came back "Unknown action" and cost the model a
+        // retry. Device enumeration is a real capability worth adding, but it needs rusb work
+        // in `mod.rs`, not an action declaration on its own.
+        vec![ActionDefinition {
+            name: "detach_device".to_string(),
+            description: "Detach from the USB device and close connection".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "detach_device"
+            }),
+            log_template: None,
+        }]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {

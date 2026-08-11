@@ -57,11 +57,12 @@ Client state tracked in `ClientInstance`:
 
 **Async Actions** (user-triggered):
 
-- `modify_pop3_instruction` - Change client instruction
-    - Parameters: `instruction`
-
 - `disconnect` - Close POP3 connection
     - Sends QUIT command before closing
+
+  `modify_pop3_instruction` used to be listed here. It was never runnable — `execute_action`
+  rejected the name and clients read their `instruction` once at connect — so it was removed
+  rather than left as a tool the model is punished for using.
 
 **Sync Actions** (LLM response to events):
 

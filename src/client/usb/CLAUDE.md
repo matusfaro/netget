@@ -83,8 +83,11 @@ Examples:
 
 **Async Actions** (user-triggered):
 
-- `list_usb_devices`: Enumerate connected USB devices
 - `detach_device`: Detach from device and close connection
+
+`list_usb_devices` was listed here and never worked — `execute_action` had no arm for it, so it
+came back "Unknown action" and cost the model a retry. Device enumeration is worth adding, but
+it needs nusb work in `mod.rs`, not an action declaration on its own.
 
 **Sync Actions** (response to events):
 

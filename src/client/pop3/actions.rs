@@ -77,32 +77,19 @@ impl Protocol for Pop3ClientProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "modify_pop3_instruction".to_string(),
-                description: "Modify the POP3 client instruction".to_string(),
-                parameters: vec![Parameter {
-                    name: "instruction".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "New instruction for the LLM".to_string(),
-                    required: true,
-                }],
-                example: json!({
-                    "type": "modify_pop3_instruction",
-                    "instruction": "Retrieve all messages from the mailbox"
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from POP3 server".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-                log_template: None,
-            },
-        ]
+        // `modify_pop3_instruction` used to be advertised here and was unrunnable: this
+        // protocol's `execute_action` rejects the name ("Unknown POP3 client action"), and no
+        // generic client-side instruction plumbing exists — a client reads `instruction` once
+        // at connect and never re-reads it. Advertising it only cost the model a retry.
+        vec![ActionDefinition {
+            name: "disconnect".to_string(),
+            description: "Disconnect from POP3 server".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "disconnect"
+            }),
+            log_template: None,
+        }]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {

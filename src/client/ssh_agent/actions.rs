@@ -75,27 +75,19 @@ impl Protocol for SshAgentClientProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "modify_instruction".to_string(),
-                description: "Modify the LLM instruction for SSH Agent client".to_string(),
-                parameters: vec![Parameter {
-                    name: "instruction".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "New LLM instruction".to_string(),
-                    required: true,
-                }],
-                example: json!({"type": "modify_instruction", "instruction": "..."}),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from SSH Agent".to_string(),
-                parameters: vec![],
-                example: json!({"type": "disconnect"}),
-                log_template: None,
-            },
-        ]
+        // `modify_instruction` used to be advertised here. Nothing could run it: this
+        // protocol's `execute_action` rejects the name, `handle_custom_action` has no branch
+        // for it, and no generic client-side instruction plumbing exists — clients read
+        // `instruction` once at connect and never re-read it. So the model was shown a tool
+        // that always came back "Unknown action type: modify_instruction", burning a retry.
+        // The server's SSH-Agent protocol does implement it; the client never did.
+        vec![ActionDefinition {
+            name: "disconnect".to_string(),
+            description: "Disconnect from SSH Agent".to_string(),
+            parameters: vec![],
+            example: json!({"type": "disconnect"}),
+            log_template: None,
+        }]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {

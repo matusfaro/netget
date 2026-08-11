@@ -208,43 +208,21 @@ impl Protocol for NfcClientProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "list_readers".to_string(),
-                description: "List available NFC/smart card readers via PC/SC".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "list_readers"
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "connect_card".to_string(),
-                description: "Connect to NFC card/tag in reader (waits for card if not present)"
-                    .to_string(),
-                parameters: vec![Parameter {
-                    name: "timeout_ms".to_string(),
-                    type_hint: "number".to_string(),
-                    description: "Timeout in milliseconds to wait for card (default: 30000)"
-                        .to_string(),
-                    required: false,
-                }],
-                example: json!({
-                    "type": "connect_card",
-                    "timeout_ms": 30000
-                }),
-                log_template: None,
-            },
-            ActionDefinition {
-                name: "disconnect_card".to_string(),
-                description: "Disconnect from current card/tag".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect_card"
-                }),
-                log_template: None,
-            },
-        ]
+        // `list_readers` and `connect_card` used to be advertised here and neither could run:
+        // `execute_action` below has no arm for either name, so both came back
+        // "Unknown action type" and cost the model a retry. Reader enumeration and explicit
+        // card connection are real capabilities worth adding — `connect()` currently picks a
+        // reader and waits for a card on its own — but they need PC/SC work in `mod.rs`, not
+        // an action declaration on its own.
+        vec![ActionDefinition {
+            name: "disconnect_card".to_string(),
+            description: "Disconnect from current card/tag".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "disconnect_card"
+            }),
+            log_template: None,
+        }]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {

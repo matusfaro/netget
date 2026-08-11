@@ -152,6 +152,10 @@ pub mod tftp;
 pub mod tls;
 #[cfg(feature = "tor")]
 pub mod tor;
+#[cfg(feature = "torrent-dht")]
+pub mod torrent_dht;
+#[cfg(feature = "torrent-peer")]
+pub mod torrent_peer;
 #[cfg(feature = "turn")]
 pub mod turn;
 #[cfg(feature = "udp")]

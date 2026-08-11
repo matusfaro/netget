@@ -107,9 +107,7 @@ impl Protocol for TorrentPeerClientProtocol {
                 description: "Send interested message".to_string(),
                 parameters: vec![],
                 example: json!({
-                    "type": "peer_message",
-                    "message_type": 2,
-                    "payload": ""
+                    "type": "peer_interested"
                 }),
                 log_template: None,
             },
@@ -118,9 +116,7 @@ impl Protocol for TorrentPeerClientProtocol {
                 description: "Send not interested message".to_string(),
                 parameters: vec![],
                 example: json!({
-                    "type": "peer_message",
-                    "message_type": 3,
-                    "payload": ""
+                    "type": "peer_not_interested"
                 }),
                 log_template: None,
             },
@@ -148,9 +144,10 @@ impl Protocol for TorrentPeerClientProtocol {
                     },
                 ],
                 example: json!({
-                    "type": "peer_message",
-                    "message_type": 6,
-                    "payload": "00000000000000000000400"
+                    "type": "peer_request_piece",
+                    "index": 0,
+                    "begin": 0,
+                    "length": 16384
                 }),
                 log_template: None,
             },
@@ -178,9 +175,10 @@ impl Protocol for TorrentPeerClientProtocol {
                     },
                 ],
                 example: json!({
-                    "type": "peer_message",
-                    "message_type": 7,
-                    "payload": "0000000000000000abcdef..."
+                    "type": "peer_send_piece",
+                    "index": 0,
+                    "begin": 0,
+                    "block": "abcdef0123"
                 }),
                 log_template: None,
             },
@@ -306,16 +304,77 @@ impl Client for TorrentPeerClientProtocol {
         })
     }
     fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        fn u32_field(action: &serde_json::Value, name: &str) -> Result<u32> {
+            let raw = action
+                .get(name)
+                .and_then(|v| v.as_u64())
+                .with_context(|| format!("missing or non-numeric '{}'", name))?;
+            u32::try_from(raw).with_context(|| format!("'{}' does not fit in u32", name))
+        }
+
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
             .context("Missing 'type' field in action")?;
+
+        // `peer_interested`, `peer_not_interested`, `peer_request_piece` and `peer_send_piece`
+        // are advertised by `get_async_actions()` but used to be rejected here as unknown:
+        // only `peer_message` was accepted, and that name was declared nowhere. Each of the
+        // four is a fixed BEP 3 message id with a payload derived from its own parameters, so
+        // build that payload here rather than making the model hand-assemble the hex it was
+        // shown in a contradictory example.
+        let framed = match action_type {
+            // interested (2) and not-interested (3) carry no payload.
+            "peer_interested" => Some((2u8, String::new())),
+            "peer_not_interested" => Some((3u8, String::new())),
+            // request (6): <index><begin><length>, three big-endian u32.
+            "peer_request_piece" => {
+                let index = u32_field(&action, "index")?;
+                let begin = u32_field(&action, "begin")?;
+                let length = u32_field(&action, "length")?;
+                let mut payload = Vec::with_capacity(12);
+                payload.extend_from_slice(&index.to_be_bytes());
+                payload.extend_from_slice(&begin.to_be_bytes());
+                payload.extend_from_slice(&length.to_be_bytes());
+                Some((6u8, hex::encode(payload)))
+            }
+            // piece (7): <index><begin><block>, two big-endian u32 then the raw block.
+            "peer_send_piece" => {
+                let index = u32_field(&action, "index")?;
+                let begin = u32_field(&action, "begin")?;
+                let block_hex = action
+                    .get("block")
+                    .and_then(|v| v.as_str())
+                    .context("peer_send_piece requires 'block' (hex-encoded block data)")?;
+                let block = hex::decode(block_hex)
+                    .context("peer_send_piece 'block' must be hex-encoded")?;
+                let mut payload = Vec::with_capacity(8 + block.len());
+                payload.extend_from_slice(&index.to_be_bytes());
+                payload.extend_from_slice(&begin.to_be_bytes());
+                payload.extend_from_slice(&block);
+                Some((7u8, hex::encode(payload)))
+            }
+            _ => None,
+        };
+
+        if let Some((message_type, payload)) = framed {
+            return Ok(ClientActionResult::Custom {
+                name: "peer_message".to_string(),
+                data: serde_json::json!({
+                    "type": "peer_message",
+                    "message_type": message_type,
+                    "payload": payload,
+                }),
+            });
+        }
 
         match action_type {
             "peer_handshake" => Ok(ClientActionResult::Custom {
                 name: "peer_handshake".to_string(),
                 data: action,
             }),
+            // Kept so a caller that learned the raw shape still works; it is the escape hatch
+            // for message ids the four named actions above do not cover (have, bitfield, …).
             "peer_message" => Ok(ClientActionResult::Custom {
                 name: "peer_message".to_string(),
                 data: action,
