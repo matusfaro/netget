@@ -712,13 +712,80 @@ pub async fn call_llm_for_client(
         )
         .await?;
 
+    // Execute the *common* actions this function advertised, and hand back only the ones a
+    // client protocol can run.
+    //
+    // Every client dispatches `ClientLlmResult::actions` straight into its own
+    // `Client::execute_action`, which knows only its protocol's vocabulary. `provide_feedback`
+    // is not in any of them — it is injected into the tool list above, from
+    // `common::provide_feedback_action()` — so a model that used the tool it was offered had
+    // its call rejected as an unknown action, retried, and ultimately dropped. That is the
+    // fail-open shape one level up: advertise a tool that cannot work.
+    //
+    // The server path does not have this problem because `executor::execute_actions` tries
+    // `CommonAction::from_json` before the protocol. Clients never reach that executor, so the
+    // split happens here — in the one place that advertises the action.
+    let (common_actions, protocol_actions) = split_client_common_actions(actions);
+
+    if !common_actions.is_empty() {
+        match crate::state::ClientId::from_string(&client_id) {
+            Some(cid) => {
+                if let Err(e) = crate::llm::actions::executor::execute_actions(
+                    common_actions,
+                    state,
+                    None, // no server protocol in a client context
+                    None, // no server id
+                    Some(cid),
+                )
+                .await
+                {
+                    tracing::warn!("Client common action execution failed: {}", e);
+                    let _ = status_tx.send(format!("[CLIENT] feedback action failed: {e}"));
+                }
+            }
+            None => {
+                // Cannot attribute the feedback to a client, so it cannot be stored. Say so
+                // rather than silently discarding it.
+                tracing::warn!(
+                    "Client returned a common action but client_id {:?} could not be parsed; \
+                     the action was discarded",
+                    client_id
+                );
+            }
+        }
+    }
+
     // For now, memory updates are not extracted from client responses
     // This can be enhanced later if needed
     let memory_updates = None;
 
     Ok(ClientLlmResult {
-        actions,
+        actions: protocol_actions,
         memory_updates,
+    })
+}
+
+/// Actions `call_llm_for_client` advertises but no `Client::execute_action` implements.
+///
+/// Exactly one today. Keep this list and the injection sites above in step: an entry here with
+/// no injection is dead, and an injection with no entry is a tool the model is punished for
+/// using. `tests/client_provide_feedback_test.rs` asserts both directions.
+pub const CLIENT_COMMON_ACTION_NAMES: &[&str] = &["provide_feedback"];
+
+/// Split a client model's actions into the common ones this module executes itself and the
+/// protocol ones the calling client hands to `Client::execute_action`.
+///
+/// Order within each half is preserved, so a protocol still sees its actions in the sequence
+/// the model produced them.
+pub fn split_client_common_actions(
+    actions: Vec<serde_json::Value>,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    actions.into_iter().partition(|action| {
+        action
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|name| CLIENT_COMMON_ACTION_NAMES.contains(&name))
+            .unwrap_or(false)
     })
 }
 
