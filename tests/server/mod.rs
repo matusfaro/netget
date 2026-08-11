@@ -108,6 +108,8 @@ pub mod mdns;
 pub mod memcached;
 #[cfg(feature = "mercurial")]
 pub mod mercurial;
+#[cfg(feature = "modbus")]
+pub mod modbus;
 #[cfg(feature = "mongodb-server")]
 pub mod mongodb;
 #[cfg(feature = "mqtt")]

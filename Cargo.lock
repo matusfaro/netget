@@ -7970,6 +7970,7 @@ dependencies = [
  "time",
  "tiny-skia",
  "tokio",
+ "tokio-modbus",
  "tokio-native-tls",
  "tokio-postgres",
  "tokio-rustls 0.26.4",
@@ -13339,6 +13340,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.109",
+]
+
+[[package]]
+name = "tokio-modbus"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95d06136e737e962c71d922a09148f5a264f6609a021fdf031ad16ffd172c818"
+dependencies = [
+ "async-trait",
+ "byteorder",
+ "bytes",
+ "crc",
+ "futures-core",
+ "futures-util",
+ "log",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

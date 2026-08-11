@@ -471,6 +471,13 @@ pub use mqtt::actions::MqttProtocol;
 #[cfg(feature = "mqtt")]
 pub use mqtt::MqttServer;
 
+#[cfg(feature = "modbus")]
+pub mod modbus;
+#[cfg(feature = "modbus")]
+pub use modbus::actions::ModbusProtocol;
+#[cfg(feature = "modbus")]
+pub use modbus::ModbusServer;
+
 #[cfg(feature = "amqp")]
 pub mod amqp;
 #[cfg(feature = "amqp")]

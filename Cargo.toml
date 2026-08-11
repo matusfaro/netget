@@ -75,6 +75,7 @@ portable-base = [
     "pop3",
     "nntp",
     "mqtt",
+    "modbus",
     "amqp",
     "socks5",
     "elasticsearch",
@@ -203,6 +204,7 @@ imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses ima
 pop3 = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots", "dep:rcgen"]  # POP3 email retrieval (manual implementation with TLS support)
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
+modbus = []  # Modbus TCP server (ICS/SCADA) - hand-rolled MBAP+PDU codec, no extra deps
 amqp = ["dep:lapin"]  # AMQP broker and client for RabbitMQ compatibility
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
@@ -385,6 +387,7 @@ dist-windows = [
     "pop3",
     "nntp",
     "mqtt",
+    "modbus",
     "amqp",
     "socks5",
     "elasticsearch",
@@ -486,6 +489,7 @@ all-protocols = [
     "pop3",
     "nntp",
     "mqtt",
+    "modbus",
     "amqp",
     "socks5",
     "elasticsearch",
@@ -983,6 +987,10 @@ prost-reflect = "0.14"
 prost-types = "0.13"
 # HTTP/3 (QUIC) client for e2e integration tests
 quinn = "0.11"
+# Modbus client for the modbus server e2e tests. Deliberately a *different* implementation
+# from src/server/modbus/codec.rs, which is hand-rolled: decoding our frames with someone
+# else's codec is what makes the test evidence rather than a tautology.
+tokio-modbus = { version = "0.17", default-features = false, features = ["tcp"] }
 # BitTorrent client for e2e integration tests
 # Using cratetorrent library for programmatic testing, also supports transmission-cli/aria2
 sha1 = "0.10"  # For info_hash calculation
