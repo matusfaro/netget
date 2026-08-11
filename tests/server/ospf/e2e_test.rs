@@ -388,6 +388,196 @@ mod tests {
         println!("  Packet length: {} bytes", hello.len());
     }
 
+    // ========================================================================
+    // Startup parameters -> wire
+    //
+    // hello_interval, network_mask, router_dead_interval and router_priority
+    // were declared in get_startup_parameters() and read nowhere: spawn only
+    // ever looked at router_id and area_id. They now populate an
+    // OspfInterfaceConfig that supplies the defaults for every outgoing packet
+    // and the RFC 2328 10.5 acceptance check for every incoming Hello. These
+    // tests assert both halves at byte level, against the RFC 2328 A.3.2 field
+    // offsets, because the raw-socket path itself needs root and cannot be
+    // exercised here.
+    // ========================================================================
+
+    use ::netget::server::ospf::actions::{OspfInterfaceConfig, OspfProtocol};
+
+    fn configured() -> OspfInterfaceConfig {
+        OspfInterfaceConfig {
+            router_id: "9.9.9.9".to_string(),
+            area_id: "0.0.0.7".to_string(),
+            network_mask: "255.255.0.0".to_string(),
+            hello_interval: 5,
+            router_dead_interval: 20,
+            router_priority: 200,
+        }
+    }
+
+    /// RFC 2328 A.3.2: the Hello body starts at byte 24 of the OSPF packet.
+    ///   24..28 network mask, 28..30 HelloInterval, 30 Options, 31 Rtr Pri,
+    ///   32..36 RouterDeadInterval, 36..40 DR, 40..44 BDR.
+    #[test]
+    fn ospf_startup_config_reaches_the_hello_packet() {
+        let mut action = serde_json::json!({"type": "send_hello"});
+        configured().apply_defaults(&mut action);
+
+        let hello = OspfProtocol::build_hello_packet(&action).expect("build hello");
+
+        assert_eq!(
+            &hello[4..8],
+            &[9, 9, 9, 9],
+            "configured router_id must be the packet's Router ID"
+        );
+        assert_eq!(
+            &hello[8..12],
+            &[0, 0, 0, 7],
+            "configured area_id must be the packet's Area ID"
+        );
+        assert_eq!(
+            &hello[24..28],
+            &[255, 255, 0, 0],
+            "configured network_mask must be in the Hello body"
+        );
+        assert_eq!(
+            u16::from_be_bytes([hello[28], hello[29]]),
+            5,
+            "configured hello_interval must be in the Hello body, not the hardcoded 10"
+        );
+        assert_eq!(
+            hello[31], 200,
+            "configured router_priority must be in the Hello body, not the hardcoded 1"
+        );
+        assert_eq!(
+            u32::from_be_bytes([hello[32], hello[33], hello[34], hello[35]]),
+            20,
+            "configured router_dead_interval must be in the Hello body, not the hardcoded 40"
+        );
+    }
+
+    /// The model still wins: an action that names a field keeps its own value, so a
+    /// honeypot prompt can deliberately advertise timers that differ from the interface.
+    #[test]
+    fn ospf_action_values_override_startup_config() {
+        let mut action = serde_json::json!({
+            "type": "send_hello",
+            "router_id": "1.2.3.4",
+            "hello_interval": 30,
+            "priority": 255
+        });
+        configured().apply_defaults(&mut action);
+
+        let hello = OspfProtocol::build_hello_packet(&action).expect("build hello");
+
+        assert_eq!(&hello[4..8], &[1, 2, 3, 4]);
+        assert_eq!(u16::from_be_bytes([hello[28], hello[29]]), 30);
+        assert_eq!(hello[31], 255);
+        // Untouched fields still come from the configuration.
+        assert_eq!(
+            u32::from_be_bytes([hello[32], hello[33], hello[34], hello[35]]),
+            20
+        );
+        assert_eq!(&hello[24..28], &[255, 255, 0, 0]);
+    }
+
+    /// Non-Hello packets take router_id and area_id but must not grow Hello body fields.
+    #[test]
+    fn ospf_config_defaults_apply_to_non_hello_packets() {
+        let mut action = serde_json::json!({"type": "send_database_description"});
+        configured().apply_defaults(&mut action);
+
+        assert_eq!(action["router_id"], "9.9.9.9");
+        assert_eq!(action["area_id"], "0.0.0.7");
+        assert!(
+            action.get("hello_interval").is_none(),
+            "Hello body fields have no meaning in a DD packet"
+        );
+        assert!(action.get("priority").is_none());
+    }
+
+    /// RFC 2328 10.5: a Hello whose HelloInterval, RouterDeadInterval or network mask
+    /// differs from the receiving interface's is not acceptable and cannot form an
+    /// adjacency. Exactly those three fields, and nothing else, are checked.
+    #[test]
+    fn ospf_hello_mismatch_check_follows_rfc_2328_10_5() {
+        let config = configured();
+
+        assert!(
+            config.hello_mismatches(5, 20, "255.255.0.0").is_empty(),
+            "a matching Hello must be accepted"
+        );
+
+        let m = config.hello_mismatches(10, 20, "255.255.0.0");
+        assert_eq!(m.len(), 1, "only hello_interval differs: {m:?}");
+        assert!(m[0].contains("hello_interval"));
+
+        let m = config.hello_mismatches(5, 40, "255.255.0.0");
+        assert_eq!(m.len(), 1, "only router_dead_interval differs: {m:?}");
+        assert!(m[0].contains("router_dead_interval"));
+
+        let m = config.hello_mismatches(5, 20, "255.255.255.0");
+        assert_eq!(m.len(), 1, "only network_mask differs: {m:?}");
+        assert!(m[0].contains("network_mask"));
+
+        assert_eq!(
+            config.hello_mismatches(10, 40, "255.255.255.0").len(),
+            3,
+            "all three fields differing must all be reported"
+        );
+    }
+
+    /// The defaults are RFC 2328 Appendix C.3's, so a server started with no parameters
+    /// behaves exactly as it did before the configuration existed.
+    #[test]
+    fn ospf_default_config_matches_rfc_defaults() {
+        let d = OspfInterfaceConfig::default();
+        assert_eq!(d.hello_interval, 10);
+        assert_eq!(d.router_dead_interval, 40);
+        assert_eq!(d.router_priority, 1);
+        assert_eq!(d.network_mask, "255.255.255.0");
+
+        let mut action = serde_json::json!({"type": "send_hello"});
+        d.apply_defaults(&mut action);
+        let hello = OspfProtocol::build_hello_packet(&action).expect("build hello");
+        assert_eq!(u16::from_be_bytes([hello[28], hello[29]]), 10);
+        assert_eq!(
+            u32::from_be_bytes([hello[32], hello[33], hello[34], hello[35]]),
+            40
+        );
+        assert_eq!(hello[31], 1);
+    }
+
+    /// Every declared startup parameter must be one the implementation reads. A parameter
+    /// declared and never read is dead weight the model will try to use.
+    #[test]
+    fn ospf_declares_exactly_the_parameters_it_reads() {
+        use ::netget::llm::actions::protocol_trait::Protocol;
+
+        let mut declared: Vec<String> = OspfProtocol::new()
+            .get_startup_parameters()
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        declared.sort();
+
+        let mut expected = vec![
+            "area_id",
+            "hello_interval",
+            "network_mask",
+            "router_dead_interval",
+            "router_id",
+            "router_priority",
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(
+            declared, expected,
+            "every one of these is read into OspfInterfaceConfig by \
+             OspfServer::spawn_with_llm_actions; adding a declaration without a read \
+             re-creates the defect this test exists for"
+        );
+    }
+
     #[test]
     fn test_ospf_checksum() {
         // Create a simple test packet

@@ -12,6 +12,110 @@ use serde_json::json;
 use std::sync::LazyLock;
 use tracing::debug;
 
+/// The interface configuration supplied through `get_startup_parameters()`.
+///
+/// Every one of the six declared startup parameters lands in this struct and is read:
+///
+/// * `router_id` / `area_id` / `network_mask` / `hello_interval` /
+///   `router_dead_interval` / `router_priority` become the **defaults for every packet
+///   the model sends** ([`apply_defaults`](Self::apply_defaults)). An action that names a
+///   field still wins - the model can deliberately lie about its timers - but an action
+///   that omits one now gets the operator's configured value instead of a hardcoded
+///   constant.
+/// * `hello_interval`, `router_dead_interval` and `network_mask` are additionally checked
+///   against every received Hello ([`hello_mismatches`](Self::hello_mismatches)), because
+///   RFC 2328 10.5 makes those three a precondition for accepting a Hello at all.
+///
+/// Before this existed, four of the six parameters were declared to the model and never
+/// read anywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OspfInterfaceConfig {
+    pub router_id: String,
+    pub area_id: String,
+    pub network_mask: String,
+    pub hello_interval: u16,
+    pub router_dead_interval: u32,
+    pub router_priority: u8,
+}
+
+impl Default for OspfInterfaceConfig {
+    fn default() -> Self {
+        // RFC 2328 Appendix C.3 defaults for a broadcast interface.
+        Self {
+            router_id: "0.0.0.0".to_string(),
+            area_id: "0.0.0.0".to_string(),
+            network_mask: "255.255.255.0".to_string(),
+            hello_interval: 10,
+            router_dead_interval: 40,
+            router_priority: 1,
+        }
+    }
+}
+
+impl OspfInterfaceConfig {
+    /// Fill in the fields the model left out of an outgoing packet action.
+    ///
+    /// `router_id` and `area_id` apply to every OSPF packet type; the Hello body fields
+    /// are only added to `send_hello`, where they exist. Fields the action already
+    /// carries are left untouched.
+    pub fn apply_defaults(&self, action: &mut serde_json::Value) {
+        let Some(obj) = action.as_object_mut() else {
+            return;
+        };
+
+        obj.entry("router_id")
+            .or_insert_with(|| json!(self.router_id));
+        obj.entry("area_id").or_insert_with(|| json!(self.area_id));
+
+        if obj.get("type").and_then(|t| t.as_str()) == Some("send_hello") {
+            obj.entry("network_mask")
+                .or_insert_with(|| json!(self.network_mask));
+            obj.entry("hello_interval")
+                .or_insert_with(|| json!(self.hello_interval));
+            obj.entry("router_dead_interval")
+                .or_insert_with(|| json!(self.router_dead_interval));
+            obj.entry("priority")
+                .or_insert_with(|| json!(self.router_priority));
+        }
+    }
+
+    /// RFC 2328 10.5: a received Hello whose HelloInterval, RouterDeadInterval or network
+    /// mask differs from the receiving interface's must be rejected - adjacency cannot form
+    /// across such a mismatch on a broadcast network.
+    ///
+    /// Returns one human-readable line per mismatching field, empty when the Hello is
+    /// compatible. The caller reports these to the model and refuses to advance the
+    /// neighbour state machine, rather than pretending an adjacency is forming that a real
+    /// router would never complete.
+    pub fn hello_mismatches(
+        &self,
+        hello_interval: u16,
+        router_dead_interval: u32,
+        network_mask: &str,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        if hello_interval != self.hello_interval {
+            out.push(format!(
+                "hello_interval {} does not match our configured {}",
+                hello_interval, self.hello_interval
+            ));
+        }
+        if router_dead_interval != self.router_dead_interval {
+            out.push(format!(
+                "router_dead_interval {} does not match our configured {}",
+                router_dead_interval, self.router_dead_interval
+            ));
+        }
+        if network_mask != self.network_mask {
+            out.push(format!(
+                "network_mask {} does not match our configured {}",
+                network_mask, self.network_mask
+            ));
+        }
+        out
+    }
+}
+
 /// OSPF protocol action handler
 pub struct OspfProtocol;
 
@@ -982,9 +1086,9 @@ impl Protocol for OspfProtocol {
                 // required, so declaring Root would refuse to start on a capability-only process.
                 .privilege_requirement(PrivilegeRequirement::RawSockets)
                 .implementation("Manual OSPFv2 (RFC 2328) over a raw IP-protocol-89 socket. Hello is parsed in full; DD/LSR/LSU/LSAck are parsed to their headers only. Outgoing DD carries no LSA headers and outgoing LSR/LSU/LSAck carry empty bodies - they are valid packets that advertise nothing.")
-                .llm_control("Every received packet type raises an event carrying parsed fields, and the LLM chooses the reply packet. It cannot yet put LSA contents into a reply.")
-                .e2e_testing("None against a real router. The E2E suite runs the OSPF wire format over a plain UDP server and never exercises the raw-socket path, so it proves nothing about this protocol.")
-                .notes("Hello-level simulator, not a router. No LSDB, no SPF, no routing table, no LSA construction, no DR/BDR election, no periodic Hello timer and no dead-neighbor timeout. Adjacency cannot progress past 2-Way.")
+                .llm_control("Every received packet type raises an event carrying parsed fields, and the LLM chooses the reply packet. It cannot yet put LSA contents into a reply. Fields the reply omits are filled from the interface configuration given at startup (router_id, area_id, network_mask, hello_interval, router_dead_interval, router_priority).")
+                .e2e_testing("None against a real router. The E2E suite runs the OSPF wire format over a plain UDP server and never exercises the raw-socket path, so it proves nothing about the raw-socket implementation. What IS verified at byte level (tests/server/ospf/e2e_test.rs): build_hello_packet writes the configured hello_interval, router_dead_interval, priority and network mask into the Hello body at RFC 2328 A.3.2 offsets when the action omits them, an action-supplied value overrides the configured one, and the RFC 2328 10.5 mismatch check fires on exactly the three fields the RFC names.")
+                .notes("Hello-level simulator, not a router. No LSDB, no SPF, no routing table, no LSA construction, no DR/BDR election, no periodic Hello timer and no dead-neighbor timeout. Adjacency cannot progress past 2-Way, and a Hello that fails the RFC 2328 10.5 interval/mask check does not advance it at all - the event still reaches the model, carrying the mismatch, so the refusal is visible rather than silent.")
                 .build()
     }
     fn description(&self) -> &'static str {
@@ -994,46 +1098,50 @@ impl Protocol for OspfProtocol {
         "Start an OSPF server on interface 192.168.1.100 as router 1.1.1.1 in area 0.0.0.0"
     }
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        // All six are read in ProtocolConfig terms by OspfServer::spawn_with_llm_actions into
+        // an OspfInterfaceConfig, which supplies the defaults for every outgoing packet and
+        // the RFC 2328 10.5 acceptance check for every incoming Hello. Four of them used to
+        // be declared here and read nowhere.
         vec![
             ParameterDefinition {
                 name: "router_id".to_string(),
                 type_hint: "string".to_string(),
-                description: "OSPF router ID in IPv4 address format (e.g., 1.1.1.1)".to_string(),
+                description: "OSPF router ID in IPv4 address format (e.g., 1.1.1.1). Used as the Router ID of every packet sent unless the action overrides it. Defaults to the interface address.".to_string(),
                 required: false,
                 example: json!("1.1.1.1"),
             },
             ParameterDefinition {
                 name: "area_id".to_string(),
                 type_hint: "string".to_string(),
-                description: "OSPF area ID in IPv4 format (0.0.0.0 = backbone area)".to_string(),
+                description: "OSPF area ID in IPv4 format (0.0.0.0 = backbone area). Used as the Area ID of every packet sent unless the action overrides it.".to_string(),
                 required: false,
                 example: json!("0.0.0.0"),
             },
             ParameterDefinition {
                 name: "network_mask".to_string(),
                 type_hint: "string".to_string(),
-                description: "Network mask (e.g., 255.255.255.0)".to_string(),
+                description: "Network mask of this interface (e.g., 255.255.255.0). Placed in outgoing Hello packets, and compared against incoming ones: RFC 2328 10.5 requires a Hello whose mask differs to be rejected.".to_string(),
                 required: false,
                 example: json!("255.255.255.0"),
             },
             ParameterDefinition {
                 name: "hello_interval".to_string(),
                 type_hint: "integer".to_string(),
-                description: "Hello packet interval in seconds (default 10)".to_string(),
+                description: "HelloInterval in seconds (default 10). Placed in outgoing Hello packets. A neighbour whose Hello advertises a different value is rejected per RFC 2328 10.5 and its adjacency is not advanced.".to_string(),
                 required: false,
                 example: json!(10),
             },
             ParameterDefinition {
                 name: "router_dead_interval".to_string(),
                 type_hint: "integer".to_string(),
-                description: "Router dead interval in seconds (default 40)".to_string(),
+                description: "RouterDeadInterval in seconds (default 40). Placed in outgoing Hello packets and, like hello_interval, must match a neighbour's for its Hello to be accepted.".to_string(),
                 required: false,
                 example: json!(40),
             },
             ParameterDefinition {
                 name: "router_priority".to_string(),
                 type_hint: "integer".to_string(),
-                description: "Router priority for DR election (0-255, default 1)".to_string(),
+                description: "Router priority for DR election (0-255, default 1). Placed in outgoing Hello packets unless the send_hello action sets its own 'priority'. No election algorithm runs - the value is advertised, nothing more.".to_string(),
                 required: false,
                 example: json!(1),
             },

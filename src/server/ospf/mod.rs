@@ -36,8 +36,8 @@ use crate::state::app_state::AppState;
 use crate::state::server::OspfNeighborState;
 #[cfg(feature = "ospf")]
 use actions::{
-    OspfProtocol, OSPF_DATABASE_DESCRIPTION_EVENT, OSPF_HELLO_EVENT, OSPF_LINK_STATE_ACK_EVENT,
-    OSPF_LINK_STATE_REQUEST_EVENT, OSPF_LINK_STATE_UPDATE_EVENT,
+    OspfInterfaceConfig, OspfProtocol, OSPF_DATABASE_DESCRIPTION_EVENT, OSPF_HELLO_EVENT,
+    OSPF_LINK_STATE_ACK_EVENT, OSPF_LINK_STATE_REQUEST_EVENT, OSPF_LINK_STATE_UPDATE_EVENT,
 };
 
 // OSPF Constants
@@ -78,10 +78,9 @@ struct OspfState {
     socket_fd: i32,
     #[allow(dead_code)]
     interface_ip: Ipv4Addr,
-    #[allow(dead_code)]
-    router_id: String,
-    #[allow(dead_code)]
-    area_id: String,
+    /// Interface configuration from the startup parameters. Supplies the defaults for
+    /// every outgoing packet and the RFC 2328 10.5 acceptance check for incoming Hellos.
+    config: OspfInterfaceConfig,
     neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>>,
 }
 
@@ -115,21 +114,52 @@ impl OspfServer {
             interface_ip
         ));
 
-        // Extract configuration
-        let (router_id, area_id) = if let Some(ref params) = startup_params {
-            let router_id = params
-                .get_optional_string("router_id")?
-                .unwrap_or_else(|| interface_ip.to_string());
-            let area_id = params
-                .get_optional_string("area_id")?
-                .unwrap_or_else(|| "0.0.0.0".to_string());
-
-            console_info!(status_tx, "OSPF: router_id={}, area={}", router_id, area_id);
-
-            (router_id, area_id)
-        } else {
-            (interface_ip.to_string(), "0.0.0.0".to_string())
+        // Extract interface configuration. Every declared startup parameter is read here
+        // and lands in OspfInterfaceConfig, which is consulted on both directions; four of
+        // the six used to be advertised to the model and read nowhere at all.
+        let mut config = OspfInterfaceConfig {
+            router_id: interface_ip.to_string(),
+            ..OspfInterfaceConfig::default()
         };
+
+        if let Some(ref params) = startup_params {
+            if let Some(v) = params.get_optional_string("router_id")? {
+                config.router_id = v;
+            }
+            if let Some(v) = params.get_optional_string("area_id")? {
+                config.area_id = v;
+            }
+            if let Some(v) = params.get_optional_string("network_mask")? {
+                config.network_mask = v;
+            }
+            if let Some(v) = params.get_optional_i64("hello_interval")? {
+                config.hello_interval = u16::try_from(v).map_err(|_| {
+                    anyhow!("hello_interval must be between 0 and 65535 seconds, got {v}")
+                })?;
+            }
+            if let Some(v) = params.get_optional_i64("router_dead_interval")? {
+                config.router_dead_interval = u32::try_from(v).map_err(|_| {
+                    anyhow!(
+                        "router_dead_interval must be between 0 and 4294967295 seconds, got {v}"
+                    )
+                })?;
+            }
+            if let Some(v) = params.get_optional_i64("router_priority")? {
+                config.router_priority = u8::try_from(v)
+                    .map_err(|_| anyhow!("router_priority must be between 0 and 255, got {v}"))?;
+            }
+        }
+
+        console_info!(
+            status_tx,
+            "OSPF: router_id={}, area={}, mask={}, hello={}s, dead={}s, priority={}",
+            config.router_id,
+            config.area_id,
+            config.network_mask,
+            config.hello_interval,
+            config.router_dead_interval,
+            config.router_priority
+        );
 
         let protocol = Arc::new(OspfProtocol::new());
         let neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>> =
@@ -138,8 +168,7 @@ impl OspfServer {
         let ospf_state = Arc::new(OspfState {
             socket_fd,
             interface_ip,
-            router_id: router_id.clone(),
-            area_id: area_id.clone(),
+            config,
             neighbors: neighbors.clone(),
         });
 
@@ -436,6 +465,27 @@ impl OspfServer {
             sender_router_id, priority, dr, bdr
         );
 
+        // RFC 2328 10.5: HelloInterval, RouterDeadInterval and the network mask must match
+        // the receiving interface's, or the Hello is not acceptable and no adjacency can
+        // form. The configured values come from the startup parameters.
+        let mismatches =
+            ospf_state
+                .config
+                .hello_mismatches(hello_interval, router_dead_interval, &network_mask);
+
+        if !mismatches.is_empty() {
+            warn!(
+                "OSPF Hello from {} rejected (RFC 2328 10.5): {}",
+                sender_router_id,
+                mismatches.join("; ")
+            );
+            let _ = status_tx.send(format!(
+                "[WARN] OSPF Hello from {} does not match this interface: {}",
+                sender_router_id,
+                mismatches.join("; ")
+            ));
+        }
+
         // Update neighbor state
         {
             let mut neighbors = ospf_state.neighbors.lock().await;
@@ -445,22 +495,28 @@ impl OspfServer {
                 neighbor.bdr = bdr.clone();
                 neighbor.last_hello = Instant::now();
 
-                // State transitions
-                match neighbor.state {
-                    OspfNeighborState::Down => {
-                        neighbor.state = OspfNeighborState::Init;
-                        info!("OSPF neighbor {} -> Init", sender_router_id);
+                // State transitions. A Hello that failed the 10.5 check does not advance
+                // the machine: a real router would never reach adjacency across such a
+                // mismatch, and reporting Init/2-Way here would be a lie the operator
+                // acts on.
+                if mismatches.is_empty() {
+                    match neighbor.state {
+                        OspfNeighborState::Down => {
+                            neighbor.state = OspfNeighborState::Init;
+                            info!("OSPF neighbor {} -> Init", sender_router_id);
+                        }
+                        OspfNeighborState::Init => {
+                            neighbor.state = OspfNeighborState::TwoWay;
+                            info!("OSPF neighbor {} -> 2-Way", sender_router_id);
+                        }
+                        _ => {}
                     }
-                    OspfNeighborState::Init => {
-                        neighbor.state = OspfNeighborState::TwoWay;
-                        info!("OSPF neighbor {} -> 2-Way", sender_router_id);
-                    }
-                    _ => {}
                 }
             }
         }
 
-        // Send structured event to LLM
+        // Send structured event to LLM. The event fires even for a rejected Hello, carrying
+        // the reason - a refusal the model can see and explain beats one it cannot.
         let event = Event {
             event_type: &OSPF_HELLO_EVENT,
             data: serde_json::json!({
@@ -475,6 +531,11 @@ impl OspfServer {
                 "dr": dr,
                 "bdr": bdr,
                 "neighbors": neighbor_list,
+                "local_network_mask": ospf_state.config.network_mask,
+                "local_hello_interval": ospf_state.config.hello_interval,
+                "local_router_dead_interval": ospf_state.config.router_dead_interval,
+                "local_router_priority": ospf_state.config.router_priority,
+                "config_mismatches": mismatches,
             }),
         };
 
@@ -842,6 +903,15 @@ impl OspfServer {
                                 .get("destination")
                                 .and_then(|d| d.as_str())
                                 .unwrap_or("multicast");
+
+                            // Fill in whatever the model left out from the interface
+                            // configuration. Without this the builders fell back to
+                            // hardcoded constants and the operator's hello_interval,
+                            // router_dead_interval, network_mask and router_priority
+                            // never reached the wire.
+                            let mut data = data.clone();
+                            ospf_state.config.apply_defaults(&mut data);
+                            let data = &data;
 
                             // Build packet from structured action data (no bytes in JSON!)
                             let packet_result = match action_type {

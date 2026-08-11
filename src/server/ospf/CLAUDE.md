@@ -16,7 +16,44 @@ routing logic.
 
 **Status**: Experimental (protocol simulator)
 **Spec**: [RFC 2328 (OSPFv2)](https://datatracker.ietf.org/doc/html/rfc2328)
-**Requires**: `CAP_NET_RAW` (declared as `PrivilegeRequirement::RawSockets`)
+**Requires**: `CAP_NET_RAW` (declared as `PrivilegeRequirement::RawSockets`, which is
+correct — `Root` would refuse to start on a capability-only process that could in fact
+run it)
+
+## Startup parameters
+
+Six declared, six read (`OspfServer::spawn_with_llm_actions` → `OspfInterfaceConfig` in
+`actions.rs`):
+
+| Parameter | Default | What reads it |
+|---|---|---|
+| `router_id` | the interface address | Router ID of every outgoing packet |
+| `area_id` | `0.0.0.0` | Area ID of every outgoing packet |
+| `network_mask` | `255.255.255.0` | outgoing Hello body; RFC 2328 §10.5 check on inbound Hellos |
+| `hello_interval` | `10` | outgoing Hello body; §10.5 check |
+| `router_dead_interval` | `40` | outgoing Hello body; §10.5 check |
+| `router_priority` | `1` | outgoing Hello body (`priority` field) |
+
+The defaults are RFC 2328 Appendix C.3's, so a server started with no parameters behaves
+exactly as it did before the configuration existed.
+
+**Four of the six used to be declared and read nowhere.** `spawn` looked only at
+`router_id` and `area_id`; `network_mask`, `hello_interval`, `router_dead_interval` and
+`router_priority` were advertised to the model and silently ignored, and the packet
+builders fell back to hardcoded constants. Two things now consume them:
+
+1. **Outgoing packets.** `OspfInterfaceConfig::apply_defaults` fills in every field the
+   model's action omitted, immediately before `dispatch_event` selects a builder. An
+   action that *does* name a field keeps its own value, so a honeypot prompt can still
+   deliberately advertise timers that differ from the interface.
+2. **Incoming Hellos.** RFC 2328 §10.5 makes matching HelloInterval, RouterDeadInterval
+   and network mask a precondition for accepting a Hello at all.
+   `OspfInterfaceConfig::hello_mismatches` checks exactly those three. A Hello that fails
+   does **not** advance the neighbour state machine — a real router would never reach
+   adjacency across such a mismatch, and reporting Init/2-Way would be a lie the operator
+   acts on. The event still fires, carrying `config_mismatches` plus
+   `local_hello_interval` / `local_router_dead_interval` / `local_network_mask` /
+   `local_router_priority`, so the refusal is visible to the model rather than silent.
 
 > **Scope warning.** This is a Hello-level simulator, not a router. It parses every OSPF packet
 > type and hands the parsed fields to the LLM, but it can only *construct* a complete Hello.
@@ -149,10 +186,19 @@ When OSPF Hello received:
     "router_priority": 1,
     "dr": "0.0.0.0",
     "bdr": "0.0.0.0",
-    "neighbors": ["1.1.1.1", "3.3.3.3"]
+    "neighbors": ["1.1.1.1", "3.3.3.3"],
+    "local_network_mask": "255.255.255.0",
+    "local_hello_interval": 10,
+    "local_router_dead_interval": 40,
+    "local_router_priority": 1,
+    "config_mismatches": []
   }
 }
 ```
+
+`local_*` are this interface's configured values and `config_mismatches` lists the RFC
+2328 §10.5 fields that differ. A non-empty list means no adjacency can form with that
+neighbour until one side is reconfigured.
 
 ### Action Structure (Output from LLM)
 
@@ -242,6 +288,10 @@ No real Link State Database. LLM generates LSAs on demand:
 ### Hello Packet
 
 Built from LLM JSON action:
+
+Every field below reads "from LLM", but the action rarely names them all: whatever it
+omits comes from the interface configuration (`apply_defaults`), not from a hardcoded
+constant.
 
 ```rust
 // OSPF Header (24 bytes)
@@ -353,7 +403,9 @@ unsafe {
 - DD exchange *state* (master/slave negotiation, sequence tracking) - packets are parsed and
   surfaced, but nothing tracks the exchange
 - Periodic Hello timer - the server only ever replies, it never initiates
-- Dead neighbor detection (`last_hello` is recorded and never checked)
+- Dead neighbor detection (`last_hello` is recorded and never checked). Note the
+  configured `router_dead_interval` *is* read - it is advertised in outgoing Hellos and
+  enforced as an RFC 2328 §10.5 acceptance check - but nothing uses it as a timer
 - DR/BDR election (the LLM claims a role by setting priority; no algorithm runs)
 - LSDB, SPF, routing table, route installation - out of scope by design
 
@@ -416,6 +468,16 @@ packet before parsing it. Nobody has since re-run the experiment, and raw socket
 - State transitions (Down/Init/2-Way)
 - Multicast reception
 - Protocol parsing
+
+**What the E2E suite actually asserts.** `tests/server/ospf/e2e_test.rs` still runs the
+OSPF wire format over a plain UDP server and never touches the raw-socket path, so it
+proves nothing about this module's I/O. It does now assert the configuration plumbing at
+byte level against RFC 2328 A.3.2 offsets: that a configured `hello_interval` /
+`router_dead_interval` / `router_priority` / `network_mask` reach bytes 28-29, 32-35, 31
+and 24-27 of the Hello body; that an action-supplied value overrides the configured one;
+that non-Hello packets take only `router_id`/`area_id`; that the §10.5 check fires on
+exactly the three fields the RFC names; and that the declared startup-parameter set equals
+the set the implementation reads.
 
 ## Security Considerations
 
