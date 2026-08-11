@@ -84,8 +84,21 @@ impl Protocol for ArpProtocol {
             .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("libpcap (pcap crate) + pnet for ARP packet handling")
             .llm_control("Full control - can respond to ARP requests with custom MAC addresses")
-            .e2e_testing("pnet for packet crafting and validation")
-            .notes("Requires root/CAP_NET_RAW for promiscuous mode and packet injection")
+            .e2e_testing(
+                "tests/capture_startup_reports_failure_test.rs asserts spawn() returns Err for \
+                 an unknown device and for missing capture privilege, unprivileged. \
+                 tests/server/arp/e2e_test.rs crafts real ARP frames with pnet and reads the \
+                 replies back off the wire with pcap, but is #[ignore]d for capture privilege \
+                 and has never been run in CI.",
+            )
+            .notes(
+                "Requires root/CAP_NET_RAW (or /dev/bpf* access) for promiscuous mode and packet \
+                 injection. Startup failure is reported: spawn_with_llm awaits both pcap handles \
+                 and the 'arp' BPF filter, so a privilege failure lands in ServerStatus::Error \
+                 rather than Running. UNVERIFIED: the request/reply path has only ever been \
+                 exercised by the #[ignore]d test. Loopback is not useful - ARP is not observable \
+                 there; pass a real NIC.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {

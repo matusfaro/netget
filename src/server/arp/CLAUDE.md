@@ -263,6 +263,14 @@ Failed to start server: failed to open pcap capture on 'en0' (needs root, or rea
 and a bad interface name gives `no such capture device 'nosuch0'`. The server is never reported as
 `Running` while capturing nothing.
 
+This is guarded by `tests/capture_startup_reports_failure_test.rs`, which covers all four
+capture/raw-socket protocols (`arp`, `datalink`, `isis`, `icmp`) and asserts **both** branches -
+privileged `spawn` returns `Ok`, unprivileged `spawn` returns `Err` naming the missing privilege.
+Asserting the unprivileged branch is what gives it teeth: that is the branch every developer
+machine and every CI runner takes, and a regression to fire-and-forget fails it immediately. The
+same bug was fixed three separate times (ARP, DataLink, ICMP) and missed on IS-IS each time; the
+test exists so a fourth recurrence is a red build rather than another audit finding.
+
 **Default interface**: `default_binding()` resolves to `lo` on Linux/Windows and `lo0` on
 macOS/BSD (`DEFAULT_LOOPBACK_INTERFACE` in `actions.rs`). Note ARP is not observable on loopback -
 pass a real NIC (`en0`, `eth0`) via the `interface` argument for anything useful.

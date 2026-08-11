@@ -72,14 +72,21 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "needs raw IP sockets (root, or CAP_NET_RAW on Linux): without them \
+                server_startup refuses ICMP before the server exists, so nothing here can be \
+                exercised. Run under sudo with --ignored. It used to skip-and-return-Ok, which \
+                cargo reported as a pass on every unprivileged machine - i.e. it looked like \
+                ICMP coverage and was none."]
     async fn test_icmp_echo_server() -> E2EResult<()> {
-        // Check for raw socket capability
-        if !has_raw_socket_capability() {
-            println!("⚠ Skipping ICMP server test: requires CAP_NET_RAW or root privileges");
-            println!("  Run with: sudo cargo test --features icmp --test server");
-            println!("  Or grant capability: sudo setcap cap_net_raw+ep target/debug/netget");
-            return Ok(());
-        }
+        // Reached only via --ignored, i.e. someone explicitly asked for the privileged test.
+        // Failing is the honest answer: skipping would report a pass for a test that verified
+        // nothing.
+        assert!(
+            has_raw_socket_capability(),
+            "test_icmp_echo_server requires raw IP socket access and this process does not have \
+             it (root, or `setcap cap_net_raw+ep` on Linux). It asserts nothing without it and \
+             must not report a pass."
+        );
 
         println!("✓ Raw socket capability detected");
 

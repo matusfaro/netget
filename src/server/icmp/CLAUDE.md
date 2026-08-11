@@ -200,6 +200,14 @@ Failed to start server: failed to create raw ICMP receive socket (needs root, or
 
 The server is never reported as `Running` when the socket did not open.
 
+Guarded by `tests/capture_startup_reports_failure_test.rs`
+(`icmp_spawn_outcome_matches_raw_socket_privilege`), which asserts both branches: privileged
+`spawn` returns `Ok`, unprivileged `spawn` returns `Err` naming the raw socket. The unprivileged
+branch is the one that runs on every developer machine and in CI, so a regression to the old
+fire-and-forget `spawn_blocking` fails it immediately. ARP, DataLink and ICMP each had this bug
+fixed separately and IS-IS was missed each time, which is why the guard covers all four in one
+file.
+
 ### Kernel Interaction
 - Kernel may handle some ICMP types automatically
 - Echo Request may be answered by kernel before reaching userspace

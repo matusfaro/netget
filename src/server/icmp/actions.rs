@@ -92,8 +92,21 @@ impl Protocol for IcmpProtocol {
             .privilege_requirement(PrivilegeRequirement::RawSockets)
             .implementation("Raw IP sockets + pnet for ICMP packet handling")
             .llm_control("Full control - can respond to all ICMP message types")
-            .e2e_testing("pnet for packet crafting and validation")
-            .notes("Requires root/CAP_NET_RAW for raw socket access")
+            .e2e_testing(
+                "tests/capture_startup_reports_failure_test.rs asserts spawn() returns Err \
+                 without raw-socket privilege, unprivileged. tests/server/icmp/e2e_test.rs \
+                 crafts real echo requests with pnet and reads the replies off a raw socket, \
+                 but is #[ignore]d for privilege and has never been run in CI.",
+            )
+            .notes(
+                "Requires root/CAP_NET_RAW for raw socket access. Startup failure is reported: \
+                 spawn_with_llm awaits the SOCK_RAW sockets, so a privilege failure lands in \
+                 ServerStatus::Error rather than Running. UNVERIFIED: the echo path has only \
+                 ever been exercised by the #[ignore]d test. The 'interface' argument is \
+                 accepted and ignored - the socket receives ICMP from every interface. Note the \
+                 kernel answers echo requests itself, so a userspace reply is a second reply on \
+                 the wire.",
+            )
             .build()
     }
 

@@ -12,6 +12,21 @@ Testing the ICMP server presents unique challenges due to raw socket requirement
 - Cannot run in unprivileged environments (including Claude Code for Web)
 - Must explicitly enable with `cargo test -- --ignored --test-threads=100`
 
+`test_icmp_echo_server` was **not** `#[ignore]`d until August 2026. It checked for raw-socket
+capability, printed "⚠ Skipping" and returned `Ok(())`, which cargo reported as a **pass** on
+every unprivileged machine - so the suite looked like it covered ICMP and covered nothing. It is
+now `#[ignore]`d with a reason (cargo prints *ignored*, which nobody mistakes for a pass), and
+running it explicitly with `--ignored` on a host that still lacks the privilege **fails loudly**
+rather than skipping: you asked for the privileged test.
+
+## Startup-failure coverage that does run unprivileged
+
+`tests/capture_startup_reports_failure_test.rs::icmp_spawn_outcome_matches_raw_socket_privilege`
+asserts that `IcmpServer::spawn_with_llm` returns `Ok` **iff** the raw sockets actually opened,
+and that the unprivileged refusal names the socket and how to get it. ICMP once returned `Ok`
+regardless, leaving a server in `ServerStatus::Running` that had received nothing; this is the
+guard against that returning.
+
 ## Test Approach
 
 ### Option 1: Mock-Based Testing (Recommended)
