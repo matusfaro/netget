@@ -15,6 +15,22 @@ Unlike protocols like TCP, HTTP, or DNS that run over IP sockets, IS-IS operates
 - **Interface-based**: Uses interface names (`eth0`, `veth0`) not ports
 - **Raw frames**: Ethernet + LLC/SNAP + IS-IS PDU structure
 
+## Startup-failure coverage lives elsewhere
+
+`tests/capture_startup_reports_failure_test.rs` (`isis_spawn_reports_unknown_device`,
+`isis_spawn_outcome_matches_capture_privilege`) is the only IS-IS test in the tree that runs
+**unprivileged and asserts something**. It pins the invariant that `spawn_with_llm_actions` must
+not return `Ok` unless the pcap handle genuinely opened.
+
+That mattered: IS-IS shipped the fire-and-forget `spawn_blocking` shape - the blocking task
+logged and returned on failure while `spawn` had already committed to `Ok(interface)` - so an
+unprivileged user got a server sitting in `Running` having captured nothing. ARP, DataLink and
+ICMP had the same bug and were fixed one at a time; IS-IS was missed all three times. The guard
+covers all four in one file for that reason, and asserts both branches so it fails on an
+unprivileged runner (which is every one of them).
+
+Everything below still requires root and is `#[ignore]`d.
+
 ## Test Strategy
 
 ### Mock-Based Testing (Default)

@@ -19,7 +19,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::IsisProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_info, console_trace};
 use actions::ISIS_HELLO_EVENT;
 
 // IS-IS Constants (ISO/IEC 10589, RFC 1195)
@@ -126,47 +126,73 @@ impl IsisServer {
         };
 
         let protocol = Arc::new(IsisProtocol::new());
+
+        // Retained by this function; the capture task takes ownership of `status_tx`.
+        let status_tx_ready = status_tx.clone();
+
+        // pcap is blocking, so we run it in a blocking task.
+        //
+        // Opening the pcap handle is the step that requires privileges (root, or read/write
+        // access to /dev/bpf* on macOS and the BSDs, or CAP_NET_RAW on Linux). It therefore
+        // MUST NOT be fire-and-forget: the outcome is handed back over a oneshot and this
+        // function only returns Ok once the capture is genuinely live, so a failure surfaces as
+        // ServerStatus::Error instead of a server that reports Running while capturing nothing.
+        // ARP, DataLink and ICMP were fixed for exactly this; IS-IS was missed at the time.
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+
         let interface_clone = interface.clone();
         let protocol_clone = protocol.clone();
-
-        // pcap is blocking, so we run it in a blocking task
         tokio::task::spawn_blocking(move || {
-            // Find device
-            let device = match Self::find_device(&interface_clone) {
-                Ok(d) => d,
+            let open_capture = || -> Result<(Capture<pcap::Active>, [u8; 6])> {
+                let device = Self::find_device(&interface_clone)
+                    .with_context(|| format!("no such capture device '{}'", interface_clone))?;
+
+                // Get device MAC address (needed for source MAC in responses). Not fatal:
+                // a locally administered address still produces valid frames.
+                let local_mac = match Self::get_interface_mac(&interface_clone) {
+                    Ok(mac) => mac,
+                    Err(e) => {
+                        warn!("Failed to get interface MAC address: {}, using default", e);
+                        [0x02, 0x00, 0x00, 0x00, 0x00, 0x01] // Local admin MAC
+                    }
+                };
+
+                // Open capture for IS-IS packets
+                let mut cap = Capture::from_device(device)
+                    .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
+                    .and_then(|c| c.open())
+                    .with_context(|| {
+                        format!(
+                            "failed to open pcap capture on '{}' (needs root, or \
+                             read access to /dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)",
+                            interface_clone
+                        )
+                    })?;
+
+                // BPF filter for IS-IS packets (LLC DSAP/SSAP 0xFE).
+                // This matches packets with IS-IS LLC headers. The expression is fixed, so a
+                // failure here means it will never compile on this libpcap - and without it the
+                // capture delivers *every* frame on the segment to the LLM. Refuse to start
+                // rather than silently become a firehose.
+                let filter = "ether proto 0xfefe or (ether[14:2] = 0xfefe and ether[16:1] = 0x03)";
+                cap.filter(filter, true).with_context(|| {
+                    format!("failed to apply the IS-IS BPF filter '{}'", filter)
+                })?;
+
+                Ok((cap, local_mac))
+            };
+
+            let (cap, local_mac) = match open_capture() {
+                Ok(handles) => {
+                    let _ = ready_tx.send(Ok(()));
+                    handles
+                }
                 Err(e) => {
-                    console_error!(status_tx, "Failed to find device: {}", e);
+                    console_error!(status_tx, "IS-IS capture startup failed: {:#}", e);
+                    let _ = ready_tx.send(Err(e));
                     return;
                 }
             };
-
-            // Get device MAC address (needed for source MAC in responses)
-            let local_mac = match Self::get_interface_mac(&interface_clone) {
-                Ok(mac) => mac,
-                Err(e) => {
-                    warn!("Failed to get interface MAC address: {}, using default", e);
-                    [0x02, 0x00, 0x00, 0x00, 0x00, 0x01] // Local admin MAC
-                }
-            };
-
-            // Open capture for IS-IS packets
-            let mut cap = match Capture::from_device(device)
-                .map(|c| c.promisc(true).snaplen(65535).timeout(1000))
-                .and_then(|c| c.open())
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    console_error!(status_tx, "Failed to open capture: {}", e);
-                    return;
-                }
-            };
-
-            // BPF filter for IS-IS packets (LLC DSAP/SSAP 0xFE)
-            // This matches packets with IS-IS LLC headers
-            let filter = "ether proto 0xfefe or (ether[14:2] = 0xfefe and ether[16:1] = 0x03)";
-            if let Err(e) = cap.filter(filter, true) {
-                console_warn!(status_tx, "Failed to apply IS-IS filter: {}", e);
-            }
 
             info!(
                 "IS-IS listening on {}, MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -187,7 +213,7 @@ impl IsisServer {
 
             // Capture loop
             loop {
-                let mut cap_guard = cap_arc.lock().unwrap();
+                let mut cap_guard = cap_arc.lock().unwrap_or_else(|e| e.into_inner());
                 match cap_guard.next_packet() {
                     Ok(packet) => {
                         let data = Bytes::copy_from_slice(packet.data);
@@ -293,6 +319,20 @@ impl IsisServer {
                 }
             }
         });
+
+        // Wait for the blocking task to report whether the capture actually came up.
+        match ready_rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "IS-IS capture task on '{}' exited before signalling readiness",
+                    interface
+                ))
+            }
+        }
+
+        console_info!(status_tx_ready, "IS-IS capture active on {}", interface);
 
         Ok(interface)
     }
@@ -563,7 +603,7 @@ impl IsisServer {
                         let frame = Self::build_ethernet_frame(output_data, local_mac, level)?;
 
                         // Send frame via pcap
-                        let mut cap_guard = cap.lock().unwrap();
+                        let mut cap_guard = cap.lock().unwrap_or_else(|e| e.into_inner());
                         if let Err(e) = cap_guard.sendpacket(frame.as_ref()) {
                             console_error!(status_tx, "Failed to send IS-IS frame: {}", e);
                         } else {

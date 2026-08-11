@@ -70,7 +70,10 @@ impl Protocol for IsisProtocol {
         get_isis_event_types()
     }
     fn stack_name(&self) -> &'static str {
-        "ETH>IP>UDP>ISIS"
+        // Layer 2 only: Ethernet 802.3 + LLC (DSAP/SSAP 0xFE), never IP or UDP. The old
+        // "ETH>IP>UDP>ISIS" here was a leftover from a UDP-encapsulated draft that no longer
+        // exists in this module, and it told the model IS-IS rides on a transport it does not.
+        "ETH>LLC>ISIS"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["isis", "is-is"]
@@ -85,8 +88,19 @@ impl Protocol for IsisProtocol {
             .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")
             .llm_control("Hello PDUs, LSPs, neighbor adjacencies, multicast MAC")
-            .e2e_testing("Raw socket packet injection with pcap")
-            .notes("True Layer 2 IS-IS, interoperable with real routers (FRR, Cisco, etc.)")
+            .e2e_testing(
+                "tests/capture_startup_reports_failure_test.rs asserts spawn() returns Err for an \
+                 unknown device and for missing capture privilege. PDU handling itself is \
+                 untested: tests/server/isis/e2e_test.rs is #[ignore]d for root.",
+            )
+            .notes(
+                "Layer 2 over Ethernet+LLC (DSAP/SSAP 0xFE), not UDP. Startup failure is \
+                 reported: spawn() awaits the pcap handle and the BPF filter and returns Err, \
+                 so a privilege failure lands in ServerStatus::Error rather than Running. \
+                 NEVER validated against a real router (FRR/Cisco) or any IS-IS speaker - the \
+                 earlier 'interoperable with real routers' claim was unfounded. LSP/CSNP/PSNP \
+                 are parsed and logged but not handled; there is no LSP database or SPF.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {

@@ -8,7 +8,12 @@ IS-IS for IP). The LLM controls neighbor adjacencies, Hello PDU responses, and L
 **Status**: Experimental
 **Protocol Spec
 **: [ISO/IEC 10589](https://www.iso.org/standard/30932.html), [RFC 1195 (IS-IS for IP)](https://datatracker.ietf.org/doc/html/rfc1195)
-**Port**: UDP 3784 (encapsulated IS-IS)
+**Transport**: raw Layer 2 via libpcap - Ethernet 802.3 + LLC (DSAP/SSAP `0xFE`, control `0x03`).
+**There is no port and no UDP.** Everything in this file that used to describe "UDP encapsulation
+on port 3784" was left over from a draft that does not exist in `mod.rs`; the `stack_name()` said
+`ETH>IP>UDP>ISIS` for the same reason and now says `ETH>LLC>ISIS`.
+**Privilege**: `PrivilegeRequirement::PacketCapture` - root, `/dev/bpf*` access on macOS/BSD, or
+`CAP_NET_RAW` on Linux.
 
 ## Library Choices
 
@@ -38,14 +43,46 @@ IS-IS for IP). The LLM controls neighbor adjacencies, Hello PDU responses, and L
 
 ## Architecture Decisions
 
-### UDP Encapsulation
+### Layer 2 over libpcap (not UDP)
 
-IS-IS traditionally runs directly over Layer 2 (Data Link), but this implementation uses UDP encapsulation:
+IS-IS runs directly on the data link layer, and so does this implementation:
 
-- **Port**: 3784 (standard for IS-IS over UDP)
-- **Rationale**: Simpler than raw sockets, no elevated privileges required
-- **Limitation**: Cannot participate in real IS-IS networks (which use Layer 2)
-- **Use case**: Honeypot, testing, learning, simulation
+- **Capture**: `pcap::Capture::from_device(..).promisc(true).snaplen(65535).timeout(1000).open()`
+- **BPF filter**: `ether proto 0xfefe or (ether[14:2] = 0xfefe and ether[16:1] = 0x03)`
+- **Framing**: 14-byte Ethernet header, 3-byte LLC (`0xFE 0xFE 0x03`), then the IS-IS PDU at
+  offset 17. Replies are built by `build_ethernet_frame()` and injected with `sendpacket()`.
+- **Destination MAC**: `01:80:C2:00:00:14` (AllL1ISs) or `01:80:C2:00:00:15` (AllL2ISs),
+  chosen from the `level` startup parameter.
+- **Consequence**: elevated privileges are required, and loopback is useless for real IS-IS
+  (there are no IS-IS speakers on it) - point it at a real NIC or a veth pair.
+
+### Startup reports failure (do not regress this)
+
+`spawn_with_llm_actions` opens the pcap handle inside `tokio::task::spawn_blocking` - but it
+**awaits the outcome over a `oneshot` before returning**, so device lookup, the privileged
+`open()` and the BPF filter compile all propagate out of `Server::spawn()` and `server_startup`
+records `ServerStatus::Error(..)`.
+
+This was not always so. IS-IS shipped the fire-and-forget version: the blocking task logged and
+returned while `spawn` had already committed to `Ok(interface)`, so an unprivileged user got a
+server sitting in `Running` that had captured nothing. ARP, DataLink and ICMP each had the same
+bug and were each fixed separately; IS-IS was missed all three times. An unprivileged caller now
+sees:
+
+```
+Failed to start server: failed to open pcap capture on 'en0' (needs root, or read access to
+/dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)
+```
+
+and a bad interface name gives `no such capture device 'nosuch0'`.
+
+The BPF filter is deliberately fatal too: the expression is fixed, so a failure to compile it
+means the capture would deliver *every* frame on the segment to the LLM. Refusing to start beats
+becoming a firehose.
+
+`tests/capture_startup_reports_failure_test.rs` guards all four protocols and asserts both
+branches (privileged → `Ok`, unprivileged → `Err` naming the missing privilege), so it has teeth
+on an unprivileged runner - which is every developer machine and every CI runner.
 
 ### IS-IS PDU Types
 
@@ -150,40 +187,36 @@ Extracted from LLM-generated startup prompt.
 
 **`isis_hello`** - IS-IS Hello PDU received
 
-Event data:
+Event data, as actually built in `handle_hello_pdu` - there is no `peer_addr` and no
+`pdu_type_code`, because there is no IP peer; the neighbour is identified by MAC:
 
 ```json
 {
   "pdu_type": "LAN Hello L2",
-  "pdu_type_code": 16,
-  "peer_addr": "192.168.1.100:3784",
+  "src_mac": "aa:bb:cc:dd:ee:ff",
   "packet_hex": "831b01...",
-  "area_addresses": ["49.0001"],
-  "protocols_supported": ["0xCC"],
+  "area_addresses": ["490001"],
+  "protocols_supported": ["0xcc"],
   "ip_addresses": ["192.168.1.100"],
   "hostname": "router1"
 }
 ```
 
+The last four keys are present only when the corresponding TLV appeared in the Hello.
+
 ## Connection Management
 
 ### Per-PDU "Connection"
 
-IS-IS uses UDP, so each PDU creates a new "connection" entry:
+Each captured PDU creates a "connection" entry so the TUI has something to show:
 
-- Connection ID: Unique per PDU
-- Tracks adjacency state, neighbor system ID, level
-- Updated on each Hello received
-
-### State Tracking
-
-```rust
-ProtocolConnectionInfo::Isis {
-    adjacency_state: String,      // "init", "up", "down"
-    neighbor_system_id: Option<String>, // e.g., "0000.0000.0002"
-    level: String,                 // "level-1", "level-2", "level-1+2"
-}
-```
+- Connection ID: unique per PDU (`get_next_unified_id()`)
+- `remote_addr` / `local_addr` are the source and local **MAC** rendered into a `SocketAddr`-
+  shaped string, which does not parse, so both fall back to `0.0.0.0:0`. Cosmetic, but do not
+  read those fields as meaningful.
+- `protocol_info` is `ProtocolConnectionInfo::empty()`. There is **no** `ProtocolConnectionInfo::Isis`
+  variant - `ProtocolConnectionInfo` is a generic `serde_json::Value` wrapper, not an enum, and
+  no adjacency state is stored anywhere.
 
 ## Logging
 
@@ -191,8 +224,8 @@ ProtocolConnectionInfo::Isis {
 
 **DEBUG**: PDU summaries
 
-- "IS-IS received LAN Hello L2 from 192.168.1.100, 128 bytes"
-- "IS-IS sent 96 bytes to 192.168.1.100"
+- "IS-IS received 145 bytes from aa:bb:cc:dd:ee:ff"
+- "IS-IS sent 96 bytes"
 
 **TRACE**: Full packet dumps
 
@@ -201,7 +234,7 @@ ProtocolConnectionInfo::Isis {
 
 **INFO**: Adjacency events
 
-- "IS-IS LAN Hello L2 from 192.168.1.100"
+- "IS-IS LAN Hello L2 from aa:bb:cc:dd:ee:ff"
 - "IS-IS LSP received (forwarding to LLM)"
 
 **WARN**: Invalid packets
@@ -221,7 +254,13 @@ All logs go to both `netget.log` (via tracing macros) and TUI (via `status_tx`).
 - ✅ Hello PDU construction
 - ✅ TLV parsing (Area, Protocols, IP Addresses, Hostname)
 - ✅ Basic LSP construction
-- ✅ Adjacency state tracking
+
+**Verified against**: nothing. No IS-IS speaker, no independent codec, no captured trace. The
+`metadata()` note claimed "interoperable with real routers (FRR, Cisco, etc.)"; that was never
+tested and has been removed. What *is* tested is the startup contract
+(`tests/capture_startup_reports_failure_test.rs`) and PDU-structure constants
+(`tests/server/isis/e2e_test.rs::test_isis_pdu_structure`); every test that would exercise a real
+frame is `#[ignore]`d for root.
 
 **Not Implemented**:
 
@@ -234,6 +273,8 @@ All logs go to both `netget.log` (via tracing macros) and TUI (via `status_tx`).
 - ❌ IPv6 support (only IPv4 TLVs)
 - ❌ Flooding logic
 - ❌ Holding time enforcement
+- ❌ Adjacency state tracking (the event carries no state and nothing is stored between PDUs;
+  the "Adjacency State Machine" section above describes an intent, not the code)
 
 ### No Routing Functionality
 
@@ -244,13 +285,15 @@ Server doesn't perform routing:
 - Cannot participate in real IS-IS networks
 - For honeypot, testing, and learning only
 
-### UDP Encapsulation Only
+### Requires capture privileges, and a segment with an IS-IS speaker on it
 
-Real IS-IS uses Layer 2 (Ethernet, PPP), this uses UDP:
+Framing is real Layer 2 with the correct AllL1ISs/AllL2ISs multicast destinations, so nothing
+structural prevents interoperation - but it has never been demonstrated. Practical consequences:
 
-- Cannot interoperate with real IS-IS routers
-- No multicast support (IS-IS uses 01-80-C2-00-00-14/15)
-- Simplified for honeypot/testing scenarios
+- Needs root, `/dev/bpf*` access (macOS/BSD) or `CAP_NET_RAW` (Linux); startup refuses without.
+- Loopback is pointless: no router speaks IS-IS there. Use a real NIC or a veth pair.
+- `get_interface_mac()` only reads `/sys/class/net/<if>/address`, i.e. Linux. Everywhere else it
+  fails and the server sends from the locally administered `02:00:00:00:00:01`.
 
 ### No Multi-Level Support
 
@@ -265,14 +308,23 @@ Each server instance operates at a single level (L1 or L2):
 ### Server Startup
 
 ```
-netget> Start an IS-IS router on port 3784 with system-id 0000.0000.0001 in area 49.0001
+netget> Start an IS-IS router on interface eth0 with system-id 0000.0000.0001 in area 49.0001
 ```
 
 Server output:
 
 ```
-[INFO] IS-IS server listening on 0.0.0.0:3784
+[INFO] IS-IS server starting on interface: eth0
 [INFO] IS-IS configured: system_id=0000.0000.0001, area=49.0001, level=level-2
+→ IS-IS ready on interface eth0
+[INFO] IS-IS capture active on eth0
+```
+
+Without capture privileges it refuses instead, and the server is marked `Error`:
+
+```
+[ERROR] IS-IS capture startup failed: failed to open pcap capture on 'eth0' (needs root, or
+read access to /dev/bpf* on macOS/BSD, or CAP_NET_RAW on Linux)
 ```
 
 ### Hello PDU Received
@@ -280,9 +332,9 @@ Server output:
 Client sends Hello:
 
 ```
-[DEBUG] IS-IS received LAN Hello L2 from 192.168.1.100, 128 bytes
-[TRACE] IS-IS PDU (hex): 831b0100100106000...
-→ IS-IS LAN Hello L2 from 192.168.1.100
+[DEBUG] IS-IS received 145 bytes
+[TRACE] IS-IS frame (hex): 0180c2000015aabbccddeeff...
+→ IS-IS LAN Hello L2 from aa:bb:cc:dd:ee:ff
 ```
 
 LLM receives event:
@@ -290,10 +342,10 @@ LLM receives event:
 ```json
 {
   "pdu_type": "LAN Hello L2",
-  "pdu_type_code": 16,
-  "peer_addr": "192.168.1.100:3784",
-  "area_addresses": ["49.0001"],
-  "protocols_supported": ["0xCC"],
+  "src_mac": "aa:bb:cc:dd:ee:ff",
+  "packet_hex": "831b01001001...",
+  "area_addresses": ["490001"],
+  "protocols_supported": ["0xcc"],
   "hostname": "neighbor-router"
 }
 ```
@@ -317,9 +369,8 @@ LLM responds:
 Server sends Hello:
 
 ```
-[DEBUG] IS-IS sent 96 bytes to 192.168.1.100
+[DEBUG] IS-IS sent 96 bytes
 [TRACE] IS-IS sent (hex): 831b0100100106000...
-→ IS-IS response to 192.168.1.100 (96 bytes)
 ```
 
 ### LSP Received
@@ -359,7 +410,7 @@ IS-IS server should **not** be used for production routing:
 
 - No SPF calculation or routing table
 - No LSP database or flooding
-- UDP encapsulation not compatible with real IS-IS
+- Never validated against a real IS-IS speaker
 - No authentication or security features
 
 For production routing, use established implementations (FRR, BIRD, Holo).
