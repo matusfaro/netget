@@ -25,12 +25,17 @@ use crate::state::server::{
 };
 use crate::state::ServerId;
 
-use crate::{console_info, console_warn};
+use crate::{console_error, console_info, console_warn};
 use actions::SMB_OPERATION_EVENT;
 
 // NTSTATUS codes used in SMB2 response headers (MS-ERREF 2.3.1).
 const STATUS_ACCESS_DENIED: u32 = 0xC000_0022;
 const STATUS_DATA_ERROR: u32 = 0xC000_003E;
+/// "Insufficient system resources exist to complete the API." The closest NTSTATUS to
+/// "retryable", used when the LLM failure was capacity exhaustion rather than a fault.
+const STATUS_INSUFFICIENT_RESOURCES: u32 = 0xC000_009A;
+/// "An internal error occurred." Used for every other LLM failure.
+const STATUS_INTERNAL_ERROR: u32 = 0xC000_00E5;
 
 // File attributes in the CREATE response (MS-SMB2 2.2.14 / MS-FSCC 2.6).
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
@@ -508,8 +513,11 @@ impl SmbServer {
                 info!("SMB2 CREATE request for: {}", path);
                 let _ = status_tx.send(format!("[INFO] SMB CREATE: {}", path));
 
-                // Consult LLM to check if file exists and get info
-                let actions = Self::consult_llm(
+                // Consult LLM to check if file exists and get info. An LLM failure must
+                // answer in SMB2, not drop the connection: a client that gets no reply
+                // hangs until its own timeout with no way to tell an outage from a
+                // black hole.
+                let actions = match Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -521,7 +529,20 @@ impl SmbServer {
                     }),
                     status_tx,
                 )
-                .await?;
+                .await
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        return Ok(Some(Self::llm_failure_response(
+                            _header,
+                            SMB2_CREATE,
+                            "CREATE",
+                            &path,
+                            &e,
+                            status_tx,
+                        )?));
+                    }
+                };
 
                 // The model decides whether this handle is a file or a directory. That
                 // choice reaches the wire: FILE_ATTRIBUTE_DIRECTORY in the CREATE response
@@ -609,8 +630,9 @@ impl SmbServer {
                     path, offset, length
                 ));
 
-                // Consult LLM for file content
-                let actions = Self::consult_llm(
+                // Consult LLM for file content. On an LLM failure the READ is refused
+                // with an NTSTATUS rather than answered with invented content.
+                let actions = match Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -623,7 +645,15 @@ impl SmbServer {
                     }),
                     status_tx,
                 )
-                .await?;
+                .await
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        return Ok(Some(Self::llm_failure_response(
+                            _header, SMB2_READ, "READ", &path, &e, status_tx,
+                        )?));
+                    }
+                };
 
                 // Extract file content from the LLM response, honouring the action's
                 // `encoding` field. Decoding is explicit: `content` is only base64 or hex
@@ -730,8 +760,9 @@ impl SmbServer {
 
                 // Consult the LLM. The write is refused unless the model returns
                 // smb_write_file: an LLM outage or a model that says nothing must not read
-                // as an approval.
-                let actions = Self::consult_llm(
+                // as an approval. An outage is reported as its own NTSTATUS so it stays
+                // distinguishable from the model's explicit denial (ACCESS_DENIED).
+                let actions = match Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -745,7 +776,15 @@ impl SmbServer {
                     }),
                     status_tx,
                 )
-                .await?;
+                .await
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        return Ok(Some(Self::llm_failure_response(
+                            _header, SMB2_WRITE, "WRITE", &path, &e, status_tx,
+                        )?));
+                    }
+                };
 
                 let write_action = actions
                     .iter()
@@ -798,8 +837,10 @@ impl SmbServer {
                     info!("SMB2 QUERY_INFO: {}", path);
                     let _ = status_tx.send(format!("[INFO] SMB QUERY_INFO: {}", path));
 
-                    // Consult LLM for file info
-                    let actions = Self::consult_llm(
+                    // Consult LLM for file info. On an LLM failure the client is told the
+                    // query failed rather than being handed the 4096-byte default as if
+                    // the model had answered.
+                    let actions = match Self::consult_llm(
                         _llm_client,
                         _app_state,
                         _server_id,
@@ -810,7 +851,20 @@ impl SmbServer {
                         }),
                         status_tx,
                     )
-                    .await?;
+                    .await
+                    {
+                        Ok(actions) => actions,
+                        Err(e) => {
+                            return Ok(Some(Self::llm_failure_response(
+                                _header,
+                                SMB2_QUERY_INFO,
+                                "QUERY_INFO",
+                                &path,
+                                &e,
+                                status_tx,
+                            )?));
+                        }
+                    };
 
                     // Extract file info from LLM response (or use defaults)
                     let size = actions
@@ -850,8 +904,10 @@ impl SmbServer {
                     info!("SMB2 QUERY_DIRECTORY: {}", path);
                     let _ = status_tx.send(format!("[INFO] SMB QUERY_DIRECTORY: {}", path));
 
-                    // Consult LLM for directory listing
-                    let actions = Self::consult_llm(
+                    // Consult LLM for directory listing. On an LLM failure the client is
+                    // told the enumeration failed rather than being handed an empty
+                    // listing, which reads as "the directory is empty".
+                    let actions = match Self::consult_llm(
                         _llm_client,
                         _app_state,
                         _server_id,
@@ -862,7 +918,20 @@ impl SmbServer {
                         }),
                         status_tx,
                     )
-                    .await?;
+                    .await
+                    {
+                        Ok(actions) => actions,
+                        Err(e) => {
+                            return Ok(Some(Self::llm_failure_response(
+                                _header,
+                                SMB2_QUERY_DIRECTORY,
+                                "QUERY_DIRECTORY",
+                                &path,
+                                &e,
+                                status_tx,
+                            )?));
+                        }
+                    };
 
                     // Extract file list from LLM response
                     let files = actions
@@ -1484,25 +1553,41 @@ impl SmbServer {
     /// empty error-data buffer, which is what a client parses when the status is a failure.
     /// Used to refuse an operation outright rather than answering STATUS_SUCCESS with
     /// whatever the LLM did or did not say - a refusal must be distinguishable from silence.
+    ///
+    /// The MessageId, TreeId and SessionId are echoed from the request. A client matches a
+    /// reply to its outstanding request by MessageId, so an error carrying the wrong one is
+    /// as good as no error at all.
     #[cfg(feature = "smb")]
     fn build_error_response(request_header: &[u8], command: u16, status: u32) -> Result<Vec<u8>> {
-        let mut response = Vec::new();
+        // MS-SMB2 2.2.1.2 (SYNC header) field offsets:
+        //   0 ProtocolId(4)  4 StructureSize(2)  6 CreditCharge(2)  8 Status(4)
+        //  12 Command(2)    14 CreditResponse(2) 16 Flags(4)       20 NextCommand(4)
+        //  24 MessageId(8)  32 Reserved(4)       36 TreeId(4)      40 SessionId(8)
+        //  48 Signature(16)
+        const HEADER_LEN: usize = 64;
+        if request_header.len() < HEADER_LEN {
+            return Err(anyhow::anyhow!(
+                "SMB2 request header too short to answer: {} bytes",
+                request_header.len()
+            ));
+        }
 
-        response.extend_from_slice(b"\xFESMB");
-        response.extend_from_slice(&[64, 0]); // Header length
-        response.extend_from_slice(&[0, 0]); // Credit charge
-        response.extend_from_slice(&status.to_le_bytes()); // NTSTATUS
-        response.extend_from_slice(&command.to_le_bytes()); // Command
-        response.extend_from_slice(&[1, 0]); // Credits granted
-        response.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // Flags (response)
+        let mut response = Vec::with_capacity(HEADER_LEN + 9);
 
-        // Copy message ID from the request so the client can correlate the reply
-        response.extend_from_slice(&request_header[24..32]);
-
-        response.extend_from_slice(&[0; 8]); // Reserved / next command
-        response.extend_from_slice(&[1, 0, 0, 0]); // Tree ID
-        response.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // Session ID
-        response.extend_from_slice(&[0; 16]); // Signature
+        response.extend_from_slice(b"\xFESMB"); // 0  ProtocolId
+        response.extend_from_slice(&[64, 0]); // 4  StructureSize (always 64)
+        response.extend_from_slice(&[0, 0]); // 6  CreditCharge
+        response.extend_from_slice(&status.to_le_bytes()); // 8  NTSTATUS
+        response.extend_from_slice(&command.to_le_bytes()); // 12 Command
+        response.extend_from_slice(&[1, 0]); // 14 CreditResponse
+        response.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // 16 Flags (SERVER_TO_REDIR)
+        response.extend_from_slice(&[0; 4]); // 20 NextCommand (not compounded)
+        response.extend_from_slice(&request_header[24..32]); // 24 MessageId (echoed)
+        response.extend_from_slice(&[0; 4]); // 32 Reserved
+        response.extend_from_slice(&request_header[36..40]); // 36 TreeId (echoed)
+        response.extend_from_slice(&request_header[40..48]); // 40 SessionId (echoed)
+        response.extend_from_slice(&[0; 16]); // 48 Signature (unsigned)
+        debug_assert_eq!(response.len(), HEADER_LEN, "SMB2 header must be 64 bytes");
 
         // SMB2 ERROR Response body
         response.extend_from_slice(&[9, 0]); // Structure size (9)
@@ -1511,6 +1596,51 @@ impl SmbServer {
         response.push(0); // ErrorData (one padding byte when ByteCount is 0)
 
         Ok(response)
+    }
+
+    /// Refuse an operation because the LLM call failed, in SMB2's own vocabulary.
+    ///
+    /// Fail closed: the request is answered with an NTSTATUS failure, never with
+    /// STATUS_SUCCESS and invented content, and never with silence. Before this existed,
+    /// five of the six `consult_llm` call sites propagated the error with `?`, which broke
+    /// the connection loop - the client saw a dead socket and waited out its own timeout.
+    ///
+    /// `STATUS_INSUFFICIENT_RESOURCES` (0xC000009A) is used when
+    /// `crate::llm::is_overload_error` identifies capacity exhaustion, because it is the
+    /// closest NTSTATUS to "retryable"; every other failure is `STATUS_INTERNAL_ERROR`
+    /// (0xC00000E5). Both stay distinguishable from the model's own refusal
+    /// (STATUS_ACCESS_DENIED) and from an undecodable payload (STATUS_DATA_ERROR).
+    #[cfg(feature = "smb")]
+    fn llm_failure_response(
+        request_header: &[u8],
+        command: u16,
+        operation: &str,
+        path: &str,
+        err: &anyhow::Error,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Vec<u8>> {
+        let overloaded = crate::llm::is_overload_error(err);
+        let status = if overloaded {
+            STATUS_INSUFFICIENT_RESOURCES
+        } else {
+            STATUS_INTERNAL_ERROR
+        };
+
+        console_error!(
+            status_tx,
+            "SMB {} {}: LLM {} - refusing with NTSTATUS 0x{:08X}: {}",
+            operation,
+            path,
+            if overloaded {
+                "overloaded"
+            } else {
+                "backend failure"
+            },
+            status,
+            err
+        );
+
+        Self::build_error_response(request_header, command, status)
     }
 
     /// Build SMB2 ACCESS_DENIED response for SESSION_SETUP

@@ -295,6 +295,36 @@ All four were found by writing the first test that asserts response *bytes* rath
 No explicit error field - LLM just omits expected action type.
 Server returns default error response if action not found.
 
+### When the LLM call itself fails
+
+All six `consult_llm` call sites answer in SMB2 rather than dropping the connection. Five of
+them used to propagate the error with `?`, which broke out of the connection loop and closed
+the socket; a client cannot tell that from a hung server and simply waits out its own
+timeout.
+
+| Site | Response on LLM failure |
+|---|---|
+| `session_setup` | STATUS_ACCESS_DENIED (auth is denied, never granted) |
+| `create` / `read` / `write` / `query_info` / `query_directory` | SMB2 ERROR response (MS-SMB2 2.2.2) for that command |
+
+The NTSTATUS is `STATUS_INSUFFICIENT_RESOURCES` (0xC000009A) when
+`crate::llm::is_overload_error` identifies capacity exhaustion - the closest NTSTATUS to
+"retryable" - and `STATUS_INTERNAL_ERROR` (0xC00000E5) otherwise. Both stay distinguishable
+from the model's own refusal (STATUS_ACCESS_DENIED on a write) and from an undecodable
+payload (STATUS_DATA_ERROR on a read), which is the point: an outage must never look like a
+decision, and a `query_directory` failure must not be answered with an empty listing that
+reads as "the directory is empty".
+
+`build_error_response` echoes the request's **MessageId, TreeId and SessionId**. A client
+correlates replies to outstanding requests by MessageId, so an error carrying the wrong one
+is discarded and the client is back to waiting out its timeout. It also lays the 64-byte
+header out per MS-SMB2 2.2.1.2; it previously wrote MessageId at offset 20 (omitting
+NextCommand) and hardcoded TreeId/SessionId to 1.
+
+The connection is *not* torn down: the error ends the operation, not the session, and a
+following CLOSE is still answered. `tests/server/smb/llm_failure_test.rs` asserts all of
+this on the response bytes.
+
 ## Example Prompts and Responses
 
 ### Example 1: Basic File Server
