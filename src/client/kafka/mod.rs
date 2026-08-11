@@ -1,609 +1,1245 @@
-//! Kafka client implementation
+//! Kafka client — pure Rust, no librdkafka.
+//!
+//! # Wire format: shared with the broker, not reimplemented
+//!
+//! Every byte is produced and consumed by `kafka-protocol`'s code-generated codecs, reached
+//! through the `pub use kafka_protocol` re-export in [`crate::server::kafka`]. Both halves
+//! live behind the same `kafka` Cargo feature, so there is nothing extra to gate and no
+//! second copy of the schemas to keep in sync — the same arrangement the BGP client has with
+//! `src/server/bgp/wire.rs`.
+//!
+//! This client uses the codecs in the *client* direction: it encodes requests and decodes
+//! responses, where the broker decodes requests and encodes responses. Nothing here calls a
+//! function `src/server/kafka/mod.rs` wrote, apart from the two record-field encoding helpers
+//! that decide how bytes are shown to (and taken from) a model.
+//!
+//! ## What this replaced
+//!
+//! An `rdkafka` (librdkafka) client that **was never reachable under `--features kafka`**:
+//! `src/client/mod.rs` gated it on `#[cfg(all(feature = "kafka", feature = "rdkafka"))]`, and
+//! only `all-protocols` turned the implicit `rdkafka` feature on — so a default build linked
+//! a C library annotated in `Cargo.toml` as crashing in malloc, and every targeted
+//! `--features kafka` build silently had no Kafka client at all. Its four E2E tests were
+//! `#[ignore]`d for exactly that reason. `rdkafka` is now gone from the dependency list.
+//!
+//! # Supported surface
+//!
+//! Exactly the five APIs NetGet's broker implements, negotiated rather than assumed:
+//!
+//! | API | key | this client asks for at most | why that ceiling |
+//! |---|---|---|---|
+//! | ApiVersions  | 18 | v3 | falls back to decoding at v0 if the broker refuses, per Kafka's own rule |
+//! | Metadata     | 3  | v8 | v9 is flexible, v10 replaces topic names with UUIDs |
+//! | Produce      | 0  | v7 | v8 adds per-record errors, v9 is flexible |
+//! | Fetch        | 1  | v11 | v12 is flexible, v13 replaces topic names with UUIDs |
+//! | OffsetCommit | 8  | v2 | v2 is the last version every broker since 0.9 accepts unchanged |
+//!
+//! The actual version used for each is `min(our ceiling, the broker's max)`, refused
+//! outright if that falls below the broker's minimum.
+//!
+//! **No consumer groups.** `FindCoordinator`, `JoinGroup`, `SyncGroup` and `Heartbeat` are
+//! implemented by neither half, so partitions are assigned manually and fetch offsets are
+//! explicit. **No `ListOffsets`**, so there is no earliest/latest resolution — a consumer
+//! starts at `start_offset` (default 0).
+//!
+//! # Why one mutex over the whole connection
+//!
+//! Kafka multiplexes requests on one TCP connection and matches replies by correlation id.
+//! Rather than run a demultiplexer task, this client holds a `tokio::sync::Mutex` for the
+//! duration of one request/response exchange, which makes the correlation id trivially
+//! unambiguous. The lock is *not* held across an LLM call — events are built, the guard is
+//! dropped, and only then is the model consulted. Every socket operation carries
+//! [`IO_TIMEOUT`], so a silent broker cannot hold the lock forever.
+
 pub mod actions;
 
 pub use actions::KafkaClientProtocol;
 
-use anyhow::{Context, Result};
-use rdkafka::{
-    consumer::{Consumer, StreamConsumer},
-    producer::{FutureProducer, FutureRecord},
-    ClientConfig, Message,
-};
+use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use tracing::{error, info, trace};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::sync::{mpsc, Mutex};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::client::kafka::actions::{
-    KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
-    KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
+    kafka_error_name, KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
+    KAFKA_CLIENT_METADATA_RECEIVED_EVENT, KAFKA_CLIENT_RECORDS_RECEIVED_EVENT,
 };
 use crate::client::llm_budget::call_llm_for_client;
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
-use crate::protocol::Event;
+use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 
-/// Kafka client mode
-#[derive(Debug, Clone, PartialEq)]
-enum KafkaClientMode {
-    Producer,
-    Consumer,
+// The broker's copy of the wire library and its two record-field encoding helpers. Sharing
+// them is what keeps "hex means hex" true on both sides of the same connection.
+use crate::server::kafka::kafka_protocol;
+use crate::server::kafka::{decode_field, encode_field};
+
+use kafka_protocol::messages::{
+    ApiKey, ApiVersionsRequest, ApiVersionsResponse, FetchRequest, FetchResponse, MetadataRequest,
+    MetadataResponse, OffsetCommitRequest, OffsetCommitResponse, ProduceRequest, ProduceResponse,
+    RequestHeader, ResponseHeader,
+};
+use kafka_protocol::protocol::{Decodable, Encodable, StrBytes};
+use kafka_protocol::records::{
+    Compression, Record, RecordBatchDecoder, RecordBatchEncoder, RecordEncodeOptions, TimestampType,
+};
+
+/// Every socket operation is bounded. Without this a broker that accepts a request and never
+/// answers holds the exchange mutex for the life of the process.
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Largest response frame accepted. Mirrors the broker's own request cap; the size prefix
+/// comes off the wire and is otherwise an allocation primitive.
+const MAX_RESPONSE_BYTES: i64 = 100 * 1024 * 1024;
+
+const CLIENT_MAX_API_VERSIONS: i16 = 3;
+const CLIENT_MAX_METADATA: i16 = 8;
+const CLIENT_MAX_PRODUCE: i16 = 7;
+const CLIENT_MAX_FETCH: i16 = 11;
+const CLIENT_MAX_OFFSET_COMMIT: i16 = 2;
+
+/// How many records of a batch are described to the model, and how much of each value.
+/// Matches the broker's `MAX_EVENT_RECORDS` / `MAX_EVENT_VALUE_BYTES`.
+const MAX_EVENT_RECORDS: usize = 20;
+const MAX_EVENT_VALUE_BYTES: usize = 1024;
+
+const DEFAULT_PARTITION_MAX_BYTES: i32 = 1024 * 1024;
+const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
+const MIN_POLL_INTERVAL_MS: u64 = 50;
+const DEFAULT_CLIENT_ID: &str = "netget-kafka-client";
+const DEFAULT_GROUP_ID: &str = "netget-consumer-group";
+
+/// Compression type parameters. `None` selects `kafka-protocol`'s built-in codecs (gzip,
+/// snappy, lz4, zstd are all on by default); the function types still have to be nameable.
+type Compressor = fn(&mut bytes::BytesMut, &mut Vec<u8>, Compression) -> Result<()>;
+type Decompressor = fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>;
+
+/// One partition this client is following, and where it will read from next.
+#[derive(Clone, Debug)]
+struct Assignment {
+    topic: String,
+    partition: i32,
+    next_offset: i64,
 }
 
-/// Kafka client that connects to a Kafka broker cluster
+/// The broker connection plus everything needed to frame a request on it.
+struct KafkaConn {
+    stream: TcpStream,
+    next_correlation_id: i32,
+    /// `api_key -> (min_version, max_version)` as the broker advertised it.
+    versions: HashMap<i16, (i16, i16)>,
+    client_id: StrBytes,
+}
+
+impl KafkaConn {
+    /// The version to use for `api_key`: `min(our ceiling, the broker's max)`, refused if
+    /// that lands below the broker's minimum or the broker does not implement the API at all.
+    ///
+    /// Guessing a version here is not a small mistake: a body encoded at a version the broker
+    /// does not implement is not rejected cleanly, it is misparsed.
+    fn version_for(&self, api_key: ApiKey, our_max: i16) -> Result<i16> {
+        let (broker_min, broker_max) =
+            *self.versions.get(&(api_key as i16)).with_context(|| {
+                format!(
+                    "broker does not advertise {api_key:?} (key {})",
+                    api_key as i16
+                )
+            })?;
+        let chosen = our_max.min(broker_max);
+        if chosen < broker_min {
+            bail!(
+                "broker supports {api_key:?} v{broker_min}-v{broker_max}, but this client \
+                 implements at most v{our_max}"
+            );
+        }
+        Ok(chosen)
+    }
+
+    fn build_request<B: Encodable>(
+        &mut self,
+        api_key: ApiKey,
+        api_version: i16,
+        body: &B,
+    ) -> Result<(i32, Vec<u8>)> {
+        let correlation_id = self.next_correlation_id;
+        self.next_correlation_id = self.next_correlation_id.wrapping_add(1);
+
+        let mut buf = Vec::new();
+        RequestHeader::default()
+            .with_request_api_key(api_key as i16)
+            .with_request_api_version(api_version)
+            .with_correlation_id(correlation_id)
+            .with_client_id(Some(self.client_id.clone()))
+            .encode(&mut buf, api_key.request_header_version(api_version))
+            .with_context(|| format!("encoding {api_key:?} v{api_version} request header"))?;
+        body.encode(&mut buf, api_version)
+            .with_context(|| format!("encoding {api_key:?} v{api_version} request body"))?;
+        Ok((correlation_id, buf))
+    }
+
+    async fn write_frame(&mut self, body: &[u8]) -> Result<()> {
+        let size = i32::try_from(body.len()).context("request does not fit in an i32 frame")?;
+        tokio::time::timeout(IO_TIMEOUT, self.stream.write_all(&size.to_be_bytes()))
+            .await
+            .context("timed out writing Kafka frame size")??;
+        tokio::time::timeout(IO_TIMEOUT, self.stream.write_all(body))
+            .await
+            .context("timed out writing Kafka frame body")??;
+        Ok(())
+    }
+
+    async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        let mut size = [0u8; 4];
+        tokio::time::timeout(IO_TIMEOUT, self.stream.read_exact(&mut size))
+            .await
+            .context("timed out reading Kafka response size")??;
+        // Validated in i64 so neither sign extension nor the length itself can wrap.
+        let announced = i64::from(i32::from_be_bytes(size));
+        if announced <= 0 || announced > MAX_RESPONSE_BYTES {
+            bail!("broker announced an implausible response size of {announced} bytes");
+        }
+        let mut buf = vec![0u8; announced as usize];
+        tokio::time::timeout(IO_TIMEOUT, self.stream.read_exact(&mut buf))
+            .await
+            .context("timed out reading Kafka response body")??;
+        Ok(buf)
+    }
+
+    /// One request, one response, matched on correlation id.
+    async fn exchange<B: Encodable, R: Decodable>(
+        &mut self,
+        api_key: ApiKey,
+        api_version: i16,
+        body: &B,
+    ) -> Result<R> {
+        let (correlation_id, request) = self.build_request(api_key, api_version, body)?;
+        self.write_frame(&request).await?;
+        let response = self.read_frame().await?;
+
+        let mut cursor = std::io::Cursor::new(response.as_slice());
+        let header =
+            ResponseHeader::decode(&mut cursor, api_key.response_header_version(api_version))
+                .with_context(|| format!("decoding {api_key:?} v{api_version} response header"))?;
+        if header.correlation_id != correlation_id {
+            bail!(
+                "broker answered {api_key:?} with correlation id {} instead of {correlation_id}; \
+                 the connection is desynchronised",
+                header.correlation_id
+            );
+        }
+        R::decode(&mut cursor, api_version)
+            .with_context(|| format!("decoding {api_key:?} v{api_version} response body"))
+    }
+
+    /// Send a request and deliberately read nothing back. Only correct for `acks=0` Produce,
+    /// where the broker is specified to write no reply at all.
+    async fn send_only<B: Encodable>(
+        &mut self,
+        api_key: ApiKey,
+        api_version: i16,
+        body: &B,
+    ) -> Result<()> {
+        let (_, request) = self.build_request(api_key, api_version, body)?;
+        self.write_frame(&request).await
+    }
+}
+
+/// Everything one connected client needs to run its event loop.
+#[derive(Clone)]
+struct Session {
+    conn: Arc<Mutex<KafkaConn>>,
+    assignments: Arc<Mutex<Vec<Assignment>>>,
+    memory: Arc<Mutex<String>>,
+    client_id: ClientId,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+    default_group_id: String,
+    remote_addr: String,
+}
+
+/// Kafka client that connects to a broker.
 pub struct KafkaClient;
 
 impl KafkaClient {
-    /// Connect to a Kafka cluster with integrated LLM actions
+    /// Connect to a broker, negotiate, fetch metadata, then hand the session to the model.
     pub async fn connect_with_llm_actions(
         remote_addr: String,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
-        startup_params: Option<crate::protocol::StartupParams>,
+        startup_params: Option<StartupParams>,
     ) -> Result<SocketAddr> {
-        // Parse startup parameters
-        let params = startup_params.context("Kafka client requires startup parameters")?;
+        // Parameters are validated before the socket is opened, so a bad value fails the
+        // connect with a message naming the key instead of half-starting a client.
+        let params = startup_params.as_ref();
+        let client_id_str = params
+            .map(|p| p.get_optional_string("client_id"))
+            .transpose()?
+            .flatten()
+            .unwrap_or_else(|| DEFAULT_CLIENT_ID.to_string());
 
-        let mode_str = params.get_string("mode")?;
+        let topics: Vec<String> = params
+            .map(|p| p.get_optional_array("topics"))
+            .transpose()?
+            .flatten()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        let mode = match mode_str.to_lowercase().as_str() {
-            "producer" => KafkaClientMode::Producer,
-            "consumer" => KafkaClientMode::Consumer,
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Invalid mode: {}. Must be 'producer' or 'consumer'",
-                    mode_str
-                ))
+        let partition_raw = params
+            .map(|p| p.get_optional_i64("partition"))
+            .transpose()?
+            .flatten()
+            .unwrap_or(0);
+        if !(0..=actions::MAX_PARTITION).contains(&partition_raw) {
+            bail!(
+                "Kafka client 'partition' must be between 0 and {}, got {partition_raw}",
+                actions::MAX_PARTITION
+            );
+        }
+        let partition = partition_raw as i32;
+
+        let start_offset = params
+            .map(|p| p.get_optional_i64("start_offset"))
+            .transpose()?
+            .flatten()
+            .unwrap_or(0);
+        if start_offset < 0 {
+            bail!("Kafka client 'start_offset' must not be negative, got {start_offset}");
+        }
+
+        let poll_interval_raw = params
+            .map(|p| p.get_optional_u64("poll_interval_ms"))
+            .transpose()?
+            .flatten()
+            .unwrap_or(DEFAULT_POLL_INTERVAL_MS);
+        if poll_interval_raw < MIN_POLL_INTERVAL_MS {
+            bail!(
+                "Kafka client 'poll_interval_ms' must be at least {MIN_POLL_INTERVAL_MS}, got \
+                 {poll_interval_raw}"
+            );
+        }
+        let poll_interval = Duration::from_millis(poll_interval_raw);
+
+        let group_id = params
+            .map(|p| p.get_optional_string("group_id"))
+            .transpose()?
+            .flatten()
+            .unwrap_or_else(|| DEFAULT_GROUP_ID.to_string());
+
+        info!(
+            "Kafka client {} connecting to {} (client_id={}, topics={:?})",
+            client_id, remote_addr, client_id_str, topics
+        );
+
+        let stream = tokio::time::timeout(IO_TIMEOUT, TcpStream::connect(&remote_addr))
+            .await
+            .with_context(|| format!("timed out connecting to Kafka broker {remote_addr}"))?
+            .with_context(|| format!("failed to connect to Kafka broker {remote_addr}"))?;
+        let local_addr = stream.local_addr()?;
+
+        let mut conn = KafkaConn {
+            stream,
+            next_correlation_id: 1,
+            versions: HashMap::new(),
+            client_id: StrBytes::from_string(client_id_str.clone()),
+        };
+
+        // ---- ApiVersions ------------------------------------------------------------
+        conn.versions = Self::negotiate_api_versions(&mut conn).await?;
+
+        let negotiated = serde_json::json!({
+            "metadata": conn.version_for(ApiKey::Metadata, CLIENT_MAX_METADATA)?,
+            "produce": conn.version_for(ApiKey::Produce, CLIENT_MAX_PRODUCE)?,
+            "fetch": conn.version_for(ApiKey::Fetch, CLIENT_MAX_FETCH)?,
+            "offset_commit": conn.version_for(ApiKey::OffsetCommit, CLIENT_MAX_OFFSET_COMMIT)?,
+        });
+
+        // ---- Metadata ---------------------------------------------------------------
+        let requested: Option<Vec<String>> = if topics.is_empty() {
+            None
+        } else {
+            Some(topics.clone())
+        };
+        let mut metadata = Self::request_metadata(&mut conn, requested.as_deref()).await?;
+
+        info!(
+            "Kafka client {} negotiated {} and read metadata for {} topic(s)",
+            client_id,
+            negotiated,
+            metadata
+                .get("topics")
+                .and_then(|t| t.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
+        );
+
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Kafka client {client_id} connected to {remote_addr}"
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        app_state
+            .with_client_mut(client_id, |client_inst| {
+                client_inst
+                    .set_protocol_field("brokers".to_string(), serde_json::json!(remote_addr));
+                client_inst.set_protocol_field(
+                    "kafka_client_id".to_string(),
+                    serde_json::json!(client_id_str),
+                );
+                client_inst.set_protocol_field("api_versions".to_string(), negotiated.clone());
+            })
+            .await;
+
+        let assignments: Vec<Assignment> = topics
+            .iter()
+            .map(|topic| Assignment {
+                topic: topic.clone(),
+                partition,
+                next_offset: start_offset,
+            })
+            .collect();
+        let polling = !assignments.is_empty();
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        let session = Session {
+            conn: Arc::new(Mutex::new(conn)),
+            assignments: Arc::new(Mutex::new(assignments)),
+            memory: Arc::new(Mutex::new(memory)),
+            client_id,
+            app_state: app_state.clone(),
+            llm_client,
+            status_tx: status_tx.clone(),
+            default_group_id: group_id,
+            remote_addr: remote_addr.clone(),
+        };
+
+        // The connected event and everything after it run in a task, so `connect` returns as
+        // soon as the transport is genuinely up rather than blocking startup on the model.
+        let connected_data = {
+            let obj = metadata
+                .as_object_mut()
+                .expect("request_metadata builds an object");
+            obj.insert("remote_addr".to_string(), serde_json::json!(remote_addr));
+            obj.insert("api_versions".to_string(), negotiated);
+            metadata
+        };
+
+        let task_registrar = app_state.clone();
+        let task_handle = tokio::spawn(async move {
+            let stop = session
+                .drive(Event::new(&KAFKA_CLIENT_CONNECTED_EVENT, connected_data))
+                .await;
+
+            if stop {
+                session.close("handler asked to disconnect").await;
+                return;
+            }
+            if !polling {
+                debug!(
+                    "Kafka client {} has no topics to poll; the connection stays open for \
+                     scheduled tasks and further instructions",
+                    session.client_id
+                );
+                return;
+            }
+            session.poll_loop(poll_interval).await;
+        });
+        task_registrar
+            .register_client_task(client_id, task_handle)
+            .await;
+
+        Ok(local_addr)
+    }
+
+    /// Ask the broker what it speaks.
+    ///
+    /// Kafka's own negotiation rule: a broker that does not implement the requested
+    /// ApiVersions version answers `UNSUPPORTED_VERSION` *plus the supported-API table*,
+    /// encoded at v0 so the client can always read it. Both cases are handled from the same
+    /// bytes — decoding at v3 first, then at v0 — because the reply is the only thing that
+    /// says which version to step down to.
+    async fn negotiate_api_versions(conn: &mut KafkaConn) -> Result<HashMap<i16, (i16, i16)>> {
+        let request = ApiVersionsRequest::default()
+            .with_client_software_name(StrBytes::from_static_str("netget"))
+            .with_client_software_version(StrBytes::from_static_str(env!("CARGO_PKG_VERSION")));
+
+        let (correlation_id, bytes) =
+            conn.build_request(ApiKey::ApiVersions, CLIENT_MAX_API_VERSIONS, &request)?;
+        conn.write_frame(&bytes).await?;
+        let response = conn.read_frame().await?;
+
+        let decoded = Self::decode_api_versions(&response, CLIENT_MAX_API_VERSIONS, correlation_id)
+            .and_then(|(code, body)| {
+                if code == 0 {
+                    Ok(body)
+                } else {
+                    Err(anyhow!(
+                        "ApiVersions v{CLIENT_MAX_API_VERSIONS} refused with error {code}"
+                    ))
+                }
+            });
+
+        let body = match decoded {
+            Ok(body) => body,
+            Err(first) => {
+                debug!("Kafka client stepping ApiVersions down to v0: {}", first);
+                let (code, body) = Self::decode_api_versions(&response, 0, correlation_id)
+                    .context("broker's ApiVersions reply is unreadable at v3 and at v0")?;
+                if code != 0 && body.api_keys.is_empty() {
+                    bail!(
+                        "broker refused ApiVersions with error {code} ({}) and sent no supported-API \
+                         table, so there is no version to step down to",
+                        kafka_error_name(code)
+                    );
+                }
+                body
             }
         };
 
-        let client_id_str = params
-            .get_optional_string("client_id")?
-            .unwrap_or_else(|| "netget-kafka-client".to_string());
+        if body.api_keys.is_empty() {
+            bail!("broker advertised no APIs at all");
+        }
 
-        info!(
-            "Kafka client {} connecting to {} as {:?}",
-            client_id, remote_addr, mode
-        );
+        Ok(body
+            .api_keys
+            .iter()
+            .map(|a| (a.api_key, (a.min_version, a.max_version)))
+            .collect())
+    }
 
-        match mode {
-            KafkaClientMode::Producer => {
-                Self::connect_producer(
-                    remote_addr,
-                    &client_id_str,
-                    llm_client,
-                    app_state,
-                    status_tx,
-                    client_id,
-                )
-                .await
-            }
-            KafkaClientMode::Consumer => {
-                let group_id = params
-                    .get_optional_string("group_id")?
-                    .unwrap_or_else(|| "netget-consumer-group".to_string());
+    fn decode_api_versions(
+        bytes: &[u8],
+        api_version: i16,
+        expected_correlation_id: i32,
+    ) -> Result<(i16, ApiVersionsResponse)> {
+        let mut cursor = std::io::Cursor::new(bytes);
+        let header = ResponseHeader::decode(
+            &mut cursor,
+            ApiKey::ApiVersions.response_header_version(api_version),
+        )
+        .context("decoding ApiVersions response header")?;
+        if header.correlation_id != expected_correlation_id {
+            bail!(
+                "broker answered ApiVersions with correlation id {} instead of {}",
+                header.correlation_id,
+                expected_correlation_id
+            );
+        }
+        let body = ApiVersionsResponse::decode(&mut cursor, api_version)
+            .context("decoding ApiVersions response body")?;
+        Ok((body.error_code, body))
+    }
 
-                let topics: Vec<String> = params
-                    .get_optional_array("topics")?
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
+    /// Metadata request → the structured shape a handler sees.
+    async fn request_metadata(
+        conn: &mut KafkaConn,
+        topics: Option<&[String]>,
+    ) -> Result<serde_json::Value> {
+        use kafka_protocol::messages::metadata_request::MetadataRequestTopic;
+
+        let version = conn.version_for(ApiKey::Metadata, CLIENT_MAX_METADATA)?;
+
+        let named: Option<Vec<MetadataRequestTopic>> = match topics {
+            Some(names) => Some(
+                names
+                    .iter()
+                    .map(|n| {
+                        MetadataRequestTopic::default()
+                            .with_name(Some(StrBytes::from_string(n.clone()).into()))
                     })
-                    .unwrap_or_default();
+                    .collect(),
+            ),
+            // v0 has no way to express "null topics"; there, an empty list means "everything".
+            None if version == 0 => Some(Vec::new()),
+            None => None,
+        };
 
-                Self::connect_consumer(
-                    remote_addr,
-                    &client_id_str,
-                    &group_id,
-                    topics,
-                    llm_client,
-                    app_state,
-                    status_tx,
-                    client_id,
-                )
-                .await
-            }
-        }
+        let response: MetadataResponse = conn
+            .exchange(
+                ApiKey::Metadata,
+                version,
+                &MetadataRequest::default().with_topics(named),
+            )
+            .await
+            .context("Metadata request failed")?;
+
+        Ok(metadata_to_json(&response))
     }
+}
 
-    /// Connect as Kafka producer
-    async fn connect_producer(
-        brokers: String,
-        client_id_str: &str,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        client_id: ClientId,
-    ) -> Result<SocketAddr> {
-        // Create producer
-        let producer: FutureProducer = ClientConfig::new()
-            .set("bootstrap.servers", &brokers)
-            .set("client.id", client_id_str)
-            .set("message.timeout.ms", "30000")
-            .create()
-            .context("Failed to create Kafka producer")?;
+impl Session {
+    /// Run a handler for `event`, execute what it returns, and keep going for any event those
+    /// actions produced. Returns true when the session should be torn down.
+    ///
+    /// Iterative, not recursive: the DNS client reached 211 model calls and then overflowed
+    /// the stack doing this with recursion (`IMPROVEMENTS.md` item 49). The LLM budget in
+    /// [`crate::client::llm_budget`] bounds the total; this shape bounds the stack.
+    async fn drive(&self, first: Event) -> bool {
+        let Some(instruction) = self
+            .app_state
+            .get_instruction_for_client(self.client_id)
+            .await
+        else {
+            return false;
+        };
 
-        info!("Kafka producer {} connected to {}", client_id, brokers);
+        let mut queue: VecDeque<Event> = VecDeque::from([first]);
+        while let Some(event) = queue.pop_front() {
+            let memory = self.memory.lock().await.clone();
+            let protocol = KafkaClientProtocol::new();
 
-        // Update client status
-        app_state
-            .update_client_status(client_id, ClientStatus::Connected)
-            .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] Kafka producer {} connected to {}",
-            client_id, brokers
-        ));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
-
-        // Store producer in protocol data
-        app_state
-            .with_client_mut(client_id, |client_inst| {
-                client_inst.set_protocol_field("mode".to_string(), serde_json::json!("producer"));
-                client_inst
-                    .set_protocol_field("brokers".to_string(), serde_json::json!(brokers.clone()));
-            })
-            .await;
-
-        // Call LLM with connected event
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(KafkaClientProtocol::new());
-            let event = Event::new(
-                &KAFKA_CLIENT_CONNECTED_EVENT,
-                serde_json::json!({
-                    "brokers": brokers,
-                    "client_mode": "producer",
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            if let Ok(ClientLlmResult {
-                actions,
-                memory_updates,
-            }) = call_llm_for_client(
-                &llm_client,
-                &app_state,
-                client_id.to_string(),
+            let result = call_llm_for_client(
+                &self.llm_client,
+                &self.app_state,
+                self.client_id.to_string(),
                 &instruction,
                 &memory,
                 Some(&event),
-                protocol.as_ref(),
-                &status_tx,
+                &protocol,
+                &self.status_tx,
             )
-            .await
-            {
-                // Update memory
-                if let Some(mem) = memory_updates {
-                    app_state.set_memory_for_client(client_id, mem).await;
-                }
-
-                // Execute initial actions
-                for action in actions {
-                    Self::execute_producer_action(
-                        client_id,
-                        &producer,
-                        action,
-                        &protocol,
-                        &app_state,
-                        &llm_client,
-                        &status_tx,
-                    )
-                    .await;
-                }
-            }
-        }
-
-        // Spawn producer monitoring task
-        let _producer_arc = Arc::new(producer);
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("Kafka producer {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
             .await;
 
-        // Return dummy address
-        Ok("0.0.0.0:0".parse().unwrap())
-    }
-
-    /// Connect as Kafka consumer
-    async fn connect_consumer(
-        brokers: String,
-        client_id_str: &str,
-        group_id: &str,
-        topics: Vec<String>,
-        llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        client_id: ClientId,
-    ) -> Result<SocketAddr> {
-        // Create consumer
-        let consumer: StreamConsumer = ClientConfig::new()
-            .set("bootstrap.servers", &brokers)
-            .set("group.id", group_id)
-            .set("client.id", client_id_str)
-            .set("enable.auto.commit", "false")
-            .set("session.timeout.ms", "30000")
-            .set("auto.offset.reset", "earliest")
-            .create()
-            .context("Failed to create Kafka consumer")?;
-
-        // Subscribe to topics if provided
-        if !topics.is_empty() {
-            let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
-            consumer
-                .subscribe(&topic_refs)
-                .context("Failed to subscribe to topics")?;
-            info!(
-                "Kafka consumer {} subscribed to topics: {:?}",
-                client_id, topics
-            );
-        }
-
-        info!(
-            "Kafka consumer {} connected to {} (group: {})",
-            client_id, brokers, group_id
-        );
-
-        // Update client status
-        app_state
-            .update_client_status(client_id, ClientStatus::Connected)
-            .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] Kafka consumer {} connected to {}",
-            client_id, brokers
-        ));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
-
-        // Store consumer info in protocol data
-        app_state
-            .with_client_mut(client_id, |client_inst| {
-                client_inst.set_protocol_field("mode".to_string(), serde_json::json!("consumer"));
-                client_inst
-                    .set_protocol_field("brokers".to_string(), serde_json::json!(brokers.clone()));
-                client_inst.set_protocol_field("group_id".to_string(), serde_json::json!(group_id));
-            })
-            .await;
-
-        // Call LLM with connected event
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(KafkaClientProtocol::new());
-            let event = Event::new(
-                &KAFKA_CLIENT_CONNECTED_EVENT,
-                serde_json::json!({
-                    "brokers": brokers,
-                    "client_mode": "consumer",
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            if let Ok(ClientLlmResult {
+            let ClientLlmResult {
                 actions,
                 memory_updates,
-            }) = call_llm_for_client(
-                &llm_client,
-                &app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                &status_tx,
-            )
-            .await
-            {
-                // Update memory
-                if let Some(mem) = memory_updates {
-                    app_state.set_memory_for_client(client_id, mem).await;
+            } = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        "Kafka client {} could not handle {}: {}",
+                        self.client_id,
+                        event.id(),
+                        e
+                    );
+                    let _ = self
+                        .status_tx
+                        .send(format!("[CLIENT] Kafka handler failed: {e}"));
+                    return false;
                 }
-
-                // Execute initial actions (e.g., subscribe_topics)
-                for action in actions {
-                    Self::execute_consumer_action(
-                        client_id,
-                        &consumer,
-                        action,
-                        &protocol,
-                        &app_state,
-                        &llm_client,
-                        &status_tx,
-                    )
-                    .await;
-                }
+            };
+            if let Some(mem) = memory_updates {
+                *self.memory.lock().await = mem;
             }
-        }
 
-        // Spawn consumer loop
-        let consumer_arc = Arc::new(consumer);
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                // Poll for messages
-                match consumer_arc.recv().await {
-                    Ok(message) => {
-                        let topic = message.topic().to_string();
-                        let partition = message.partition();
-                        let offset = message.offset();
-                        let timestamp = message.timestamp().to_millis();
-
-                        let key = message
-                            .key()
-                            .and_then(|k| String::from_utf8(k.to_vec()).ok());
-
-                        let payload = message
-                            .payload()
-                            .and_then(|p| String::from_utf8(p.to_vec()).ok())
-                            .unwrap_or_default();
-
-                        trace!(
-                            "Kafka consumer {} received message: topic={}, partition={}, offset={}, payload_len={}",
-                            client_id,
-                            topic,
-                            partition,
-                            offset,
-                            payload.len()
-                        );
-
-                        // Call LLM with message
-                        if let Some(instruction) =
-                            app_state.get_instruction_for_client(client_id).await
-                        {
-                            let protocol = Arc::new(KafkaClientProtocol::new());
-                            let event = Event::new(
-                                &KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
-                                serde_json::json!({
-                                    "topic": topic,
-                                    "partition": partition,
-                                    "offset": offset,
-                                    "key": key,
-                                    "payload": payload,
-                                    "timestamp": timestamp,
-                                }),
-                            );
-
-                            let memory = app_state
-                                .get_memory_for_client(client_id)
-                                .await
-                                .unwrap_or_default();
-
-                            match call_llm_for_client(
-                                &llm_client,
-                                &app_state,
-                                client_id.to_string(),
-                                &instruction,
-                                &memory,
-                                Some(&event),
-                                protocol.as_ref(),
-                                &status_tx,
-                            )
-                            .await
-                            {
-                                Ok(ClientLlmResult {
-                                    actions,
-                                    memory_updates,
-                                }) => {
-                                    // Update memory
-                                    if let Some(mem) = memory_updates {
-                                        app_state.set_memory_for_client(client_id, mem).await;
-                                    }
-
-                                    // Execute actions
-                                    for action in actions {
-                                        Self::execute_consumer_action(
-                                            client_id,
-                                            &consumer_arc,
-                                            action,
-                                            &protocol,
-                                            &app_state,
-                                            &llm_client,
-                                            &status_tx,
-                                        )
-                                        .await;
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("LLM error for Kafka consumer {}: {}", client_id, e);
+            for action in actions {
+                match protocol.execute_action(action) {
+                    Ok(ClientActionResult::Disconnect) => return true,
+                    Ok(ClientActionResult::WaitForMore) | Ok(ClientActionResult::NoAction) => {}
+                    Ok(ClientActionResult::Custom { name, data }) => {
+                        match self.perform(&name, &data).await {
+                            Ok(Some(follow_up)) => queue.push_back(follow_up),
+                            Ok(None) => {}
+                            Err(e) => {
+                                // A failed exchange is reported, never papered over with a
+                                // plausible-looking success the handler would act on.
+                                error!(
+                                    "Kafka client {} action '{}' failed: {}",
+                                    self.client_id, name, e
+                                );
+                                let _ = self
+                                    .status_tx
+                                    .send(format!("[CLIENT] Kafka {name} failed: {e}"));
+                                if is_fatal(&e) {
+                                    self.mark_error(&e.to_string()).await;
+                                    return true;
                                 }
                             }
                         }
+                    }
+                    Ok(other) => {
+                        warn!(
+                            "Kafka client {} ignoring unsupported action result {:?}",
+                            self.client_id, other
+                        );
                     }
                     Err(e) => {
-                        error!("Kafka consumer {} receive error: {}", client_id, e);
-                        app_state
-                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
-                            .await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
-                        break;
+                        error!("Kafka client {} rejected an action: {}", self.client_id, e);
+                        let _ = self
+                            .status_tx
+                            .send(format!("[CLIENT] Kafka action rejected: {e}"));
                     }
                 }
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("Kafka consumer {} stopped", client_id);
-                    break;
-                }
             }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
-
-        // Return dummy address
-        Ok("0.0.0.0:0".parse().unwrap())
+        }
+        false
     }
 
-    /// Execute producer action
-    async fn execute_producer_action(
-        client_id: ClientId,
-        producer: &FutureProducer,
-        action: serde_json::Value,
-        protocol: &Arc<KafkaClientProtocol>,
-        app_state: &Arc<AppState>,
-        llm_client: &OllamaClient,
-        status_tx: &mpsc::UnboundedSender<String>,
-    ) {
-        match protocol.execute_action(action) {
-            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data })
-                if name == "kafka_produce" =>
-            {
-                if let (Some(topic), Some(payload)) = (
-                    data.get("topic").and_then(|v| v.as_str()),
-                    data.get("payload").and_then(|v| v.as_str()),
-                ) {
-                    let key = data.get("key").and_then(|v| v.as_str());
-
-                    let mut record = FutureRecord::to(topic).payload(payload);
-
-                    if let Some(k) = key {
-                        record = record.key(k);
-                    }
-
-                    match producer.send(record, Duration::from_secs(30)).await {
-                        Ok((partition, offset)) => {
-                            info!(
-                                "Kafka producer {} sent message to topic '{}' (partition={}, offset={})",
-                                client_id, topic, partition, offset
-                            );
-
-                            // Call LLM with delivery confirmation
-                            if let Some(instruction) =
-                                app_state.get_instruction_for_client(client_id).await
-                            {
-                                let event = Event::new(
-                                    &KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
-                                    serde_json::json!({
-                                        "topic": topic,
-                                        "partition": partition,
-                                        "offset": offset,
-                                    }),
-                                );
-
-                                let memory = app_state
-                                    .get_memory_for_client(client_id)
-                                    .await
-                                    .unwrap_or_default();
-
-                                if let Ok(ClientLlmResult { memory_updates, .. }) =
-                                    call_llm_for_client(
-                                        llm_client,
-                                        app_state,
-                                        client_id.to_string(),
-                                        &instruction,
-                                        &memory,
-                                        Some(&event),
-                                        protocol.as_ref(),
-                                        status_tx,
-                                    )
-                                    .await
-                                {
-                                    if let Some(mem) = memory_updates {
-                                        app_state.set_memory_for_client(client_id, mem).await;
-                                    }
-                                }
-                            }
-                        }
-                        Err((kafka_err, _)) => {
-                            error!(
-                                "Kafka producer {} failed to send message: {}",
-                                client_id, kafka_err
-                            );
-                        }
-                    }
-                }
+    /// Perform one action against the broker. Returns the event it produced, if any.
+    async fn perform(&self, name: &str, data: &serde_json::Value) -> Result<Option<Event>> {
+        match name {
+            "kafka_produce" => self.produce(data).await,
+            "kafka_fetch" => {
+                let topic = str_field(data, "topic")?;
+                let partition = i64_field(data, "partition")? as i32;
+                let offset = match data.get("offset").and_then(|v| v.as_i64()) {
+                    Some(o) => o,
+                    None => self.tracked_offset(&topic, partition).await.unwrap_or(0),
+                };
+                let max_bytes = data
+                    .get("max_bytes")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(i64::from(DEFAULT_PARTITION_MAX_BYTES))
+                    as i32;
+                self.fetch(&topic, partition, offset, max_bytes).await
             }
-            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                info!("Kafka producer {} disconnecting", client_id);
-                app_state
-                    .update_client_status(client_id, ClientStatus::Disconnected)
-                    .await;
+            "kafka_metadata" => {
+                let topics: Option<Vec<String>> =
+                    data.get("topics").and_then(|v| v.as_array()).map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .collect()
+                    });
+                let mut conn = self.conn.lock().await;
+                let metadata = KafkaClient::request_metadata(&mut conn, topics.as_deref()).await?;
+                drop(conn);
+                Ok(Some(Event::new(
+                    &KAFKA_CLIENT_METADATA_RECEIVED_EVENT,
+                    metadata,
+                )))
             }
-            _ => {}
+            "kafka_commit" => self.commit(data).await.map(|()| None),
+            other => Err(anyhow!("unknown Kafka client action result '{other}'")),
         }
     }
 
-    /// Execute consumer action
-    async fn execute_consumer_action(
-        client_id: ClientId,
-        consumer: &StreamConsumer,
-        action: serde_json::Value,
-        protocol: &Arc<KafkaClientProtocol>,
-        app_state: &Arc<AppState>,
-        _llm_client: &OllamaClient,
-        _status_tx: &mpsc::UnboundedSender<String>,
-    ) {
-        match protocol.execute_action(action) {
-            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data })
-                if name == "kafka_subscribe" =>
-            {
-                if let Some(topics_arr) = data.get("topics").and_then(|v| v.as_array()) {
-                    let topics: Vec<String> = topics_arr
-                        .iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect();
+    /// Publish one record.
+    async fn produce(&self, data: &serde_json::Value) -> Result<Option<Event>> {
+        use kafka_protocol::messages::produce_request::{PartitionProduceData, TopicProduceData};
 
-                    if !topics.is_empty() {
-                        let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
-                        if let Err(e) = consumer.subscribe(&topic_refs) {
-                            error!(
-                                "Kafka consumer {} failed to subscribe to topics: {}",
-                                client_id, e
-                            );
-                        } else {
-                            info!(
-                                "Kafka consumer {} subscribed to topics: {:?}",
-                                client_id, topics
-                            );
-                        }
-                    }
-                }
+        let topic = str_field(data, "topic")?;
+        let partition = i64_field(data, "partition")? as i32;
+        let acks = i64_field(data, "acks")? as i16;
+
+        // The declared encoding is honoured here, by the same decoder the broker uses for its
+        // own outbound records. An action documented as accepting hex that puts literal ASCII
+        // on the wire is the defect this codebase names as its reference case.
+        let key = decode_field(
+            data.get("key"),
+            data.get("key_encoding")
+                .and_then(|v| v.as_str())
+                .unwrap_or("utf8"),
+        )
+        .context("record key")?;
+        let value = decode_field(
+            data.get("value"),
+            data.get("value_encoding")
+                .and_then(|v| v.as_str())
+                .unwrap_or("utf8"),
+        )
+        .context("record value")?;
+
+        let batch = encode_single_record(key, value)?;
+
+        let request = ProduceRequest::default()
+            .with_acks(acks)
+            .with_timeout_ms(IO_TIMEOUT.as_millis() as i32)
+            .with_topic_data(vec![TopicProduceData::default()
+                .with_name(StrBytes::from_string(topic.clone()).into())
+                .with_partition_data(vec![PartitionProduceData::default()
+                    .with_index(partition)
+                    .with_records(Some(batch))])]);
+
+        let mut conn = self.conn.lock().await;
+        let version = conn.version_for(ApiKey::Produce, CLIENT_MAX_PRODUCE)?;
+
+        if acks == 0 {
+            // Kafka specifies no reply for acks=0. Waiting for one would hang the exchange
+            // until IO_TIMEOUT and then look like a broker failure.
+            conn.send_only(ApiKey::Produce, version, &request).await?;
+            drop(conn);
+            info!(
+                "Kafka client {} produced to {}/{} with acks=0 (no acknowledgement requested)",
+                self.client_id, topic, partition
+            );
+            let _ = self.status_tx.send(format!(
+                "[CLIENT] Kafka produced to {topic}/{partition} (acks=0, unacknowledged)"
+            ));
+            return Ok(None);
+        }
+
+        let response: ProduceResponse = conn.exchange(ApiKey::Produce, version, &request).await?;
+        drop(conn);
+
+        let topic_response = response
+            .responses
+            .iter()
+            .find(|t| t.name.as_str() == topic)
+            .or_else(|| response.responses.first())
+            .context("Produce response named no topic")?;
+        let partition_response = topic_response
+            .partition_responses
+            .iter()
+            .find(|p| p.index == partition)
+            .or_else(|| topic_response.partition_responses.first())
+            .context("Produce response named no partition")?;
+
+        let error_code = partition_response.error_code;
+        let delivered = error_code == 0;
+        if delivered {
+            info!(
+                "Kafka client {} produced to {}/{} at offset {}",
+                self.client_id, topic, partition, partition_response.base_offset
+            );
+            let _ = self.status_tx.send(format!(
+                "[CLIENT] Kafka produced to {topic}/{partition} at offset {}",
+                partition_response.base_offset
+            ));
+        } else {
+            // A rejected write is an error, not a quieter kind of success.
+            error!(
+                "Kafka client {} produce to {}/{} rejected: {} ({})",
+                self.client_id,
+                topic,
+                partition,
+                error_code,
+                kafka_error_name(error_code)
+            );
+            let _ = self.status_tx.send(format!(
+                "[CLIENT] Kafka produce to {topic}/{partition} rejected: {} ({error_code})",
+                kafka_error_name(error_code)
+            ));
+        }
+
+        Ok(Some(Event::new(
+            &KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
+            serde_json::json!({
+                "topic": topic,
+                "partition": partition,
+                "base_offset": partition_response.base_offset,
+                "error_code": error_code,
+                "error_name": kafka_error_name(error_code),
+                "delivered": delivered,
+            }),
+        )))
+    }
+
+    /// Read one partition. Returns an event only when records actually came back, so an idle
+    /// poll costs no model call.
+    async fn fetch(
+        &self,
+        topic: &str,
+        partition: i32,
+        offset: i64,
+        max_bytes: i32,
+    ) -> Result<Option<Event>> {
+        use kafka_protocol::messages::fetch_request::{FetchPartition, FetchTopic};
+
+        let request = FetchRequest::default()
+            .with_max_wait_ms(500)
+            .with_min_bytes(1)
+            .with_max_bytes(max_bytes)
+            .with_topics(vec![FetchTopic::default()
+                .with_topic(StrBytes::from_string(topic.to_string()).into())
+                .with_partitions(vec![FetchPartition::default()
+                    .with_partition(partition)
+                    .with_fetch_offset(offset)
+                    .with_partition_max_bytes(max_bytes)])]);
+
+        let mut conn = self.conn.lock().await;
+        let version = conn.version_for(ApiKey::Fetch, CLIENT_MAX_FETCH)?;
+        let response: FetchResponse = conn.exchange(ApiKey::Fetch, version, &request).await?;
+        drop(conn);
+
+        if response.error_code != 0 {
+            bail!(
+                "Fetch failed at the response level: {} ({})",
+                response.error_code,
+                kafka_error_name(response.error_code)
+            );
+        }
+
+        let Some(topic_response) = response.responses.first() else {
+            debug!(
+                "Kafka client {} fetched {}/{}: broker returned no topic",
+                self.client_id, topic, partition
+            );
+            return Ok(None);
+        };
+        let Some(partition_data) = topic_response.partitions.first() else {
+            return Ok(None);
+        };
+
+        if partition_data.error_code != 0 {
+            bail!(
+                "Fetch of {topic}/{partition} failed: {} ({})",
+                partition_data.error_code,
+                kafka_error_name(partition_data.error_code)
+            );
+        }
+
+        let records = match partition_data.records.as_ref() {
+            Some(raw) if !raw.is_empty() => {
+                let owned = Bytes::copy_from_slice(raw.as_ref());
+                let mut cursor = std::io::Cursor::new(owned);
+                RecordBatchDecoder::decode_with_custom_compression::<_, Decompressor>(
+                    &mut cursor,
+                    None,
+                )
+                .context("broker's record batch did not decode")?
             }
-            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, .. })
-                if name == "kafka_commit" =>
-            {
-                if let Err(e) = consumer.commit_consumer_state(rdkafka::consumer::CommitMode::Async)
+            _ => Vec::new(),
+        };
+
+        if records.is_empty() {
+            trace!(
+                "Kafka client {} fetched {}/{} from offset {}: nothing new",
+                self.client_id,
+                topic,
+                partition,
+                offset
+            );
+            return Ok(None);
+        }
+
+        let last_offset = records.iter().map(|r| r.offset).max().unwrap_or(offset);
+        let next_offset = last_offset + 1;
+        self.set_tracked_offset(topic, partition, next_offset).await;
+
+        info!(
+            "Kafka client {} fetched {} record(s) from {}/{} at offset {}",
+            self.client_id,
+            records.len(),
+            topic,
+            partition,
+            offset
+        );
+        let _ = self.status_tx.send(format!(
+            "[CLIENT] Kafka received {} record(s) from {topic}/{partition}",
+            records.len()
+        ));
+
+        Ok(Some(Event::new(
+            &KAFKA_CLIENT_RECORDS_RECEIVED_EVENT,
+            serde_json::json!({
+                "topic": topic,
+                "partition": partition,
+                "high_watermark": partition_data.high_watermark,
+                "next_offset": next_offset,
+                "record_count": records.len(),
+                "records": records.iter().take(MAX_EVENT_RECORDS).map(record_to_json).collect::<Vec<_>>(),
+            }),
+        )))
+    }
+
+    /// Commit an offset. No event: the answer is a bare error code, and raising an event for
+    /// it would double the model round trips a consumer needs per batch.
+    async fn commit(&self, data: &serde_json::Value) -> Result<()> {
+        use kafka_protocol::messages::offset_commit_request::{
+            OffsetCommitRequestPartition, OffsetCommitRequestTopic,
+        };
+
+        let topic = str_field(data, "topic")?;
+        let partition = i64_field(data, "partition")? as i32;
+        let offset = i64_field(data, "offset")?;
+        let group_id = data
+            .get("group_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.default_group_id)
+            .to_string();
+
+        let request = OffsetCommitRequest::default()
+            .with_group_id(StrBytes::from_string(group_id.clone()).into())
+            // -1 / empty: this client is not a group member, and claiming a generation it
+            // never joined would be rejected by any broker that implements groups.
+            .with_generation_id_or_member_epoch(-1)
+            .with_topics(vec![OffsetCommitRequestTopic::default()
+                .with_name(StrBytes::from_string(topic.clone()).into())
+                .with_partitions(vec![OffsetCommitRequestPartition::default()
+                    .with_partition_index(partition)
+                    .with_committed_offset(offset)])]);
+
+        let mut conn = self.conn.lock().await;
+        let version = conn.version_for(ApiKey::OffsetCommit, CLIENT_MAX_OFFSET_COMMIT)?;
+        let response: OffsetCommitResponse = conn
+            .exchange(ApiKey::OffsetCommit, version, &request)
+            .await?;
+        drop(conn);
+
+        let error_code = response
+            .topics
+            .first()
+            .and_then(|t| t.partitions.first())
+            .map(|p| p.error_code)
+            .context("OffsetCommit response named no partition")?;
+
+        if error_code != 0 {
+            bail!(
+                "commit of {topic}/{partition} offset {offset} was refused: {error_code} ({})",
+                kafka_error_name(error_code)
+            );
+        }
+
+        info!(
+            "Kafka client {} committed {}/{} offset {} for group {}",
+            self.client_id, topic, partition, offset, group_id
+        );
+        let _ = self.status_tx.send(format!(
+            "[CLIENT] Kafka committed {topic}/{partition} offset {offset}"
+        ));
+        Ok(())
+    }
+
+    /// Poll every assigned partition until the client goes away or the connection breaks.
+    ///
+    /// The first round runs immediately. Sleeping first would make a consumer sit idle for a
+    /// whole interval before its first read, and would hide records that were already there
+    /// when it connected.
+    async fn poll_loop(&self, interval: Duration) {
+        let mut first = true;
+        loop {
+            if !first {
+                tokio::time::sleep(interval).await;
+            }
+            first = false;
+
+            if self.app_state.get_client(self.client_id).await.is_none() {
+                info!("Kafka client {} stopped", self.client_id);
+                return;
+            }
+
+            let assignments = self.assignments.lock().await.clone();
+            for assignment in assignments {
+                match self
+                    .fetch(
+                        &assignment.topic,
+                        assignment.partition,
+                        assignment.next_offset,
+                        DEFAULT_PARTITION_MAX_BYTES,
+                    )
+                    .await
                 {
-                    error!(
-                        "Kafka consumer {} failed to commit offset: {}",
-                        client_id, e
-                    );
-                } else {
-                    trace!("Kafka consumer {} committed offset", client_id);
+                    Ok(Some(event)) => {
+                        if self.drive(event).await {
+                            self.close("handler asked to disconnect").await;
+                            return;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        error!(
+                            "Kafka client {} polling {}/{} failed: {}",
+                            self.client_id, assignment.topic, assignment.partition, e
+                        );
+                        let _ = self
+                            .status_tx
+                            .send(format!("[CLIENT] Kafka poll failed: {e}"));
+                        if is_fatal(&e) {
+                            self.mark_error(&e.to_string()).await;
+                            return;
+                        }
+                    }
                 }
             }
-            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                info!("Kafka consumer {} disconnecting", client_id);
-                app_state
-                    .update_client_status(client_id, ClientStatus::Disconnected)
-                    .await;
-            }
-            _ => {}
         }
     }
+
+    async fn tracked_offset(&self, topic: &str, partition: i32) -> Option<i64> {
+        self.assignments
+            .lock()
+            .await
+            .iter()
+            .find(|a| a.topic == topic && a.partition == partition)
+            .map(|a| a.next_offset)
+    }
+
+    /// Record where to read next, adding the partition to the poll set if it is new. A
+    /// handler that fetches a topic it was not configured with then keeps receiving it.
+    async fn set_tracked_offset(&self, topic: &str, partition: i32, next_offset: i64) {
+        let mut assignments = self.assignments.lock().await;
+        match assignments
+            .iter_mut()
+            .find(|a| a.topic == topic && a.partition == partition)
+        {
+            Some(existing) => existing.next_offset = next_offset,
+            None => assignments.push(Assignment {
+                topic: topic.to_string(),
+                partition,
+                next_offset,
+            }),
+        }
+    }
+
+    async fn mark_error(&self, message: &str) {
+        self.app_state
+            .update_client_status(self.client_id, ClientStatus::Error(message.to_string()))
+            .await;
+        let _ = self.status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    async fn close(&self, why: &str) {
+        info!(
+            "Kafka client {} disconnecting from {}: {}",
+            self.client_id, self.remote_addr, why
+        );
+        // Shutting the socket down explicitly makes the broker see a clean close rather than
+        // waiting for its own idle timeout.
+        let _ = self.conn.lock().await.stream.shutdown().await;
+        self.app_state
+            .update_client_status(self.client_id, ClientStatus::Disconnected)
+            .await;
+        let _ = self.status_tx.send(format!(
+            "[CLIENT] Kafka client {} disconnected",
+            self.client_id
+        ));
+        let _ = self.status_tx.send("__UPDATE_UI__".to_string());
+    }
+}
+
+/// Whether an error means the connection is unusable, as opposed to one request being refused.
+///
+/// A refused Produce leaves the session healthy; a desynchronised correlation id or a broken
+/// socket does not, and continuing to poll on it would spin.
+fn is_fatal(e: &anyhow::Error) -> bool {
+    let text = e.to_string();
+    e.downcast_ref::<std::io::Error>().is_some()
+        || e.chain()
+            .any(|c| c.downcast_ref::<std::io::Error>().is_some())
+        || text.contains("desynchronised")
+        || text.contains("timed out")
+        || text.contains("implausible response size")
+}
+
+/// Encode one record as a v2 record batch, the format every broker since 0.11 stores.
+fn encode_single_record(key: Option<Vec<u8>>, value: Option<Vec<u8>>) -> Result<Bytes> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(-1);
+
+    let records = vec![Record {
+        transactional: false,
+        control: false,
+        partition_leader_epoch: 0,
+        producer_id: -1,
+        producer_epoch: -1,
+        timestamp_type: TimestampType::Creation,
+        offset: 0,
+        sequence: 0,
+        timestamp,
+        key: key.map(Bytes::from),
+        value: value.map(Bytes::from),
+        headers: Default::default(),
+    }];
+
+    let mut buf = Vec::new();
+    RecordBatchEncoder::encode_with_custom_compression::<_, _, Compressor>(
+        &mut buf,
+        &records,
+        &RecordEncodeOptions {
+            version: 2,
+            compression: Compression::None,
+        },
+        None,
+    )
+    .context("encoding the record batch")?;
+    Ok(Bytes::from(buf))
+}
+
+/// Render one fetched record for a handler.
+///
+/// `encode_field` is the broker's own helper: printable bytes become text tagged `utf8`,
+/// anything else becomes hex tagged `hex`. Never base64, which models cannot read.
+fn record_to_json(record: &Record) -> serde_json::Value {
+    let (key, key_encoding) = match record.key.as_ref() {
+        Some(k) => {
+            let (v, e) = encode_field(k.as_ref(), MAX_EVENT_VALUE_BYTES);
+            (v, Some(e))
+        }
+        None => (serde_json::Value::Null, None),
+    };
+    let (value, value_encoding) = match record.value.as_ref() {
+        Some(v) => {
+            let (val, e) = encode_field(v.as_ref(), MAX_EVENT_VALUE_BYTES);
+            (val, Some(e))
+        }
+        None => (serde_json::Value::Null, None),
+    };
+
+    serde_json::json!({
+        "offset": record.offset,
+        "timestamp": record.timestamp,
+        "key": key,
+        "key_encoding": key_encoding,
+        "value": value,
+        "value_encoding": value_encoding,
+    })
+}
+
+/// Turn a Metadata response into the structured shape handlers see.
+fn metadata_to_json(response: &MetadataResponse) -> serde_json::Value {
+    let brokers: Vec<serde_json::Value> = response
+        .brokers
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "node_id": b.node_id.0,
+                "host": b.host.to_string(),
+                "port": b.port,
+            })
+        })
+        .collect();
+
+    let topics: Vec<serde_json::Value> = response
+        .topics
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name.as_ref().map(|n| n.to_string()),
+                "error_code": t.error_code,
+                "error_name": kafka_error_name(t.error_code),
+                "partitions": t.partitions.iter().map(|p| serde_json::json!({
+                    "partition": p.partition_index,
+                    "leader": p.leader_id.0,
+                    "error_code": p.error_code,
+                    "replicas": p.replica_nodes.iter().map(|r| r.0).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "cluster_id": response.cluster_id.as_ref().map(|c| c.to_string()),
+        "controller_id": response.controller_id.0,
+        "brokers": brokers,
+        "topics": topics,
+    })
+}
+
+fn str_field(data: &serde_json::Value, key: &str) -> Result<String> {
+    data.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .with_context(|| format!("action data is missing '{key}'"))
+}
+
+fn i64_field(data: &serde_json::Value, key: &str) -> Result<i64> {
+    data.get(key)
+        .and_then(|v| v.as_i64())
+        .with_context(|| format!("action data is missing '{key}'"))
 }

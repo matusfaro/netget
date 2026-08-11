@@ -383,7 +383,7 @@ rather than a hardcoded copy:
 | NFC | `pcsclite` | `nfc`, `nfc-client` |
 | Protobuf | `protoc` | `etcd`, `grpc`, `kubernetes`, `zookeeper` |
 | Packet capture | `libpcap` | `datalink`, `arp`, `isis` |
-| Other | — | `kafka` (untested), `smb-client` (`libsmbclient`) |
+| Other | — | `smb-client` (`libsmbclient`) |
 
 ```bash
 # Safe pattern

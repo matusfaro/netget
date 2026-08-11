@@ -1336,15 +1336,20 @@ let getdata = NetworkMessage::GetData(vec![
 
 ---
 
-### Kafka 🟠
+### Kafka ✅ implemented
 **Complexity:** Hard
-**Client Library:** `rdkafka` (librdkafka wrapper)
+**Client Library:** `kafka-protocol` (pure Rust), used in the client direction and shared with
+the Kafka broker through `src/server/kafka/mod.rs`'s re-export. **Not `rdkafka`** — that was
+removed for aborting in malloc, and the optional feature it left behind gated the client out of
+every `--features kafka` build. See `src/client/kafka/CLAUDE.md`.
 
 **LLM Control:**
-- Produce messages
-- Subscribe to topics
-- Offset management
-- Consumer groups
+- Produce records (`produce_message`, with explicit `utf8`/`hex` field encodings)
+- Fetch records from an explicit offset (`fetch_records`)
+- Cluster metadata (`list_topics`)
+- Offset commits (`commit_offset`)
+- **Not** consumer groups: `FindCoordinator`/`JoinGroup`/`SyncGroup`/`Heartbeat` are implemented
+  by neither the client nor the broker, so partitions are assigned manually
 
 **Implementation Strategy:**
 ```rust

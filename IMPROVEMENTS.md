@@ -28,18 +28,13 @@ failed / 29 ignored** on the CI feature set, clippy clean, `cargo fmt --check` c
 1. **`bluetooth_ble_beacon` as a Linux-only path.** BlueZ can set `ManufacturerData`; macOS
    cannot, by Apple's design. Needs a decision about whether a protocol that cannot run on the
    maintainer's own machine is worth carrying.
-2. **The Kafka *client* is dead code.** `src/client/mod.rs` gates it on `cfg(all(feature="kafka",
-   feature="rdkafka"))` and nothing enables `rdkafka` — Cargo.toml marks it optional with
-   "rdkafka removed - causes malloc crashes". Its four tests are `#[ignore]`d with precise
-   reasons. Either re-enable and fix the crashes, or delete `src/client/kafka/` and its registry
-   entry; right now it tells users to rebuild with a feature they already have.
-3. **BGP client has no hold-timer enforcement.** It sends keepalives at the negotiated cadence
+2. **BGP client has no hold-timer enforcement.** It sends keepalives at the negotiated cadence
    but only notices a silent peer when TCP does. Needs a shutdown `Notify` so the ticker can
    interrupt a blocked `read_exact`, as the server has.
-4. **Item 48** — auditing library panics reachable from the wire is standing practice, not a
+3. **Item 48** — auditing library panics reachable from the wire is standing practice, not a
    discrete fix. `pgwire` (item 77) is the open one and is upstream.
-5. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
-6. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
+4. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
+5. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
 
 ### Patterns worth auditing for
 
@@ -104,6 +99,7 @@ Delete an entry once its context is no longer useful.
 | 46 — no single-feature CI | `5bed7583` | `single-feature` job runs `cargo check --tests` over 14 protocol features one at a time — the only way to catch an under-declared feature |
 | 20 — dependency system inert | `2a48ccfb` | `get_dependencies()` derives from `privilege_requirement` instead of 116 restatements. Also fixed `PromiscuousMode` reading the raw-socket flag instead of the capture flag |
 | — ARP/DataLink/IS-IS misdeclared privilege | `f48e26da` | Declared `RawSockets`; they do layer-2 capture. A macOS ChmodBPF user was hard-refused three protocols they can run. `PacketCapture` had existed with zero adopters |
+| — Kafka client was dead code | (this change) | Reimplemented on `kafka-protocol` in the client direction, sharing the broker's re-export and its `encode_field`/`decode_field`. `rdkafka`/librdkafka removed from `Cargo.toml` and from `all-protocols`; the module is gated on `feature = "kafka"` alone. Four `#[ignore]`d tests replaced by two mutation-checked E2E tests driving NetGet's own broker |
 | — CLAUDE.md drift | `9949fb5d` | Maturity ratings, four fixed-but-still-documented bugs, and an orphan-check snippet whose `awk $2` reported every directory as orphaned |
 | 56 — events with no action vocabulary (remainder) | `0619bab9` | Last 22 events; all 8 SSH-Agent events were affected, so that whole protocol reached the model with no vocabulary. Four events that genuinely have none now say so with `.with_no_actions()`. `KNOWN_MISDECLARED` is empty |
 | 31 — async actions had no live state | `e5f58be9`, `da5cf2f0` | Type-erased server-handle registry, then the defaulted `Server::execute_action_with_state` and the executor call site |
@@ -250,8 +246,6 @@ dependency for exactly that reason.
   grows memory without bound.
 - `state/machine.rs` defines a generic `StateMachine<S>` that nothing instantiates; every
   protocol hand-rolls Idle/Processing/Accumulating, so a fix in one does not propagate.
-- `all-protocols` pulls in `rdkafka` to gate the Kafka *client*, though the Kafka server
-  feature comment says it was removed for causing malloc crashes (`Cargo.toml:239,514`).
 
 ---
 

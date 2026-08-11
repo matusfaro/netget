@@ -6,7 +6,7 @@
 
 ## Overview
 
-NetGet has **~100 protocol features**, of which **~75 are available** in Claude Code for Web. The remaining **~32 features** require system libraries that are not available in the web-based sandbox environment.
+NetGet has **~100 protocol features**, of which **~76 are available** in Claude Code for Web. The remaining **~31 features** require system libraries that are not available in the web-based sandbox environment.
 
 This document provides a comprehensive guide to understanding these limitations, working around them, and knowing which features are available for development in Claude Code for Web.
 
@@ -14,15 +14,15 @@ This document provides a comprehensive guide to understanding these limitations,
 
 ## Quick Reference
 
-### ✅ Available Features (~75)
+### ✅ Available Features (~76)
 
 You can build and test these features in Claude Code for Web:
 
 ```bash
-tcp, socket_file, http, http2, http3, pypi, maven, udp, datalink, arp, dc, dns, dot, doh, dhcp, bootp, ntp, whois, snmp, igmp, syslog, ssh, ssh-agent, svn, irc, xmpp, telnet, smtp, mdns, mysql, ipp, postgresql, redis, rss, proxy, webdav, nfs, cassandra, smb, stun, turn, webrtc, sip, ldap, imap, pop3, nntp, mqtt, amqp, socks5, elasticsearch, dynamo, s3, sqs, npm, openai, ollama, oauth2, jsonrpc, wireguard, openvpn, ipsec, bgp, ospf, isis, rip, bitcoin, mcp, xmlrpc, tor, vnc, openapi, openid, git, mercurial, torrent-tracker, torrent-dht, torrent-peer, tls, saml-idp, saml-sp, embedded-llm
+tcp, socket_file, http, http2, http3, pypi, maven, udp, datalink, arp, dc, dns, dot, doh, dhcp, bootp, ntp, whois, snmp, igmp, syslog, ssh, ssh-agent, svn, irc, xmpp, telnet, smtp, mdns, mysql, ipp, postgresql, redis, rss, proxy, webdav, nfs, cassandra, smb, stun, turn, webrtc, sip, ldap, imap, pop3, nntp, mqtt, amqp, socks5, elasticsearch, dynamo, s3, sqs, npm, openai, ollama, oauth2, jsonrpc, wireguard, openvpn, ipsec, bgp, ospf, isis, rip, bitcoin, mcp, xmlrpc, tor, vnc, openapi, openid, git, mercurial, kafka, torrent-tracker, torrent-dht, torrent-peer, tls, saml-idp, saml-sp, embedded-llm
 ```
 
-### ❌ Unavailable Features (~32)
+### ❌ Unavailable Features (~31)
 
 These features require system libraries NOT available in Claude Code for Web:
 
@@ -34,7 +34,6 @@ These features require system libraries NOT available in Claude Code for Web:
 
 **Protobuf-based (4):** `etcd`, `grpc`, `kubernetes`, `zookeeper`
 
-**Other (1):** `kafka` (may require system dependencies)
 
 ---
 
@@ -175,21 +174,12 @@ The `protobuf-src` crate can vendor protoc, but requires build-time integration.
 
 ---
 
-### 5. Kafka Feature (1 feature)
+### 5. Kafka Feature — no longer unavailable
 
-**System Dependency:** Unknown (untested)
-**Status:** Excluded preemptively, needs testing
-
-#### Unavailable Features
-- `kafka` - Apache Kafka message broker client
-
-#### Investigation Needed
-The Kafka feature was excluded during testing but not confirmed to fail. It may:
-- Require system libraries (e.g., librdkafka for native client)
-- Compile successfully with pure-Rust client
-- Require protoc for schema registry features
-
-**Action Required:** Test in isolation to determine exact limitations.
+**System Dependency:** none
+**Status:** Available. `kafka` builds the broker and the client from `kafka-protocol`, which is
+pure Rust. It was excluded preemptively while `rdkafka` (librdkafka) was still an optional
+dependency; that dependency has been removed, so there is nothing left to exclude.
 
 ---
 

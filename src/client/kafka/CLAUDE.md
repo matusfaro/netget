@@ -1,299 +1,168 @@
 # Kafka Client Implementation
 
-## Overview
+Pure-Rust Kafka client. Produces records, fetches records, reads cluster metadata and commits
+offsets against a broker.
 
-The Kafka client implementation provides LLM-controlled access to Apache Kafka broker clusters. The LLM can produce
-messages to topics (producer mode) or consume messages from topics (consumer mode), with full control over message
-routing, consumer groups, and offset management.
+**Status**: `Experimental`. **Port**: connects to TCP 9092 by convention; no privilege needed.
+**Stack**: `ETH>IP>TCP>Kafka`. **Feature**: `kafka` (the same one as the broker).
+**Spec**: [Apache Kafka protocol guide](https://kafka.apache.org/protocol).
 
-## Implementation Details
+## Wire format: shared with the broker, not reimplemented
 
-### Library Choice
+Every byte is encoded and decoded by **`kafka-protocol`**'s code-generated codecs, reached
+through the `pub use kafka_protocol` re-export at the top of `src/server/kafka/mod.rs`. This is
+the same arrangement the BGP client has with `src/server/bgp/wire.rs`: one Cargo feature, one
+copy of the schemas, no second implementation to keep in sync.
 
-- **rdkafka** - Rust wrapper for librdkafka (the official C/C++ Kafka client)
-- High-performance, production-ready Kafka protocol implementation
-- Supports all Kafka features: producer, consumer, consumer groups, offset management
-- Asynchronous message delivery and consumption
+The direction is the opposite of the broker's. The broker decodes requests and encodes
+responses; this client encodes requests and decodes responses. The only functions it borrows
+from `src/server/kafka/mod.rs` are `encode_field` and `decode_field`, which decide how record
+bytes are shown to a model and how a model's text becomes bytes — sharing those is what keeps
+`"hex"` meaning the same thing on both ends of one connection.
 
-### Architecture
+## What this replaced
 
-```
-┌────────────────────────────────────────┐
-│  KafkaClient::connect_with_llm_actions │
-│  - Parse startup parameters            │
-│  - Determine mode (producer/consumer)  │
-│  - Create rdkafka client               │
-└────────────────────────────────────────┘
-         │
-         ├─► Producer Mode
-         │   ├─ FutureProducer (async)
-         │   ├─ Call LLM on connect
-         │   ├─ Execute produce_message actions
-         │   └─ Call LLM on delivery confirmation
-         │
-         └─► Consumer Mode
-             ├─ StreamConsumer (async streaming)
-             ├─ Subscribe to topics
-             ├─ Spawn message polling loop
-             │   ├─ Poll for messages
-             │   ├─ Call LLM with message event
-             │   └─ Execute actions (produce, commit, etc.)
-             └─ Handle subscribe_topics, commit_offset
-```
+An `rdkafka` (librdkafka) client that was **not reachable from any `--features kafka` build**:
 
-### Client Modes
+| Was | Now |
+|---|---|
+| `src/client/mod.rs` gated the module on `#[cfg(all(feature = "kafka", feature = "rdkafka"))]`, and nothing but `all-protocols` turned the implicit `rdkafka` feature on. So `--features kafka` compiled the broker and silently no client, and `open_client` answered *"rebuild with --features kafka"* to someone who had used exactly that | gated on `feature = "kafka"` alone |
+| Default builds linked librdkafka, a C dependency `Cargo.toml` itself annotated as *"causes malloc crashes"* | no C dependency; `rdkafka` is gone from `Cargo.toml` entirely |
+| Four E2E tests, all `#[ignore]`d, one of which had passed while the client was completely non-functional because it only asserted a log line | two E2E tests, both driving NetGet's own broker, both mutation-checked |
+| `mode: "producer" \| "consumer"` startup parameter, forcing two connections to do both | one connection does both, which is how Kafka works |
+| Consumer built on a `group_id` and `StreamConsumer` subscription — impossible, because group coordination is implemented by neither half | manual partition assignment and explicit offsets, which the broker does support |
+| Actions documented as "Text Payloads Only — binary must be base64-encoded", which the root CLAUDE.md forbids | `key`/`value` plus `key_encoding`/`value_encoding` (`"utf8"` default, `"hex"`), decoded by `decode_field` |
 
-#### Producer Mode
+## Supported surface
 
-- Send messages to Kafka topics
-- Async delivery with partition and offset confirmation
-- LLM controls: topic, payload, key (for partitioning)
+Exactly the five APIs NetGet's broker implements. The version used for each is negotiated —
+`min(this client's ceiling, the broker's max)` — and refused outright if that lands below the
+broker's minimum. Nothing is hardcoded.
 
-#### Consumer Mode
+| API | key | ceiling | why that ceiling |
+|---|---|---|---|
+| ApiVersions | 18 | v3 | falls back to decoding the same bytes at v0 if the broker refuses v3 |
+| Metadata | 3 | v8 | v9 is flexible (tagged fields), v10 replaces topic names with UUIDs |
+| Produce | 0 | v7 | v8 adds per-record errors, v9 is flexible |
+| Fetch | 1 | v11 | v12 is flexible, v13 replaces topic names with UUIDs |
+| OffsetCommit | 8 | v2 | the last version every broker since 0.9 accepts unchanged |
 
-- Receive messages from subscribed topics
-- Consumer group coordination
-- Manual offset commit control
-- LLM processes each message and decides actions
+**Not implemented, because the broker does not implement them either**: `ListOffsets`,
+`FindCoordinator`, `JoinGroup`, `SyncGroup`, `Heartbeat`, `LeaveGroup`, `OffsetFetch`, and every
+admin API. Consequences, stated plainly:
 
-### LLM Control
+- **No consumer groups.** Partitions are assigned manually via the `topics` + `partition`
+  startup parameters, or implicitly by any `fetch_records` action.
+- **No `auto.offset.reset`.** Resolving earliest/latest needs `ListOffsets`. A consumer starts
+  at `start_offset` (default 0).
+- `commit_offset` sends a bare `OffsetCommit` with generation `-1` and an empty member id. No
+  broker that implements groups would accept it as a group commit, and it is not claimed to be.
 
-**Startup Parameters** (required):
+## ApiVersions negotiation
 
-- `mode` - "producer" or "consumer" (required)
-- `client_id` - Kafka client identifier (optional, default: "netget-kafka-client")
-- `topics` - Array of topics to subscribe to (consumer mode only, optional)
-- `group_id` - Consumer group ID (consumer mode only, optional, default: "netget-consumer-group")
+The request goes out at v3. Kafka's own rule for a broker that does not implement that version
+is to answer `UNSUPPORTED_VERSION` **plus the supported-API table**, encoded at v0 so the client
+can always read the message telling it what to step down to. So the reply is decoded at v3
+first, then at v0 from the same bytes, and the table is used either way. A reply that refuses
+*and* carries no table is a hard failure — there would be nothing to step down to.
 
-**Async Actions** (user-triggered):
+## Connection model
 
-- `produce_message` - Produce message to topic (producer mode)
-    - Parameters: topic (string), payload (string), key (string, optional)
-- `subscribe_topics` - Subscribe to topics (consumer mode)
-    - Parameters: topics (array of strings)
-- `commit_offset` - Commit current consumer offset (consumer mode)
-- `disconnect` - Close Kafka connection
+One `tokio::sync::Mutex` guards the whole connection, held for the duration of one
+request/response exchange. Kafka multiplexes on a single TCP connection and matches replies by
+correlation id; serialising the exchange makes that match trivially unambiguous without running
+a demultiplexer task. The mutex is **not** held across an LLM call — the event is built, the
+guard is dropped, and only then is the model consulted. Every socket operation carries a 30s
+timeout, so a silent broker cannot hold the lock forever.
 
-**Sync Actions** (in response to Kafka events):
+Requests are correlation-id checked on the way back. A mismatch is fatal: the connection is
+desynchronised and continuing would attribute one reply to another request.
 
-- `produce_message` - Produce message in response to received message
-- `commit_offset` - Commit offset after processing message
+## Events and actions
 
-**Events:**
+`get_async_actions` and `get_sync_actions` return the same list. That is not laziness:
+`call_llm_for_client` builds the model's tool list from **`get_async_actions` alone**, so an
+action declared only in the sync list is never offered and is rejected as unknown if the model
+returns it anyway.
 
-- `kafka_connected` - Fired when connection established
-    - Data: brokers, client_mode
-- `kafka_message_received` - Fired when consumer receives message
-    - Data: topic, partition, offset, key, payload, timestamp
-- `kafka_message_delivered` - Fired when producer delivers message
-    - Data: topic, partition, offset
+| Event | Fires |
+|---|---|
+| `kafka_connected` | ApiVersions negotiated and the first Metadata answered. Carries brokers, topics with their partitions, and the negotiated versions |
+| `kafka_records_received` | a Fetch returned **at least one** record. An empty poll raises nothing, so idling costs no model call |
+| `kafka_message_delivered` | the broker answered a Produce, success **or** failure. `delivered` is true only when `error_code` is 0 |
+| `kafka_metadata_received` | a `list_topics` action was answered |
 
-### Message Format
+| Action | Does |
+|---|---|
+| `produce_message` | one record to `topic`/`partition`, with `key`/`value` and their encodings, `acks` 1 (default), -1 or 0 |
+| `fetch_records` | read from an explicit `offset`, or from the tracked position. Also adds the partition to the poll set |
+| `list_topics` | Metadata request, all topics or a named list |
+| `commit_offset` | OffsetCommit for one partition. `offset` is required — committing an offset nobody named would acknowledge consumption that may not have happened |
+| `disconnect` | close the connection |
+| `wait_for_more` | do nothing, keep the connection open |
 
-Messages in Kafka are structured with:
+`acks: 0` is the one action that reads no reply, because Kafka specifies that the broker writes
+none. It raises no `kafka_message_delivered` and says so in its own description.
 
-- **Topic** - Logical channel for messages
-- **Partition** - Ordered sequence within topic
-- **Offset** - Unique ID for message in partition
-- **Key** - Optional partitioning key
-- **Payload** - Message content (string)
-- **Timestamp** - Message timestamp (milliseconds)
+### Handler loop
 
-### Structured Actions
+Events are processed from a **queue, not by recursion**. A produce raises
+`kafka_message_delivered`, whose handler may produce again; done recursively that is the shape
+that made the DNS client overflow its stack after 211 model calls (`IMPROVEMENTS.md` item 49).
+The per-client LLM budget (`src/client/llm_budget.rs`, 100 calls) bounds the total; the queue
+bounds the stack.
 
-```json
-// Producer: Send message
-{
-  "type": "produce_message",
-  "topic": "user-events",
-  "payload": "{\"user_id\": 123, \"action\": \"login\"}",
-  "key": "user-123"
-}
+### Failure is reported, never softened
 
-// Consumer: Subscribe to topics
-{
-  "type": "subscribe_topics",
-  "topics": ["user-events", "system-events"]
-}
+- A Produce with a non-zero `error_code` logs at ERROR and raises the event with
+  `delivered: false`. It is never presented as a quieter success.
+- A Fetch whose response or partition carries an error fails the action rather than returning an
+  empty batch that reads like "nothing new".
+- A refused `commit_offset` fails the action.
+- Transport-level failures (I/O error, timeout, desynchronised correlation id) end the session
+  and set `ClientStatus::Error`; a merely refused request leaves the session healthy.
 
-// Consumer: Commit offset
-{
-  "type": "commit_offset"
-}
+## Startup parameters
 
-// Event: Message received
-{
-  "event_type": "kafka_message_received",
-  "data": {
-    "topic": "user-events",
-    "partition": 0,
-    "offset": 12345,
-    "key": "user-123",
-    "payload": "{\"user_id\": 123, \"action\": \"login\"}",
-    "timestamp": 1704067200000
-  }
-}
+| Name | Default | Notes |
+|---|---|---|
+| `client_id` | `netget-kafka-client` | sent in every request header |
+| `topics` | none | topics to describe at connect and then poll. Omit to connect without consuming |
+| `partition` | 0 | the partition polled for each topic; 0-1024 |
+| `start_offset` | 0 | where polling begins; there is no earliest/latest |
+| `poll_interval_ms` | 1000 | delay *between* rounds, minimum 50. The first round runs immediately |
+| `group_id` | `netget-consumer-group` | used by `commit_offset` when the action names none |
 
-// Event: Message delivered
-{
-  "event_type": "kafka_message_delivered",
-  "data": {
-    "topic": "user-events",
-    "partition": 0,
-    "offset": 12345
-  }
-}
-```
-
-### Dual Logging
-
-```rust
-info!("Kafka producer {} connected", client_id);           // → netget.log
-status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
-```
+All are validated before the TCP connect, so a bad value fails `open_client` with a message
+naming the key rather than half-starting a client. `mode` is **gone**: one connection produces
+and consumes, and a parameter that only picked which half of the client existed had no meaning
+once the client stopped being two clients.
 
 ## Limitations
 
-- **No Transaction Support** - Kafka transactions not implemented
-- **No Schema Registry** - No Avro/Protobuf schema validation
-- **Single Client Instance** - No connection pooling
-- **Manual Offset Commit** - Auto-commit disabled for LLM control
-- **Text Payloads Only** - Binary payloads must be base64-encoded
-- **No Exactly-Once Semantics** - At-least-once delivery only
-- **No Admin Operations** - Cannot create/delete topics, partitions
+1. **Never run against Apache Kafka or Redpanda.** No broker is installed on the development
+   machine. Everything verified here was verified against NetGet's own broker, whose supported
+   surface is a subset of a real one's.
+2. **No consumer groups, no `ListOffsets`** — see above.
+3. **No SSL/SASL.** Plaintext only.
+4. **No transactions and no idempotent producer.** `producer_id` is -1.
+5. **Produce is one record per request** and uncompressed. Compressed batches *are* decoded on
+   the fetch path, via `kafka-protocol`'s built-in gzip/snappy/lz4/zstd codecs.
+6. **No record headers.** They are neither sent nor surfaced.
+7. **The poll loop's timed rounds are not covered by E2E tests.** NetGet's non-interactive
+   *client* mode exits about 500ms after the prompt is handled (`src/cli/non_interactive.rs`
+   only enters a keep-alive loop for `Mode::Server`), so only the immediate first round fits in
+   a test. The loop's body — `fetch()` — is covered; its scheduler is not.
+8. **`stop_client` aborts the task but the socket closes by drop**, in common with every other
+   client.
 
-## Usage Examples
+## Testing
 
-### Producer: Send Message
+`tests/client/kafka/` — see its CLAUDE.md. Two mocked E2E tests, both driving a mocked NetGet
+Kafka broker over a real socket, both mutation-checked.
 
-**User**: "Connect to Kafka at localhost:9092 as producer and send a message to 'events' topic"
+## References
 
-**Startup Parameters**:
-
-```json
-{
-  "mode": "producer",
-  "client_id": "netget-producer-1"
-}
-```
-
-**LLM Action**:
-
-```json
-{
-  "type": "produce_message",
-  "topic": "events",
-  "payload": "Hello Kafka",
-  "key": "message-1"
-}
-```
-
-### Consumer: Subscribe and Process
-
-**User**: "Connect to Kafka at localhost:9092 as consumer, subscribe to 'events', and log each message"
-
-**Startup Parameters**:
-
-```json
-{
-  "mode": "consumer",
-  "group_id": "netget-consumers",
-  "topics": ["events"],
-  "client_id": "netget-consumer-1"
-}
-```
-
-**LLM receives messages automatically**:
-
-```json
-{
-  "event_type": "kafka_message_received",
-  "data": {
-    "topic": "events",
-    "partition": 0,
-    "offset": 100,
-    "payload": "Hello Kafka"
-  }
-}
-```
-
-**LLM Action (after processing)**:
-
-```json
-{
-  "type": "commit_offset"
-}
-```
-
-### Consumer: Dynamic Subscription
-
-**User**: "Subscribe to topics 'logs' and 'metrics'"
-
-**LLM Action**:
-
-```json
-{
-  "type": "subscribe_topics",
-  "topics": ["logs", "metrics"]
-}
-```
-
-### Producer: Stream Processing
-
-**User**: "For each message in 'input' topic, process it and send to 'output' topic"
-
-**Setup**: Open consumer for 'input', producer for 'output'
-
-**Consumer receives**:
-
-```json
-{
-  "event_type": "kafka_message_received",
-  "data": {
-    "topic": "input",
-    "payload": "{\"value\": 42}"
-  }
-}
-```
-
-**LLM produces to output** (requires separate producer client):
-
-```json
-{
-  "type": "produce_message",
-  "topic": "output",
-  "payload": "{\"value\": 84}"
-}
-```
-
-## Testing Strategy
-
-See `tests/client/kafka/CLAUDE.md` for E2E testing approach.
-
-## Future Enhancements
-
-- **Transaction Support** - Exactly-once semantics
-- **Schema Registry Integration** - Avro/Protobuf/JSON Schema
-- **Admin API** - Create/delete topics, partitions, ACLs
-- **Binary Payloads** - Native binary data handling
-- **Compression** - Snappy, LZ4, GZIP compression
-- **SSL/SASL Authentication** - Secure cluster connections
-- **Partition Assignment Control** - Manual partition assignment
-- **Exactly-Once Semantics** - Idempotent producer + transactions
-- **Consumer Lag Monitoring** - Offset lag tracking
-- **Header Support** - Kafka message headers
-
-## Security Considerations
-
-- **Plaintext by Default** - No encryption or authentication
-- **Network Exposure** - Kafka traffic is unencrypted
-- **Consumer Groups** - Shared group IDs can cause conflicts
-- **Offset Management** - Manual commit prevents data loss but requires care
-
-## Performance Notes
-
-- **Async Producer** - Non-blocking message delivery with 30s timeout
-- **Streaming Consumer** - Efficient async message polling
-- **Batch Processing** - rdkafka handles internal batching
-- **No Connection Pooling** - Each client is a single connection
-- **Partition Assignment** - Consumer group rebalancing handled automatically
+- [Apache Kafka Protocol Guide](https://kafka.apache.org/protocol)
+- [`kafka-protocol` crate](https://docs.rs/kafka-protocol/) — `Cargo.toml` pins 0.14
+- Broker half: `src/server/kafka/CLAUDE.md`

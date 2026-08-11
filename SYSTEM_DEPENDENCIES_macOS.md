@@ -12,7 +12,6 @@ Most NetGet protocols are implemented in pure Rust and have no system dependenci
 |----------|------------------|-------|--------------|-------|
 | **WireGuard Client** | TUN Interface | defguard_wireguard_rs | Built-in (userspace) | Uses wireguard-go userspace implementation |
 | **OpenVPN** | TUN/TAP Interface | tun (planned) | Manual setup required | Not yet fully implemented |
-| **Kafka** | librdkafka-dev | rdkafka | Homebrew | Optional, some features require it |
 | **PostgreSQL Client** | libpq | pgwire | Homebrew | Only if connecting to PostgreSQL servers |
 | **MySQL Client** | libmysqlclient | opensrv-mysql | Homebrew | Only if using MySQL protocol |
 | **Git** | libgit2 | git2 | Homebrew | For git:// protocol support |
@@ -83,20 +82,17 @@ mysql_config --version
 export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
 ```
 
-### 4. Apache Kafka (Optional - if using Kafka protocol)
+### 4. Apache Kafka — **no system dependency**
 
-**When to install**: Only needed for Kafka protocol support.
+The `kafka` feature builds the broker *and* the client from `kafka-protocol`, which is pure
+Rust. **librdkafka is not required and is no longer a dependency**: `rdkafka` was removed
+because it aborted in malloc, and the optional feature it left behind gated the Kafka client
+out of every `--features kafka` build.
 
-**Install Kafka and librdkafka**:
+Only install a broker if you want to test NetGet's *client* against a real one:
+
 ```bash
-# Install librdkafka (C/C++ Kafka client library)
-brew install librdkafka
-
-# Verify installation
-pkg-config --modversion rdkafka
-
-# Optional: Install Kafka broker for testing
-brew install kafka
+brew install kafka   # optional, for interoperability testing only
 ```
 
 ### 5. Git Support (Optional - if using Git protocol)
@@ -132,7 +128,7 @@ export PKG_CONFIG_PATH="/opt/homebrew/opt/libgit2/lib/pkgconfig"
 ### Full Feature Build (with system libraries)
 ```bash
 # First install system dependencies:
-brew install postgresql librdkafka git libgit2
+brew install postgresql git libgit2
 
 # Then build with all features:
 ./cargo-isolated.sh build --all-features
@@ -162,12 +158,11 @@ mysql -h localhost -u root -e "SELECT @@version;"
 ```
 
 ### Verify Kafka Setup
-```bash
-# Check librdkafka
-pkg-config --libs --cflags rdkafka
 
-# Test with Kafka server (requires running Kafka)
-# Kafka provides shell scripts for testing
+Nothing to verify — the Kafka broker and client are pure Rust. If you installed a real broker
+to test interoperability against:
+
+```bash
 $KAFKA_HOME/bin/kafka-console-producer.sh --broker-list localhost:9092 --topic test
 ```
 
@@ -186,16 +181,6 @@ cargo build --no-default-features --features postgresql
 export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
 export PKG_CONFIG_PATH="/opt/homebrew/opt/mysql-client/lib/pkgconfig"
 cargo build --no-default-features --features mysql
-```
-
-### "rdkafka-config: command not found" for Kafka
-**Solution**: Install librdkafka correctly:
-```bash
-brew uninstall librdkafka
-brew install librdkafka
-
-# Verify
-pkg-config --modversion rdkafka
 ```
 
 ### WireGuard "Permission denied" on macOS
@@ -224,10 +209,6 @@ if [ -d "/opt/homebrew/opt/libgit2" ]; then
   export PKG_CONFIG_PATH="/opt/homebrew/opt/libgit2/lib/pkgconfig:$PKG_CONFIG_PATH"
 fi
 
-# Kafka (if installed)
-if [ -d "/opt/homebrew/opt/librdkafka" ]; then
-  export PKG_CONFIG_PATH="/opt/homebrew/opt/librdkafka/lib/pkgconfig:$PKG_CONFIG_PATH"
-fi
 ```
 
 ## macOS-Specific Notes

@@ -1572,7 +1572,10 @@ fn clamp_error_code(v: Option<i64>) -> i16 {
 /// Models cannot read base64 and cannot be trusted to notice that a "string" is really
 /// binary, so the encoding is stated explicitly alongside the value — the same shape the
 /// TCP protocol settled on.
-fn encode_field(bytes: &[u8], max_len: usize) -> (Value, &'static str) {
+///
+/// Shared with the Kafka *client* (`src/client/kafka/`) so that "hex means hex" is decided
+/// once for both directions of the same connection.
+pub(crate) fn encode_field(bytes: &[u8], max_len: usize) -> (Value, &'static str) {
     let printable = std::str::from_utf8(bytes).ok().filter(|s| {
         !s.chars()
             .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
@@ -1593,7 +1596,10 @@ fn encode_field(bytes: &[u8], max_len: usize) -> (Value, &'static str) {
 ///
 /// If a field is documented as accepting hex, the executor has to actually decode it —
 /// anything else puts literal ASCII on the wire.
-fn decode_field(value: Option<&Value>, encoding: &str) -> Result<Option<Vec<u8>>> {
+///
+/// Shared with the Kafka *client* (`src/client/kafka/`), which has the same obligation on its
+/// produce path.
+pub(crate) fn decode_field(value: Option<&Value>, encoding: &str) -> Result<Option<Vec<u8>>> {
     let Some(value) = value else {
         return Ok(None);
     };
