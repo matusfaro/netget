@@ -63,6 +63,12 @@ items 5, 79, 80, 81):
   living there — one of them leaking a live `netget` process per run.
 * **A `Drop` guard that panics** when a mock config carrying expectations is never verified.
 
+A second-pass protocol audit (2026-08-11) confirmed the four classic defect classes are now
+largely closed and **retired three items as stale — verified, not assumed**: item 39 (DNS Beta
+tests fail — false, `server::dns` is 5/5), item 47 (ntp asserts nothing — now 27 asserts + a real
+`rsntp` client), item 76 (nfs/ipp/vnc/webdav transport-only — all decode payloads now). Their
+entries below are kept only as archive.
+
 ### Still open
 
 1. **`bluetooth_ble_beacon` on real Linux hardware.** *(Implemented, unverified.)* The
@@ -93,6 +99,20 @@ items 5, 79, 80, 81):
 7. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
 8. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
 9. `src/server/usb/{msc,serial,fido2}/CLAUDE.md` describe pre-fix behaviour and are stale.
+10. **The sole `Stable` rating is unearned.** `wireguard` is the only Stable protocol and its
+    E2E test (`tests/server/wireguard/e2e_test.rs:245`) forges a handshake with fake keys
+    (`0xAA`/`0xBB`) and asserts only that the server *logged* "WireGuard"; it is root-gated and has
+    never run end to end. This is exactly the defect that demoted `tor_relay` and `openvpn` last
+    session. *(Being resolved: earn it with a real `boringtun` peer interop test, or demote to
+    Beta.)*
+11. **The remaining protocol risk is all "too much LLM", never "too little".** No protocol answers
+    statically where it should reason; several reason where a static default would do — `stun`
+    (per binding request, 100% mechanical: reflect mapped addr, echo txid), `ntp` (every field
+    defaults), and the deterministic routing/discovery family `igmp, arp, rip, ospf, isis, mdns,
+    bgp, turn`. Each spends an LLM round-trip on an answer the wire fully determines — wasteful
+    and an error surface. Give each a static default with the LLM as opt-in. (`dns`/`dhcp` are
+    correctly excluded — those are genuine policy decisions.) Counterpoint worth noting: `tor_relay`
+    now has a stronger real-client test than several Beta protocols — a promotion candidate.
 
 ### Patterns worth auditing for
 
