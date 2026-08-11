@@ -30,11 +30,11 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 #[cfg(feature = "usb-serial")]
 use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-serial")]
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "usb-serial")]
 use crate::{
-    llm::action_helper::call_llm, llm::OllamaClient, protocol::Event,
+    console_error, llm::action_helper::call_llm, llm::OllamaClient, protocol::Event,
     server::connection::ConnectionId, state::app_state::AppState,
 };
 
@@ -226,6 +226,7 @@ impl UsbSerialServer {
             &app_state,
             &connections,
             &protocol,
+            &status_tx,
             server_id,
             Event::new(
                 &USB_SERIAL_ATTACHED_EVENT,
@@ -263,6 +264,7 @@ impl UsbSerialServer {
                         &app_state,
                         &connections,
                         &protocol,
+                        &status_tx,
                         server_id,
                         Event::new(
                             &USB_SERIAL_DATA_RECEIVED_EVENT,
@@ -290,6 +292,7 @@ impl UsbSerialServer {
             &app_state,
             &connections,
             &protocol,
+            &status_tx,
             server_id,
             Event::new(
                 &USB_SERIAL_DETACHED_EVENT,
@@ -312,6 +315,8 @@ impl UsbSerialServer {
     }
 
     /// Raise one event with the LLM, guarding against overlapping calls on the same port.
+    ///
+    /// On failure the port answers in CDC's own vocabulary — see the `Err` arm.
     #[allow(clippy::too_many_arguments)]
     async fn call_llm_for_event(
         connection_id: ConnectionId,
@@ -319,6 +324,7 @@ impl UsbSerialServer {
         app_state: &Arc<AppState>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<UsbSerialProtocol>,
+        status_tx: &mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         event: Event,
         what: &str,
@@ -354,10 +360,34 @@ impl UsbSerialServer {
                 "USB serial LLM call completed for connection {} ({})",
                 connection_id, what
             ),
-            Err(e) => error!(
-                "LLM call failed for USB serial connection {} ({}): {}",
-                connection_id, what, e
-            ),
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "LLM call failed for USB serial connection {} ({}): {}",
+                    connection_id,
+                    what,
+                    e
+                );
+
+                // The host wrote and nobody could answer, so those bytes are gone. CDC PSTN 1.2
+                // has a word for that — `SERIAL_STATE` with `bOverRun` — and it is the only
+                // thing a serial port *can* say, since the class has no request/response framing
+                // to fail. Silence would be indistinguishable from a peer with nothing to send.
+                //
+                // Only `data_received` earns one: attach has had nothing written to it yet, and
+                // by detach the port is gone.
+                if what == "data_received" && protocol.signal_overrun(connection_id) {
+                    let _ = status_tx.send(format!(
+                        "[ERROR] USB serial port {connection_id} signalled SERIAL_STATE overrun: \
+                         the host's data was dropped because the model could not be reached"
+                    ));
+                    warn!(
+                        "USB serial connection {} queued a SERIAL_STATE overrun notification \
+                         after the data_received handler failed",
+                        connection_id
+                    );
+                }
+            }
         }
 
         let mut conns = connections.lock().await;

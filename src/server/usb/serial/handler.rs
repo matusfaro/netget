@@ -36,6 +36,18 @@ mod request_type {
     pub const CLASS_INTERFACE_IN: u8 = 0b1010_0001;
 }
 
+/// CDC class-specific notifications (CDC PSTN 1.2, table 30), sent on the interrupt IN endpoint.
+#[cfg(feature = "usb-serial")]
+mod cdc_notification {
+    /// `bmRequestType` for a device-to-host class notification about an interface.
+    pub const REQUEST_TYPE: u8 = 0b1010_0001;
+    /// `SERIAL_STATE` (CDC PSTN 1.2 §6.5.4): the UART state bitmap.
+    pub const SERIAL_STATE: u8 = 0x20;
+
+    /// `bOverRun` (D6) — "received data has been discarded due to overrun in the device".
+    pub const UART_STATE_OVERRUN: u16 = 1 << 6;
+}
+
 /// A virtual CDC ACM serial port.
 ///
 /// `Debug` is required by `usbip::UsbInterfaceHandler` as of 0.9. It is derived: the only
@@ -52,6 +64,11 @@ pub struct UsbCdcAcmSerialHandler {
     line_coding: LineCoding,
     /// DTR/RTS as last set by the host.
     control_lines: ControlLineState,
+    /// Whole CDC notifications waiting for the host's next interrupt IN URB.
+    ///
+    /// Queued as messages rather than as a byte stream: a host parses one notification per
+    /// transfer, so two must never be merged into one URB.
+    notifications: std::collections::VecDeque<Vec<u8>>,
 }
 
 #[cfg(feature = "usb-serial")]
@@ -62,7 +79,38 @@ impl UsbCdcAcmSerialHandler {
             rx_tx,
             line_coding: LineCoding::default_115200_8n1(),
             control_lines: ControlLineState::from_value(0),
+            notifications: std::collections::VecDeque::new(),
         }
+    }
+
+    /// Tell the host its bytes were dropped, in CDC's own vocabulary.
+    ///
+    /// A serial port has no request/response framing, so there is no reply to fail — but CDC
+    /// PSTN 1.2 does define what a device says when it could not take what the host wrote:
+    /// `SERIAL_STATE` with `bOverRun` set, on the interrupt IN (notification) endpoint. That is
+    /// what this queues. A Linux `cdc-acm` host counts it as a receive overrun on the tty.
+    ///
+    /// Silence would be the alternative and it is the wrong one: a port that says nothing is
+    /// indistinguishable from a port with nothing to say, so an LLM outage would look exactly
+    /// like a quiet peer.
+    pub fn queue_serial_state_overrun(&mut self) {
+        let state = cdc_notification::UART_STATE_OVERRUN;
+        // bmRequestType, bNotification, wValue, wIndex (interface 0), wLength, then the bitmap.
+        let mut message = Vec::with_capacity(10);
+        message.push(cdc_notification::REQUEST_TYPE);
+        message.push(cdc_notification::SERIAL_STATE);
+        message.extend_from_slice(&0u16.to_le_bytes()); // wValue
+        message.extend_from_slice(&0u16.to_le_bytes()); // wIndex: the comms interface
+        message.extend_from_slice(&2u16.to_le_bytes()); // wLength
+        message.extend_from_slice(&state.to_le_bytes());
+        debug!("USB serial queueing SERIAL_STATE notification with bOverRun set");
+        self.notifications.push_back(message);
+    }
+
+    /// Notifications still waiting to go out. Used by tests and diagnostics.
+    #[allow(dead_code)]
+    pub fn pending_notifications(&self) -> usize {
+        self.notifications.len()
     }
 
     /// The endpoints a CDC ACM interface needs, taken verbatim from the `usbip` crate:
@@ -186,8 +234,22 @@ impl usbip::UsbInterfaceHandler for UsbCdcAcmSerialHandler {
             }
             usbip::Direction::In => {
                 if ep.attributes == usbip::EndpointAttributes::Interrupt as u8 {
-                    // The notification endpoint: no serial-state changes are reported.
-                    return Ok(vec![]);
+                    // The notification endpoint. One whole message per transfer; a message
+                    // longer than the URB is split and the remainder pushed back to the front,
+                    // so it reassembles without ever being merged with the next one.
+                    let limit = (ep.max_packet_size as usize).min(transfer_buffer_length as usize);
+                    let Some(mut message) = self.notifications.pop_front() else {
+                        return Ok(vec![]);
+                    };
+                    if message.len() > limit {
+                        let remainder = message.split_off(limit);
+                        self.notifications.push_front(remainder);
+                    }
+                    trace!(
+                        "USB serial sent a {} byte CDC notification to the host",
+                        message.len()
+                    );
+                    return Ok(message);
                 }
 
                 // Bulk IN: hand the host as much as this URB can take.

@@ -272,6 +272,33 @@ impl UsbSerialProtocol {
         }
     }
 
+    /// Tell the host its bytes were dropped, because the model could not be reached.
+    ///
+    /// Queues a CDC `SERIAL_STATE` notification with `bOverRun` set on the port's interrupt IN
+    /// endpoint. Returns whether a handler was found; the session may already have ended.
+    pub fn signal_overrun(&self, connection_id: ConnectionId) -> bool {
+        let handler = match self.handlers.lock() {
+            Ok(handlers) => handlers.get(&connection_id).cloned(),
+            Err(_) => None,
+        };
+        let Some(handler) = handler else {
+            return false;
+        };
+        let Ok(mut guard) = handler.lock() else {
+            return false;
+        };
+        match guard
+            .as_any()
+            .downcast_mut::<crate::server::usb::serial::handler::UsbCdcAcmSerialHandler>()
+        {
+            Some(serial) => {
+                serial.queue_serial_state_overrun();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Run `f` against the CDC ACM handler an action refers to.
     fn with_serial_handler<T>(
         &self,
