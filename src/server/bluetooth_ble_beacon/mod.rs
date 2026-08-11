@@ -32,11 +32,11 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
-use crate::console_info;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_error, console_info};
 use actions::{BluetoothBleBeaconProtocol, BEACON_STARTED_EVENT};
 use advertise::BeaconAdvertiser;
 use payload::BeaconFrame;
@@ -95,6 +95,34 @@ impl BeaconServer {
     }
 }
 
+/// The single source of the text used when the handler could not configure the beacon.
+///
+/// Kept in one place, and `pub`, for the same reason as
+/// [`advertise::UNSUPPORTED_PLATFORM_MESSAGE`]: it is the only thing a user or a test can
+/// observe about this failure, so it must say what happened *and* what the consequence is —
+/// "nothing is being advertised" — rather than leaving a bare `anyhow` chain to be read as a
+/// transient hiccup. The project forbids `#[cfg(test)]` modules in `src/`, and on macOS and
+/// Windows `spawn` refuses before it ever reaches the model call, so this is the only part of
+/// the fail-closed path a test can reach off Linux.
+pub fn beacon_configuration_failure(
+    device_name: &str,
+    adapter: &str,
+    err: &anyhow::Error,
+) -> String {
+    let overloaded = if crate::llm::is_overload_error(err) {
+        " The LLM backend was saturated rather than broken, so starting the server again may \
+         succeed."
+    } else {
+        ""
+    };
+    format!(
+        "BLE beacon '{device_name}' on adapter {adapter} could not be configured: the handler \
+         failed ({err}). NOTHING is being advertised and the server is not running - a beacon \
+         is its advertising payload, so there is no useful default to fall back to and \
+         inventing one would put an unattributable frame on the air.{overloaded}"
+    )
+}
+
 /// BLE Beacon server
 pub struct BluetoothBleBeacon;
 
@@ -150,7 +178,21 @@ impl BluetoothBleBeacon {
             }),
         );
 
-        let result = call_llm(
+        // A failure here is fatal to the server, deliberately.
+        //
+        // For a GATT server the model answers *traffic*, so the base `bluetooth-ble` stack
+        // keeps a powered adapter up when this call fails. A beacon has no traffic: the
+        // configuration produced by this one call *is* the entire server. Reporting `Running`
+        // with nothing on air would be the fail-open shape the root CLAUDE.md warns about —
+        // indistinguishable, to anyone reading `list_servers`, from a beacon that is
+        // broadcasting. So the adapter is released and `server_startup` records
+        // `ServerStatus::Error` with the reason.
+        //
+        // `stop_beacon()` first because it is cheap and unconditional: `call_llm` reports a
+        // failure before executing any action, but a partially-configured radio left
+        // transmitting an unattributable frame is exactly the outcome that must not be
+        // possible, and asserting that from here costs one lock.
+        let result = match call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -158,7 +200,16 @@ impl BluetoothBleBeacon {
             &started_event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                server.stop_beacon().await;
+                let reason = beacon_configuration_failure(&device_name, &adapter_name, &e);
+                console_error!(status_tx, "{}", reason);
+                return Err(e.context(reason));
+            }
+        };
 
         // No fallback beacon. If the model (or the configured handler) named no frame, nothing
         // is broadcast and that is said out loud — inventing a default UUID would put a beacon

@@ -15,7 +15,7 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_info, console_trace};
+use crate::{console_error, console_info, console_trace};
 use actions::{
     BluetoothBleProtocol, BLUETOOTH_BLE_STARTED_EVENT, BLUETOOTH_READ_REQUEST_EVENT,
     BLUETOOTH_STATE_CHANGED_EVENT, BLUETOOTH_SUBSCRIBE_EVENT, BLUETOOTH_WRITE_REQUEST_EVENT,
@@ -561,6 +561,45 @@ impl BluetoothBle {
         Ok(())
     }
 
+    /// Run the GATT event loop over an externally supplied event stream, with no radio.
+    ///
+    /// This is the same [`Self::event_loop`] `spawn_with_llm_actions` runs; the only difference
+    /// is that the `ServerData` it builds holds no `Peripheral`, so the actions that would
+    /// transmit are no-ops while the request/response paths are byte-for-byte the ones a real
+    /// central drives.
+    ///
+    /// It exists so `tests/` can exercise the ATT error paths. The project forbids
+    /// `#[cfg(test)]` modules in `src/`, and the alternative — a Bluetooth adapter plus a second
+    /// radio acting as a central — is why every test in `tests/server/bluetooth_ble/e2e_test.rs`
+    /// is `#[ignore]`d. `parse_ble_uuid` above is `pub` for the same reason.
+    #[cfg(feature = "bluetooth-ble")]
+    pub async fn run_event_loop_without_radio(
+        event_rx: mpsc::Receiver<PeripheralEvent>,
+        server_id: crate::state::ServerId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let server_data = Arc::new(Mutex::new(ServerData {
+            peripheral: None,
+            state: ConnectionState::Idle,
+            memory: String::new(),
+            characteristics: HashMap::new(),
+            queued_events: Vec::new(),
+        }));
+
+        Self::event_loop(
+            event_rx,
+            server_id,
+            llm_client,
+            app_state,
+            status_tx,
+            server_data,
+            Arc::new(BluetoothBleProtocol::new()),
+        )
+        .await;
+    }
+
     /// Main event processing loop
     #[cfg(feature = "bluetooth-ble")]
     async fn event_loop(
@@ -587,8 +626,11 @@ impl BluetoothBle {
                         }),
                     );
 
-                    // Call LLM with state change
-                    let _ = Self::call_llm_for_event(
+                    // Call LLM with state change. There is no peer waiting on an adapter
+                    // state change, so silence towards the radio is the only possible
+                    // behaviour - but the failure must still be visible. This used to be
+                    // `let _ = ...`, which discarded the error with no log on either channel.
+                    if let Err(e) = Self::call_llm_for_event(
                         &server_id,
                         &llm_client,
                         &app_state,
@@ -597,7 +639,16 @@ impl BluetoothBle {
                         &protocol,
                         llm_event,
                     )
-                    .await;
+                    .await
+                    {
+                        console_error!(
+                            status_tx,
+                            "BLE adapter state change (powered = {}) was not handled: the \
+                             handler failed ({}). Nothing was reconfigured.",
+                            is_powered,
+                            e
+                        );
+                    }
                 }
                 PeripheralEvent::ReadRequest {
                     request,
@@ -681,7 +732,21 @@ impl BluetoothBle {
                                     });
                                 }
                                 Err(e) => {
-                                    error!("LLM call failed for read request: {}", e);
+                                    // Fail closed, and say so on both channels. ATT has no
+                                    // "try again later"; `UnlikelyError` (0x0E) is the generic
+                                    // "the server could not do it" the central will surface as
+                                    // a failed read. What must not happen is the fallback in
+                                    // the Ok branch above — answering Success with the last
+                                    // cached value, which is a claim about the characteristic
+                                    // that nothing here is in a position to make.
+                                    console_error!(
+                                        status_tx,
+                                        "BLE read of {} could not be answered: the handler \
+                                         failed ({}). Replying ATT Unlikely Error (0x0E); no \
+                                         characteristic value is being invented.",
+                                        char_uuid_str,
+                                        e
+                                    );
                                     let _ = responder.send(ReadRequestResponse {
                                         value: Vec::new(),
                                         response: RequestResponse::UnlikelyError,
@@ -785,7 +850,18 @@ impl BluetoothBle {
                                     });
                                 }
                                 Err(e) => {
-                                    error!("LLM call failed for write request: {}", e);
+                                    // Fail closed: the central must be told the write did not
+                                    // take effect. An ATT Write Response is an acknowledgement,
+                                    // so answering Success here would tell the peer its value
+                                    // was accepted by a handler that never ran.
+                                    console_error!(
+                                        status_tx,
+                                        "BLE write to {} could not be answered: the handler \
+                                         failed ({}). Replying ATT Unlikely Error (0x0E); the \
+                                         write is NOT acknowledged.",
+                                        char_uuid_str,
+                                        e
+                                    );
                                     let _ = responder.send(WriteRequestResponse {
                                         response: RequestResponse::UnlikelyError,
                                     });
@@ -846,7 +922,12 @@ impl BluetoothBle {
                         }),
                     );
 
-                    let _ = Self::call_llm_for_event(
+                    // A CCCD subscription update is reported after the fact - the stack has
+                    // already acknowledged the descriptor write and there is no responder here,
+                    // so there is nothing to answer. What there is to do is say the
+                    // subscription will not be served, because the notifications the central is
+                    // now waiting for were never set up. This used to be `let _ = ...`.
+                    if let Err(e) = Self::call_llm_for_event(
                         &server_id,
                         &llm_client,
                         &app_state,
@@ -855,7 +936,17 @@ impl BluetoothBle {
                         &protocol,
                         llm_event,
                     )
-                    .await;
+                    .await
+                    {
+                        console_error!(
+                            status_tx,
+                            "BLE subscription change on {} (subscribed = {}) was not handled: \
+                             the handler failed ({}). No notifications will be sent for it.",
+                            char_uuid_str,
+                            subscribed,
+                            e
+                        );
+                    }
                 }
             }
         }
