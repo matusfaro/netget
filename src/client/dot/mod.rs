@@ -68,6 +68,12 @@ impl DotClient {
         // Extract hostname for SNI (or use IP as fallback)
         let server_name = remote_addr.split(':').next().unwrap_or("dns.server");
 
+        // Install a rustls CryptoProvider before building the config. Without one,
+        // `ClientConfig::builder()` panics rather than returning an error whenever the
+        // build has more than one provider feature live, which `all-protocols` does. See
+        // the fuller note in `src/client/tls/mod.rs`.
+        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+
         // Create TLS config with root certificates
         let root_store = RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),

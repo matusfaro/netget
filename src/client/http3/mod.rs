@@ -137,6 +137,11 @@ impl Http3Client {
         // Create QUIC endpoint
         let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
 
+        // Install a rustls CryptoProvider before building the config, or
+        // `ClientConfig::builder()` panics instead of erroring. See the fuller note in
+        // `src/client/tls/mod.rs`.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         // Configure TLS (accept invalid certs for now - can be made configurable)
         let mut rustls_client_config = rustls::ClientConfig::builder()
             .dangerous()

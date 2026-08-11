@@ -292,6 +292,11 @@ impl DcClient {
             // Extract hostname for SNI
             let server_name_str = remote_addr.split(':').next().unwrap_or("dc.hub");
 
+            // Install a rustls CryptoProvider before building the config, or
+            // `ClientConfig::builder()` panics instead of erroring. See the fuller note in
+            // `src/client/tls/mod.rs`.
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+
             // Create TLS config
             let root_store = RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),

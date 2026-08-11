@@ -92,6 +92,25 @@ impl TlsClient {
                 .to_string()
         };
 
+        // Make sure rustls has a process-level CryptoProvider before any builder runs.
+        //
+        // `ClientConfig::builder()` *panics* when it cannot pick one automatically, and it
+        // cannot whenever more than one provider feature is live in the build - which is
+        // the normal case here, because `all-protocols` pulls in dependencies that enable
+        // both `ring` and `aws-lc-rs`. The panic reads "Could not automatically determine
+        // the process-level CryptoProvider from Rustls crate features".
+        //
+        // `src/bin/netget.rs` installs the provider at startup, so the shipped binary was
+        // fine and this stayed hidden; anything else using NetGet as a library - every
+        // test, and the protocol smoke sweep that found this - reached the builder with no
+        // provider installed and took down the connecting task instead of returning `Err`.
+        // The servers already guard themselves this way (`src/server/tls_cert_manager.rs`,
+        // `src/server/proxy/tls_mitm.rs`); the TLS client did not.
+        //
+        // Installing is idempotent-by-ignoring: `install_default` returns `Err` if one is
+        // already installed, which is exactly the case we want to do nothing about.
+        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+
         // Create TLS config
         let config = if accept_invalid_certs {
             // Accept any certificate (for testing with self-signed certs)
