@@ -1,19 +1,62 @@
-//! E2E tests for IRC client
+//! E2E tests for the IRC client, against a NetGet IRC server.
 //!
-//! These tests verify IRC client functionality by spawning the actual NetGet binary
-//! and testing client behavior as a black-box.
-//! Test strategy: Use netget binary to start IRC server + client, < 10 LLM calls total.
+//! Two NetGet processes, each with its own mock Ollama: one runs the IRC server, the other the
+//! IRC client. Both sides of every exchange are therefore observable, and the client's read
+//! loop, registration detection, event emission and action execution are all exercised for
+//! real.
+//!
+//! # These tests had never passed
+//!
+//! They were wired into `tests/client/mod.rs` in `1e842bf0` and failed at HEAD from that point
+//! on, because every mock named an event or an action the code does not have:
+//!
+//! | Mock said | Code emits/accepts |
+//! |---|---|
+//! | server event `irc_data_received`, field `data` | `irc_message_received`, field `message` |
+//! | client event `irc_client_connected` | `irc_connected` (the *static* is `IRC_CLIENT_CONNECTED_EVENT`; its `id` is not) |
+//! | client event `irc_client_message_received` | `irc_message_received` |
+//! | client action `register` | nothing — the client sends NICK/USER itself before the event fires |
+//! | client `irc_..._message_received` with `message: "001"` | never fires: the 001 line is consumed to raise `irc_connected` |
+//!
+//! Nothing matched, so no mock ever answered, no `001` was ever sent, the client never
+//! registered, and none of its events fired. The assertions could not see that — they checked
+//! only that the output mentioned "connected" or "message", which the startup banner satisfies.
+//! `verify_mocks()` was called and was the only thing that failed.
+//!
+//! The mocks below use the real vocabulary and the assertions now check the wire.
+//!
+//! ```bash
+//! ./cargo-isolated.sh test --no-default-features --features irc \
+//!     --test client -- client::irc --test-threads=100
+//! ```
 
 #[cfg(all(test, feature = "irc"))]
 mod irc_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
 
-    /// Test IRC client connection and registration
-    /// LLM calls: 3 (server startup, client connection, connected event)
+    /// Nick/user/realname are pinned rather than left to the client's defaults so the server's
+    /// mocks can match on exact lines.
+    fn open_client_action(port: u16, instruction: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "open_client",
+            "remote_addr": format!("127.0.0.1:{}", port),
+            "protocol": "IRC",
+            "instruction": instruction,
+            "startup_params": {
+                "nickname": "testbot",
+                "username": "testbot",
+                "realname": "Test Bot"
+            }
+        })
+    }
+
+    /// Test IRC client connection and registration.
+    ///
+    /// LLM calls: 2 server (startup, USER) + 2 client (startup, irc_connected). NICK is
+    /// answered by the server's mock too, so 5 in total.
     #[tokio::test]
     async fn test_irc_client_connect_and_register() -> E2EResult<()> {
-        // Start an IRC server listening on an available port with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IRC. Accept client connections and log all messages."
         )
@@ -32,19 +75,19 @@ mod irc_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: IRC client sends NICK
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                // Mock 2: the client's NICK line. One `irc_message_received` per protocol
+                // line, carrying `message`.
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
+                    {"type": "wait_for_more"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: IRC client sends USER
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                // Mock 3: the client's USER line completes registration, so answer with 001 —
+                // the line the client watches for.
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_irc_message",
@@ -57,10 +100,6 @@ mod irc_client_tests {
 
         let mut server = start_netget_server(server_config).await?;
 
-        // Give server time to start
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        // Now start an IRC client that connects to this server with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to IRC at 127.0.0.1:{} with nickname testbot, wait for registration to complete.",
             server.port
@@ -71,34 +110,15 @@ mod irc_client_tests {
                 .on_instruction_containing("Connect to IRC")
                 .and_instruction_containing("testbot")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": format!("127.0.0.1:{}", server.port),
-                        "protocol": "IRC",
-                        "instruction": "Register with nickname testbot"
-                    }
+                    open_client_action(server.port, "Register with nickname testbot")
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Client connected event
-                .on_event("irc_client_connected")
+                // Mock 2: registration completed. The event id is `irc_connected`; NICK/USER
+                // were already sent by the client, so there is nothing to do but acknowledge.
+                .on_event("irc_connected")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "register",
-                        "nickname": "testbot",
-                        "username": "testbot",
-                        "realname": "Test Bot"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Client receives welcome (001)
-                .on_event("irc_client_message_received")
-                .and_event_data_contains("message", "001")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
+                    {"type": "wait_for_more"}
                 ]))
                 .expect_calls(1)
                 .and()
@@ -106,41 +126,33 @@ mod irc_client_tests {
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and register
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Registration is 4 messages over loopback plus two mocked LLM answers.
+        client
+            .wait_for_pattern("registration complete", Duration::from_secs(10))
+            .await?;
 
-        // Verify client output shows connection
-        assert!(
-            client.output_contains("connected").await
-                || client.output_contains("registration").await,
-            "Client should show connection or registration message. Output: {:?}",
-            client.get_output().await
-        );
+        println!("✅ IRC client connected and registered");
 
-        println!("✅ IRC client connected and registered successfully");
-
-        // Verify mock expectations were met
+        // The mocks are the real assertion: mock 2 firing exactly once proves the client
+        // detected 001 and raised irc_connected, and mocks 2-3 on the server prove NICK and
+        // USER actually went out on the wire.
         server.verify_mocks().await?;
         client.verify_mocks().await?;
 
-        // Cleanup
         server.stop().await?;
         client.stop().await?;
 
         Ok(())
     }
 
-    /// Test IRC client can join channel and send message
-    /// LLM calls: 4 (server startup, client connection, connected event, message sending)
+    /// Test that the client joins a channel and sends a message when told to.
     #[tokio::test]
     async fn test_irc_client_join_and_message() -> E2EResult<()> {
-        // Start an IRC server with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IRC. Accept all channel joins and log PRIVMSG commands."
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
                 .on_instruction_containing("Listen on port")
                 .and_instruction_containing("IRC")
                 .respond_with_actions(serde_json::json!([
@@ -153,106 +165,61 @@ mod irc_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: NICK command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
+                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
+                    {"type": "send_irc_message", "message": ":testserver 001 testbot :Welcome"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: USER command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                // The client's JOIN, confirmed back so the client sees its own join.
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "JOIN #test")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testserver 001 testbot :Welcome"
-                    }
+                    {"type": "send_irc_message", "message": ":testbot JOIN #test"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: JOIN command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "JOIN")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testbot JOIN #test"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: PRIVMSG command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "PRIVMSG")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
+                // The message the client was told to send. This rule firing is the proof that
+                // send_privmsg reached the wire.
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "PRIVMSG #test :Hello, channel!")
+                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
                 .expect_calls(1)
                 .and()
         });
 
         let mut server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        // Client that joins a channel and sends a message with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to IRC at 127.0.0.1:{} with nickname testbot. After connecting, join #test and say 'Hello, channel!'",
             server.port
         ))
         .with_mock(|mock| {
             mock
-                // Mock 1: Client startup
                 .on_instruction_containing("Connect to IRC")
                 .and_instruction_containing("testbot")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": format!("127.0.0.1:{}", server.port),
-                        "protocol": "IRC",
-                        "instruction": "Register, join #test, and send message"
-                    }
+                    open_client_action(server.port, "Register, join #test, and send message")
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Client connected
-                .on_event("irc_client_connected")
+                .on_event("irc_connected")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "register",
-                        "nickname": "testbot",
-                        "username": "testbot",
-                        "realname": "Test Bot"
-                    }
+                    {"type": "join_channel", "channel": "#test"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Client receives welcome (001)
-                .on_event("irc_client_message_received")
-                .and_event_data_contains("message", "001")
+                // The JOIN confirmation comes back as a parsed message whose `command` is JOIN.
+                .on_event("irc_message_received")
+                .and_event_data_contains("command", "JOIN")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "join_channel",
-                        "channel": "#test"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 4: Client receives JOIN confirmation
-                .on_event("irc_client_message_received")
-                .and_event_data_contains("message", "JOIN")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_privmsg",
-                        "target": "#test",
-                        "message": "Hello, channel!"
-                    }
+                    {"type": "send_privmsg", "target": "#test", "message": "Hello, channel!"}
                 ]))
                 .expect_calls(1)
                 .and()
@@ -260,36 +227,32 @@ mod irc_client_tests {
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to connect, register, join, and send message
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // Verify the client is IRC protocol
         assert_eq!(client.protocol, "IRC", "Client should be IRC protocol");
+
+        // Wait for the server to log the client's PRIVMSG rather than sleeping a fixed span.
+        server
+            .wait_for_pattern("Hello, channel!", Duration::from_secs(15))
+            .await?;
 
         println!("✅ IRC client joined channel and sent message");
 
-        // Verify mock expectations were met
         server.verify_mocks().await?;
         client.verify_mocks().await?;
 
-        // Cleanup
         server.stop().await?;
         client.stop().await?;
 
         Ok(())
     }
 
-    /// Test IRC client responds to server messages
-    /// LLM calls: 5 (server startup, client connection, connected event, server message, client response)
+    /// Test that the client answers a message the server sends it.
     #[tokio::test]
     async fn test_irc_client_responds_to_messages() -> E2EResult<()> {
-        // Start an IRC server that will send a message to the client with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IRC. When a client joins #bot, send them a PRIVMSG saying 'Welcome bot!'"
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
                 .on_instruction_containing("Listen on port")
                 .and_instruction_containing("IRC")
                 .respond_with_actions(serde_json::json!([
@@ -302,123 +265,68 @@ mod irc_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: NICK command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
+                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
+                    {"type": "send_irc_message", "message": ":testserver 001 testbot :Welcome"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: USER command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                // Confirm the join, then talk to the client unprompted.
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "JOIN #bot")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testserver 001 responsebot :Welcome"
-                    }
+                    {"type": "send_irc_message", "message": ":testbot JOIN #bot"},
+                    {"type": "send_irc_message", "message": ":testserver PRIVMSG testbot :Welcome bot!"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: JOIN #bot command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "JOIN")
-                .and_event_data_contains("data", "#bot")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_irc_message",
-                        "message": ":responsebot JOIN #bot"
-                    },
-                    {
-                        "type": "send_irc_message",
-                        "message": ":testserver PRIVMSG responsebot :Welcome bot!"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: Client responds with PRIVMSG Thanks
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "PRIVMSG")
-                .and_event_data_contains("data", "Thanks")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
+                // The client's reply. This rule is the whole point of the test.
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "PRIVMSG #bot :Thanks!")
+                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
                 .expect_calls(1)
                 .and()
         });
 
         let mut server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        // Client that joins and responds to messages with mocks
         let client_config = NetGetConfig::new(format!(
-            "Connect to IRC at 127.0.0.1:{} with nickname responsebot. Join #bot and respond to any messages with 'Thanks!'",
+            "Connect to IRC at 127.0.0.1:{} with nickname testbot. Join #bot and respond to any messages with 'Thanks!'",
             server.port
         ))
         .with_mock(|mock| {
             mock
-                // Mock 1: Client startup
                 .on_instruction_containing("Connect to IRC")
-                .and_instruction_containing("responsebot")
+                .and_instruction_containing("testbot")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_client",
-                        "remote_addr": format!("127.0.0.1:{}", server.port),
-                        "protocol": "IRC",
-                        "instruction": "Join #bot and respond to messages"
-                    }
+                    open_client_action(server.port, "Join #bot and respond to messages")
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Client connected
-                .on_event("irc_client_connected")
+                .on_event("irc_connected")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "register",
-                        "nickname": "responsebot",
-                        "username": "responsebot",
-                        "realname": "Response Bot"
-                    }
+                    {"type": "join_channel", "channel": "#bot"}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Client receives welcome (001)
-                .on_event("irc_client_message_received")
-                .and_event_data_contains("message", "001")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "join_channel",
-                        "channel": "#bot"
-                    }
-                ]))
+                .on_event("irc_message_received")
+                .and_event_data_contains("command", "JOIN")
+                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: Client receives JOIN confirmation
-                .on_event("irc_client_message_received")
-                .and_event_data_contains("message", "JOIN")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "wait_for_more"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 5: Client receives PRIVMSG "Welcome bot!"
-                .on_event("irc_client_message_received")
-                .and_event_data_contains("message", "PRIVMSG")
+                // PRIVMSG is parsed, so `command` and `message` are separate fields — matching
+                // on `message` alone would have to match the trailing text, not the verb.
+                .on_event("irc_message_received")
+                .and_event_data_contains("command", "PRIVMSG")
                 .and_event_data_contains("message", "Welcome bot!")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_privmsg",
-                        "target": "#bot",
-                        "message": "Thanks!"
-                    }
+                    {"type": "send_privmsg", "target": "#bot", "message": "Thanks!"}
                 ]))
                 .expect_calls(1)
                 .and()
@@ -426,25 +334,15 @@ mod irc_client_tests {
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give time for connection, join, server message, and client response
-        tokio::time::sleep(Duration::from_secs(4)).await;
-
-        // Verify client received and processed messages
-        let output = client.get_output().await;
-        assert!(
-            output.iter().any(|l| l.contains("PRIVMSG"))
-                || output.iter().any(|l| l.contains("message")),
-            "Client should show received message. Output: {:?}",
-            output
-        );
+        server
+            .wait_for_pattern("Thanks!", Duration::from_secs(15))
+            .await?;
 
         println!("✅ IRC client responded to server messages");
 
-        // Verify mock expectations were met
         server.verify_mocks().await?;
         client.verify_mocks().await?;
 
-        // Cleanup
         server.stop().await?;
         client.stop().await?;
 
