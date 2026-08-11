@@ -1,70 +1,96 @@
-# TFTP Client Implementation
+# TFTP Client (RFC 1350)
 
-## Overview
+LLM-driven file transfer over UDP. NetGet owns the socket and the packet framing; the model
+chooses the operation, acknowledges every inbound block, and supplies every outbound block.
 
-TFTP client for downloading files from TFTP servers (RRQ) and uploading files (WRQ). The LLM controls file transfer operations and processes received data.
+## History: why this was disabled for nine months
 
-## Library Choice
+Commented out of `client_registry.rs` and `src/client/mod.rs` on 2025-11-20 by `66212c37`
+("Client needs `call_llm_for_client` API updates (deferred to future commit)"). The future
+commit never came. Re-enabled 2026-08 by porting it to the current signature.
 
-**Custom Implementation** - No external dependencies. Simple UDP packet construction and parsing.
+The disabling reason was real at the time and is now stale: `call_llm_for_client` takes eight
+arguments (`llm_client, state, client_id, instruction, memory, event, protocol, status_tx`)
+and lives in `crate::client::llm_budget`. The old code called a three-argument version in a
+module that no longer exists. `src/client/rip/` is the working reference for the current
+shape.
 
-## Architecture
+## The bug re-enabling it exposed
 
-### Connection Flow
+`call_llm_for_client` (`src/llm/action_helper.rs`) builds the model's tool list from
+**`get_async_actions()` alone**. It never reads `get_sync_actions()`, and — unlike the server
+path — it never reads `event.event_type.actions`.
+
+So an action declared only as *sync* is offered to the model by nothing, and if the model
+names it anyway (because the event's example shows it), the executor rejects it as
+`Unknown Action`. `send_ack` was in exactly that position: every DATA block came back with an
+unknown-action error and the transfer stalled at block 1.
+
+The fix is that `get_async_actions()` returns **every** action, sync ones included. The RIP
+client already did this; it reads like duplication and is load-bearing. This is the
+client-side twin of the "declared but unreachable" server defect described in the root
+`CLAUDE.md`, and unlike the server case there is no test guarding it across all clients —
+`tests/event_action_declarations_test.rs` walks the *server* registry only.
+
+## Flow
 
 ```
-1. Parse instruction → determine operation (read/write)
-2. Bind local UDP socket
-3. Send RRQ or WRQ to server:69
-4. Server responds from TID port
-5. Exchange DATA/ACK packets
-6. Call LLM on each received block
-7. Transfer complete when final block (< 512 bytes)
+open_client  ──> bind UDP 0.0.0.0:0
+             ──> event tftp_connected
+                  model answers tftp_read_file / tftp_write_file / disconnect
+                  (nothing else starts a transfer — the client never invents a request)
+
+read:   RRQ ──> DATA n ──> event tftp_data_received ──> model: send_ack n ──> ...
+        final block (< 512 bytes) ──> event tftp_transfer_complete
+
+write:  WRQ ──> ACK 0 ──> event tftp_ack_received ──> model: send_data_block 1 ──> ACK 1 ──> ...
+        a block shorter than 512 bytes ends the transfer
 ```
 
-### LLM Integration
+**Server TID.** RFC 1350 §4: the server answers from a freshly allocated port, and every
+subsequent client packet must go *there*, not to port 69. `run_transfer` learns the address
+from the first reply. A client that keeps writing to the well-known port appears to work and
+then hangs after block 1, which is why `tests/client/tftp/e2e_test.rs` uses a two-socket
+server.
 
-**Events**:
-- `tftp_connected` - Initial connection
-- `tftp_data_received` - DATA block received (read)
-- `tftp_ack_received` - ACK received (write)
-- `tftp_transfer_complete` - Transfer finished
-- `tftp_error` - Error from server
+## Events and actions
 
-**Actions**:
-- `tftp_read_file` - Request file (async)
-- `tftp_write_file` - Send file (async)
-- `send_ack` - Acknowledge DATA block (sync)
-- `send_data_block` - Send DATA block (sync)
-- `disconnect` - Abort transfer (sync)
+| Event | Raised when | Actions offered |
+|---|---|---|
+| `tftp_connected` | socket bound | `tftp_read_file`, `tftp_write_file`, `disconnect` |
+| `tftp_data_received` | DATA arrives (read) | `send_ack`, `disconnect` |
+| `tftp_ack_received` | ACK arrives (write) | `send_data_block`, `disconnect` |
+| `tftp_transfer_complete` | final block seen | `disconnect` |
+| `tftp_error` | ERROR packet arrives | `disconnect` |
 
-### Data Encoding
+All five are emitted. `tftp_write_file` deliberately carries **no file content**: the WRQ is
+sent, the server answers ACK 0, and the model supplies each block in response to an
+`tftp_ack_received` event. That is symmetric with the read path and keeps the model in charge
+of what goes on the wire — at the cost of one LLM call per 512 bytes, which is stated in
+`metadata().notes`.
 
-Hex-encoded like TCP client:
-```json
-{
-  "data_hex": "48656c6c6f",
-  "data_length": 5
-}
-```
+## Encoding
+
+`data_hex` — inbound and outbound. The name states the encoding and the executor really
+performs `hex::decode` (`send_data_block`), so the round trip is symmetric. This is the shape
+the `send_tcp_data` fix (`d70bb5b5`) established; TFTP payloads are binary by definition, so
+there is no useful "utf8" alternative to offer.
 
 ## Limitations
 
-- **No Retransmission**: Timeouts cause transfer abort (5-second timeout)
-- **No Options**: RFC 1350 only, no blocksize/timeout negotiation
-- **Simple Instruction Parsing**: Looks for "read"/"write" and filename in instruction
-- **Single Transfer**: One operation per client instance
+- **No retransmission.** A 5-second timeout aborts the transfer. RFC 1350's timeout/retry is
+  not implemented.
+- **No RFC 2347 options** — no `blksize`, `timeout` or `tsize` negotiation. Block size is
+  always 512.
+- **`netascii` is carried, not applied.** The mode string reaches the wire but the payload is
+  passed through unmodified; no CR/LF translation happens.
+- **One transfer per client.** The first `tftp_read_file`/`tftp_write_file` starts it; there
+  is no way to begin a second on the same client.
+- **Write transfers are untested.** The code path exists and the events fire, but
+  `tests/client/tftp/` covers reads only.
 
-## Example Usage
+## Example
 
-**Read File**:
 ```
-connect to 192.168.1.1:69 via tftp
-Read file pxelinux.0 in octet mode
-```
-
-**Write File**:
-```
-connect to 192.168.1.1:69 via tftp
-Write config.txt with data "Hello TFTP!"
+connect to 192.168.1.1:69 via tftp. Read file pxelinux.0 in octet mode and report its size.
 ```

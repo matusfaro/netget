@@ -1,11 +1,11 @@
 //! RSS client protocol actions implementation
 
 use crate::llm::actions::{
-    client_trait::{Client, ClientActionResult, ConnectContext},
+    client_trait::{Client, ClientActionResult},
     protocol_trait::Protocol,
     ActionDefinition, Parameter, ParameterDefinition,
 };
-use crate::protocol::EventType;
+use crate::protocol::{ConnectContext, EventType};
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -21,8 +21,7 @@ pub static RSS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "RSS client initialized and ready to fetch feeds",
         json!({
             "type": "fetch_rss_feed",
-            "url": "http://example.com/tech-news.xml",
-            "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
+            "url": "/tech-news.xml"
         }),
     )
     .with_parameters(vec![Parameter {
@@ -31,11 +30,22 @@ pub static RSS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         description: "Base URL for RSS feeds".to_string(),
         required: true,
     }])
+    .with_actions(vec![fetch_rss_feed_action(), disconnect_action()])
 });
 
 /// RSS client feed fetched event
 pub static RSS_CLIENT_FEED_FETCHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rss_feed_fetched", "RSS feed fetched and parsed", json!({"type": "placeholder", "event_id": "rss_feed_fetched"})).with_parameters(vec![
+    EventType::new(
+        "rss_feed_fetched",
+        "RSS feed fetched and parsed",
+        json!({"type": "disconnect"}),
+    )
+    .with_actions(vec![
+        fetch_rss_feed_action(),
+        wait_for_more_action(),
+        disconnect_action(),
+    ])
+    .with_parameters(vec![
         Parameter {
             name: "url".to_string(),
             type_hint: "string".to_string(),
@@ -78,9 +88,58 @@ pub static RSS_CLIENT_FEED_FETCHED_EVENT: LazyLock<EventType> = LazyLock::new(||
 /// RSS client protocol action handler
 pub struct RssClientProtocol;
 
+impl Default for RssClientProtocol {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl RssClientProtocol {
     pub fn new() -> Self {
         Self
+    }
+}
+
+/// Fetch a feed. `url` may be absolute (`http://host/feed.xml`) or a path relative to the
+/// address the client was opened on (`/feed.xml`).
+fn fetch_rss_feed_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "fetch_rss_feed".to_string(),
+        description: "Fetch and parse an RSS 2.0 feed. The url may be absolute or a path \
+                      relative to the address this client was opened on."
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "url".to_string(),
+            type_hint: "string".to_string(),
+            description: "Feed URL or path (e.g. '/news.xml' or 'http://example.com/feed.xml')"
+                .to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "fetch_rss_feed",
+            "url": "/tech-news.xml"
+        }),
+        log_template: None,
+    }
+}
+
+fn wait_for_more_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "wait_for_more".to_string(),
+        description: "Do nothing further with this feed and wait for more input".to_string(),
+        parameters: vec![],
+        example: json!({ "type": "wait_for_more" }),
+        log_template: None,
+    }
+}
+
+fn disconnect_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "disconnect".to_string(),
+        description: "Stop the RSS client".to_string(),
+        parameters: vec![],
+        example: json!({ "type": "disconnect" }),
+        log_template: None,
     }
 }
 
@@ -91,80 +150,14 @@ impl Protocol for RssClientProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "fetch_rss_feed".to_string(),
-                description: "Fetch and parse an RSS feed from a URL".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "url".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Full URL to RSS feed (e.g., http://example.com/feed.xml)"
-                            .to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "if_modified_since".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "RFC 2822 date for conditional fetch (e.g., 'Mon, 09 Nov 2025 12:00:00 GMT')"
-                            .to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "fetch_rss_feed",
-                    "url": "http://example.com/tech-news.xml",
-                    "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
-                }),
-            log_template: None,
-            },
-            ActionDefinition {
-                name: "disconnect".to_string(),
-                description: "Disconnect from the RSS feed source".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "disconnect"
-                }),
-            log_template: None,
-            },
-        ]
+        vec![fetch_rss_feed_action(), disconnect_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
-            ActionDefinition {
-                name: "fetch_rss_feed".to_string(),
-                description: "Fetch another RSS feed in response to received data".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "url".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Full URL to RSS feed".to_string(),
-                        required: true,
-                    },
-                    Parameter {
-                        name: "if_modified_since".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "RFC 2822 date for conditional fetch".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "fetch_rss_feed",
-                    "url": "http://example.com/related-feed.xml",
-                    "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
-                }),
-            log_template: None,
-            },
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more user input before fetching more feeds".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            log_template: None,
-            },
+            fetch_rss_feed_action(),
+            wait_for_more_action(),
+            disconnect_action(),
         ]
     }
 
@@ -192,9 +185,22 @@ impl Protocol for RssClientProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation("reqwest HTTP client + rss crate for RSS 2.0 XML parsing")
+            .implementation(
+                "reqwest HTTP GET + the `rss` crate for RSS 2.0 parsing. Items are handed \
+                 to the model as structured JSON, never raw XML. No conditional requests \
+                 (no ETag / If-Modified-Since), no Atom, no autodiscovery.",
+            )
             .llm_control("Feed selection, item filtering, content interpretation")
-            .e2e_testing("RSS server - planned <10 LLM calls")
+            .e2e_testing(
+                "Validated against a plain in-test HTTP listener serving RSS 2.0 XML, and \
+                 against feed bytes produced independently of the `rss` crate. Not yet run \
+                 against a third-party feed server.",
+            )
+            .notes(
+                "Re-enabled 2026-08; had been commented out of the registry since 2025-11 \
+                 pending the call_llm_for_client signature change. Chained fetches are \
+                 capped at 16 per client.",
+            )
             .build()
     }
 
@@ -276,7 +282,7 @@ impl Client for RssClientProtocol {
             crate::client::rss::RssClient::connect_with_llm_actions(
                 ctx.remote_addr,
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.client_id,
             )

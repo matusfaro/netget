@@ -114,6 +114,8 @@ pub mod pypi;
 pub mod redis;
 #[cfg(feature = "rip")]
 pub mod rip;
+#[cfg(feature = "rss")]
+pub mod rss;
 #[cfg(feature = "s3")]
 pub mod s3;
 #[cfg(feature = "saml")]
@@ -144,6 +146,8 @@ pub mod syslog;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
+#[cfg(feature = "tftp")]
+pub mod tftp;
 #[cfg(feature = "tls")]
 pub mod tls;
 #[cfg(feature = "tor")]

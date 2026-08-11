@@ -338,17 +338,17 @@ pub mod couchdb;
 #[cfg(feature = "couchdb")]
 pub use couchdb::actions::CouchDbClientProtocol;
 
-// tftp client - temporarily disabled (API fixes needed)
-// #[cfg(feature = "tftp")]
-// pub mod tftp;
-// #[cfg(feature = "tftp")]
-// pub use tftp::actions::TftpClientProtocol;
+// tftp client
+#[cfg(feature = "tftp")]
+pub mod tftp;
+#[cfg(feature = "tftp")]
+pub use tftp::actions::TftpClientProtocol;
 
-// rss client - temporarily disabled (needs API updates)
-// #[cfg(feature = "rss")]
-// pub mod rss;
-// #[cfg(feature = "rss")]
-// pub use rss::actions::RssClientProtocol;
+// rss client
+#[cfg(feature = "rss")]
+pub mod rss;
+#[cfg(feature = "rss")]
+pub use rss::actions::RssClientProtocol;
 
 // rip client
 #[cfg(feature = "rip")]

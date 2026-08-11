@@ -1,23 +1,106 @@
-//! TFTP client implementation
+//! TFTP (RFC 1350) client implementation
+//!
+//! The LLM drives the transfer: it chooses the operation (`tftp_read_file` /
+//! `tftp_write_file`), acknowledges each inbound DATA block (`send_ack`), and supplies each
+//! outbound DATA block (`send_data_block`). NetGet owns only the UDP socket and the packet
+//! framing.
+
 pub mod actions;
 pub use actions::TftpClientProtocol;
 
-use crate::state::ClientId;
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
+use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::state::{ClientId, ClientStatus};
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tokio::sync::{mpsc, Mutex};
+use tracing::{debug, error, info, trace, warn};
 
 use actions::{
     TFTP_CLIENT_ACK_RECEIVED_EVENT, TFTP_CLIENT_CONNECTED_EVENT, TFTP_CLIENT_DATA_RECEIVED_EVENT,
     TFTP_CLIENT_ERROR_EVENT, TFTP_CLIENT_TRANSFER_COMPLETE_EVENT,
 };
+
+/// TFTP opcodes (RFC 1350 §5)
+pub const OP_RRQ: u16 = 1;
+pub const OP_WRQ: u16 = 2;
+pub const OP_DATA: u16 = 3;
+pub const OP_ACK: u16 = 4;
+pub const OP_ERROR: u16 = 5;
+
+/// Maximum payload of a TFTP DATA block; a shorter block terminates the transfer.
+pub const TFTP_BLOCK_SIZE: usize = 512;
+
+/// Build an RRQ (opcode 1) or WRQ (opcode 2) packet.
+///
+/// `opcode | filename | 0 | mode | 0`
+pub fn build_request_packet(opcode: u16, filename: &str, mode: &str) -> Vec<u8> {
+    let mut packet = Vec::with_capacity(4 + filename.len() + mode.len());
+    packet.extend_from_slice(&opcode.to_be_bytes());
+    packet.extend_from_slice(filename.as_bytes());
+    packet.push(0);
+    packet.extend_from_slice(mode.as_bytes());
+    packet.push(0);
+    packet
+}
+
+/// A decoded inbound TFTP packet.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TftpPacket {
+    Data { block: u16, payload: Vec<u8> },
+    Ack { block: u16 },
+    Error { code: u16, message: String },
+}
+
+impl TftpPacket {
+    /// Decode a packet received from the server. Returns `None` for opcodes a client
+    /// never receives (RRQ/WRQ) or for a truncated datagram.
+    pub fn decode(data: &[u8]) -> Option<Self> {
+        if data.len() < 4 {
+            return None;
+        }
+        let opcode = u16::from_be_bytes([data[0], data[1]]);
+        let block = u16::from_be_bytes([data[2], data[3]]);
+        match opcode {
+            OP_DATA => Some(TftpPacket::Data {
+                block,
+                payload: data[4..].to_vec(),
+            }),
+            OP_ACK => Some(TftpPacket::Ack { block }),
+            OP_ERROR => {
+                // ErrorCode(2) then a NUL-terminated netascii message.
+                let msg_bytes = &data[4..];
+                let end = msg_bytes
+                    .iter()
+                    .position(|b| *b == 0)
+                    .unwrap_or(msg_bytes.len());
+                Some(TftpPacket::Error {
+                    code: block,
+                    message: String::from_utf8_lossy(&msg_bytes[..end]).to_string(),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Which direction the current transfer runs in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Direction {
+    Read,
+    Write,
+}
+
+/// Per-client LLM state (mirrors the per-connection state machine servers use).
+struct ClientData {
+    memory: String,
+}
 
 pub struct TftpClient;
 
@@ -28,93 +111,157 @@ impl TftpClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
-        instruction: String,
     ) -> Result<SocketAddr> {
-        // Parse remote address
-        let server_addr: SocketAddr = remote_addr.parse().context("Invalid server address")?;
+        let server_addr: SocketAddr = remote_addr
+            .parse()
+            .with_context(|| format!("Invalid TFTP server address: {}", remote_addr))?;
 
-        // Bind local UDP socket
-        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+        let socket = Arc::new(
+            UdpSocket::bind("0.0.0.0:0")
+                .await
+                .context("Failed to bind TFTP client UDP socket")?,
+        );
         let local_addr = socket.local_addr()?;
 
-        info!("TFTP client {} bound to {}", client_id, local_addr);
-        let _ = status_tx.send(format!("[INFO] TFTP client bound to {}", local_addr));
-
-        // Parse instruction to determine operation (read or write)
-        let (operation, filename, mode) = Self::parse_instruction(&instruction)?;
-
         info!(
-            "TFTP client {} operation: {} file '{}' mode '{}'",
-            client_id, operation, filename, mode
+            "TFTP client {} bound to {} (server {})",
+            client_id, local_addr, server_addr
         );
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] TFTP client {} bound to {}",
+            client_id, local_addr
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Call LLM with connected event
+        let client_data = Arc::new(Mutex::new(ClientData {
+            memory: String::new(),
+        }));
+        let protocol = Arc::new(TftpClientProtocol::new());
+
+        // Ask the model what to do with this server.
         let event = Event::new(
             &TFTP_CLIENT_CONNECTED_EVENT,
             serde_json::json!({
                 "server_addr": server_addr.to_string(),
-                "operation": operation,
-                "filename": filename.clone(),
+                "local_addr": local_addr.to_string(),
             }),
         );
 
-        match call_llm_for_client(
+        let instruction = app_state
+            .get_instruction_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        let memory_snapshot = client_data.lock().await.memory.clone();
+        let llm_result = call_llm_for_client(
             &llm_client,
             &app_state,
-            client_id,
-            Some(&event),
+            client_id.to_string(),
             &instruction,
+            &memory_snapshot,
+            Some(&event),
+            protocol.as_ref() as &dyn Client,
+            &status_tx,
         )
-        .await
-        {
-            Ok(_) => {
-                // LLM acknowledged connection
+        .await;
+
+        let actions = match llm_result {
+            Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    client_data.lock().await.memory = mem;
+                }
+                actions
             }
             Err(e) => {
                 error!("TFTP client {} LLM error on connect: {}", client_id, e);
+                let _ = status_tx.send(format!("[CLIENT] TFTP LLM error on connect: {}", e));
+                Vec::new()
+            }
+        };
+
+        // Only a read or write request starts a transfer. Anything else leaves the socket
+        // bound and idle — the client never invents a request the model did not ask for.
+        let mut started = false;
+        for action in actions {
+            match protocol.execute_action(action) {
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    let filename = data
+                        .get("filename")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let mode = data
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("octet")
+                        .to_string();
+                    if filename.is_empty() {
+                        warn!("TFTP client {} got {} with empty filename", client_id, name);
+                        continue;
+                    }
+                    let direction = match name.as_str() {
+                        "tftp_read_file" => Direction::Read,
+                        "tftp_write_file" => Direction::Write,
+                        other => {
+                            warn!(
+                                "TFTP client {} unhandled custom action {}",
+                                client_id, other
+                            );
+                            continue;
+                        }
+                    };
+
+                    let handle = tokio::spawn(Self::run_transfer(
+                        direction,
+                        socket.clone(),
+                        server_addr,
+                        filename,
+                        mode,
+                        llm_client.clone(),
+                        app_state.clone(),
+                        status_tx.clone(),
+                        client_id,
+                        instruction.clone(),
+                        client_data.clone(),
+                        protocol.clone(),
+                    ));
+                    app_state.register_client_task(client_id, handle).await;
+                    started = true;
+                }
+                Ok(ClientActionResult::Disconnect) => {
+                    info!("TFTP client {} disconnecting on model request", client_id);
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    return Ok(local_addr);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("TFTP client {} rejected action: {}", client_id, e);
+                }
             }
         }
 
-        // Spawn transfer task based on operation
-        match operation.as_str() {
-            "read" => {
-                tokio::spawn(Self::handle_read_transfer(
-                    socket,
-                    server_addr,
-                    filename,
-                    mode,
-                    llm_client,
-                    app_state,
-                    status_tx,
-                    client_id,
-                    instruction,
-                ));
-            }
-            "write" => {
-                tokio::spawn(Self::handle_write_transfer(
-                    socket,
-                    server_addr,
-                    filename,
-                    mode,
-                    llm_client,
-                    app_state,
-                    status_tx,
-                    client_id,
-                    instruction,
-                ));
-            }
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Unknown TFTP operation: {}",
-                    operation
-                ));
-            }
+        if !started {
+            debug!(
+                "TFTP client {} idle: model requested no transfer",
+                client_id
+            );
         }
 
         Ok(local_addr)
     }
 
-    async fn handle_read_transfer(
+    /// Drive one RRQ or WRQ transfer to completion.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_transfer(
+        direction: Direction,
         socket: Arc<UdpSocket>,
         server_addr: SocketAddr,
         filename: String,
@@ -124,254 +271,223 @@ impl TftpClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
         instruction: String,
+        client_data: Arc<Mutex<ClientData>>,
+        protocol: Arc<TftpClientProtocol>,
     ) {
-        // Send RRQ
-        let rrq_packet = Self::build_request_packet(1, &filename, &mode);
-        if let Err(e) = socket.send_to(&rrq_packet, server_addr).await {
-            error!("TFTP client {} failed to send RRQ: {}", client_id, e);
+        let opcode = match direction {
+            Direction::Read => OP_RRQ,
+            Direction::Write => OP_WRQ,
+        };
+        let request = build_request_packet(opcode, &filename, &mode);
+        if let Err(e) = socket.send_to(&request, server_addr).await {
+            error!("TFTP client {} failed to send request: {}", client_id, e);
+            app_state
+                .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                .await;
             return;
         }
-
-        debug!("TFTP client {} sent RRQ for '{}'", client_id, filename);
+        debug!(
+            "TFTP client {} sent {} for '{}' ({})",
+            client_id,
+            if opcode == OP_RRQ { "RRQ" } else { "WRQ" },
+            filename,
+            mode
+        );
         let _ = status_tx.send(format!(
-            "[DEBUG] TFTP sent RRQ for '{}'",
+            "[CLIENT] TFTP {} '{}'",
+            if opcode == OP_RRQ { "RRQ" } else { "WRQ" },
             filename
         ));
 
-        let mut buffer = vec![0u8; 516];
-        let mut total_bytes = 0u64;
-        let mut total_blocks = 0u16;
+        // The server answers from a freshly allocated TID, so the peer address of the first
+        // reply — not the well-known port — is where subsequent packets go (RFC 1350 §4).
+        let mut transfer_addr = server_addr;
+        let mut learned_tid = false;
+
+        let mut buffer = vec![0u8; 4 + TFTP_BLOCK_SIZE];
+        let mut total_bytes: u64 = 0;
+        let mut total_blocks: u16 = 0;
 
         loop {
-            match tokio::time::timeout(
+            let received = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 socket.recv_from(&mut buffer),
             )
-            .await
-            {
-                Ok(Ok((n, _))) => {
-                    let data = &buffer[..n];
+            .await;
 
-                    if data.len() < 4 {
-                        continue;
-                    }
-
-                    let opcode = u16::from_be_bytes([data[0], data[1]]);
-
-                    match opcode {
-                        3 => {
-                            // DATA packet
-                            let block_number = u16::from_be_bytes([data[2], data[3]]);
-                            let block_data = &data[4..];
-                            let is_final = block_data.len() < 512;
-
-                            total_bytes += block_data.len() as u64;
-                            total_blocks = block_number;
-
-                            debug!(
-                                "TFTP client {} received DATA block {} ({} bytes)",
-                                client_id,
-                                block_number,
-                                block_data.len()
-                            );
-
-                            // Call LLM with data received event
-                            let event = Event::new(
-                                &TFTP_CLIENT_DATA_RECEIVED_EVENT,
-                                serde_json::json!({
-                                    "block_number": block_number,
-                                    "data_hex": hex::encode(block_data),
-                                    "data_length": block_data.len(),
-                                    "is_final": is_final,
-                                    "total_bytes": total_bytes,
-                                }),
-                            );
-
-                            match call_llm_for_client(
-                                &llm_client,
-                                &app_state,
-                                client_id,
-                                Some(&event),
-                                &instruction,
-                            )
-                            .await
-                            {
-                                Ok(result) => {
-                                    // Process actions (should include send_ack)
-                                    for action_result in result.actions {
-                                        match action_result {
-                                            crate::llm::actions::client_trait::ClientActionResult::SendData(
-                                                packet,
-                                            ) => {
-                                                let _ = socket.send_to(&packet, server_addr).await;
-                                            }
-                                            crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                                                return;
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("TFTP client {} LLM error: {}", client_id, e);
-                                }
-                            }
-
-                            if is_final {
-                                // Transfer complete
-                                debug!(
-                                    "TFTP client {} transfer complete ({} bytes, {} blocks)",
-                                    client_id, total_bytes, total_blocks
-                                );
-
-                                let event = Event::new(
-                                    &TFTP_CLIENT_TRANSFER_COMPLETE_EVENT,
-                                    serde_json::json!({
-                                        "total_bytes": total_bytes,
-                                        "total_blocks": total_blocks,
-                                    }),
-                                );
-
-                                let _ = call_llm_for_client(
-                                    &llm_client,
-                                    &app_state,
-                                    client_id,
-                                    Some(&event),
-                                    &instruction,
-                                )
-                                .await;
-
-                                break;
-                            }
-                        }
-                        5 => {
-                            // ERROR packet
-                            let error_code = u16::from_be_bytes([data[2], data[3]]);
-                            let error_msg = String::from_utf8_lossy(&data[4..n - 1]).to_string();
-
-                            error!(
-                                "TFTP client {} received ERROR {}: {}",
-                                client_id, error_code, error_msg
-                            );
-
-                            let event = Event::new(
-                                &TFTP_CLIENT_ERROR_EVENT,
-                                serde_json::json!({
-                                    "error_code": error_code,
-                                    "error_message": error_msg,
-                                }),
-                            );
-
-                            let _ = call_llm_for_client(
-                                &llm_client,
-                                &app_state,
-                                client_id,
-                                Some(&event),
-                                &instruction,
-                            )
-                            .await;
-
-                            break;
-                        }
-                        _ => {
-                            debug!(
-                                "TFTP client {} received unexpected opcode {}",
-                                client_id, opcode
-                            );
-                        }
-                    }
-                }
+            let (n, peer) = match received {
+                Ok(Ok(pair)) => pair,
                 Ok(Err(e)) => {
                     error!("TFTP client {} socket error: {}", client_id, e);
-                    break;
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                        .await;
+                    return;
                 }
                 Err(_) => {
-                    debug!("TFTP client {} timeout waiting for DATA", client_id);
-                    break;
+                    warn!("TFTP client {} timed out waiting for a reply", client_id);
+                    let _ = status_tx.send("[CLIENT] TFTP timeout".to_string());
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    return;
+                }
+            };
+
+            if !learned_tid {
+                transfer_addr = peer;
+                learned_tid = true;
+                trace!("TFTP client {} learned server TID {}", client_id, peer);
+            }
+
+            let packet = match TftpPacket::decode(&buffer[..n]) {
+                Some(p) => p,
+                None => {
+                    debug!("TFTP client {} ignoring undecodable datagram", client_id);
+                    continue;
+                }
+            };
+
+            let (event, terminal) = match &packet {
+                TftpPacket::Data { block, payload } => {
+                    let is_final = payload.len() < TFTP_BLOCK_SIZE;
+                    total_bytes += payload.len() as u64;
+                    total_blocks = *block;
+                    (
+                        Event::new(
+                            &TFTP_CLIENT_DATA_RECEIVED_EVENT,
+                            serde_json::json!({
+                                "block_number": block,
+                                "data_hex": hex::encode(payload),
+                                "data_length": payload.len(),
+                                "is_final": is_final,
+                                "total_bytes": total_bytes,
+                            }),
+                        ),
+                        is_final,
+                    )
+                }
+                TftpPacket::Ack { block } => {
+                    total_blocks = *block;
+                    (
+                        Event::new(
+                            &TFTP_CLIENT_ACK_RECEIVED_EVENT,
+                            serde_json::json!({ "block_number": block }),
+                        ),
+                        false,
+                    )
+                }
+                TftpPacket::Error { code, message } => {
+                    error!(
+                        "TFTP client {} received ERROR {}: {}",
+                        client_id, code, message
+                    );
+                    let _ = status_tx.send(format!("[CLIENT] TFTP error {}: {}", code, message));
+                    (
+                        Event::new(
+                            &TFTP_CLIENT_ERROR_EVENT,
+                            serde_json::json!({
+                                "error_code": code,
+                                "error_message": message,
+                            }),
+                        ),
+                        true,
+                    )
+                }
+            };
+
+            let memory_snapshot = client_data.lock().await.memory.clone();
+            let llm_result = call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &memory_snapshot,
+                Some(&event),
+                protocol.as_ref() as &dyn Client,
+                &status_tx,
+            )
+            .await;
+
+            let mut disconnect = false;
+            let mut wrote_short_block = false;
+            match llm_result {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
+                    if let Some(mem) = memory_updates {
+                        client_data.lock().await.memory = mem;
+                    }
+                    for action in actions {
+                        match protocol.execute_action(action) {
+                            Ok(ClientActionResult::SendData(bytes)) => {
+                                // A DATA block shorter than 512 bytes ends a write transfer.
+                                if bytes.len() >= 4
+                                    && u16::from_be_bytes([bytes[0], bytes[1]]) == OP_DATA
+                                {
+                                    let payload_len = bytes.len() - 4;
+                                    total_bytes += payload_len as u64;
+                                    if payload_len < TFTP_BLOCK_SIZE {
+                                        wrote_short_block = true;
+                                    }
+                                }
+                                if let Err(e) = socket.send_to(&bytes, transfer_addr).await {
+                                    error!("TFTP client {} send failed: {}", client_id, e);
+                                }
+                            }
+                            Ok(ClientActionResult::Disconnect) => disconnect = true,
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!("TFTP client {} rejected action: {}", client_id, e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("TFTP client {} LLM error: {}", client_id, e);
                 }
             }
+
+            if terminal || disconnect || wrote_short_block {
+                if !matches!(packet, TftpPacket::Error { .. }) {
+                    let complete = Event::new(
+                        &TFTP_CLIENT_TRANSFER_COMPLETE_EVENT,
+                        serde_json::json!({
+                            "total_bytes": total_bytes,
+                            "total_blocks": total_blocks,
+                        }),
+                    );
+                    let memory_snapshot = client_data.lock().await.memory.clone();
+                    if let Err(e) = call_llm_for_client(
+                        &llm_client,
+                        &app_state,
+                        client_id.to_string(),
+                        &instruction,
+                        &memory_snapshot,
+                        Some(&complete),
+                        protocol.as_ref() as &dyn Client,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        error!("TFTP client {} LLM error on completion: {}", client_id, e);
+                    }
+                    info!(
+                        "TFTP client {} transfer complete ({} bytes, {} blocks)",
+                        client_id, total_bytes, total_blocks
+                    );
+                    let _ = status_tx.send(format!(
+                        "[CLIENT] TFTP transfer complete: {} bytes",
+                        total_bytes
+                    ));
+                }
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                return;
+            }
         }
-    }
-
-    async fn handle_write_transfer(
-        socket: Arc<UdpSocket>,
-        server_addr: SocketAddr,
-        filename: String,
-        mode: String,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        client_id: ClientId,
-        _instruction: String,
-    ) {
-        // Send WRQ
-        let wrq_packet = Self::build_request_packet(2, &filename, &mode);
-        if let Err(e) = socket.send_to(&wrq_packet, server_addr).await {
-            error!("TFTP client {} failed to send WRQ: {}", client_id, e);
-            return;
-        }
-
-        debug!("TFTP client {} sent WRQ for '{}'", client_id, filename);
-        let _ = status_tx.send(format!(
-            "[DEBUG] TFTP sent WRQ for '{}'",
-            filename
-        ));
-
-        // Wait for ACK block 0, then call LLM to get file content to send
-        // For brevity, this is simplified - full implementation would call LLM for data
-        info!("TFTP client {} write transfer started", client_id);
-    }
-
-    fn parse_instruction(instruction: &str) -> Result<(String, String, String)> {
-        // Simple parsing: look for "read" or "write" keywords and filename
-        let lower = instruction.to_lowercase();
-
-        let operation = if lower.contains("read") || lower.contains("download") || lower.contains("get")
-        {
-            "read".to_string()
-        } else if lower.contains("write") || lower.contains("upload") || lower.contains("put") {
-            "write".to_string()
-        } else {
-            "read".to_string() // Default
-        };
-
-        // Extract filename (look for common patterns)
-        let filename = if let Some(start) = lower.find("file") {
-            // Look for quoted filename or next word
-            let rest = &instruction[start..];
-            rest.split_whitespace()
-                .skip(1)
-                .next()
-                .unwrap_or("file.txt")
-                .trim_matches(|c| c == '"' || c == '\'')
-                .to_string()
-        } else {
-            // Look for filename in instruction
-            instruction
-                .split_whitespace()
-                .find(|w| w.contains('.'))
-                .unwrap_or("file.txt")
-                .to_string()
-        };
-
-        // Mode
-        let mode = if lower.contains("netascii") || lower.contains("text") {
-            "netascii".to_string()
-        } else {
-            "octet".to_string()
-        };
-
-        Ok((operation, filename, mode))
-    }
-
-    fn build_request_packet(opcode: u16, filename: &str, mode: &str) -> Vec<u8> {
-        // RRQ/WRQ: opcode(2) filename(string) 0 mode(string) 0
-        let mut packet = Vec::new();
-        packet.extend_from_slice(&opcode.to_be_bytes());
-        packet.extend_from_slice(filename.as_bytes());
-        packet.push(0);
-        packet.extend_from_slice(mode.as_bytes());
-        packet.push(0);
-        packet
     }
 }

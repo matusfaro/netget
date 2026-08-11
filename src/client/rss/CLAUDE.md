@@ -1,264 +1,97 @@
-# RSS Feed Client Implementation
+# RSS Feed Client (RSS 2.0)
 
-## Overview
+Fetches feeds over HTTP and hands the model **structured items, never XML**. The model
+chooses which feed to fetch and what to do with the result.
 
-RSS feed client that fetches and parses RSS 2.0 XML feeds with LLM-controlled interpretation. The LLM decides which
-feeds to fetch and how to process items.
+## History: why this was disabled for nine months
 
-**Status**: Experimental
+This client was born disabled. `e16ffb2d` (2025-11-09) added the RSS server *and* client but
+commented the client out of `client_registry.rs` and `src/client/mod.rs` in the same commit —
+"Temporarily disabled due to API mismatches". Re-enabled 2026-08.
 
-## Implementation Details
+The mismatches were real and had accumulated: it imported `crate::llm::client::OllamaClient`
+and `crate::llm::llm_helpers::call_llm_for_client` (neither path exists), used
+`tokio::sync::mpsc::Sender` where the status channel is an `UnboundedSender`, called
+`app_state.clients.*` methods that were never on `AppState`, and its `Client::connect` read
+`ctx.app_state` where the field is `ctx.state`. Porting it to `src/client/rip/`'s shape was
+the whole fix; no protocol logic changed.
 
-### Library Choice
+Two things were *removed* rather than ported:
 
-- **reqwest** - Modern async HTTP client for Rust
-- **rss v2.0** - RSS 2.0 XML parsing library
+- **`if_modified_since`** was a declared action parameter that nothing read. A declared but
+  unread parameter is dead weight the model will try to use, so it went. Conditional requests
+  are a real feature and would need real code.
+- **The 5-second polling task** that did nothing but check whether the client still existed.
 
-**Rationale**: reqwest provides reliable HTTP fetching with TLS support. The `rss` crate handles RSS XML parsing,
-converting XML into structured Rust types.
-
-### Architecture
+## Flow
 
 ```
-┌──────────────────────────────────────────┐
-│  RssClient::connect_with_llm_actions     │
-│  - Store base URL in protocol_data       │
-│  - Mark as Connected                     │
-│  - Call LLM with connected event         │
-└──────────────────────────────────────────┘
-         │
-         ├─► fetch_feed() - Called per LLM action
-         │   - Fetch RSS via HTTP GET
-         │   - Parse RSS XML
-         │   - Convert items to JSON
-         │   - Call LLM with parsed feed
-         │   - Update memory
-         │
-         └─► Background Monitor Task
-             - Checks if client still exists
-             - Exits if client removed
+open_client ──> resolve remote_addr, base_url = http://<remote_addr>
+            ──> event rss_connected { base_url }
+                 model answers fetch_rss_feed { url } / disconnect
+                 (no fetch is invented — an empty answer leaves the client idle)
+
+fetch ──> HTTP GET ──> parse RSS 2.0 ──> event rss_feed_fetched { structured items }
+                                          model may fetch again, wait, or disconnect
 ```
 
-### Connection Model
+Chained fetches are capped at **16 per client** (`MAX_CHAINED_FETCHES`), so a model that keeps
+answering `fetch_rss_feed` cannot spin forever.
 
-Unlike persistent connections (TCP, WebSocket), RSS client is **request/response** based:
+## Structured data, not XML
 
-- "Connection" = initialization of HTTP client
-- Each feed fetch is independent HTTP request
-- LLM triggers fetches via actions
-- Feed data triggers LLM calls for interpretation
-
-### LLM Control
-
-**Async Actions** (user-triggered):
-
-- `fetch_rss_feed` - Fetch and parse RSS feed from URL
-    - Parameters: url (full URL to feed)
-    - Returns Custom result with feed fetch request
-- `disconnect` - Stop RSS client
-
-**Sync Actions** (in response to feed fetched):
-
-- `fetch_rss_feed` - Fetch another feed based on parsed content
-- `wait_for_more` - Wait for user input before fetching more
-
-**Events:**
-
-- `rss_connected` - Fired when client initialized
-    - Data: base_url
-- `rss_feed_fetched` - Fired when feed parsed
-    - Data: url, feed_title, feed_link, feed_description, item_count, items (array)
-
-### Structured Data (CRITICAL)
-
-RSS client uses **structured data**, NOT raw XML:
+This is the point of the protocol. `channel_to_event_data` turns the parsed channel into:
 
 ```json
-// Fetch action
 {
-  "type": "fetch_rss_feed",
-  "url": "http://example.com/tech-news.xml"
-}
-
-// Feed fetched event
-{
-  "event_type": "rss_feed_fetched",
-  "data": {
-    "url": "http://example.com/tech-news.xml",
-    "feed_title": "Tech News",
-    "feed_link": "https://example.com",
-    "feed_description": "Latest technology news",
-    "item_count": 5,
-    "items": [
-      {
-        "title": "New AI Model Released",
-        "link": "https://example.com/ai-news",
-        "description": "Company X released new AI model",
-        "author": "John Doe",
-        "pub_date": "Mon, 01 Jan 2024 12:00:00 GMT",
-        "guid": "https://example.com/ai-news"
-      },
-      ...
-    ]
-  }
+  "url": "http://host/news.xml",
+  "feed_title": "...", "feed_link": "...", "feed_description": "...",
+  "item_count": 2,
+  "items": [{"title": ..., "link": ..., "description": ..., "author": ...,
+             "pub_date": ..., "guid": ...}]
 }
 ```
 
-LLMs can interpret feed metadata and filter/process items.
+Models cannot reliably parse XML back out of a string, so handing them the raw document would
+be the same mistake as putting raw bytes in an action parameter.
 
-### Feed Fetch Flow
+## URL resolution
 
-1. **LLM Action**: `fetch_rss_feed` with URL
-2. **Connection State Check**: Prevent concurrent fetches (state machine)
-3. **HTTP GET**: Fetch feed via reqwest
-4. **XML Parsing**: Parse RSS with `rss` crate
-5. **Data Extraction**: Convert Channel and Items to JSON
-6. **LLM Call**: Call LLM with `rss_feed_fetched` event
-7. **State Reset**: Return to Idle state
+`resolve_feed_url` accepts a bare path (`/news.xml`), a bare name (`news.xml`) or an absolute
+URL, and joins the first two to the address the client was opened on. Getting this wrong sends
+the request to the wrong host and looks like a network fault rather than a bug, which is why it
+has its own test.
 
-### Connection State Machine
+## Events and actions
 
-Prevents concurrent LLM calls:
+| Event | Raised when | Actions offered |
+|---|---|---|
+| `rss_connected` | client initialised | `fetch_rss_feed`, `disconnect` |
+| `rss_feed_fetched` | a feed parsed | `fetch_rss_feed`, `wait_for_more`, `disconnect` |
 
-- **Idle**: Ready for new fetch
-- **Processing**: Currently fetching/parsing feed
-- **Accumulating**: Not used for RSS (no streaming)
+Both are emitted. Note that, on the client path, what the model is actually offered comes from
+`get_async_actions()` — `call_llm_for_client` never reads `get_sync_actions()` or the event's
+own action list. RSS is unaffected because `fetch_rss_feed` and `disconnect` are in both, but
+see `src/client/tftp/CLAUDE.md` for the case where that difference bit.
 
-### Dual Logging
+## Connection model
 
-```rust
-info!("RSS client {} fetching feed: {}", client_id, url);  // → netget.log
-status_tx.send("[RSS CLIENT] Fetching feed");              // → TUI
-```
-
-### Error Handling
-
-- **HTTP Error**: Log error, return Err, don't crash client
-- **Parse Error**: XML parsing failed, return Err
-- **LLM Error**: Log, continue accepting actions
-- **State Machine**: Reset to Idle on error
-
-## Features
-
-### Supported Features
-
-- ✅ HTTP and HTTPS feed fetching
-- ✅ RSS 2.0 XML parsing
-- ✅ Structured item extraction (title, link, description, etc.)
-- ✅ LLM-driven feed discovery and filtering
-- ✅ Connection state management
-
-### URL Handling
-
-- Base URL stored in `protocol_data`
-- Absolute URLs: `http://example.com/feed.xml`
-- Relative paths: If base_url is `http://example.com`, `/feed.xml` → `http://example.com/feed.xml`
+RSS is request/response, not a persistent connection. "Connected" means the address resolved
+and an HTTP client is ready. `Client::connect` must return a `SocketAddr`, so the remote
+address is resolved with `lookup_host` at connect time — which also fails early on a bad
+address instead of at first fetch.
 
 ## Limitations
 
-- **No Streaming** - Full feed buffered in memory
-- **No Caching** - Each fetch re-downloads feed
-- **No ETag/If-Modified-Since** - No conditional requests
-- **No Feed Autodiscovery** - Must know exact feed URL
-- **RSS 2.0 Only** - No Atom or RSS 1.0 support
-- **No Enclosures** - Audio/video enclosures not extracted
-- **No Categories** - Item categories not extracted
+- **RSS 2.0 only** — no Atom, no RSS 1.0/RDF.
+- **No conditional requests** — no ETag, no If-Modified-Since (see above).
+- **No autodiscovery** — the exact feed URL must be known.
+- **No enclosures or categories** extracted.
+- **No caching**; every fetch re-downloads.
+- The whole document is buffered in memory.
 
-## Usage Examples
+## Example
 
-### Fetch Single Feed
-
-**User**: "Connect to example.com:80 via rss and fetch /news.xml"
-
-**LLM Action**:
-
-```json
-{
-  "type": "fetch_rss_feed",
-  "url": "http://example.com/news.xml"
-}
 ```
-
-### Filter Items by Date
-
-**User**: "Fetch tech feed and show only items from last week"
-
-**LLM Response** (after feed_fetched event):
-
-```json
-{
-  "type": "show_message",
-  "message": "Found 3 items from last week: [titles]"
-}
+Connect to localhost:8080 via rss and fetch /tech-news.xml, show me the latest 5 items
 ```
-
-### Discover Related Feeds
-
-**User**: "Fetch main feed, then fetch any linked feeds"
-
-**LLM Flow**:
-
-1. Fetch main feed
-2. Parse items for feed links
-3. Generate `fetch_rss_feed` actions for discovered feeds
-
-## Testing Strategy
-
-See `tests/client/rss/CLAUDE.md` for E2E testing approach.
-
-## Future Enhancements
-
-### 1. Atom Support
-
-Support Atom 1.0 feeds:
-
-- Use `atom_syndication` crate
-- Auto-detect format (RSS vs Atom)
-- Unified item structure
-
-### 2. Feed Caching
-
-Add caching layer:
-
-- Store feeds in memory with TTL
-- Support ETag and If-Modified-Since headers
-- Conditional requests to save bandwidth
-
-### 3. Feed Autodiscovery
-
-Discover feeds from HTML pages:
-
-- Parse `<link rel="alternate">` tags
-- Support autodiscovery per RSS spec
-- Extract multiple feeds from single page
-
-### 4. Advanced Filtering
-
-LLM-driven content filtering:
-
-- Filter by keywords, date ranges, authors
-- Deduplicate items across feeds
-- Rank items by relevance
-
-### 5. Enclosure Support
-
-Extract audio/video enclosures:
-
-- Parse `<enclosure>` elements
-- Download podcast audio files
-- Support media RSS extensions
-
-### 6. Polling & Subscriptions
-
-Automatic feed polling:
-
-- Poll feeds at intervals
-- Notify on new items
-- Track seen items to avoid duplicates
-
-## References
-
-- [RSS 2.0 Specification](https://www.rssboard.org/rss-specification)
-- [rss Crate Documentation](https://docs.rs/rss/latest/rss/)
-- [reqwest Documentation](https://docs.rs/reqwest/)
-- [RSS on Wikipedia](https://en.wikipedia.org/wiki/RSS)
