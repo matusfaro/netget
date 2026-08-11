@@ -47,8 +47,10 @@ use std::sync::Arc;
 #[cfg(feature = "usb-msc")]
 use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-msc")]
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
+#[cfg(feature = "usb-msc")]
+use crate::console_error;
 #[cfg(feature = "usb-msc")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-msc")]
@@ -330,6 +332,7 @@ impl UsbMscServer {
             &app_state,
             &connections,
             &protocol,
+            &status_tx,
             server_id,
             Event::new(
                 &USB_MSC_ATTACHED_EVENT,
@@ -363,14 +366,14 @@ impl UsbMscServer {
                     if let Some(event) = Self::summarize(connection_id, &batch, false) {
                         Self::call_llm_for_event(
                             connection_id, &llm_client, &app_state, &connections, &protocol,
-                            server_id, event, "read",
+                            &status_tx, server_id, event, "read",
                         )
                         .await;
                     }
                     if let Some(event) = Self::summarize(connection_id, &batch, true) {
                         Self::call_llm_for_event(
                             connection_id, &llm_client, &app_state, &connections, &protocol,
-                            server_id, event, "write",
+                            &status_tx, server_id, event, "write",
                         )
                         .await;
                     }
@@ -390,6 +393,7 @@ impl UsbMscServer {
             &app_state,
             &connections,
             &protocol,
+            &status_tx,
             server_id,
             Event::new(
                 &USB_MSC_DETACHED_EVENT,
@@ -469,6 +473,8 @@ impl UsbMscServer {
     }
 
     /// Raise one event with the LLM, guarding against overlapping calls on the same device.
+    ///
+    /// On failure the device answers in SCSI's own vocabulary — see the `Err` arm.
     #[allow(clippy::too_many_arguments)]
     async fn call_llm_for_event(
         connection_id: ConnectionId,
@@ -476,6 +482,7 @@ impl UsbMscServer {
         app_state: &Arc<AppState>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<UsbMscProtocol>,
+        status_tx: &mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         event: Event,
         what: &str,
@@ -513,10 +520,42 @@ impl UsbMscServer {
                 "USB MSC LLM call completed ({}) for connection {}",
                 what, connection_id
             ),
-            Err(e) => error!(
-                "LLM call failed for USB MSC connection {} ({}): {}",
-                connection_id, what, e
-            ),
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "LLM call failed for USB MSC connection {} ({}): {}",
+                    connection_id,
+                    what,
+                    e
+                );
+
+                // `attach` is the only event whose answer the host depends on: it is where the
+                // model says what is on the drive (`serve_files`). Without it the device would
+                // present an empty but perfectly valid FAT16 volume, and a host cannot tell
+                // "the model was unreachable" from "the model served an empty disk" — the
+                // fail-open shape this project keeps getting bitten by.
+                //
+                // So take the medium away. Every command that needs one then fails CHECK
+                // CONDITION with NOT READY / MEDIUM NOT PRESENT (02/3A/00), which is exactly
+                // what SCSI has to say about a drive with nothing in it. INQUIRY still answers,
+                // so the device stays enumerable and the host learns *why* rather than hanging.
+                //
+                // Read and write events are notifications about transfers the image already
+                // served, so there is nothing for the host to be told and nothing to withdraw;
+                // detach has no wire left. Those log and stop.
+                if what == "attach" && protocol.fail_closed_eject(connection_id) {
+                    let _ = status_tx.send(format!(
+                        "[ERROR] USB MSC device on {connection_id} reports NOT READY / MEDIUM \
+                         NOT PRESENT: the model never said what the drive contains"
+                    ));
+                    warn!(
+                        "USB MSC connection {} ejected the medium after the attach handler \
+                         failed; the host will see NOT READY / MEDIUM NOT PRESENT until a \
+                         serve_files or mount_disk succeeds",
+                        connection_id
+                    );
+                }
+            }
         }
 
         let mut conns = connections.lock().await;

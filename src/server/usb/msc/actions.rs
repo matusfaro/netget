@@ -272,6 +272,38 @@ impl UsbMscProtocol {
         }
     }
 
+    /// Take the medium away because the model could not be reached.
+    ///
+    /// A drive whose contents the model never got to supply must not look like a working drive:
+    /// an empty, correctly-formatted FAT16 volume is indistinguishable from one the model
+    /// deliberately left empty. `eject_disk` is the existing mechanism for "there is no medium",
+    /// so every command that needs one fails CHECK CONDITION with NOT READY / MEDIUM NOT
+    /// PRESENT (02/3A/00) until a later `serve_files` or `mount_disk` puts one back.
+    ///
+    /// Returns whether a handler was found; the session may already have ended.
+    pub fn fail_closed_eject(&self, connection_id: ConnectionId) -> bool {
+        let handler = match self.handlers.lock() {
+            Ok(handlers) => handlers.get(&connection_id).cloned(),
+            Err(_) => None,
+        };
+        let Some(handler) = handler else {
+            return false;
+        };
+        let Ok(mut guard) = handler.lock() else {
+            return false;
+        };
+        match guard
+            .as_any()
+            .downcast_mut::<super::handler::UsbMscHandler>()
+        {
+            Some(msc) => {
+                msc.eject_disk();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Run `f` against the MSC handler an action refers to.
     fn with_msc_handler<T>(
         &self,
