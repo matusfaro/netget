@@ -50,7 +50,8 @@ pub mod http_common;
     feature = "quic",
     feature = "smtp",
     feature = "pop3",
-    feature = "tls"
+    feature = "tls",
+    feature = "kubernetes-server"
 ))]
 pub mod tls_cert_manager;
 
@@ -497,6 +498,15 @@ pub mod npm;
 pub use npm::actions::NpmProtocol;
 #[cfg(feature = "npm")]
 pub use npm::NpmServer;
+
+// Kubernetes API server. Gated on `kubernetes-server`, NOT on the `kubernetes` client
+// feature: the server is JSON-only and pulls in neither kube nor k8s-openapi.
+#[cfg(feature = "kubernetes-server")]
+pub mod kubernetes;
+#[cfg(feature = "kubernetes-server")]
+pub use kubernetes::actions::KubernetesProtocol;
+#[cfg(feature = "kubernetes-server")]
+pub use kubernetes::KubernetesServer;
 
 #[cfg(feature = "openai")]
 pub mod openai;

@@ -103,6 +103,7 @@ portable-base = [
     "mercurial",
     "kafka",
     "kubernetes",
+    "kubernetes-server",
     "etcd",
     "zookeeper",
     "torrent-tracker",
@@ -239,6 +240,10 @@ usb-smartcard = ["usb-common"]  # Virtual USB CCID smart card reader over USB/IP
 usb = ["dep:nusb"]  # USB client for connecting to USB devices
 openidconnect = ["dep:openidconnect", "urlencoding"]  # OpenID Connect client for authentication flows
 kubernetes = ["dep:kube", "dep:k8s-openapi"]  # Kubernetes client protocol with v1.30 API support
+# Kubernetes API *server*. Deliberately independent of the `kubernetes` client feature: kubectl
+# speaks JSON to an apiserver by default, so this needs neither kube nor k8s-openapi - just the
+# HTTP stack and rustls for the optional TLS listener. Pure Rust, no system library.
+kubernetes-server = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 git = ["dep:git2"]  # Git client support
 mercurial = ["http", "urlencoding"]  # Mercurial HTTP server with LLM-controlled virtual repositories
 kafka = ["dep:kafka-protocol"]  # Apache Kafka broker and client, both pure Rust on kafka-protocol (rdkafka/librdkafka removed - aborted in malloc)
@@ -393,6 +398,7 @@ dist-windows = [
     "mercurial",
     "kafka",
     "kubernetes",
+    "kubernetes-server",
     "etcd",
     "zookeeper",
     "torrent-tracker",
@@ -492,6 +498,7 @@ all-protocols = [
     "mercurial",
     "kafka",
     "kubernetes",
+    "kubernetes-server",
     "etcd",
     "zookeeper",
     "torrent-tracker",

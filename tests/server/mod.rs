@@ -120,6 +120,8 @@ pub mod nfs;
 pub mod nntp;
 #[cfg(feature = "npm")]
 pub mod npm;
+#[cfg(feature = "kubernetes-server")]
+pub mod kubernetes;
 #[cfg(feature = "ntp")]
 pub mod ntp;
 #[cfg(feature = "oauth2")]

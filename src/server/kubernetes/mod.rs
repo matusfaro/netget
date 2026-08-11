@@ -1,0 +1,831 @@
+//! Kubernetes API server implementation.
+//!
+//! NetGet impersonates a `kube-apiserver` well enough for a real `kubectl` to talk to it. The
+//! transport is plain HTTP/1.1 (optionally under TLS); everything on the wire is JSON, which is
+//! what `kubectl` speaks to an apiserver by default — no protobuf, and therefore no `protoc`
+//! and no `kube`/`k8s-openapi` dependency.
+//!
+//! **The model owns the cluster.** There is no resource store here: NetGet never remembers a
+//! pod. Every list, get and write is answered by the LLM (or by a script/static handler) via
+//! the `k8s_*` actions. What NetGet owns is the envelope — routing, discovery, `Table`
+//! rendering and the `Status` error object — the parts a real client will reject if they are
+//! wrong.
+//!
+//! See `src/server/kubernetes/CLAUDE.md` for the discovery/content split and its rationale.
+
+pub mod actions;
+mod discovery;
+mod table;
+
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
+use hyper::header::{HeaderValue, ACCEPT, CONTENT_TYPE};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, trace, warn};
+
+use crate::llm::action_helper::call_llm;
+use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::{Event, EventType};
+use crate::server::connection::ConnectionId;
+use crate::state::app_state::AppState;
+use crate::state::ServerId;
+use crate::{console_debug, console_error, console_info};
+
+pub use discovery::{status_object, ApiResource, ApiSurface};
+
+/// Everything the accept loop needs that is not the socket or the LLM.
+#[derive(Clone, Debug)]
+pub struct KubernetesConfig {
+    /// The advertised API discovery surface.
+    pub surface: Arc<ApiSurface>,
+    /// Version string reported by `GET /version`, e.g. `v1.29.4`.
+    pub kubernetes_version: String,
+}
+
+impl Default for KubernetesConfig {
+    fn default() -> Self {
+        Self {
+            surface: Arc::new(ApiSurface::builtin()),
+            kubernetes_version: DEFAULT_KUBERNETES_VERSION.to_string(),
+        }
+    }
+}
+
+/// Version claimed by `GET /version` when `kubernetes_version` is not supplied.
+pub const DEFAULT_KUBERNETES_VERSION: &str = "v1.29.4";
+
+/// Kubernetes API server.
+pub struct KubernetesServer;
+
+impl KubernetesServer {
+    /// Bind, then spawn the accept loop.
+    ///
+    /// The listener is bound *before* the task is spawned so a bind failure is returned to the
+    /// caller and `server_startup` records `ServerStatus::Error` — a server that reports
+    /// `Running` while nothing is listening is worse than one that refuses to start. The
+    /// accept-loop handle is registered with `AppState::register_server_task` so `stop_server`
+    /// can abort it and release the port.
+    pub async fn spawn_with_llm_actions(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        server_id: ServerId,
+        tls_config: Option<Arc<rustls::ServerConfig>>,
+        config: KubernetesConfig,
+    ) -> anyhow::Result<SocketAddr> {
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let local_addr = listener.local_addr()?;
+
+        let scheme = if tls_config.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        console_info!(
+            status_tx,
+            "Kubernetes API server listening on {}://{} (claiming {})",
+            scheme,
+            local_addr,
+            config.kubernetes_version
+        );
+
+        let protocol = Arc::new(actions::KubernetesProtocol::new());
+        let tls_acceptor = tls_config.map(tokio_rustls::TlsAcceptor::from);
+        let config = Arc::new(config);
+        let server_address = format!("{scheme}://{local_addr}");
+
+        let task_registrar = app_state.clone();
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, remote_addr)) => {
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
+                        info!(
+                            "Kubernetes API connection {} from {}",
+                            connection_id, remote_addr
+                        );
+
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
+                        let now = std::time::Instant::now();
+                        let conn_state = ServerConnectionState {
+                            id: connection_id,
+                            remote_addr,
+                            local_addr: local_addr_conn,
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            packets_sent: 0,
+                            packets_received: 0,
+                            last_activity: now,
+                            status: ConnectionStatus::Active,
+                            status_changed_at: now,
+                            protocol_info: ProtocolConnectionInfo::empty(),
+                        };
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+                        let ctx = RequestContext {
+                            llm_client: llm_client.clone(),
+                            app_state: app_state.clone(),
+                            status_tx: status_tx.clone(),
+                            protocol: protocol.clone(),
+                            config: config.clone(),
+                            server_id,
+                            server_address: server_address.clone(),
+                        };
+                        let tls_acceptor = tls_acceptor.clone();
+                        let app_state_for_close = app_state.clone();
+                        let status_for_close = status_tx.clone();
+
+                        tokio::spawn(async move {
+                            match tls_acceptor {
+                                Some(acceptor) => match acceptor.accept(stream).await {
+                                    Ok(tls_stream) => {
+                                        debug!(
+                                            "Kubernetes TLS handshake complete with {}",
+                                            remote_addr
+                                        );
+                                        serve_connection(TokioIo::new(tls_stream), ctx).await;
+                                    }
+                                    Err(e) => {
+                                        console_error!(
+                                            status_for_close,
+                                            "Kubernetes TLS handshake failed with {}: {}",
+                                            remote_addr,
+                                            e
+                                        );
+                                    }
+                                },
+                                None => {
+                                    serve_connection(TokioIo::new(stream), ctx).await;
+                                }
+                            }
+
+                            app_state_for_close
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_for_close.send(format!(
+                                "[INFO] Kubernetes API connection {connection_id} closed"
+                            ));
+                            let _ = status_for_close.send("__UPDATE_UI__".to_string());
+                        });
+                    }
+                    Err(e) => {
+                        console_error!(
+                            status_tx,
+                            "Failed to accept Kubernetes API connection: {}",
+                            e
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
+
+        Ok(local_addr)
+    }
+}
+
+/// Per-connection dependencies, cloned into each hyper service call.
+#[derive(Clone)]
+struct RequestContext {
+    llm_client: OllamaClient,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+    protocol: Arc<actions::KubernetesProtocol>,
+    config: Arc<KubernetesConfig>,
+    server_id: ServerId,
+    server_address: String,
+}
+
+async fn serve_connection<T>(io: TokioIo<T>, ctx: RequestContext)
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service = service_fn(move |req: Request<Incoming>| {
+        let ctx = ctx.clone();
+        async move { Ok::<_, Infallible>(handle_request(req, ctx).await) }
+    });
+
+    if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+        debug!("Kubernetes API connection ended: {:?}", err);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+
+/// A request against a resource collection or object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceRoute {
+    /// API group; empty for core.
+    pub group: String,
+    /// Group version.
+    pub version: String,
+    /// Plural resource name from the URL, e.g. `pods`.
+    pub resource: String,
+    /// Namespace, when the URL carried `/namespaces/{ns}/`.
+    pub namespace: Option<String>,
+    /// Object name, when the URL addressed a single object.
+    pub name: Option<String>,
+    /// Subresource, e.g. `log`, `status`.
+    pub subresource: Option<String>,
+}
+
+impl ResourceRoute {
+    fn group_version(&self) -> String {
+        if self.group.is_empty() {
+            self.version.clone()
+        } else {
+            format!("{}/{}", self.group, self.version)
+        }
+    }
+}
+
+/// What a request path resolves to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Route {
+    /// `GET /version`
+    Version,
+    /// `GET /healthz`, `/livez`, `/readyz`
+    Health,
+    /// `GET /api`
+    CoreApiVersions,
+    /// `GET /apis`
+    ApiGroupList,
+    /// `GET /apis/{group}`
+    ApiGroup(String),
+    /// `GET /api/{version}` or `GET /apis/{group}/{version}`
+    ApiResourceList { group: String, version: String },
+    /// Anything addressing actual objects.
+    Resource(ResourceRoute),
+    /// Not part of the served surface.
+    Unknown,
+}
+
+/// Resolve a request path to a [`Route`].
+///
+/// Exposed for tests: routing is the part `kubectl` exercises hardest, and getting
+/// `/api/v1/namespaces` (list namespaces) to not be confused with
+/// `/api/v1/namespaces/default/pods` is the whole trick.
+pub fn resolve_route(path: &str) -> Route {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    match segments.as_slice() {
+        [] => Route::Unknown,
+        ["version"] => Route::Version,
+        ["healthz"] | ["livez"] | ["readyz"] => Route::Health,
+        ["api"] => Route::CoreApiVersions,
+        ["apis"] => Route::ApiGroupList,
+        ["api", version] => Route::ApiResourceList {
+            group: String::new(),
+            version: (*version).to_string(),
+        },
+        ["apis", group] => Route::ApiGroup((*group).to_string()),
+        ["apis", group, version] => Route::ApiResourceList {
+            group: (*group).to_string(),
+            version: (*version).to_string(),
+        },
+        ["api", version, rest @ ..] => {
+            Route::Resource(resource_route(String::new(), (*version).to_string(), rest))
+        }
+        ["apis", group, version, rest @ ..] => Route::Resource(resource_route(
+            (*group).to_string(),
+            (*version).to_string(),
+            rest,
+        )),
+        _ => Route::Unknown,
+    }
+}
+
+fn resource_route(group: String, version: String, rest: &[&str]) -> ResourceRoute {
+    // `/namespaces` is both a cluster-scoped resource and the prefix of every namespaced
+    // path. It is only a prefix when there is a resource name *after* the namespace.
+    if rest.first() == Some(&"namespaces") && rest.len() >= 3 {
+        ResourceRoute {
+            group,
+            version,
+            resource: rest[2].to_string(),
+            namespace: Some(rest[1].to_string()),
+            name: rest.get(3).map(|s| (*s).to_string()),
+            subresource: rest.get(4).map(|s| (*s).to_string()),
+        }
+    } else {
+        ResourceRoute {
+            group,
+            version,
+            resource: rest.first().map(|s| (*s).to_string()).unwrap_or_default(),
+            namespace: None,
+            name: rest.get(1).map(|s| (*s).to_string()),
+            subresource: rest.get(2).map(|s| (*s).to_string()),
+        }
+    }
+}
+
+/// Parse a query string into a flat key→value map, keeping the last value for repeated keys.
+fn parse_query(query: &str) -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = match pair.split_once('=') {
+            Some((k, v)) => (k, v),
+            None => (pair, ""),
+        };
+        map.insert(
+            percent_decode(key),
+            Value::String(percent_decode(value.replace('+', " ").as_str())),
+        );
+    }
+    map
+}
+
+/// Minimal percent-decoding; query values here are selectors like `app%3Dnginx`.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+            match u8::from_str_radix(hex, 16) {
+                Ok(byte) => {
+                    out.push(byte);
+                    i += 3;
+                    continue;
+                }
+                Err(_) => {
+                    out.push(bytes[i]);
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// True when the client asked for `Table` output — what `kubectl get` always sends.
+fn wants_table(accept: Option<&str>) -> bool {
+    accept
+        .map(|value| value.to_ascii_lowercase().contains("as=table"))
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Request handling
+// ---------------------------------------------------------------------------
+
+fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
+    let bytes = serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec());
+    let mut response = Response::new(Full::new(Bytes::from(bytes)));
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response
+}
+
+fn status_response(
+    code: u16,
+    reason: &str,
+    message: &str,
+    details: Option<Value>,
+) -> Response<Full<Bytes>> {
+    let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    json_response(status, &status_object(code, reason, message, details))
+}
+
+fn text_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(body.to_string())));
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+    response
+}
+
+async fn handle_request(req: Request<Incoming>, ctx: RequestContext) -> Response<Full<Bytes>> {
+    let (parts, body) = req.into_parts();
+    let method = parts.method.clone();
+    let path = parts.uri.path().to_string();
+    let query_string = parts.uri.query().unwrap_or("").to_string();
+    let query = parse_query(&query_string);
+    let accept = parts
+        .headers
+        .get(ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let user_agent = parts
+        .headers
+        .get(hyper::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    debug!("Kubernetes API {} {}{}", method, path, {
+        if query_string.is_empty() {
+            String::new()
+        } else {
+            format!("?{query_string}")
+        }
+    });
+    let _ = ctx
+        .status_tx
+        .send(format!("[DEBUG] Kubernetes API {method} {path}"));
+
+    let route = resolve_route(&path);
+    trace!("Kubernetes API route: {:?}", route);
+
+    // Discovery and health are served deterministically: kubectl performs them before every
+    // command and fails opaquely if they are wrong, and they describe the API's shape rather
+    // than the cluster's contents. See CLAUDE.md.
+    match &route {
+        Route::Version => {
+            return json_response(
+                StatusCode::OK,
+                &discovery::version_info(&ctx.config.kubernetes_version),
+            )
+        }
+        Route::Health => return text_response(StatusCode::OK, "ok"),
+        Route::CoreApiVersions => {
+            return json_response(
+                StatusCode::OK,
+                &ctx.config.surface.api_versions(&ctx.server_address),
+            )
+        }
+        Route::ApiGroupList => {
+            return json_response(StatusCode::OK, &ctx.config.surface.api_group_list())
+        }
+        Route::ApiGroup(group) => {
+            return match ctx.config.surface.api_group(group) {
+                Some(value) => json_response(StatusCode::OK, &value),
+                None => status_response(
+                    404,
+                    "NotFound",
+                    &format!("the server could not find the requested resource: /apis/{group}"),
+                    Some(json!({"group": group})),
+                ),
+            }
+        }
+        Route::ApiResourceList { group, version } => {
+            return match ctx.config.surface.api_resource_list(group, version) {
+                Some(value) => json_response(StatusCode::OK, &value),
+                None => status_response(
+                    404,
+                    "NotFound",
+                    &format!("the server could not find the requested resource: {path}"),
+                    None,
+                ),
+            }
+        }
+        Route::Unknown => {
+            return status_response(
+                404,
+                "NotFound",
+                &format!("the server could not find the requested resource: {path}"),
+                None,
+            )
+        }
+        Route::Resource(_) => {}
+    }
+
+    let Route::Resource(resource_route) = route else {
+        unreachable!("non-resource routes returned above");
+    };
+
+    // `?watch=true` is a long-lived chunked stream this server does not implement. Say so
+    // explicitly rather than answering a watch with a one-shot list, which leaves the client
+    // reconnecting in a loop against a body it cannot decode.
+    let watching = query
+        .get("watch")
+        .and_then(Value::as_str)
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    if watching {
+        warn!(
+            "Kubernetes API watch requested on {} - not implemented",
+            path
+        );
+        return status_response(
+            501,
+            "NotImplemented",
+            "netget's Kubernetes API server does not implement watch (?watch=true); use a \
+             polling client or omit --watch",
+            None,
+        );
+    }
+
+    if ctx
+        .config
+        .surface
+        .find(
+            &resource_route.group,
+            &resource_route.version,
+            &resource_route.resource,
+        )
+        .is_none()
+    {
+        return status_response(
+            404,
+            "NotFound",
+            &format!(
+                "the server could not find the requested resource: {} is not advertised at {}",
+                resource_route.resource,
+                resource_route.group_version()
+            ),
+            Some(json!({
+                "group": resource_route.group,
+                "kind": resource_route.resource,
+            })),
+        );
+    }
+
+    let body_bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            error!("Failed to read Kubernetes request body: {}", e);
+            return status_response(
+                400,
+                "BadRequest",
+                &format!("failed to read request body: {e}"),
+                None,
+            );
+        }
+    };
+
+    let as_table = wants_table(accept.as_deref());
+    let is_write = !matches!(method, Method::GET | Method::HEAD);
+
+    let (event_type, mut event_data): (&'static EventType, Value) = if is_write {
+        let parsed_body = serde_json::from_slice::<Value>(&body_bytes).ok();
+        let mut data = base_event_data(&resource_route, &method, &path, &query, &user_agent);
+        match parsed_body {
+            Some(value) => data["body"] = value,
+            None if !body_bytes.is_empty() => {
+                data["body_text"] = json!(String::from_utf8_lossy(&body_bytes).into_owned());
+            }
+            None => {}
+        }
+        (&actions::K8S_WRITE_REQUEST, data)
+    } else if resource_route.name.is_some() {
+        (
+            &actions::K8S_GET_REQUEST,
+            base_event_data(&resource_route, &method, &path, &query, &user_agent),
+        )
+    } else {
+        (
+            &actions::K8S_LIST_REQUEST,
+            base_event_data(&resource_route, &method, &path, &query, &user_agent),
+        )
+    };
+    event_data["as_table"] = json!(as_table);
+
+    if ctx.app_state.get_instruction(ctx.server_id).await.is_none() {
+        error!("Kubernetes server {} not found in state", ctx.server_id);
+        return status_response(
+            500,
+            "InternalError",
+            "netget server instance is no longer registered",
+            None,
+        );
+    }
+
+    console_debug!(
+        ctx.status_tx,
+        "Calling LLM for Kubernetes {} {}",
+        method,
+        path
+    );
+
+    let event = Event::new(event_type, event_data);
+    let llm_result = call_llm(
+        &ctx.llm_client,
+        &ctx.app_state,
+        ctx.server_id,
+        None,
+        &event,
+        ctx.protocol.as_ref(),
+    )
+    .await;
+
+    match llm_result {
+        Ok(execution) => {
+            for result in execution.protocol_results {
+                if let Some(response) =
+                    build_response(result, &resource_route, as_table, &ctx.config)
+                {
+                    return response;
+                }
+            }
+            // No usable action. Refuse rather than inventing an empty list: an empty PodList
+            // is a claim about the cluster, and "the model said nothing" must not be
+            // indistinguishable from "the model said there are no pods".
+            console_error!(
+                ctx.status_tx,
+                "Kubernetes: model returned no k8s action for {} {}",
+                method,
+                path
+            );
+            status_response(
+                500,
+                "InternalError",
+                "the handler returned no Kubernetes action for this request",
+                None,
+            )
+        }
+        Err(e) => {
+            console_error!(ctx.status_tx, "Kubernetes LLM call failed: {}", e);
+            status_response(
+                503,
+                "ServiceUnavailable",
+                &format!("netget could not obtain a response for this request: {e}"),
+                None,
+            )
+        }
+    }
+}
+
+fn base_event_data(
+    route: &ResourceRoute,
+    method: &Method,
+    path: &str,
+    query: &serde_json::Map<String, Value>,
+    user_agent: &str,
+) -> Value {
+    let mut data = json!({
+        "method": method.as_str(),
+        "path": path,
+        "api_group": route.group,
+        "api_version": route.version,
+        "group_version": route.group_version(),
+        "resource": route.resource,
+        "user_agent": user_agent,
+    });
+    if let Some(namespace) = &route.namespace {
+        data["namespace"] = json!(namespace);
+    }
+    if let Some(name) = &route.name {
+        data["name"] = json!(name);
+    }
+    if let Some(subresource) = &route.subresource {
+        data["subresource"] = json!(subresource);
+    }
+    for key in ["labelSelector", "fieldSelector", "limit", "resourceVersion"] {
+        if let Some(value) = query.get(key) {
+            data[key] = value.clone();
+        }
+    }
+    data
+}
+
+/// Turn one action result into an HTTP response, or `None` if it is not a Kubernetes action
+/// so the caller can keep scanning (a model may emit `show_message` alongside the real answer).
+fn build_response(
+    action_result: crate::llm::ActionResult,
+    route: &ResourceRoute,
+    as_table: bool,
+    config: &KubernetesConfig,
+) -> Option<Response<Full<Bytes>>> {
+    use crate::llm::ActionResult;
+
+    let ActionResult::Custom { name, data } = action_result else {
+        return None;
+    };
+
+    match name.as_str() {
+        "k8s_list_response" => {
+            let item_kind = data
+                .get("kind")
+                .and_then(Value::as_str)
+                .map(|k| k.trim_end_matches("List").to_string())
+                .unwrap_or_else(|| kind_for_route(route, config));
+            let items: Vec<Value> = data
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let api_version = data
+                .get("apiVersion")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| route.group_version());
+            let resource_version = data
+                .get("resourceVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("1")
+                .to_string();
+
+            if as_table {
+                return Some(json_response(
+                    StatusCode::OK,
+                    &table::table_from_items(&item_kind, &items),
+                ));
+            }
+            Some(json_response(
+                StatusCode::OK,
+                &json!({
+                    "kind": format!("{item_kind}List"),
+                    "apiVersion": api_version,
+                    "metadata": {"resourceVersion": resource_version},
+                    "items": items,
+                }),
+            ))
+        }
+        "k8s_table_response" => {
+            let columns: Vec<Value> = data
+                .get("columns")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let rows: Vec<Value> = data
+                .get("rows")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            Some(json_response(
+                StatusCode::OK,
+                &table::table_from_columns_and_rows(&columns, &rows),
+            ))
+        }
+        "k8s_object_response" => {
+            let mut object = data.get("object").cloned().unwrap_or_else(|| json!({}));
+            if object.get("kind").is_none() {
+                object["kind"] = json!(kind_for_route(route, config));
+            }
+            if object.get("apiVersion").is_none() {
+                object["apiVersion"] = json!(route.group_version());
+            }
+            let code = data
+                .get("status_code")
+                .and_then(Value::as_u64)
+                .unwrap_or(200) as u16;
+            let status = StatusCode::from_u16(code).unwrap_or(StatusCode::OK);
+            if as_table {
+                let kind = object
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                return Some(json_response(
+                    status,
+                    &table::table_from_items(&kind, std::slice::from_ref(&object)),
+                ));
+            }
+            Some(json_response(status, &object))
+        }
+        "k8s_status" => {
+            let code = data.get("code").and_then(Value::as_u64).unwrap_or(500) as u16;
+            let reason = data
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("InternalError");
+            let message = data
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unspecified error");
+            Some(status_response(
+                code,
+                reason,
+                message,
+                data.get("details").cloned(),
+            ))
+        }
+        other => {
+            debug!("Kubernetes: ignoring non-Kubernetes action '{}'", other);
+            None
+        }
+    }
+}
+
+/// The object kind for a route, taken from the discovery table so the envelope matches what
+/// discovery advertised even when the model omitted `kind`.
+fn kind_for_route(route: &ResourceRoute, config: &KubernetesConfig) -> String {
+    config
+        .surface
+        .find(&route.group, &route.version, &route.resource)
+        .map(|r| r.kind.clone())
+        .unwrap_or_else(|| "Unknown".to_string())
+}

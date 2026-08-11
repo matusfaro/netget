@@ -253,6 +253,9 @@ impl ServerRegistry {
         #[cfg(feature = "npm")]
         self.register(Arc::new(crate::server::NpmProtocol::new()));
 
+        #[cfg(feature = "kubernetes-server")]
+        self.register(Arc::new(crate::server::KubernetesProtocol::new()));
+
         #[cfg(feature = "ipp")]
         self.register(Arc::new(crate::server::IppProtocol::new()));
 
@@ -929,6 +932,7 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("Elasticsearch", "elasticsearch"),
     ("CouchDB", "couchdb"),
     ("NPM", "npm"),
+    ("Kubernetes", "kubernetes-server"),
     ("IPP", "ipp"),
     ("WebDAV", "webdav"),
     ("NFS", "nfs"),
