@@ -16,6 +16,21 @@
 //! The premise was also stale. `usbip` 0.9 still has no mouse handler, but netget has had its
 //! own complete one in `handler.rs` — report descriptor, 4-byte reports, automatic release —
 //! for some time. Nothing was wired to it.
+//!
+//! ## When the LLM call fails, the mouse stays still — deliberately
+//!
+//! A HID mouse owes the host no reply. The host polls the interrupt IN endpoint and is NAKed
+//! whenever the pointer is not moving, which is what every mouse does most of the time; there is
+//! no HID vocabulary for "the device's brain is unreachable", and STALLing the endpoint is a
+//! fault that makes a host reset or unbind the device rather than a refusal it can act on.
+//! (`usbip` cannot express it either — returning `Err` from `handle_urb` aborts the session for
+//! the whole device.)
+//!
+//! What matters is the other direction, and it comes for free: a failed LLM call must never move
+//! the pointer or press a button. Reports exist only where an action produced them.
+//!
+//! So the failure is dual-logged at ERROR and nothing is sent.
+//! `tests/server/usb_mouse/llm_failure_test.rs` pins both halves.
 
 pub mod actions;
 
@@ -39,6 +54,8 @@ use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-mouse")]
 use tracing::{debug, error, info};
 
+#[cfg(feature = "usb-mouse")]
+use crate::console_error;
 #[cfg(feature = "usb-mouse")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-mouse")]
@@ -285,6 +302,7 @@ impl UsbMouseServer {
             connection_id,
             &llm_client,
             &app_state,
+            &status_tx,
             &connections,
             &protocol,
             server_id,
@@ -312,6 +330,7 @@ impl UsbMouseServer {
         connection_id: ConnectionId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::mouse::UsbMouseProtocol>,
         server_id: crate::state::ServerId,
@@ -342,9 +361,11 @@ impl UsbMouseServer {
                 "USB mouse LLM call completed (detach) for connection {}",
                 connection_id
             ),
-            Err(e) => error!(
+            Err(e) => console_error!(
+                status_tx,
                 "LLM call failed for USB mouse detach on connection {}: {}",
-                connection_id, e
+                connection_id,
+                e
             ),
         }
 
@@ -359,7 +380,7 @@ impl UsbMouseServer {
         connection_id: ConnectionId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        _status_tx: &mpsc::UnboundedSender<String>,
+        status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::mouse::UsbMouseProtocol>,
         server_id: crate::state::ServerId,
@@ -435,9 +456,15 @@ impl UsbMouseServer {
                 }
             }
             Err(e) => {
-                error!(
-                    "LLM call failed for USB mouse connection {}: {}",
-                    connection_id, e
+                // Silence is the correct wire behaviour here, and it is deliberate — see the
+                // module docs. What must not happen is that it goes unrecorded, so this is
+                // dual-logged at ERROR rather than only reaching `netget.log`.
+                console_error!(
+                    status_tx,
+                    "LLM call failed for USB mouse connection {}: {}; no HID report will be \
+                     sent, so the host's pointer does not move",
+                    connection_id,
+                    e
                 );
 
                 // Set state back to idle

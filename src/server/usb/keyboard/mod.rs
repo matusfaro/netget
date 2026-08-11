@@ -3,6 +3,24 @@
 //! This module implements a virtual USB HID keyboard using the USB/IP protocol.
 //! The keyboard can be controlled by the LLM to type text, press keys, and handle
 //! key combinations (Ctrl+C, Alt+Tab, etc.).
+//!
+//! ## When the LLM call fails, the keyboard stays silent — deliberately
+//!
+//! Most protocols owe the peer an answer, and going quiet on an LLM failure leaves it hanging
+//! until its own timeout. A HID keyboard owes nothing. The host polls the interrupt IN endpoint
+//! and is NAKed whenever no key is down; a keyboard with nothing to report is the *normal*
+//! state of every keyboard in the world, not an error condition. There is no HID vocabulary for
+//! "the device's brain is unreachable" either: STALLing the interrupt endpoint is a fault
+//! condition that makes a host reset or unbind the device, which is a worse and less truthful
+//! answer than reporting no keystrokes. (`usbip` also has no way to express it — returning
+//! `Err` from `handle_urb` aborts the USB/IP session for the whole device.)
+//!
+//! The fail-closed property that *does* matter here is the one this direction makes free: a
+//! failed LLM call must never put a keystroke on the wire. Nothing below can synthesise a
+//! report; reports exist only where an action produced them.
+//!
+//! So the failure is dual-logged at ERROR and nothing is sent.
+//! `tests/server/usb_keyboard/llm_failure_test.rs` pins both halves.
 
 pub mod actions;
 
@@ -26,6 +44,8 @@ use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-keyboard")]
 use tracing::{debug, error, info};
 
+#[cfg(feature = "usb-keyboard")]
+use crate::console_error;
 #[cfg(feature = "usb-keyboard")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-keyboard")]
@@ -306,6 +326,7 @@ impl UsbKeyboardServer {
                         leds,
                         &llm_client,
                         &app_state,
+                        &status_tx,
                         &connections,
                         &protocol,
                         server_id,
@@ -326,6 +347,7 @@ impl UsbKeyboardServer {
             connection_id,
             &llm_client,
             &app_state,
+            &status_tx,
             &connections,
             &protocol,
             server_id,
@@ -357,6 +379,7 @@ impl UsbKeyboardServer {
         leds: LedState,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::keyboard::UsbKeyboardProtocol>,
         server_id: crate::state::ServerId,
@@ -403,9 +426,12 @@ impl UsbKeyboardServer {
                 "USB keyboard LLM call completed (led_status) for connection {}",
                 connection_id
             ),
-            Err(e) => error!(
-                "LLM call failed for USB keyboard led_status on connection {}: {}",
-                connection_id, e
+            Err(e) => console_error!(
+                status_tx,
+                "LLM call failed for USB keyboard led_status on connection {}: {}; the keyboard \
+                 stays silent (see the module docs for why silence is the refusal here)",
+                connection_id,
+                e
             ),
         }
 
@@ -424,6 +450,7 @@ impl UsbKeyboardServer {
         connection_id: ConnectionId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::keyboard::UsbKeyboardProtocol>,
         server_id: crate::state::ServerId,
@@ -453,9 +480,11 @@ impl UsbKeyboardServer {
         .await;
 
         if let Err(e) = &result {
-            error!(
+            console_error!(
+                status_tx,
                 "LLM call failed for USB keyboard detach on connection {}: {}",
-                connection_id, e
+                connection_id,
+                e
             );
         } else {
             info!(
@@ -477,7 +506,7 @@ impl UsbKeyboardServer {
         connection_id: ConnectionId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        _status_tx: &mpsc::UnboundedSender<String>,
+        status_tx: &mpsc::UnboundedSender<String>,
         connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: &Arc<crate::server::usb::keyboard::UsbKeyboardProtocol>,
         server_id: crate::state::ServerId,
@@ -553,9 +582,15 @@ impl UsbKeyboardServer {
                 }
             }
             Err(e) => {
-                error!(
-                    "LLM call failed for USB keyboard connection {}: {}",
-                    connection_id, e
+                // Silence is the correct wire behaviour here, and it is deliberate — see the
+                // module docs. What must not happen is that it goes unrecorded, so this is
+                // dual-logged at ERROR rather than only reaching `netget.log`.
+                console_error!(
+                    status_tx,
+                    "LLM call failed for USB keyboard connection {}: {}; no HID report will be \
+                     sent, so the host sees a keyboard nobody is typing on",
+                    connection_id,
+                    e
                 );
 
                 // Set state back to idle
