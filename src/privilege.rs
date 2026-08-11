@@ -184,8 +184,69 @@ fn is_running_as_root() -> bool {
     }
 }
 
+/// What a single privileged-port bind attempt actually proved.
+///
+/// The distinction exists because a failed bind is not one fact but three, and the
+/// original probe collapsed them: it tried 80, 67, 123 and 53, and returned `false` if
+/// none bound. A developer machine with anything already listening on those ports —
+/// a local web server on 80, `dnsmasq` on 53, an NTP daemon on 123 — was therefore
+/// reported as unable to bind privileged ports, and `server_startup` refused to start
+/// servers the machine could in fact run. "Someone else holds this port" says nothing
+/// whatsoever about this process's privilege.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortProbe {
+    /// The bind succeeded: proof the process *can* bind privileged ports.
+    Bound,
+    /// `EACCES`/`EPERM`: proof it *cannot*.
+    Denied,
+    /// `EADDRINUSE`/`EADDRNOTAVAIL`, or any other error: the port was unavailable for
+    /// reasons unrelated to privilege, so this attempt proved nothing either way.
+    Inconclusive,
+}
+
+/// Classify a failed `bind(2)` by what it says about privilege.
+pub fn classify_bind_error(err: &std::io::Error) -> PortProbe {
+    match err.kind() {
+        std::io::ErrorKind::PermissionDenied => PortProbe::Denied,
+        // AddrInUse: another process holds it. AddrNotAvailable: the address is not
+        // ours to bind. Neither is a statement about privilege.
+        std::io::ErrorKind::AddrInUse | std::io::ErrorKind::AddrNotAvailable => {
+            PortProbe::Inconclusive
+        }
+        _ => PortProbe::Inconclusive,
+    }
+}
+
+/// Decide the capability from a set of probe outcomes.
+///
+/// - Any `Bound` ⇒ capable. One success is proof.
+/// - Otherwise any `Denied` ⇒ not capable. The kernel said so explicitly.
+/// - Otherwise (every probe inconclusive, e.g. every test port already in use) the
+///   honest answer is **unknown**, and we report `true` — capable.
+///
+/// That last choice is deliberate. This flag *hard-gates* startup in
+/// `server_startup.rs`, so mapping "unknown" to `false` turns "we could not tell" into
+/// a refusal, which is the failure mode the capability probes were rewritten to
+/// eliminate. Reporting `true` on unknown costs nothing worse than the real `bind`
+/// failing a moment later with its own `EACCES`, which is a clear, specific, actionable
+/// error — strictly better than refusing a machine that would have worked. Note this is
+/// a *capability* probe, not an authorization decision: the permissive default here
+/// grants no access that the kernel would not independently grant.
+pub fn privileged_port_capability(probes: &[PortProbe]) -> bool {
+    if probes.contains(&PortProbe::Bound) {
+        return true;
+    }
+    if probes.contains(&PortProbe::Denied) {
+        return false;
+    }
+    true
+}
+
 /// Check if we can bind to privileged ports (< 1024)
-/// This is done by attempting to bind to port 80 (or 67 if 80 is in use)
+///
+/// Probes several well-known privileged ports and classifies each failure; see
+/// [`PortProbe`] and [`privileged_port_capability`] for why the failures must be
+/// told apart.
 fn can_bind_privileged_port() -> bool {
     // If we're root, we definitely can
     if is_running_as_root() {
@@ -195,20 +256,43 @@ fn can_bind_privileged_port() -> bool {
     // Try to bind to common privileged ports
     // Use a quick test bind that doesn't actually listen
     let test_ports = [80, 67, 123, 53];
+    let mut probes = Vec::with_capacity(test_ports.len() * 2);
 
     for port in test_ports {
+        let addr = format!("127.0.0.1:{}", port);
+
         // Try TCP first
-        if let Ok(listener) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
-            drop(listener);
-            debug!("Successfully test-bound to privileged port {}", port);
-            return true;
+        match TcpListener::bind(&addr) {
+            Ok(listener) => {
+                drop(listener);
+                debug!("Successfully test-bound to privileged TCP port {}", port);
+                return true;
+            }
+            Err(e) => {
+                let outcome = classify_bind_error(&e);
+                debug!(
+                    "TCP bind to privileged port {} failed: {} ({:?})",
+                    port, e, outcome
+                );
+                probes.push(outcome);
+            }
         }
 
         // Try UDP
-        if let Ok(socket) = UdpSocket::bind(format!("127.0.0.1:{}", port)) {
-            drop(socket);
-            debug!("Successfully test-bound to privileged port {}", port);
-            return true;
+        match UdpSocket::bind(&addr) {
+            Ok(socket) => {
+                drop(socket);
+                debug!("Successfully test-bound to privileged UDP port {}", port);
+                return true;
+            }
+            Err(e) => {
+                let outcome = classify_bind_error(&e);
+                debug!(
+                    "UDP bind to privileged port {} failed: {} ({:?})",
+                    port, e, outcome
+                );
+                probes.push(outcome);
+            }
         }
     }
 
@@ -218,8 +302,18 @@ fn can_bind_privileged_port() -> bool {
         warn!("Cannot bind to any ports - networking may be broken");
     }
 
-    debug!("Cannot bind to privileged ports - requires elevated privileges");
-    false
+    let capable = privileged_port_capability(&probes);
+    if capable {
+        warn!(
+            "Every privileged test port ({:?}) was unavailable for reasons other than \
+             permission - assuming privileged ports are bindable. A server on a port \
+             below 1024 will report the real error if this assumption is wrong.",
+            test_ports
+        );
+    } else {
+        debug!("Cannot bind to privileged ports - requires elevated privileges");
+    }
+    capable
 }
 
 /// Check whether this process can open a **raw IP socket** (`SOCK_RAW`).
