@@ -44,6 +44,13 @@ const MAX_FRAME_BODY_BYTES: usize = 256 * 1024 * 1024;
 /// them was retained for the life of that connection.
 const MAX_PREPARED_STATEMENTS: usize = 1024;
 
+/// Native-protocol ERROR code 0x0000, "Server error: something unexpected happened".
+const CASSANDRA_ERROR_SERVER_ERROR: u32 = 0x0000;
+
+/// Native-protocol ERROR code 0x1001, "Overloaded: the request cannot be processed because the
+/// coordinator node is overloaded". Drivers treat it as retryable.
+const CASSANDRA_ERROR_OVERLOADED: u32 = 0x1001;
+
 /// Cassandra server implementation
 pub struct CassandraServer {
     llm_client: OllamaClient,
@@ -394,7 +401,7 @@ impl CassandraServer {
 
         let server_id = self.server_id.context("Server ID not set")?;
 
-        let execution_result = call_llm(
+        let execution_result = match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -402,7 +409,22 @@ impl CassandraServer {
             &event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.send_llm_failure_error(
+                    frame.stream_id,
+                    "STARTUP",
+                    &e,
+                    stream,
+                    connection_id,
+                    status_tx,
+                )
+                .await?;
+                return Ok(true);
+            }
+        };
 
         // Show messages
         for message in &execution_result.messages {
@@ -477,7 +499,7 @@ impl CassandraServer {
 
         let server_id = self.server_id.context("Server ID not set")?;
 
-        let execution_result = call_llm(
+        let execution_result = match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -485,7 +507,22 @@ impl CassandraServer {
             &event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.send_llm_failure_error(
+                    frame.stream_id,
+                    "OPTIONS",
+                    &e,
+                    stream,
+                    connection_id,
+                    status_tx,
+                )
+                .await?;
+                return Ok(true);
+            }
+        };
 
         // Show messages
         for message in &execution_result.messages {
@@ -563,7 +600,7 @@ impl CassandraServer {
 
         let server_id = self.server_id.context("Server ID not set")?;
 
-        let execution_result = call_llm(
+        let execution_result = match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -571,7 +608,22 @@ impl CassandraServer {
             &event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.send_llm_failure_error(
+                    frame.stream_id,
+                    "QUERY",
+                    &e,
+                    stream,
+                    connection_id,
+                    status_tx,
+                )
+                .await?;
+                return Ok(true);
+            }
+        };
 
         // Show messages
         for message in &execution_result.messages {
@@ -982,7 +1034,7 @@ impl CassandraServer {
 
         let server_id = self.server_id.context("Server ID not set")?;
 
-        let execution_result = call_llm(
+        let execution_result = match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -990,7 +1042,22 @@ impl CassandraServer {
             &event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.send_llm_failure_error(
+                    frame.stream_id,
+                    "PREPARE",
+                    &e,
+                    stream,
+                    connection_id,
+                    status_tx,
+                )
+                .await?;
+                return Ok(true);
+            }
+        };
 
         // Show messages
         for message in &execution_result.messages {
@@ -1108,7 +1175,7 @@ impl CassandraServer {
 
         let server_id = self.server_id.context("Server ID not set")?;
 
-        let execution_result = call_llm(
+        let execution_result = match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -1116,7 +1183,22 @@ impl CassandraServer {
             &event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.send_llm_failure_error(
+                    frame.stream_id,
+                    "EXECUTE",
+                    &e,
+                    stream,
+                    connection_id,
+                    status_tx,
+                )
+                .await?;
+                return Ok(true);
+            }
+        };
 
         // Show messages
         for message in &execution_result.messages {
@@ -1381,6 +1463,55 @@ impl CassandraServer {
         Ok(())
     }
 
+    /// Send the ERROR frame that answers a failed LLM call.
+    ///
+    /// The native protocol has an ERROR opcode with a numeric code, and a driver surfaces it as
+    /// an exception on the exact request that produced it - so unlike silence it cannot be
+    /// mistaken for a slow query, and unlike a RESULT frame it cannot be mistaken for an empty
+    /// result set, which in CQL means "no rows matched".
+    ///
+    /// 0x1001 `Overloaded` is the protocol's own "the coordinator cannot take this right now",
+    /// and every driver treats it as retryable - so capacity exhaustion gets a signal the
+    /// client already knows how to act on. Everything else is 0x0000 `Server error`.
+    ///
+    /// Note what is *not* used for the AUTH_RESPONSE stage: 0x0100 `Bad credentials`. The
+    /// credentials were never examined, and saying they were bad both misattributes the
+    /// failure and would make a driver stop retrying with correct ones. An ERROR frame of any
+    /// code is a refusal - AUTH_SUCCESS is the only thing that authenticates - so this stays
+    /// fail-closed either way.
+    async fn send_llm_failure_error(
+        &self,
+        stream_id: i16,
+        stage: &str,
+        err: &anyhow::Error,
+        stream: &mut TcpStream,
+        connection_id: ConnectionId,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        let overloaded = crate::llm::is_overload_error(err);
+        let (code, label) = if overloaded {
+            (CASSANDRA_ERROR_OVERLOADED, "Overloaded")
+        } else {
+            (CASSANDRA_ERROR_SERVER_ERROR, "Server error")
+        };
+        error!(
+            "LLM error for Cassandra {} on connection {} (overload={}): {}",
+            stage, connection_id, overloaded, err
+        );
+        let reason = crate::utils::truncate_for_log(&err.to_string(), 200);
+        let message = if overloaded {
+            format!("netget: backend at capacity, retry later: {reason}")
+        } else {
+            format!("netget: {reason}")
+        };
+        let _ = status_tx.send(format!(
+            "[ERROR] Cassandra connection {} answering {} with ERROR 0x{:04X} ({}): {}",
+            connection_id, stage, code, label, message
+        ));
+        self.send_error(stream_id, code, &message, stream, status_tx)
+            .await
+    }
+
     /// Send ERROR response
     async fn send_error(
         &self,
@@ -1453,7 +1584,7 @@ impl CassandraServer {
 
         let server_id = self.server_id.context("Server ID not set")?;
 
-        let execution_result = call_llm(
+        let execution_result = match call_llm(
             &self.llm_client,
             &self.app_state,
             server_id,
@@ -1461,7 +1592,22 @@ impl CassandraServer {
             &event,
             &protocol,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.send_llm_failure_error(
+                    frame.stream_id,
+                    "AUTH_RESPONSE",
+                    &e,
+                    stream,
+                    connection_id,
+                    status_tx,
+                )
+                .await?;
+                return Ok(true);
+            }
+        };
 
         // Show messages
         for message in &execution_result.messages {

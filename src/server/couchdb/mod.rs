@@ -340,15 +340,33 @@ async fn handle_couchdb_request_with_llm(
                 .unwrap_or_else(|_| Response::new(Full::new(Bytes::from(r#"{"ok":true}"#)))))
         }
         Err(e) => {
-            console_error!(status_tx, "LLM error for CouchDB request: {}", e);
+            // CouchDB reports errors as `{"error": ..., "reason": ...}` with a matching HTTP
+            // status, and clients raise on it. What matters is that it is never a 2xx: a 200
+            // with `{"rows": []}` means the view returned nothing, and a 201 with `{"ok":
+            // true}` means the document was written - both statements about the database that
+            // nothing here is in a position to make.
+            let overloaded = crate::llm::is_overload_error(&e);
+            let (status, kind) = if overloaded {
+                (503u16, "unavailable")
+            } else {
+                (500u16, "internal_server_error")
+            };
+            error!(
+                "LLM error for CouchDB request (overload={}, status {}): {}",
+                overloaded, status, e
+            );
+            console_error!(status_tx, "CouchDB answering {} {}: {}", status, kind, e);
 
             let error_response = serde_json::json!({
-                "error": "internal_server_error",
-                "reason": format!("LLM processing error: {}", e)
+                "error": kind,
+                "reason": format!(
+                    "netget: {}",
+                    crate::utils::truncate_for_log(&e.to_string(), 200)
+                )
             })
             .to_string();
 
-            Ok(couchdb_response_builder(500)
+            Ok(couchdb_response_builder(status)
                 .body(Full::new(Bytes::from(error_response)))
                 .unwrap_or_else(|_| Response::new(Full::new(Bytes::from(r#"{"ok":false}"#)))))
         }

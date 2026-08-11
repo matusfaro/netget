@@ -268,22 +268,50 @@ async fn handle_elasticsearch_request_with_llm(
             Ok(build_es_response(200, default_response))
         }
         Err(e) => {
-            console_error!(status_tx, "LLM error for Elasticsearch request: {}", e);
+            // Elasticsearch's error envelope is what every client parses, and `status` inside
+            // the body must agree with the HTTP status or clients report the wrong thing.
+            //
+            // 503 with `type: "unavailable_shards_exception"` when the backend is merely
+            // saturated: that is the type Elasticsearch itself uses for "come back later", and
+            // clients retry it. 500 `server_error` otherwise. Neither can be read as a search
+            // result - an empty `hits` array with a 200 would say the index contains nothing
+            // matching, which is a statement about the data.
+            let overloaded = crate::llm::is_overload_error(&e);
+            let (status, kind) = if overloaded {
+                (503u16, "unavailable_shards_exception")
+            } else {
+                (500u16, "server_error")
+            };
+            error!(
+                "LLM error for Elasticsearch request (overload={}, status {}): {}",
+                overloaded, status, e
+            );
+            console_error!(
+                status_tx,
+                "Elasticsearch answering {} {}: {}",
+                status,
+                kind,
+                e
+            );
 
+            let reason = format!(
+                "netget: {}",
+                crate::utils::truncate_for_log(&e.to_string(), 200)
+            );
             let error_response = serde_json::json!({
                 "error": {
                     "root_cause": [{
-                        "type": "server_error",
-                        "reason": format!("LLM processing error: {}", e)
+                        "type": kind,
+                        "reason": reason
                     }],
-                    "type": "server_error",
-                    "reason": format!("LLM processing error: {}", e)
+                    "type": kind,
+                    "reason": reason
                 },
-                "status": 500
+                "status": status
             })
             .to_string();
 
-            Ok(build_es_response(500, error_response))
+            Ok(build_es_response(status, error_response))
         }
     }
 }

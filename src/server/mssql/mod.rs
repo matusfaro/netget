@@ -20,6 +20,15 @@ use tracing::{debug, error, info, trace, warn};
 /// TDS packet size we advertise in the login ENVCHANGE and honour when writing.
 const TDS_PACKET_SIZE: usize = 4096;
 
+/// Generic user-defined error number. Anything >= 50000 is a user error, which is what an
+/// LLM-driven server's failures actually are.
+const MSSQL_ERROR_GENERIC: u32 = 50000;
+
+/// "Cannot process request. Not enough resources to process request." On the standard
+/// transient-error list SqlClient's built-in retry logic keys off, so a client backs off and
+/// retries instead of surfacing the failure to the application.
+const MSSQL_ERROR_NOT_ENOUGH_RESOURCES: u32 = 49918;
+
 /// MSSQL server implementation
 pub struct MssqlServer {
     llm_client: OllamaClient,
@@ -646,9 +655,35 @@ impl MssqlHandler {
                 Ok(close_requested)
             }
             Err(e) => {
-                error!("LLM error for MSSQL query: {}", e);
-                self.send_error(stream, 50000, &format!("netget: {}", e), 16)
-                    .await?;
+                // A TDS ERROR token is raised by every driver as a SqlException on the
+                // statement that produced it, so it cannot be mistaken for a result set - and
+                // an empty result set is a meaningful answer in SQL, which is why silence or a
+                // bare DONE would be worse than useless here.
+                //
+                // 49918 ("Cannot process request. Not enough resources") is on the standard
+                // transient-error list that SqlClient's own retry logic keys off, so capacity
+                // exhaustion gets retried rather than surfaced to the application. 50000 is
+                // the generic user-defined error number for everything else.
+                let overloaded = crate::llm::is_overload_error(&e);
+                let number = if overloaded {
+                    MSSQL_ERROR_NOT_ENOUGH_RESOURCES
+                } else {
+                    MSSQL_ERROR_GENERIC
+                };
+                error!(
+                    "LLM error for MSSQL query (overload={}, number {}): {}",
+                    overloaded, number, e
+                );
+                let reason = crate::utils::truncate_for_log(&e.to_string(), 200);
+                let message = if overloaded {
+                    format!("netget: backend at capacity, retry later: {reason}")
+                } else {
+                    format!("netget: {reason}")
+                };
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] MSSQL replying error {number}: {message}"));
+                self.send_error(stream, number, &message, 16).await?;
                 Ok(false)
             }
         }

@@ -354,7 +354,7 @@ impl MongodbHandler {
                 let server_id = self
                     .server_id
                     .unwrap_or_else(|| crate::state::ServerId::new(0));
-                let execution_result = call_llm(
+                let execution_result = match call_llm(
                     &self.llm_client,
                     &self.app_state,
                     server_id,
@@ -362,7 +362,45 @@ impl MongodbHandler {
                     &event,
                     self.protocol.as_ref(),
                 )
-                .await?;
+                .await
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        // `?` here dropped the connection with nothing written, and a
+                        // MongoDB driver blocks on the reply to every command it sends, so
+                        // the operation hung until the driver's own timeout and was then
+                        // reported as a network fault rather than a server error.
+                        //
+                        // `{ok: 0}` is the only shape a driver reads as a command failure;
+                        // anything with `ok: 1` is a result, and an empty result for `find`
+                        // means "no documents matched" - a statement about the data.
+                        //
+                        // The code is InternalError for both branches. MongoDB's
+                        // driver-retryable codes all describe replica-set failover
+                        // (ShutdownInProgress, PrimarySteppedDown, NotWritablePrimary) and
+                        // claiming one would send the driver hunting for a new primary that
+                        // does not exist, so the overload distinction stays in the log.
+                        let overloaded = crate::llm::is_overload_error(&e);
+                        error!(
+                            "LLM error for MongoDB command '{}' on connection {} (overload={}): {}",
+                            command_name, self.connection_id, overloaded, e
+                        );
+                        let reason = crate::utils::truncate_for_log(&e.to_string(), 200);
+                        let message = if overloaded {
+                            format!("netget: backend at capacity, retry later: {reason}")
+                        } else {
+                            format!("netget: {reason}")
+                        };
+                        let _ = self.status_tx.send(format!(
+                            "[ERROR] MongoDB connection {} replying ok:0 InternalError: {}",
+                            self.connection_id, message
+                        ));
+                        let doc = mongodb_error_doc(MONGODB_INTERNAL_ERROR, &message);
+                        let response_bytes = self.encode_op_msg_response(request_id, doc)?;
+                        writer.write_all(&response_bytes).await?;
+                        continue;
+                    }
+                };
 
                 // Execute actions from LLM
                 let namespace = format!("{}.{}", database, collection.as_deref().unwrap_or("$cmd"));
@@ -596,6 +634,11 @@ impl MongodbHandler {
 
 /// Build a MongoDB command-failure document.
 #[cfg(feature = "mongodb-server")]
+/// MongoDB `InternalError`: "an internal server error occurred". Paired with `ok: 0`, which is
+/// what makes a driver raise rather than return a result.
+#[cfg(feature = "mongodb-server")]
+const MONGODB_INTERNAL_ERROR: i32 = 1;
+
 fn mongodb_error_doc(code: i32, message: &str) -> Document {
     doc! { "ok": 0, "code": code, "errmsg": message }
 }
