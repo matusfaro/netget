@@ -113,7 +113,18 @@ impl Protocol for XmppProtocol {
                  decides where stanzas begin and end",
             )
             .llm_control("All XMPP stanzas (message, presence, iq) and the SASL outcome")
-            .e2e_testing("Raw TCP client exchanging stream headers and stanzas")
+            .e2e_testing(
+                "tests/server/xmpp/test.rs, 6 LLM calls. A TCP peer that parses everything the \
+                 server writes with xmpp-parsers 0.22 - the stanza layer tokio-xmpp clients are \
+                 built on. Verified: the stream header (namespace, from, id, version='1.0' and \
+                 the XML declaration), <stream:features/> decoded into StreamFeatures with its \
+                 SASL mechanism list, a message stanza decoded into Message (JIDs with resource, \
+                 type, body round-tripped through XML escaping with &, <, > and an apostrophe in \
+                 it), and a presence stanza decoded into Presence (no 'type' attribute when \
+                 available, show, status). Not verified against a real client end to end: \
+                 tokio_xmpp::Client cannot connect because there is no STARTTLS and no SASL \
+                 exchange. IQ, auth and stream restart are untested.",
+            )
             .notes(
                 "Core stanzas only. No roster, no presence distribution, no MUC, no S2S, no \
                  TLS/STARTTLS, and no credential checking - the model decides every auth outcome.",

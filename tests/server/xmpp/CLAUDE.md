@@ -1,131 +1,52 @@
 # XMPP E2E Testing
 
-## Testing Strategy
+`tests/server/xmpp/test.rs`. Two tests, **6 LLM calls total**.
 
-XMPP E2E tests validate core protocol functionality using manual TCP clients that send XML streams and stanzas.
+## Strategy
 
-### Test Coverage
+The peer parses everything the server writes with **`xmpp-parsers` 0.22** — already a
+dependency of the `xmpp` feature, and the stanza layer every `tokio-xmpp`-based client is built
+on. So a stanza that is not well-formed, lands in the wrong namespace, or had text interpolated
+into it without XML escaping fails the test the same way it would break a real client's stream.
 
-1. **Stream Initialization** (`test_xmpp_stream_header`)
-    - Tests XML stream header exchange
-    - Validates server responds with proper stream:stream element
-    - LLM calls: 1 (stream header response)
+It is not a full client. `tokio_xmpp::Client` cannot connect, because the server has no
+STARTTLS and no SASL exchange. Say that rather than implying an XMPP client was run.
 
-2. **Message Exchange** (`test_xmpp_message`)
-    - Tests basic message stanza handling
-    - Validates message echo functionality
-    - LLM calls: 2 (stream header + message echo)
+`StreamPeer` handles the awkward part: an XML stream is one element that never closes, so it
+cannot be parsed as it stands. Appending `</stream:stream>` to whatever has arrived turns it
+into a document, and a parse failure just means the stanza is still incomplete — the same
+incremental-parse state a real client is in. `wait_for_children(n, …)` reads until the stream
+parses with at least `n` top-level stanzas, and panics with the raw bytes on timeout.
 
-3. **Presence Handling** (`test_xmpp_presence`)
-    - Tests presence stanza processing
-    - Validates presence acknowledgment
-    - LLM calls: 2 (stream header + presence response)
+## What is asserted
 
-### LLM Call Budget
+| Test | Asserts |
+|---|---|
+| `test_xmpp_stream_header_and_features` | The XML declaration is present (RFC 6120 4.2); root is `<stream/>` in `http://etherx.jabber.org/streams` with `from`, `id`, `version='1.0'`; `<stream:features/>` decodes into `StreamFeatures` and its `sasl_mechanisms.mechanisms` are exactly what the model listed, in order. `from` is **omitted** by the action, so this also proves the `domain` startup parameter is read rather than the hardcoded default |
+| `test_xmpp_message_and_presence_round_trip` | The message element inherits `jabber:client`; `Message` decodes with both JIDs (including the resource) and `type='chat'`; the body survives byte-for-byte through escaping and re-parsing, with `&`, `<`, `>` and an apostrophe in it. `Presence` decodes with `type_ == Type::None` — RFC 6121 4.7.1: an available presence carries no `type` attribute, and `type='available'` is not a legal value — plus `show` and `status` |
 
-**Target**: < 10 LLM calls per test suite
-**Actual**: ~5 LLM calls total (1-2 per test)
+The body characters are the load-bearing part: interpolated unescaped they produce a malformed
+stream, and a real client's parser drops the whole stream on the first well-formedness error
+rather than skipping one stanza.
 
-Tests are designed to minimize LLM calls:
+## LLM call budget
 
-- Simple, focused prompts
-- Single server instance per test
-- Limited interaction sequences
-- No complex multi-stanza exchanges
+- `test_xmpp_stream_header_and_features`: 1 startup + 1 stream-open event = 2
+- `test_xmpp_message_and_presence_round_trip`: 1 startup + 3 stream events = 4
 
-### Test Runtime
+## Mock notes
 
-**Typical Runtime**: 30-60 seconds per test
+Every event is `xmpp_data_received` with the whole accumulated buffer in `xml_data`; rules are
+distinguished by `and_event_data_contains("xml_data", …)` on `stream:stream`, `<message` or
+`<presence`. The server hands the model raw text and clears its buffer only once the model has
+acted on it, so a rule that never matches leaves the buffer in place and every later event
+carries the earlier text too.
 
-- 10s LLM response timeout per interaction
-- 3 tests × 2 interactions × 10s = ~60s max
-- Actual runtime usually faster (LLM responds in 2-5s)
+## Not covered
 
-### Test Client
+SASL authentication, IQ stanzas (roster, bind), stream restart after auth, STARTTLS, multiple
+stanzas in one write, and malformed input from the client side.
 
-Tests use manual TCP client with AsyncReadExt/AsyncWriteExt:
+## Privacy
 
-- Send raw XML strings
-- Read XML responses into buffers
-- Simple pattern matching for validation
-- No XMPP library required
-
-### Known Issues
-
-1. **Stream Parsing**: LLM receives entire buffer, not parsed stanzas
-    - May struggle with complex XML or partial stanzas
-    - Works fine for simple, complete stanzas
-
-2. **Timeout Sensitivity**: 10-second timeout per LLM call
-    - May need adjustment for slower models
-    - Test uses best-effort validation (doesn't fail on timeout)
-
-3. **XML Validation**: Tests use simple string matching
-    - No strict XML schema validation
-    - Accepts various valid XML formats
-
-### Running Tests
-
-```bash
-# Build release binary first (required)
-./cargo-isolated.sh build --release --features xmpp
-
-# Run XMPP E2E tests
-./cargo-isolated.sh test --no-default-features --features xmpp --test server::xmpp::test
-```
-
-**Important**: Always build release binary before running E2E tests. Tests spawn the actual NetGet binary.
-
-### Test Prompts
-
-#### Stream Header Test
-
-```
-listen on port {AVAILABLE_PORT} via xmpp. When clients connect and send an XML stream header,
-respond with: <?xml version='1.0'?><stream:stream xmlns='jabber:client'
-xmlns:stream='http://etherx.jabber.org/streams' from='localhost' id='stream-123' version='1.0'>
-```
-
-#### Message Echo Test
-
-```
-listen on port {AVAILABLE_PORT} via xmpp domain=localhost. When clients send an XML stream header,
-respond with server stream header and features. When clients send a message stanza, extract the body
-text and echo it back with: <message from='bot@localhost' to='[sender]' type='chat'><body>Echo: [body]</body></message>
-```
-
-#### Presence Test
-
-```
-listen on port {AVAILABLE_PORT} via xmpp. When clients connect, respond with stream header.
-When clients send a presence stanza, acknowledge with: <presence from='server@localhost'
-type='available'><status>Server online</status></presence>
-```
-
-### Privacy & Offline Mode
-
-All tests:
-
-- ✓ Use localhost only (127.0.0.1)
-- ✓ No external connections
-- ✓ Work offline
-- ✓ No network access required (except to local Ollama)
-
-### Future Enhancements
-
-1. **Authentication Tests**: Test SASL PLAIN authentication flow
-2. **IQ Tests**: Test info/query stanzas (roster, bind, etc.)
-3. **Multi-Stanza**: Test multiple messages in single stream
-4. **Error Handling**: Test malformed XML, invalid stanzas
-5. **Stream Restart**: Test post-authentication stream restart
-
-### Performance Optimization
-
-Current tests are reasonably optimized:
-
-- 3 independent tests (can run in parallel with `--test-threads`)
-- Simple prompts (reduce LLM processing time)
-- Short interaction sequences (minimize network round-trips)
-- Pattern matching (avoid expensive XML parsing in tests)
-
-No further optimization needed at this stage.
+127.0.0.1 only, no external connections, works offline.
