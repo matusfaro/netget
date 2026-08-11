@@ -188,6 +188,11 @@ stun = ["dep:webrtc-stun", "dep:stunclient"]
 smb-client = ["smb", "pavao"]  # SMB client requires native libsmbclient library
 turn = ["dep:webrtc-turn"]
 webrtc = ["dep:webrtc", "dep:tokio-tungstenite"]  # WebRTC client + server for peer-to-peer data channels
+# Generic WebSocket (RFC 6455) server + client. Reuses the tokio-tungstenite 0.21 already in
+# the tree for `webrtc`: framing, masking, fragmentation, ping/pong and the close handshake.
+# Bumping that crate is a webrtc-wide decision, so this feature deliberately does not force one.
+# No system library, hence present in dist / dist-windows (and dist-darwin via dist).
+websocket = ["dep:tokio-tungstenite"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn", "dep:ldap3"]
 imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses imap-codec for protocol parsing
@@ -284,6 +289,7 @@ dist = [
     "mcp-stdio",
     "mcp-http",
     # Pure-Rust protocols absent from android-termux for historical reasons only
+    "websocket",
     "ftp",
     "tftp",
     "ospf",
@@ -327,6 +333,7 @@ dist-windows = [
     "mcp-stdio",
     "mcp-http",
     "tcp",
+    "websocket",
     "http",
     "http2",
     "quic",
@@ -464,6 +471,7 @@ all-protocols = [
     "stun",
     "turn",
     "webrtc",
+    "websocket",
     "sip",
     "ldap",
     "imap",

@@ -234,6 +234,8 @@ pub mod webdav;
 pub mod webrtc;
 #[cfg(feature = "webrtc")]
 pub mod webrtc_signaling;
+#[cfg(feature = "websocket")]
+pub mod websocket;
 #[cfg(feature = "whois")]
 pub mod whois;
 #[cfg(feature = "wireguard")]

@@ -352,6 +352,11 @@ impl ClientRegistry {
         #[cfg(feature = "webrtc")]
         self.register(Arc::new(crate::client::webrtc::WebRtcClientProtocol::new()));
 
+        #[cfg(feature = "websocket")]
+        self.register(Arc::new(
+            crate::client::websocket::WebSocketClientProtocol::new(),
+        ));
+
         #[cfg(feature = "whois")]
         self.register(Arc::new(crate::client::whois::WhoisClientProtocol::new()));
 
@@ -686,6 +691,7 @@ const ALL_KNOWN_CLIENT_PROTOCOLS: &[(&str, &str)] = &[
     ("USB", "usb"),
     ("VNC", "vnc"),
     ("WebRTC", "webrtc"),
+    ("WebSocket", "websocket"),
     ("Bitcoin", "bitcoin"),
     ("Bluetooth (BLE)", "bluetooth-ble-client"),
     ("DynamoDB", "dynamodb"),

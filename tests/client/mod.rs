@@ -160,6 +160,8 @@ pub mod vnc;
 pub mod webdav;
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
+#[cfg(feature = "websocket")]
+pub mod websocket;
 #[cfg(feature = "whois")]
 pub mod whois;
 #[cfg(feature = "wireguard")]

@@ -524,6 +524,12 @@ pub mod webrtc;
 #[cfg(feature = "webrtc")]
 pub use webrtc::actions::WebRtcClientProtocol;
 
+// websocket client
+#[cfg(feature = "websocket")]
+pub mod websocket;
+#[cfg(feature = "websocket")]
+pub use websocket::actions::WebSocketClientProtocol;
+
 // whois client
 #[cfg(feature = "whois")]
 pub mod whois;

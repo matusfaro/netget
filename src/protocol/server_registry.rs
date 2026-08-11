@@ -301,6 +301,9 @@ impl ServerRegistry {
         #[cfg(feature = "webrtc")]
         self.register(Arc::new(crate::server::WebRtcSignalingProtocol::new()));
 
+        #[cfg(feature = "websocket")]
+        self.register(Arc::new(crate::server::WebSocketProtocol::new()));
+
         #[cfg(feature = "sip")]
         self.register(Arc::new(crate::server::SipProtocol::new()));
 
@@ -710,6 +713,17 @@ impl ServerRegistry {
             return Some(stack);
         }
 
+        // Priority 7: Check WebRTC Signaling before the generic WebSocket protocol.
+        // "websocket signaling" is a strict superset of WebSocket's "websocket" keyword, and
+        // the loop below iterates a HashMap, so without this the winner is whichever the hash
+        // order happens to yield. Nothing is registered under this name unless the `webrtc`
+        // feature is on, in which case the lookup simply misses.
+        if let Some(stack) =
+            self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "WebRTC Signaling")
+        {
+            return Some(stack);
+        }
+
         // For all other protocols, check ALL keywords from each protocol with word boundaries
         for (protocol_name, protocol) in &self.protocols {
             for keyword in protocol.keywords() {
@@ -949,6 +963,7 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("IPSec/IKEv2", "ipsec"),
     ("TURN", "turn"),
     ("WebRTC Signaling", "webrtc"),
+    ("WebSocket", "websocket"),
     ("SIP", "sip"),
     ("ISIS", "isis"),
     ("RIP", "rip"),

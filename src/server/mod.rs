@@ -401,6 +401,13 @@ pub use webrtc::actions::WebRtcProtocol;
 #[cfg(feature = "webrtc")]
 pub use webrtc::{WebRtcServer, WebRtcServerData};
 
+#[cfg(feature = "websocket")]
+pub mod websocket;
+#[cfg(feature = "websocket")]
+pub use websocket::actions::WebSocketProtocol;
+#[cfg(feature = "websocket")]
+pub use websocket::WebSocketServer;
+
 #[cfg(feature = "webrtc")]
 pub mod webrtc_signaling;
 #[cfg(feature = "webrtc")]
