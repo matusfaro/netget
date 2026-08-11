@@ -83,11 +83,7 @@ impl SipServer {
 
                         // TRACE: Log first 200 chars of message (SIP is text-based)
                         if let Ok(text) = String::from_utf8(data.clone()) {
-                            let preview = if text.len() > 200 {
-                                format!("{}...", &text[..200])
-                            } else {
-                                text.clone()
-                            };
+                            let preview = crate::utils::truncate_for_log(&text, 200);
                             console_trace!(status_tx, "SIP message: {}", preview);
                         }
 

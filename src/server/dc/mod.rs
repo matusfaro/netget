@@ -143,11 +143,8 @@ impl DcServer {
                                             let command = command_str.trim_end_matches('|');
 
                                             // DEBUG: Log summary with text preview
-                                            let preview = if command.len() > 100 {
-                                                format!("{}...", &command[..100])
-                                            } else {
-                                                command.to_string()
-                                            };
+                                            let preview =
+                                                crate::utils::truncate_for_log(command, 100);
                                             debug!(
                                                 "DC received {} bytes on connection {}: {}",
                                                 command_bytes.len(),

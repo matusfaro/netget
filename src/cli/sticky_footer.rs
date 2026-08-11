@@ -1123,7 +1123,7 @@ impl StickyFooter {
             text.to_string()
         } else {
             let truncate_at = (max_width as usize).saturating_sub(3);
-            format!("{}...", &text[..truncate_at])
+            crate::utils::truncate_for_log(text, truncate_at)
         }
     }
 
@@ -1541,7 +1541,7 @@ impl StickyFooter {
             if path.len() <= remaining_width {
                 path
             } else if remaining_width > 3 {
-                format!("{}...", &path[..remaining_width.saturating_sub(3)])
+                crate::utils::truncate_for_log(&path, remaining_width.saturating_sub(3))
             } else {
                 String::new()
             }

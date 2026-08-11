@@ -115,11 +115,8 @@ impl NntpServer {
 
                                             // DEBUG: Log summary
                                             let response = String::from_utf8_lossy(&data);
-                                            let preview = if response.len() > 100 {
-                                                format!("{}...", &response[..100])
-                                            } else {
-                                                response.to_string()
-                                            };
+                                            let preview =
+                                                crate::utils::truncate_for_log(&response, 100);
                                             debug!(
                                                 "NNTP sent {} bytes on connection {}: {}",
                                                 data.len(),
@@ -164,11 +161,7 @@ impl NntpServer {
                                 }
 
                                 // DEBUG: Log summary with text preview
-                                let preview = if line.len() > 100 {
-                                    format!("{}...", &line[..100])
-                                } else {
-                                    line.to_string()
-                                };
+                                let preview = crate::utils::truncate_for_log(&line, 100);
                                 debug!(
                                     "NNTP received {} bytes on connection {}: {}",
                                     n,
@@ -235,11 +228,9 @@ impl NntpServer {
 
                                                     // DEBUG: Log summary with text preview
                                                     let response = String::from_utf8_lossy(&data);
-                                                    let preview = if response.len() > 100 {
-                                                        format!("{}...", &response[..100])
-                                                    } else {
-                                                        response.to_string()
-                                                    };
+                                                    let preview = crate::utils::truncate_for_log(
+                                                        &response, 100,
+                                                    );
                                                     debug!(
                                                         "NNTP sent {} bytes on connection {}: {}",
                                                         data.len(),

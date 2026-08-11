@@ -85,22 +85,14 @@ fn log_open_server_summary(
 
     // Instruction (truncated if long)
     if !instruction.is_empty() {
-        let truncated = if instruction.len() > 100 {
-            format!("{}...", &instruction[..100])
-        } else {
-            instruction.to_string()
-        };
+        let truncated = crate::utils::truncate_for_log(instruction, 100);
         let _ = status_tx.send(format!("[INFO]   Instruction: {}", truncated));
     }
 
     // Initial memory (truncated if long)
     if let Some(mem) = initial_memory {
         if !mem.is_empty() {
-            let truncated = if mem.len() > 100 {
-                format!("{}...", &mem[..100])
-            } else {
-                mem.to_string()
-            };
+            let truncated = crate::utils::truncate_for_log(mem, 100);
             let _ = status_tx.send(format!("[INFO]   Initial Memory: {}", truncated));
         }
     }
@@ -143,11 +135,7 @@ fn log_open_server_summary(
                     .and_then(|h| h.get("code"))
                     .and_then(|c| c.as_str())
                 {
-                    let truncated = if code.len() > 200 {
-                        format!("{}...", &code[..200])
-                    } else {
-                        code.to_string()
-                    };
+                    let truncated = crate::utils::truncate_for_log(code, 200);
                     for line in format_indented_dimmed_lines(&truncated, 8) {
                         let _ = status_tx.send(format!("[INFO] {}", line));
                     }
@@ -159,11 +147,7 @@ fn log_open_server_summary(
                 if let Some(actions) = handler.get("handler").and_then(|h| h.get("actions")) {
                     let actions_str = serde_json::to_string_pretty(actions)
                         .unwrap_or_else(|_| actions.to_string());
-                    let truncated = if actions_str.len() > 300 {
-                        format!("{}...", &actions_str[..300])
-                    } else {
-                        actions_str
-                    };
+                    let truncated = crate::utils::truncate_for_log(&actions_str, 300);
                     for line in format_indented_dimmed_lines(&truncated, 8) {
                         let _ = status_tx.send(format!("[INFO] {}", line));
                     }
@@ -190,11 +174,7 @@ fn log_open_server_summary(
             };
             let _ = status_tx.send(format!("[INFO]     • {} ({})", task.task_id, timing));
             // Task instruction (dimmed)
-            let truncated = if task.instruction.len() > 100 {
-                format!("{}...", &task.instruction[..100])
-            } else {
-                task.instruction.clone()
-            };
+            let truncated = crate::utils::truncate_for_log(&task.instruction, 100);
             for line in format_indented_dimmed_lines(&truncated, 8) {
                 let _ = status_tx.send(format!("[INFO] {}", line));
             }
@@ -203,11 +183,7 @@ fn log_open_server_summary(
 
     // Feedback instructions
     if let Some(fb) = feedback_instructions {
-        let truncated = if fb.len() > 100 {
-            format!("{}...", &fb[..100])
-        } else {
-            fb.to_string()
-        };
+        let truncated = crate::utils::truncate_for_log(fb, 100);
         let _ = status_tx.send(format!("[INFO]   Feedback Instructions: {}", truncated));
     }
 
@@ -235,22 +211,14 @@ fn log_open_client_summary(
 
     // Instruction (truncated if long)
     if !instruction.is_empty() {
-        let truncated = if instruction.len() > 100 {
-            format!("{}...", &instruction[..100])
-        } else {
-            instruction.to_string()
-        };
+        let truncated = crate::utils::truncate_for_log(instruction, 100);
         let _ = status_tx.send(format!("[INFO]   Instruction: {}", truncated));
     }
 
     // Initial memory (truncated if long)
     if let Some(mem) = initial_memory {
         if !mem.is_empty() {
-            let truncated = if mem.len() > 100 {
-                format!("{}...", &mem[..100])
-            } else {
-                mem.to_string()
-            };
+            let truncated = crate::utils::truncate_for_log(mem, 100);
             let _ = status_tx.send(format!("[INFO]   Initial Memory: {}", truncated));
         }
     }
@@ -292,11 +260,7 @@ fn log_open_client_summary(
                     .and_then(|h| h.get("code"))
                     .and_then(|c| c.as_str())
                 {
-                    let truncated = if code.len() > 200 {
-                        format!("{}...", &code[..200])
-                    } else {
-                        code.to_string()
-                    };
+                    let truncated = crate::utils::truncate_for_log(code, 200);
                     for line in format_indented_dimmed_lines(&truncated, 8) {
                         let _ = status_tx.send(format!("[INFO] {}", line));
                     }
@@ -307,11 +271,7 @@ fn log_open_client_summary(
                 if let Some(actions) = handler.get("handler").and_then(|h| h.get("actions")) {
                     let actions_str = serde_json::to_string_pretty(actions)
                         .unwrap_or_else(|_| actions.to_string());
-                    let truncated = if actions_str.len() > 300 {
-                        format!("{}...", &actions_str[..300])
-                    } else {
-                        actions_str
-                    };
+                    let truncated = crate::utils::truncate_for_log(&actions_str, 300);
                     for line in format_indented_dimmed_lines(&truncated, 8) {
                         let _ = status_tx.send(format!("[INFO] {}", line));
                     }
@@ -337,11 +297,7 @@ fn log_open_client_summary(
                     .unwrap_or_else(|| "one-shot".to_string())
             };
             let _ = status_tx.send(format!("[INFO]     • {} ({})", task.task_id, timing));
-            let truncated = if task.instruction.len() > 100 {
-                format!("{}...", &task.instruction[..100])
-            } else {
-                task.instruction.clone()
-            };
+            let truncated = crate::utils::truncate_for_log(&task.instruction, 100);
             for line in format_indented_dimmed_lines(&truncated, 8) {
                 let _ = status_tx.send(format!("[INFO] {}", line));
             }
@@ -350,11 +306,7 @@ fn log_open_client_summary(
 
     // Feedback instructions
     if let Some(fb) = feedback_instructions {
-        let truncated = if fb.len() > 100 {
-            format!("{}...", &fb[..100])
-        } else {
-            fb.to_string()
-        };
+        let truncated = crate::utils::truncate_for_log(fb, 100);
         let _ = status_tx.send(format!("[INFO]   Feedback Instructions: {}", truncated));
     }
 
@@ -851,7 +803,12 @@ impl EventHandler {
     }
 
     /// Execute server management actions (open_server, close_server, etc.)
-    async fn execute_server_management_action(
+    ///
+    /// Public so `tests/` can drive the real `open_server` / `open_client` executor —
+    /// including `log_open_server_summary`, which used to panic on a multi-byte
+    /// instruction — rather than re-implementing it. See the test-location policy in
+    /// `CLAUDE.md`: tests reach internals through `netget::` public APIs.
+    pub async fn execute_server_management_action(
         &mut self,
         action: CommonAction,
         status_tx: &mpsc::UnboundedSender<String>,
