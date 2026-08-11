@@ -6,9 +6,51 @@ Layer 2 (Data Link) packet capture and injection using libpcap. Allows the LLM t
 directly, bypassing IP/TCP/UDP layers. Primary use cases: ARP monitoring, custom layer 2 protocols, network packet
 analysis, and honeypot operations at the lowest network level.
 
-**Status**: Beta (Layer 2 Protocol)
+**Status**: Experimental (Layer 2 Protocol)
 **Layer**: OSI Layer 2 (Data Link)
 **Interface**: Any network interface (eth0, en0, wlan0, etc.)
+**Privilege**: `PrivilegeRequirement::PacketCapture`
+
+### Why not Beta
+
+It was `Beta` until August 2026, on a suite that asserted nothing: three mocked E2E tests with
+zero `assert!` and zero `verify_mocks()` calls, whose own comment conceded that "mock
+verification is not possible in subprocess tests"; plus one `#[ignore]`d test that printed
+*"No ARP reply received (this is expected if server isn't fully implemented)"* on failure and
+returned `Ok(())`. Its `e2e_testing` metadata read "libpcap for packet validation", which
+described no test in the tree. Beta means *works against a real client*, and nothing here had
+ever demonstrated that a single frame reached the LLM.
+
+The suite is now real (see **Testing** below) but the capture path is still unproven, because
+the one test that proves it needs privileges. **Promote to `Beta` when
+`datalink_captures_a_real_loopback_frame` has actually been run and passed** - and update
+`metadata().notes` in `actions.rs` at the same time, since it currently says UNVERIFIED.
+
+## Testing
+
+`tests/server/datalink/e2e_test.rs` drives `DataLinkServer::spawn_with_llm` **in process** (no
+subprocess, no mock Ollama; capture events are answered by a static handler and the LLM endpoint
+is an unroutable address, so reaching a model would itself be a failure):
+
+| Test | Privilege | Asserts |
+|---|---|---|
+| `datalink_unknown_interface_is_refused` | none | `spawn` returns `Err` naming the device |
+| `datalink_startup_outcome_matches_capture_privilege` | none | `Ok` **iff** the pcap handle really opened; the unprivileged branch asserts the refusal text names `/dev/bpf*` or `CAP_NET_RAW` |
+| `datalink_invalid_bpf_filter_is_refused` | capture | an uncompilable BPF expression fails startup |
+| `datalink_captures_a_real_loopback_frame` | capture | a UDP datagram put on loopback appears byte-for-byte in the captured hex **and** reaches the event path |
+
+`tests/server/datalink/test.rs` covers the declarations with no privileges at all: the default
+binding is this platform's loopback name, the privilege requirement is `PacketCapture` and
+`is_met_by` agrees with the probe, `filter` is the only startup parameter and undeclared keys are
+refused by name, and the action set is observation-only with every event carrying actions.
+
+The two privileged tests are `#[ignore]`d, so cargo reports them as *ignored* and never as
+passed - an unprivileged run cannot be mistaken for evidence that capture works. Run them with:
+
+```bash
+sudo -E ./cargo-isolated.sh test --no-default-features --features datalink \
+    --test server -- server::datalink --ignored --test-threads=100
+```
 
 ## Library Choices
 

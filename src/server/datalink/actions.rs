@@ -96,12 +96,30 @@ impl Protocol for DataLinkProtocol {
         };
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Beta)
+            // Demoted from Beta. Beta means "works against a real client"; the capture path
+            // has never been observed working by any test. What the suite proves today is the
+            // startup contract, not the capture. See notes.
+            .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("libpcap (pcap crate) for Layer 2 packet capture")
             .llm_control("Observation only - no packet injection")
-            .e2e_testing("libpcap for packet validation")
-            .notes("Requires root/CAP_NET_RAW for promiscuous mode")
+            .e2e_testing(
+                "tests/server/datalink/e2e_test.rs drives DataLinkServer::spawn_with_llm in \
+                 process. Unprivileged, it asserts an unknown device and a missing capture \
+                 privilege both produce Err with the documented text. The real-capture test \
+                 (a UDP datagram on loopback, asserted byte-for-byte in the captured frame) \
+                 and the invalid-BPF-filter test are #[ignore]d because they need /dev/bpf* \
+                 (macOS/BSD) or CAP_NET_RAW (Linux).",
+            )
+            .notes(
+                "Requires root/CAP_NET_RAW (or /dev/bpf* access) for promiscuous mode. \
+                 Startup failure is reported: spawn_with_llm awaits the pcap handle and the \
+                 BPF filter, so a privilege failure lands in ServerStatus::Error rather than \
+                 Running. UNVERIFIED: no test has ever observed a frame being captured and \
+                 handed to the LLM - that requires the privileged, #[ignore]d test to be run. \
+                 Capture-only: there is no packet-injection action, so the model can analyse \
+                 frames but cannot answer them.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
