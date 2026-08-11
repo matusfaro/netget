@@ -92,16 +92,36 @@ everywhere, and is guarded two ways: `EventType::with_no_actions()` marks the de
 anything else logs at ERROR and falls back, and `tests/event_action_declarations_test.rs` fails
 the build on any new occurrence across every registered protocol.
 
-**A fourth variant, still open: an event can be declared and never emitted.** Declaring actions
-on it then buys nothing, because it never fires. The USB family is the live case — only
-`*_attached` is ever raised for `usb-mouse`/`usb-keyboard`/`usb-msc` (one `call_llm_on_attach`
-per `mod.rs`), and `usb-serial` raises nothing at all, so `usb_*_detached`, `usb_msc_read`,
-`usb_msc_write`, `usb_keyboard_led_status` and all three `usb_serial_*` events are advertised to
-the model and cannot fire. Check the emit side, not just the declaration:
+**That guard had a hole worth remembering, because it inverted the whole point.**
+`audit_event_action_declarations` early-returned when `get_sync_actions()` was empty, on the
+reasoning that a protocol advertising nothing is withholding nothing. It is backwards: offering
+the model *no* vocabulary is the worst case, not the exempt one. `usb-fido2` had zero sync
+actions, zero LLM integration and three events the model could not answer, and
+`cargo test --features usb-fido2,tcp` reported **3 passed**. The rule now fails that case; re-run
+at `--all-features` it flagged exactly `usb-fido2` and produced no false positives across the
+other 115, and delegation is unaffected because `doh`/`dot` return a non-empty set of their own.
+The `registry-audit` CI job runs these audits at `--all-features` for that reason — every other
+job compiles 6 of 116, so a registry-walking test is only as wide as its feature set.
+
+**A fourth variant: an event can be declared and never emitted.** Declaring actions on it then
+buys nothing, because it never fires. The USB family was the live case and is now fixed —
+`usb_*_detached`, `usb_msc_read`, `usb_msc_write`, `usb_keyboard_led_status` and the
+`usb_serial_*` events all have real emit sites. Two of those repairs are worth knowing about,
+because the protocols were more broken than "an event does not fire": `usb-mouse`'s
+`handle_connection` took the socket as `_stream` and dropped it, ran no USB/IP session at all and
+parked on `sleep(u64::MAX)`, while a complete handler sat unwired in `handler.rs`; and every
+`usb-keyboard` action demanded `connection_id.as_u64()` while events report `"conn-2"`, so no
+value the model could send would ever have worked. Check the emit side, not just the declaration:
 
 ```bash
 grep -rn "_EVENT" src/server/<p>/mod.rs   # which events does the server actually raise?
 ```
+
+**A fifth variant, on the client side: `call_llm_for_client` builds its tool list from
+`get_async_actions()` alone.** It reads neither `get_sync_actions()` nor
+`event.event_type.actions`, so the two paths do not agree about what an action is. The TFTP
+client declared `send_ack` sync-only and every DATA block came back `Unknown Action`, stalling
+every transfer at block 1. Check a client's declarations against the async list specifically.
 
 The whole `bluetooth_ble_*` family was a third variant: `BluetoothBle::spawn_with_llm_actions`
 hardcodes `BluetoothBleProtocol` when it calls `call_llm`, so all sixteen profiles' own actions
@@ -391,7 +411,7 @@ rather than a hardcoded copy:
 | Bluetooth LE | `libdbus-1-dev` | all `bluetooth-ble*` (18) |
 | USB | `libusb-1.0-dev` | `usb`, `usb-keyboard`, `usb-mouse`, `usb-serial`, `usb-msc`, `usb-fido2`, `usb-smartcard` |
 | NFC | `pcsclite` | `nfc`, `nfc-client` |
-| Protobuf | `protoc` | `etcd`, `grpc`, `kubernetes`, `zookeeper` |
+| Protobuf | `protoc` | `etcd`, `grpc`, `zookeeper` (**not** `kubernetes` — see below) |
 | Packet capture | `libpcap` | `datalink`, `arp`, `isis` |
 | Other | — | `smb-client` (`libsmbclient`) |
 
@@ -399,6 +419,12 @@ rather than a hardcoded copy:
 # Safe pattern
 ./cargo-isolated.sh build --no-default-features --features tcp,http,dns
 ```
+
+`kubernetes` was listed under `protoc` for a long time and never needed it: `build.rs` invokes
+`protoc` only under `#[cfg(feature = "etcd")]`. The `kubernetes` *client* pulls `kube` +
+`k8s-openapi` (large, but no system library); the `kubernetes-server` protocol deliberately
+depends on neither, because `kubectl` speaks JSON to an apiserver by default. Derive this table
+from `Cargo.toml` and `build.rs` rather than trusting it — it has been wrong.
 
 ## MCP surface
 
@@ -479,8 +505,35 @@ Assume other agents work in this repo concurrently.
   ```bash
   git diff --cached --name-only     # must list only your files
   ```
+
+- **The pathspec form protects against a dirty INDEX, not a dirty WORKING TREE — and for a
+  shared file that distinction is the whole problem.** `git commit <pathspec>` commits the
+  *working-tree* content of those paths. So if another agent has `Cargo.toml` mid-edit and you
+  name `Cargo.toml`, you commit **their uncommitted hunks along with yours**. Three agents hit
+  this independently in one session, on `Cargo.toml`, both registries and both test `mod.rs`
+  files. The rule above reads as complete protection and is not.
+
+  For a file only you touched, the pathspec form is fine. For a **shared** file, rebuild its
+  blob from `HEAD` plus only your own lines and stage that, leaving the working tree alone so
+  the other agent's edits survive:
+
+  ```bash
+  # HEAD-based patch of just your hunks, applied to the index only
+  git diff HEAD -- <shared-file> > /tmp/mine.patch   # then edit down to your hunks
+  git apply --cached /tmp/mine.patch
+  git diff --cached --name-only    # must list only your files
+  git diff --cached -- <shared-file>   # must show only your lines
+  git commit -m "..."              # no pathspec: the index is already exactly right
+  ```
+
+  `git hash-object` + `git update-index --cacheinfo` achieves the same thing when the file is
+  easier to reconstruct than to patch. Either way, **verify `git diff --cached` before
+  committing** — that is the only step that actually catches the mistake.
 - **Shared files** (`Cargo.toml`, both registries, `server/mod.rs`, `client/mod.rs`, both test
   `mod.rs` files, `state/server.rs`): use `Edit`, add incrementally, never overwrite wholesale.
+- **Give scratchpad files a name unique to you.** Two agents independently wrote `mod.rs.bak`
+  into the shared session scratchpad; one clobbered the other, and restoring "the" backup put
+  one protocol's source into another protocol's file. Prefix every scratch file with your task.
 - **Pause and report** if you hit an error in code you did not modify. It is almost always
   another agent mid-edit; retry rather than "fixing" their file.
 - **Verify HEAD, not the working tree.** During parallel work the working tree is routinely
@@ -503,7 +556,20 @@ Read before assuming a subsystem is sound:
   credentials, and a model's explicit denial was indistinguishable from silence and became an
   approval. Its own CLAUDE.md documented this as a feature ("ensures the server always responds
   correctly"). Default to refusal, and make the model's rejection path structurally distinct
-  from its no-answer path.
+  from its no-answer path. `radius` is the worked example of the shape to copy: nothing in its
+  `actions.rs` can synthesise an Access-Accept, accept and reject share no code path, and a
+  no-answer logs `decision=fail_closed_*` while a model denial logs `decision=model_reject` —
+  distinguishable in the log *and* on the wire. Its regression test asserts the fail-closed
+  packet is also correctly *signed*, because a denial the client discards as corrupt is just a
+  timeout.
+- **A tokio blocking API called from async context, with the panic swallowed by `tokio::spawn`.**
+  Found three times: `block_on` inside `UsbInterfaceHandler::handle_urb` (usb-msc, usb-fido2) and
+  `tokio::sync::Mutex::blocking_lock()` in SMB's connection task. The failure mode is identical
+  and nasty — the task panics, `tokio::spawn` swallows it, the server stays `Running`, the log
+  shows the operation *succeeding*, and the peer hangs. In SMB every SESSION_SETUP killed its own
+  connection the moment the LLM approved the login. If a synchronous callback needs an async
+  result, restructure so the sync side parks the request and an async task feeds the answer back
+  (usb-fido2 does this over CTAPHID `KEEPALIVE`); do not bridge with `block_on`.
 - Byte-index string truncation (`&s[..N]` guarded only by `s.len() > N`) panicked on multi-byte
   UTF-8 at the cut point, on LLM output and event descriptions. Fixed in `b9aa1058` —
   `src/utils/truncate.rs` has char-boundary helpers; use `truncate_for_log` rather than slicing.
