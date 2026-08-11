@@ -16,13 +16,35 @@ const TERMINAL_WIDTH: u16 = 80;
 const TERMINAL_HEIGHT: u16 = 24;
 const SNAPSHOT_DIR: &str = "tests/terminal_snapshot/snapshots";
 
+/// Owns a `netget` this file spawned and guarantees it is terminated and reaped.
+///
+/// Every test here used to bind the child to `let _child` and return. `Child`'s `Drop` neither
+/// kills nor waits, so each of the seventeen tests left a live `netget` behind — and the project
+/// rule is that netget processes are never killed, so nothing collected them afterwards either.
+/// `clippy::zombie_processes` flags this, but only at `--all-features`, which CI cannot build.
+///
+/// Killing here is safe and is not the process the rule protects: this guard holds the exact pid
+/// this test spawned, into a PTY it created, and never touches any other process.
+struct NetGetChild(Option<Child>);
+
+impl Drop for NetGetChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            // Already exited (Ctrl-C, PTY hangup) is the common case; kill() then errors
+            // harmlessly. wait() is what actually reaps it.
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// Helper to spawn NetGet in a PTY and return the PTY handle and child process
-fn spawn_netget() -> (pty_process::blocking::Pty, Child) {
+fn spawn_netget() -> (pty_process::blocking::Pty, NetGetChild) {
     spawn_netget_with_args(&[])
 }
 
 /// Helper to spawn NetGet with arguments in a PTY
-fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) {
+fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, NetGetChild) {
     // Use cargo's env variable to get the actual binary path
     let binary_path = env!("CARGO_BIN_EXE_netget");
 
@@ -49,7 +71,7 @@ fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) 
     }
     let child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
 
-    (pty, child)
+    (pty, NetGetChild(Some(child)))
 }
 
 /// Capture terminal output and parse it with vt100
@@ -825,7 +847,7 @@ mod tests {
         // Now spawn netget in the PTY that already has content
         let binary_path = env!("CARGO_BIN_EXE_netget");
         let mut cmd = pty_process::blocking::Command::new(binary_path);
-        let _child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
+        let _child = NetGetChild(Some(cmd.spawn(pts).expect("Failed to spawn netget in PTY")));
 
         // Give TUI time to start and render
         std::thread::sleep(Duration::from_millis(2000));

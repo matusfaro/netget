@@ -21,6 +21,26 @@ env:
   # that's 3+ min / 3GB+ RAM and needs system libs (protoc, libpcap, dbus,
   # libusb, pcsclite) this workflow does not install.
   CI_FEATURES: tcp,http,dns,udp,redis,mcp-stdio
+  # CI_FEATURES plus terminal-snapshot, used for the blocking clippy run only.
+  # terminal-snapshot gates tests/terminal_snapshot/, which is where the
+  # clippy::zombie_processes violation lived that leaked a live `netget` process on
+  # every run. Without the feature that whole file is invisible to the gate.
+  LINT_FEATURES: tcp,http,dns,udp,redis,mcp-stdio,terminal-snapshot
+  # Everything the runner can build without a system library, for the advisory
+  # wide-feature clippy job. `dist` is the Linux release feature set (release.yml
+  # builds it for x86_64-unknown-linux-gnu), so it is known to compile here.
+  # Excluded on purpose: bluetooth-ble* (dbus), usb-* (libusb), nfc* (pcsclite),
+  # etcd/grpc/kubernetes/zookeeper (protoc), datalink/arp/isis (libpcap),
+  # kafka, smb-client (libsmbclient), embedded-llm (huge).
+  WIDE_FEATURES: >-
+    dist,terminal-snapshot,tcp,socket_file,http,http2,http3,dns,dot,doh,dhcp,bootp,
+    udp,redis,tls,proxy,http_proxy,sqlite,quic,telnet,ldap,syslog,ntp,socks5,mqtt,
+    smtp,imap,pop3,nntp,irc,xmpp,ssh,ssh-agent,svn,whois,snmp,igmp,stun,turn,sip,
+    mysql,mssql,postgresql,mongodb,mongodb-server,elasticsearch,couchdb,cassandra,
+    s3,sqs,dynamo,dynamodb,npm,pypi,maven,openai,ollama,oauth2,openidconnect,
+    jsonrpc,saml,saml-idp,saml-sp,wireguard,ipsec,bgp,rip,bitcoin,mcp,mcp-stdio,
+    mcp-http,xmlrpc,tor,vnc,openapi,openid,git,mercurial,torrent-tracker,
+    torrent-dht,torrent-peer,webdav,nfs,smb,mdns,ipp,rss,dc,webrtc,amqp
 
 jobs:
   lint:
@@ -52,9 +72,22 @@ jobs:
       # clippy::suspicious lints, so denying just those two groups is
       # green today and still catches real bugs (the kind of thing that
       # would otherwise ship silently) rather than nothing at all.
-      - name: "cargo clippy (blocking: correctness + suspicious only)"
+      #
+      # --all-targets is NOT decoration. Without it clippy lints the lib only, and
+      # every one of ~200 test files is exempt from the gate. Two clippy::suspicious
+      # violations were living there unseen, both invisible to this job for that
+      # reason plus a missing feature:
+      #   * tests/terminal_snapshot/mod.rs - clippy::zombie_processes. Seventeen tests
+      #     spawned the netget binary into a PTY, bound it to `let _child` and returned.
+      #     Child::drop neither kills nor waits, so every run leaked a live netget
+      #     process, and this project's rules say netget processes are never killed -
+      #     so nothing reaped them afterwards either.
+      #   * tests/helpers/event_trigger.rs - clippy::empty_line_after_doc_comments.
+      # Both are fixed; keeping --all-targets (and LINT_FEATURES) is what stops them
+      # coming back.
+      - name: "cargo clippy (blocking: correctness + suspicious, lib + all test targets)"
         run: |
-          cargo clippy --locked --no-default-features --features "$CI_FEATURES" \
+          cargo clippy --locked --no-default-features --features "$LINT_FEATURES" --all-targets \
             -- -D clippy::correctness -D clippy::suspicious
 
       # ADVISORY: full default lint set (style/complexity/perf included),
@@ -66,7 +99,47 @@ jobs:
         continue-on-error: true
         run: |
           echo "::notice::Full clippy (default lints, --all-targets) is advisory-only today; only correctness/suspicious are enforced above."
-          cargo clippy --locked --no-default-features --features "$CI_FEATURES" --all-targets
+          cargo clippy --locked --no-default-features --features "$LINT_FEATURES" --all-targets
+
+  # ADVISORY, deliberately. Clippy is feature-sensitive in a way `cargo fmt` is not,
+  # because it compiles: at --all-features the lib alone emits ~495 warnings against
+  # ~50 for CI_FEATURES, and the correctness/suspicious gate above only ever sees the
+  # 6 protocols CI_FEATURES enables out of 116.
+  #
+  # Why not blocking:
+  #   * --all-features is not achievable here at all - it needs protoc, libpcap, dbus,
+  #     libusb and pcsclite, none of which this workflow installs.
+  #   * WIDE_FEATURES avoids all of those, but it is a large set that no job has ever
+  #     built before, and a gate whose first act is to redden master on ~500 pre-existing
+  #     style warnings teaches people to ignore it. The correctness/suspicious subset may
+  #     well be clean; when a run here proves that over several PRs, move the
+  #     `-D clippy::correctness -D clippy::suspicious` invocation into the blocking
+  #     `lint` job and delete this note.
+  # Until then this exists so the number is visible instead of unknown.
+  clippy-wide:
+    name: Clippy (wide feature set, advisory)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-wide
+
+      - name: "cargo clippy (advisory: wide feature set)"
+        continue-on-error: true
+        shell: bash
+        run: |
+          FEATURES="$(echo "$WIDE_FEATURES" | tr -d ' \n')"
+          echo "::notice::Advisory only. Features: $FEATURES"
+          cargo clippy --locked --no-default-features --features "$FEATURES" --all-targets \
+            -- -D clippy::correctness -D clippy::suspicious
 
   test:
     name: Test
@@ -150,9 +223,14 @@ jobs:
   orphaned-tests:
     name: Orphaned test check
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      # rustfmt is what resolves the module graph in the file-level check below.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       # Guards a bug that silently cost this repo most of its test
       # coverage: tests/server.rs and tests/client.rs only compile
@@ -203,3 +281,21 @@ jobs:
           check_group client tests/client tests/client/mod.rs || status=1
 
           exit $status
+
+      # The directory check above is necessary and not sufficient. It compares
+      # directories, so it cannot see:
+      #   * a FILE inside a declared directory that the directory's own mod.rs omits -
+      #     tests/server/{proxy,ssh_agent,datalink}/mod.rs each declared only
+      #     `mod e2e_test;`, hiding the 704-line, 8-test proxy suite that is the only one
+      #     routing real traffic through the proxy;
+      #   * a test tree outside tests/server and tests/client - tests/e2e/ and
+      #     tests/validators/ were reachable from no target root at all;
+      #   * anything under src/ - six dead modules there had never been compiled.
+      # 29 test functions and 20 files were invisible this way. The script resolves the
+      # real module graph (via rustfmt) and fails on anything unreachable that is not
+      # explicitly declared dead in .github/unreachable-modules.txt. It also runs rustfmt
+      # over every tracked .rs file, which closes the same hole for formatting: `cargo fmt`
+      # has no feature flags and does not evaluate cfg, so undeclared modules - not
+      # cfg-gated ones - are the only files it never sees.
+      - name: Check every .rs file is reachable from a target root
+        run: ./.github/scripts/check-module-reachability.sh

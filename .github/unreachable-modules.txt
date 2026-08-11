@@ -1,0 +1,35 @@
+# Files deliberately unreachable from every cargo target root.
+#
+# A .rs file that no `mod` statement names is never compiled, never linted, and never
+# formatted — silently. That cost this repo 29 test functions in three protocol suites plus
+# two whole test trees (see .github/workflows/ci.yml, job `module-reachability`).
+#
+# Anything listed here is exempt from BOTH gates in that job: the reachability check and the
+# rustfmt sweep. That is the whole point — these files are dead, and formatting dead code
+# would only make it look maintained. Every entry is a debt, not a policy.
+#
+# Rules:
+#   * one repo-relative path per line; `#` starts a comment
+#   * every entry needs a reason and an exit condition
+#   * an entry that no longer applies (file deleted, or now reachable) is reported as stale
+#     and should be removed — that is a warning, not a failure, so reviving a module never
+#     breaks master on a bookkeeping detail
+#
+# The list should only ever shrink.
+
+# --- Dead client protocols -------------------------------------------------------------
+# `src/client/mod.rs` has these two commented out ("temporarily disabled (API fixes needed)"
+# / "(needs API updates)"). The sources were left on disk, compile against nothing, and are
+# the only unformatted code in src/. Remove these entries when the clients are either
+# deleted or repaired and re-declared. Leaving dead modules on disk is how `Http2Server`
+# stayed dead for months.
+src/client/rss/mod.rs
+src/client/rss/actions.rs
+src/client/tftp/mod.rs
+src/client/tftp/actions.rs
+
+# --- Dead TUI modules ------------------------------------------------------------------
+# `src/ui/mod.rs` declares only `pub mod app;`. These two predate the rolling TUI and
+# nothing references `ui::events` or `ui::layout`. Delete them or wire them back in.
+src/ui/events.rs
+src/ui/layout.rs

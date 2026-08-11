@@ -42,7 +42,10 @@ impl BootpProtocol {
 
     #[cfg(feature = "bootp")]
     pub fn set_request_context(&self, context: BootpRequestContext) {
-        *self.request_context.lock().unwrap_or_else(|e| e.into_inner()) = Some(context);
+        *self
+            .request_context
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(context);
     }
 }
 

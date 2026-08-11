@@ -212,7 +212,11 @@ impl EventTrigger {
     }
 }
 
-/// Helper functions for building common protocol packets
+// Helper functions for building common protocol packets.
+//
+// A `///` here documented `build_dns_query` rather than the section, and the blank line between
+// them made that non-obvious — `clippy::empty_line_after_doc_comments`, which is in the denied
+// `suspicious` group and so fails the blocking gate at wider feature sets.
 
 /// Build a minimal DNS query packet
 /// Returns (packet_bytes, query_id)

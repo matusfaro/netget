@@ -4,15 +4,15 @@
 //! without modifying NetGet's core code.
 
 use anyhow::Result;
-use netget::llm::actions::{ActionDefinition, Parameter, Server};
 use netget::llm::actions::protocol_trait::ActionResult;
-use netget::protocol::metadata::{ProtocolMetadata, DevelopmentState};
+use netget::llm::actions::{ActionDefinition, Parameter, Server};
+use netget::protocol::metadata::{DevelopmentState, ProtocolMetadata};
 use netget::protocol::SpawnContext;
 use netget::state::app_state::AppState;
 use serde_json::Value as JsonValue;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::future::Future;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tracing::{debug, info};
@@ -34,10 +34,7 @@ impl Default for EchoProtocol {
 }
 
 impl Server for EchoProtocol {
-    fn spawn(
-        &self,
-        ctx: SpawnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
+    fn spawn(&self, ctx: SpawnContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
             let listener = TcpListener::bind(ctx.listen_addr).await?;
             let local_addr = listener.local_addr()?;
@@ -59,7 +56,10 @@ impl Server for EchoProtocol {
                                             break;
                                         }
                                         Ok(n) => {
-                                            debug!("[ECHO] Received {} bytes from {}", n, peer_addr);
+                                            debug!(
+                                                "[ECHO] Received {} bytes from {}",
+                                                n, peer_addr
+                                            );
 
                                             // Echo back the data
                                             if let Err(e) = stream.write_all(&buf[..n]).await {
@@ -103,7 +103,7 @@ impl Server for EchoProtocol {
     fn metadata(&self) -> ProtocolMetadata {
         ProtocolMetadata::with_notes(
             DevelopmentState::Beta,
-            "Simple echo server that returns all received data"
+            "Simple echo server that returns all received data",
         )
     }
 
@@ -116,28 +116,24 @@ impl Server for EchoProtocol {
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![]  // No async actions for this simple protocol
+        vec![] // No async actions for this simple protocol
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "send_echo_data".to_string(),
-                description: "Send data back to the client".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "data".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Data to echo back".to_string(),
-                        required: true,
-                    },
-                ],
-                example: serde_json::json!({
-                    "type": "send_echo_data",
-                    "data": "Hello, World!"
-                }),
-            },
-        ]
+        vec![ActionDefinition {
+            name: "send_echo_data".to_string(),
+            description: "Send data back to the client".to_string(),
+            parameters: vec![Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Data to echo back".to_string(),
+                required: true,
+            }],
+            example: serde_json::json!({
+                "type": "send_echo_data",
+                "data": "Hello, World!"
+            }),
+        }]
     }
 
     fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
