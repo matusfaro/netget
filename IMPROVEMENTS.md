@@ -22,8 +22,23 @@ items when fifteen were already fixed and seventeen were findings rather than wo
 `DevelopmentState::Incomplete` is down from twelve to **zero**. The last one,
 `bluetooth_ble_beacon`, was a platform limit rather than unfinished work, and was closed by
 implementing the BlueZ path and making the macOS refusal explicit — see the maturity section of
-`CLAUDE.md`. Test suite is **393 passed / 0 failed / 29 ignored** on the CI feature set, clippy
-clean, `cargo fmt --check` clean.
+`CLAUDE.md`. Test suite is **415 passed / 0 failed / 36 ignored** on the CI feature set (+
+`sqlite`), clippy clean, `cargo fmt --check` clean.
+
+Three gates were added because the green result was worth less than it looked (see archived
+items 5, 79, 80, 81):
+
+* **`orphaned-tests` now checks files, not just directories.**
+  `.github/scripts/check-module-reachability.sh` resolves the real module graph and fails on any
+  tracked `.rs` under `src/`/`tests/` that no `mod` statement names, with an explicit
+  `.github/unreachable-modules.txt` allowlist for the six known-dead modules. It also runs
+  rustfmt over every tracked file, which is what closes the formatting hole — `cargo fmt` has no
+  feature flags and does not evaluate `cfg`, so **undeclared** modules, not cfg-gated ones, were
+  the only files it never saw.
+* **The blocking clippy gate gained `--all-targets` and `terminal-snapshot`.** Without those it
+  linted the lib only, exempting ~200 test files, and two `clippy::suspicious` violations were
+  living there — one of them leaking a live `netget` process per run.
+* **A `Drop` guard that panics** when a mock config carrying expectations is never verified.
 
 ### Still open
 
@@ -413,6 +428,31 @@ malformed `COM_STMT_EXECUTE` shapes, including an explicit `panic!("bad column t
 client-chosen byte) and `kafka-protocol`'s unbounded element counts are the same shape and are
 documented in the panic audit.
 
+### 78. `tcp_connection_opened` is advertised unconditionally and fires only for `send_first` servers **[verified]**
+
+`src/server/tcp/actions.rs:490` describes the event as *"New TCP connection established (send
+initial greeting/banner if needed)"* and ships a `response_example` that sends a `220 Welcome`
+banner. `src/server/tcp/mod.rs:125,261-277` raises it only when the server was started with
+`startup_params: {"send_first": true}` — the default is `false`.
+
+So a model that reads the event catalogue, sees `tcp_connection_opened`, and configures a
+handler for it (LLM, script or static) gets nothing at all: the event never fires, the handler
+never runs, and no diagnostic says why. This is the "declared and never emitted" class the root
+`CLAUDE.md` records for the USB family, in a `Beta`-adjacent protocol.
+
+Found by making `tests/examples/tcp_examples_test.rs` able to fail — three of its four tests
+swallowed every failure mode, so the shipped `response_example` had never actually been
+exercised. The tests now pass `send_first` explicitly and assert the wire bytes; the product
+side is still open:
+
+* say so in the event description, and in the `send_first` parameter description, so the model
+  can tell that one requires the other; or
+* raise the event on every connection and let the handler decide whether to write anything,
+  which is what its description already promises.
+
+Note this is *not* archived item 13 (`send_first` ignored as a top-level `open_server` field) —
+the `startup_params` path does work. It is the documentation and the conditional emission.
+
 ### 76. Test suites that assert only at the transport level **[verified]**
 
 `tests/server/{nfs,ipp,vnc,webdav}/test.rs` are declared and running, and assert only that a
@@ -429,6 +469,90 @@ transport success.
 
 Kept because the reasoning is worth finding again, not because anything is pending here.
 Each fixed item has a row in the Fixed table above.
+
+### 79. The orphaned-test gate checked directories, so 30 test functions never compiled **[verified, fixed]**
+
+Archived item 5 fixed 76 orphaned test *directories* and added a CI job to hold the line. The job
+compares `ls -d tests/server/*/` against `pub mod` lines, which cannot see a **file** inside a
+declared directory, a test tree outside `tests/server`/`tests/client`, or anything under `src/`.
+Twenty tracked `.rs` files were unreachable from every cargo target root; ten held tests.
+
+* `tests/server/{proxy,ssh_agent,datalink}/mod.rs` declared only `mod e2e_test;`. `proxy/test.rs`
+  alone is 704 lines and 8 tests — the only proxy tests that stand up real HTTP/HTTPS targets and
+  route traffic through the proxy, for the protocol family archived as "21 failures → 5".
+* `tests/server/bluetooth_ble_{keyboard,mouse}/mod.rs` said *"Tests would go here"* with an
+  `e2e_test.rs` beside them.
+* `tests/e2e/` and `tests/validators/` were reachable from no root at all.
+
+Eight of the newly-live tests failed on first execution, all in `proxy/test.rs`, which had been
+written against an API that does not exist: events `proxy_http_request_received` /
+`proxy_https_connect_received` (real: `proxy_http_request` / `proxy_https_connect`) and actions
+`proxy_forward_request` / `proxy_block_request` / `proxy_allow_connect` / `proxy_block_connect`
+(real: `handle_request_pass` / `handle_request_block` / `handle_request_modify` /
+`handle_https_connection_{allow,block}`, with different parameter names). No rule ever matched;
+the proxy forwarded anyway, so the assertions would have passed while the LLM path was dead.
+
+Two product defects fell out once the tests could run:
+
+* `apply_request_modifications` (`src/server/proxy/mod.rs`) keyed its header map on the raw field
+  name. HTTP field names are case-insensitive (RFC 9110 §5.1) and hyper lowercases them on the
+  wire while a model writes `User-Agent`, so `remove_headers` removed nothing and `headers:
+  {"Host": …}` would have **appended** a second Host header. `tls_mitm.rs` already lowercased;
+  the plain-HTTP path did not.
+* `start_test_https_server` wrote `${TMPDIR}/test_https_cert_${PID}.pem` "to avoid conflicts when
+  running tests concurrently" — concurrent Rust tests share one process, so both HTTPS tests
+  wrote the same paths with different key pairs. Intermittent handshake failures. Now in memory.
+
+Fixed by declaring everything, adding `tests/e2e.rs` as a root, and replacing the
+directory-only CI job with `.github/scripts/check-module-reachability.sh`.
+
+### 80. Two clippy::suspicious violations lived where the blocking gate could not see them **[verified, fixed]**
+
+The `lint` job ran `cargo clippy` **without `--all-targets`**, so it linted the lib and exempted
+every test file. At `--all-features --all-targets` the same `-D clippy::correctness -D
+clippy::suspicious` invocation exits 101 on two:
+
+* `tests/terminal_snapshot/mod.rs` — `clippy::zombie_processes`. Seventeen tests spawned the
+  netget binary into a PTY, bound it to `let _child` and returned. `Child::drop` neither kills
+  nor waits, so **every run leaked a live `netget` process**, and this project's standing rule is
+  that netget processes are never killed — so nothing collected them afterwards either. Fixed
+  with an owning `NetGetChild` guard that kills and reaps the pid it spawned.
+* `tests/helpers/event_trigger.rs` — `clippy::empty_line_after_doc_comments`.
+
+The blocking gate now runs `--all-targets` with `terminal-snapshot` enabled (verified to catch
+both when reverted), and an advisory `clippy-wide` job covers ~95 further features. Blocking
+`--all-features` is not achievable on the runner: protoc, libpcap, dbus, libusb, pcsclite.
+
+Note the fmt half of this was a *different* mechanism. `cargo fmt` has no feature flags and does
+not evaluate `cfg` — cfg-gated modules **are** visited. All six unformatted files at the time
+were among the twenty undeclared ones in item 79, so fixing the declarations closed the fmt gap
+by itself; the rustfmt sweep in the reachability script keeps the remaining allowlisted files
+honest.
+
+### 81. Mock helpers with an API that lied, a guard that only printed, and tests that could not fail **[verified, fixed]**
+
+Three separate ways the mock harness let a suite assert nothing:
+
+* **`.on_custom(pred)` never called `pred`.** `MockRule::matches` consulted only the serialized
+  matcher, and `on_custom` set `match_any = true` there as a placeholder — so every custom rule
+  was an `on_any` rule. Seven call sites in the grpc/http2/quic suites wrote
+  `|ctx| !ctx.instruction.contains("Event ID:")` believing it filtered; they were saved only by
+  being declared last, and one carried the comment *"catch-all for user input, MUST come LAST"*.
+  `MockLlmConfig::clone` compounded it by dropping the matcher on the way to the mock server.
+  The matcher is now an `Arc`, survives the clone, and is consulted whenever
+  `has_custom_predicate` is set. All twelve tests in those three suites still pass.
+* **24 test files configured mocks and never called `verify_mocks()`.** The `Drop` backstop
+  `eprintln!`ed a warning that at `--test-threads=100` nobody has ever read. It now **panics**
+  when the config carries any `expect_calls`/`expect_at_least`/`expect_at_most` and the thread is
+  not already panicking (panicking twice would abort and destroy the real message); a config with
+  no expectations still only warns. 113 `verify_mocks()` calls were added across 22 files, and
+  the guard immediately found a 24th case the sweep missed —
+  `tests/client/tcp/e2e_test.rs` verified its server and not its client.
+* **`tests/examples/tcp_examples_test.rs` had three tests that could not fail.** Each read arm
+  printed `⚠ … may be expected in mock mode` and continued, and one skipped mock verification
+  unless data had arrived. They now read the `response_example` **from the registry** rather than
+  keeping a copy — the copy had already drifted, missing the `"encoding": "hex"` field the
+  protocol gained — and assert the exact wire bytes. That is what surfaced item 78.
 
 ### 56. Sixteen protocols never show the model their own actions **[verified]**
 
