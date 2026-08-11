@@ -26,6 +26,29 @@ fn with_port_zero(example: &serde_json::Value) -> serde_json::Value {
     modified
 }
 
+/// Why a protocol cannot start on the host running the test, if it cannot.
+///
+/// A few protocols are genuinely bound to one operating system and refuse to start elsewhere —
+/// deliberately, because reporting `Running` while being unable to do the one thing the
+/// protocol exists for is worse than refusing. Counting that refusal as a startup failure would
+/// make the sweep below assert the opposite of what the protocol promises, so those are skipped
+/// with the reason printed.
+///
+/// Keep this list short and specific. It is for *platform* impossibility only, never for a
+/// protocol that is merely flaky or unfinished.
+fn unsupported_on_this_platform(protocol_name: &str) -> Option<&'static str> {
+    match protocol_name {
+        // A beacon is its advertising payload. Only BlueZ lets an application set
+        // ManufacturerData/ServiceData; CoreBluetooth documents every advertising key other
+        // than the local name and service UUIDs as ignored, so macOS cannot emit a beacon at
+        // all and `spawn()` returns an error there by design.
+        "BLUETOOTH_BLE_BEACON" if !cfg!(target_os = "linux") => {
+            Some("BLE advertising payloads require Linux/BlueZ")
+        }
+        _ => None,
+    }
+}
+
 /// Test that reads and validates all startup examples from all protocols
 ///
 /// This test iterates over all registered protocols and verifies their
@@ -247,7 +270,14 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
     let mut failed = 0;
     let mut errors: Vec<(String, String)> = Vec::new();
 
+    let mut skipped = 0;
+
     for (name, protocol) in &all_protocols {
+        if let Some(reason) = unsupported_on_this_platform(name) {
+            println!("  - {} - skipped: {}", name, reason);
+            skipped += 1;
+            continue;
+        }
         let startup_examples = protocol.get_startup_examples();
         let llm_mode_with_port_0 = with_port_zero(&startup_examples.llm_mode);
 
@@ -289,9 +319,11 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
         }
     }
 
+    let attempted = all_protocols.len() - skipped;
     println!("\n=== Results ===");
-    println!("Passed: {}/{}", passed, all_protocols.len());
-    println!("Failed: {}/{}", failed, all_protocols.len());
+    println!("Passed: {}/{}", passed, attempted);
+    println!("Failed: {}/{}", failed, attempted);
+    println!("Skipped (platform): {}", skipped);
 
     if !errors.is_empty() {
         println!("\nFailed protocols:");
@@ -302,7 +334,7 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
 
     // Allow some failures for protocols that may have special requirements
     // but fail if more than 20% fail
-    let failure_threshold = all_protocols.len() / 5;
+    let failure_threshold = attempted / 5;
     if failed > failure_threshold {
         let failed_list: Vec<String> = errors
             .iter()
@@ -311,7 +343,7 @@ async fn test_all_protocols_llm_mode_startup() -> E2EResult<()> {
         panic!(
             "Too many LLM mode startup failures: {}/{} (threshold: {})\n\nFailed protocols:\n  - {}",
             failed,
-            all_protocols.len(),
+            attempted,
             failure_threshold,
             failed_list.join("\n  - ")
         );
@@ -339,7 +371,14 @@ async fn test_all_protocols_static_mode_startup() -> E2EResult<()> {
     let mut failed = 0;
     let mut errors: Vec<(String, String)> = Vec::new();
 
+    let mut skipped = 0;
+
     for (name, protocol) in &all_protocols {
+        if let Some(reason) = unsupported_on_this_platform(name) {
+            println!("  - {} - skipped: {}", name, reason);
+            skipped += 1;
+            continue;
+        }
         let startup_examples = protocol.get_startup_examples();
         let static_mode_with_port_0 = with_port_zero(&startup_examples.static_mode);
 
@@ -374,9 +413,11 @@ async fn test_all_protocols_static_mode_startup() -> E2EResult<()> {
         }
     }
 
+    let attempted = all_protocols.len() - skipped;
     println!("\n=== Results ===");
-    println!("Passed: {}/{}", passed, all_protocols.len());
-    println!("Failed: {}/{}", failed, all_protocols.len());
+    println!("Passed: {}/{}", passed, attempted);
+    println!("Failed: {}/{}", failed, attempted);
+    println!("Skipped (platform): {}", skipped);
 
     if !errors.is_empty() {
         println!("\nFailed protocols:");
@@ -385,7 +426,7 @@ async fn test_all_protocols_static_mode_startup() -> E2EResult<()> {
         }
     }
 
-    let failure_threshold = all_protocols.len() / 5;
+    let failure_threshold = attempted / 5;
     if failed > failure_threshold {
         let failed_list: Vec<String> = errors
             .iter()
@@ -394,7 +435,7 @@ async fn test_all_protocols_static_mode_startup() -> E2EResult<()> {
         panic!(
             "Too many static mode startup failures: {}/{} (threshold: {})\n\nFailed protocols:\n  - {}",
             failed,
-            all_protocols.len(),
+            attempted,
             failure_threshold,
             failed_list.join("\n  - ")
         );

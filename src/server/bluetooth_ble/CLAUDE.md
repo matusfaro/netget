@@ -425,8 +425,14 @@ Full specifications: https://www.bluetooth.com/specifications/assigned-numbers/
 `start_advertising(name, uuids)` takes a local name and a service-UUID list and nothing else, so
 iBeacon (manufacturer data) and Eddystone (service data) are both inexpressible. **0.2.0 is the
 newest release** — only 0.1.0 and 0.2.0 have ever been published, the latest on 2024-12-28 — so
-this is an upstream limit, not a version lag, and `bluetooth_ble_beacon` stays `Incomplete` until
-the crate gains an advertising-payload API or is replaced.
+this is an upstream limit, not a version lag.
+
+`bluetooth_ble_beacon` no longer builds on this stack for that reason. It talks to BlueZ
+directly through `bluer` (Linux only), which is where `ManufacturerData` and `ServiceData` live,
+and refuses to start elsewhere. It is not a profile wrapper any more and shares no code with
+this module — see `src/server/bluetooth_ble_beacon/CLAUDE.md`. If this base ever gains an
+advertising-payload API, that is a chance to re-unify them, not a reason to assume they are
+still related.
 
 ## Error Handling
 

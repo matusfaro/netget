@@ -141,7 +141,7 @@ nfc = []  # Virtual NFC tag over a TCP socket (vpcd framing). Needs no PC/SC: th
 nfc-client = ["dep:pcsc"]  # NFC reader/writer client via PC/SC (ISO14443, APDU, NDEF)
 bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
 bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
-bluetooth-ble-beacon = ["bluetooth-ble"]  # BLE beacon (iBeacon, Eddystone)
+bluetooth-ble-beacon = ["bluetooth-ble", "dep:bluer"]  # BLE beacon (iBeacon, Eddystone) - advertising payload needs BlueZ (Linux only)
 bluetooth-ble-remote = ["bluetooth-ble"]  # BLE media remote control
 bluetooth-ble-battery = ["bluetooth-ble"]  # BLE Battery Service
 bluetooth-ble-heart-rate = ["bluetooth-ble"]  # BLE Heart Rate Service
@@ -919,6 +919,16 @@ hf-hub = { version = "0.3", optional = true, features = ["tokio"] }  # Hugging F
 
 # SQLite database support (in-memory or file-based)
 rusqlite = { version = "0.37", optional = true, features = ["bundled"] }  # SQLite library with bundled SQLite (matches tor-dirmgr dependency)
+
+# Linux-only dependencies
+#
+# BlueZ over D-Bus, for BLE advertising payloads (bluetooth-ble-beacon). This is the same crate
+# ble-peripheral-rust already uses for its Linux backend, so no second D-Bus stack is added; it
+# is declared directly because ble-peripheral-rust exposes no way to set ManufacturerData or
+# ServiceData, which is the entire content of a beacon. Optional and target-gated: enabling the
+# feature on macOS/Windows is a no-op and the protocol refuses to start there.
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { version = "0.17", optional = true, features = ["bluetoothd"] }
 
 [dev-dependencies]
 # For async tests

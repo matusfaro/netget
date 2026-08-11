@@ -7829,6 +7829,7 @@ dependencies = [
  "base64 0.22.1",
  "bitcoin",
  "ble-peripheral-rust",
+ "bluer",
  "bson 3.0.0",
  "btleplug",
  "bytes",

@@ -134,9 +134,21 @@ production `.app` needs `NSBluetoothAlwaysUsageDescription` in its `Info.plist`.
 encountered here — the tests ran and advertised without one — so the exact conditions under which
 macOS demands consent were not established.
 
-### `bluetooth_ble_beacon` cannot be implemented — confirmed, and it is not a version problem
+### `bluetooth_ble_beacon` cannot be implemented **on macOS** — and it is not a version problem
 
-`bluetooth_ble_beacon` is marked `Incomplete` because `ble-peripheral-rust` 0.2 cannot set an
+> **Update.** The conclusion below is still correct about macOS and about `ble-peripheral-rust`,
+> but the protocol is no longer `Incomplete`. It stopped using that crate: on Linux it registers
+> an `org.bluez.LEAdvertisement1` object through `bluer`, and on macOS/Windows `spawn()` now
+> returns an explicit error naming the CoreBluetooth restriction instead of the protocol being
+> hidden from the model. Nothing here changes for a macOS user except that asking for a beacon
+> now produces `ServerStatus::Error` with the reason rather than silence. See
+> `src/server/bluetooth_ble_beacon/CLAUDE.md`.
+>
+> The deeper point stands and is worth keeping: the blocker was never the Rust wrapper.
+> `-[CBPeripheralManager startAdvertising:]` honours exactly two keys and documents the rest as
+> ignored, so hand-written CoreBluetooth bindings would have hit the same wall.
+
+`bluetooth_ble_beacon` was marked `Incomplete` because `ble-peripheral-rust` 0.2 cannot set an
 advertising payload. Checked whether a newer release fixes this:
 
 ```bash
@@ -151,9 +163,10 @@ async fn start_advertising(&mut self, name: &str, uuids: &[Uuid]) -> Result<(), 
 ```
 
 A local name and a service-UUID list, and nothing else. iBeacon needs manufacturer-specific data;
-Eddystone needs service data. Neither can be expressed. `bluetooth_ble_beacon` stays `Incomplete`,
-and this is a hard upstream limit rather than a version lag — it would take an upstream patch or a
-different crate, not a bump.
+Eddystone needs service data. Neither can be expressed. This is a hard upstream limit rather than
+a version lag — it would take an upstream patch or a different crate, not a bump. The resolution
+was the second of those: a different crate (`bluer`, on Linux only), plus an honest refusal
+everywhere else.
 
 ### Test-gating footgun found
 

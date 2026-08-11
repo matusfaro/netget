@@ -28,14 +28,22 @@ Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/proto
 - **Beta** — human-reviewed, works against real clients (12 protocols).
 - **Experimental** — LLM-authored or newly implemented, not fully reviewed. The overwhelming
   majority (~99).
-- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). Down to
-  **one**, and it is a platform limit rather than unfinished work:
-  - `bluetooth_ble_beacon` — **macOS cannot do this at all.** A beacon *is* its advertising
-    payload, and `CBPeripheralManager.startAdvertising:` accepts only
-    `CBAdvertisementDataLocalNameKey` and `CBAdvertisementDataServiceUUIDsKey`; every other key
-    is documented as ignored, so writing our own CoreBluetooth bindings would change nothing.
-    Linux/BlueZ *can* (`org.bluez.LEAdvertisement1` exposes `ManufacturerData`/`ServiceData`),
-    so it is implementable as a Linux-only path if someone wants it.
+- **Incomplete** — hidden from the LLM entirely (`is_available_to_llm()` returns false). **None
+  remain.** The last one, `bluetooth_ble_beacon`, was a platform limit rather than unfinished
+  work, and was resolved by making the platform explicit rather than by hiding the protocol:
+  - A beacon *is* its advertising payload, and `CBPeripheralManager.startAdvertising:` accepts
+    only `CBAdvertisementDataLocalNameKey` and `CBAdvertisementDataServiceUUIDsKey`; every other
+    key is documented as ignored, so macOS cannot emit one and no CoreBluetooth binding would
+    change that. Linux/BlueZ can, via `org.bluez.LEAdvertisement1`'s
+    `ManufacturerData`/`ServiceData` registered on `org.bluez.LEAdvertisingManager1`.
+  - It is now `Experimental`, implemented on Linux with `bluer` (already in the tree as
+    `ble-peripheral-rust`'s Linux backend, so no second D-Bus stack), and `spawn()` returns a
+    clear `Err` naming the reason on every other platform. **Hiding a protocol is not the same
+    as refusing to start it**: hidden, the model never learns why; refused, the user gets
+    `ServerStatus::Error` with the CoreBluetooth key that makes it impossible.
+  - Its payload construction is pure and exhaustively unit-tested against literal spec bytes;
+    its BlueZ transport has never been compiled or run on Linux. `metadata().notes` says both,
+    which is what `Experimental` is for.
 
 Twelve protocols left `Incomplete` in August 2026 — `amqp`, `bgp`, `kafka`, `nfc`, `openvpn`,
 `turn`, `usb/serial`, `usb/smartcard`, `vnc`, `webdav`, `webrtc`, `zookeeper`. Each was verified
@@ -97,9 +105,11 @@ grep -rn "_EVENT" src/server/<p>/mod.rs   # which events does the server actuall
 
 The whole `bluetooth_ble_*` family was a third variant: `BluetoothBle::spawn_with_llm_actions`
 hardcodes `BluetoothBleProtocol` when it calls `call_llm`, so all sixteen profiles' own actions
-and events were unreachable regardless of what they declared. Fifteen now delegate explicitly;
-`bluetooth_ble_beacon` is `Incomplete`, because the underlying crate cannot set an advertising
-payload and a beacon is nothing else.
+and events were unreachable regardless of what they declared. Fifteen now delegate explicitly.
+`bluetooth_ble_beacon` took the other exit: it no longer goes through the base at all, so it
+calls `call_llm` with its own protocol and its own actions really are the ones offered and
+executed. That is the only way a profile can own a vocabulary — delegate the base's, or stop
+using the base.
 
 Per-protocol docs: `src/server/<protocol>/CLAUDE.md` and `tests/server/<protocol>/CLAUDE.md`.
 **Read both before modifying a protocol.** Note that these files are frequently more

@@ -19,15 +19,23 @@ items when fifteen were already fixed and seventeen were findings rather than wo
 
 ### State
 
-`DevelopmentState::Incomplete` is down from twelve to **one**, and that one is a platform limit,
-not unfinished work — see the maturity section of `CLAUDE.md`. Test suite is **393 passed / 0
-failed / 29 ignored** on the CI feature set, clippy clean, `cargo fmt --check` clean.
+`DevelopmentState::Incomplete` is down from twelve to **zero**. The last one,
+`bluetooth_ble_beacon`, was a platform limit rather than unfinished work, and was closed by
+implementing the BlueZ path and making the macOS refusal explicit — see the maturity section of
+`CLAUDE.md`. Test suite is **393 passed / 0 failed / 29 ignored** on the CI feature set, clippy
+clean, `cargo fmt --check` clean.
 
 ### Still open
 
-1. **`bluetooth_ble_beacon` as a Linux-only path.** BlueZ can set `ManufacturerData`; macOS
-   cannot, by Apple's design. Needs a decision about whether a protocol that cannot run on the
-   maintainer's own machine is worth carrying.
+1. **`bluetooth_ble_beacon` on real Linux hardware.** *(Implemented, unverified.)* The
+   Linux-only BlueZ path exists — `bluer` registering `org.bluez.LEAdvertisement1` on
+   `org.bluez.LEAdvertisingManager1` — and macOS/Windows now return an explicit `Err` from
+   `spawn()` instead of the protocol being hidden. Payload construction is pure and tested
+   byte-for-byte against the Apple and google/eddystone layouts. What is still open is that the
+   BlueZ half has never been **compiled or run on Linux**, so first use is bring-up: an
+   `#[ignore]`d test in `tests/server/bluetooth_ble_beacon/e2e_test.rs` is the starting point,
+   and `btmon` is the confirmation. Also note the release `dist` (Linux) feature set excludes
+   all `bluetooth-ble*` for libdbus reasons, so the shipped Linux binary does not contain it.
 2. **BGP client has no hold-timer enforcement.** It sends keepalives at the negotiated cadence
    but only notices a silent peer when TCP does. Needs a shutdown `Notify` so the ticker can
    interrupt a blocked `read_exact`, as the server has.
@@ -958,9 +966,12 @@ emitted, the base's `.with_actions(...)` lists the only vocabulary offered, and
 the family was unreachable no matter what it declared.
 
 Fixed in `3a7bbb5a`, `691de8d8`, `f17e3f1c`: fifteen profiles now delegate explicitly the way
-`doh`/`dot` do, and `bluetooth_ble_beacon` is `Incomplete` — `ble-peripheral-rust` 0.2 exposes
-no advertising-payload API, and a beacon is nothing but its advertising payload, so delegating
-would have handed it a working GATT vocabulary that is precisely not a beacon.
+`doh`/`dot` do. `bluetooth_ble_beacon` was left `Incomplete` at the time — `ble-peripheral-rust`
+0.2 exposes no advertising-payload API, and a beacon is nothing but its advertising payload, so
+delegating would have handed it a working GATT vocabulary that is precisely not a beacon. It has
+since taken the third exit: it stopped using the base stack altogether, talks to BlueZ directly
+through `bluer`, and calls `call_llm` with its own protocol — so a profile has exactly two
+honest options, delegate the base's vocabulary or stop going through the base.
 
 Along the way: two profiles discarded the user's instruction entirely, one had actions declared
 but absent from its own match arm, several advertised a connection table that cannot be
@@ -1225,7 +1236,7 @@ protocols were rated above what they could do:
 | webrtc | Experimental | Incomplete | `spawn` binds nothing; `accept_offer` has no caller |
 | webdav | Experimental | Incomplete | serves a real in-process `MemFs`, never consults the model |
 | vnc | Experimental | Incomplete | no LLM integration at all |
-| bluetooth_ble_beacon | Experimental | Incomplete | the crate cannot set an advertising payload |
+| bluetooth_ble_beacon | Experimental | Incomplete, since promoted back to Experimental | the crate could not set an advertising payload; now bypasses it with BlueZ on Linux and refuses elsewhere |
 
 `nfc`, `bgp` and `usb_smartcard` were already `Incomplete` and remain so, correctly.
 

@@ -1,150 +1,79 @@
-# BLE Beacon E2E Tests
+# BLE Beacon Tests
 
-## Test Strategy
+## Strategy
 
-BLE beacons are **advertisement-only** devices that broadcast data without accepting connections. Testing requires a BLE
-scanner to detect and parse advertising packets.
+A beacon is advertisement-only: no connection, no request, no response. There is nothing a test
+can send it and nothing it will send back. Confirming a frame is really on air needs a **second
+radio** running a scanner, on a Linux host with `bluetoothd` and an adapter. Neither CI nor a
+macOS dev machine can do that.
 
-### Test Approach
+So the suite is split by what is actually knowable:
 
-**Black-box testing**: Tests validate beacon behavior by scanning for advertising packets and verifying:
+| File | Runs everywhere | What it proves |
+|---|---|---|
+| `payload_test.rs` | yes | The advertising octets are correct, against literal spec-derived bytes |
+| `e2e_test.rs` | yes | Registry wiring, startup parameters, and the non-Linux refusal |
+| `e2e_test.rs` (`#[ignore]`d Linux test) | no | That BlueZ accepts the advertisement — run by hand on hardware |
 
-- Beacon type (iBeacon, Eddystone-UID, Eddystone-URL, Eddystone-TLM)
-- Advertising data format (Apple/Google standard compliance)
-- TX power calibration values
-- UUID/namespace/instance identifiers
+**No LLM calls.** Nothing here starts the netget binary or a mock Ollama, so the budget is zero.
+That is a deliberate change: the previous version of this directory spawned the binary three
+times, mocked `bluetooth_ble_started`, and asserted a server started — which exercised the
+`bluetooth-ble` base stack's LLM plumbing, needed a real adapter, and said nothing whatever
+about beacons, at a time when the protocol could not emit a beacon frame at all.
 
-### Client Library
+## `payload_test.rs`
 
-Using **btleplug** as BLE central/scanner to detect beacons:
+Every expected byte string is written out literally and derived from the published layout, not
+from the implementation. Sources are named in the file header:
 
-- Cross-platform (same as bluetooth-ble-client)
-- Supports passive scanning (no connection required)
-- Parses manufacturer-specific data and service data
+- Apple, "Getting Started with iBeacon" (2014) §2.1
+- `github.com/google/eddystone`, `eddystone-uid` and `eddystone-url`
+- Bluetooth Core Specification Supplement, Part A (AD structures, the 31-octet limit)
 
-## Test Cases
+Coverage worth keeping if these tests are ever rewritten:
 
-### 1. iBeacon Advertising Test
+- **Endianness.** `ibeacon_major_and_minor_are_big_endian` uses 0x1234/0xABCD. Values like
+  1 and 100 hide a byte swap; asymmetric ones do not.
+- **Signed power octets.** -59 is 0xC5, -12 is 0xF4, -20 is 0xEC. A cast bug is invisible on 0.
+- **AD length octets.** 0x1A for the iBeacon manufacturer structure, 0x17 for Eddystone-UID's
+  service data, 0x0E for the example URL frame. The length counts the type and UUID octets and
+  not itself; the pre-rewrite Eddystone-URL builder got exactly this wrong (it wrote `3 + len`
+  where the answer is `6 + len`) and no test noticed because none existed.
+- **The URL tables.** All four scheme prefixes *and* all fourteen suffix codes, each asserted
+  separately. The old builder implemented the schemes and ignored the suffixes entirely, which
+  costs four octets on `.com/` out of a 17-octet budget.
+- **The 17-octet boundary from both sides**: 17 accepted, 18 refused.
+- **Char-safe truncation** of the device name, with a multi-byte string whose cut point falls
+  mid-character.
 
-**LLM Budget**: 1 call (start server with beacon protocol)
+## `e2e_test.rs`
 
-**Note**: Uses `base_stack: "BLUETOOTH_BLE_BEACON"` (not "BluetoothBLE") to match the protocol's `stack_name()`.
+Constructs a real `SpawnContext` and calls `Server::spawn` in-process. The LLM endpoint points
+at `127.0.0.1:1` on purpose: every assertion is about a failure that must happen *before* any
+model call, so a test that could quietly reach a running Ollama would not be testing it.
 
-Validates:
+The non-Linux test asserts three things, and the third is the one that matters: the error names
+the platform, the error names the CoreBluetooth key that makes it impossible, and **no server
+handle is left registered**. A refused spawn that leaves state behind is the half-started server
+this whole change exists to prevent.
 
-- Server starts without errors
-- Beacon protocol is properly registered and accessible
+## Running
 
-### 2. Eddystone-UID Advertising Test
-
-**LLM Budget**: 1 call (start server with beacon protocol)
-
-**Note**: Uses `base_stack: "BLUETOOTH_BLE_BEACON"` to match the protocol's `stack_name()`.
-
-Validates:
-
-- Server starts without errors
-- Beacon protocol handles Eddystone-UID configuration
-
-### 3. Eddystone-URL Advertising Test
-
-**LLM Budget**: 1 call (start server with beacon protocol)
-
-**Note**: Uses `base_stack: "BLUETOOTH_BLE_BEACON"` to match the protocol's `stack_name()`.
-
-Validates:
-
-- Server starts without errors
-- Beacon protocol handles Eddystone-URL configuration
-
-## LLM Call Budget
-
-**Total**: 3 LLM calls (one per test)
-
-- iBeacon test: 1 call (server startup only)
-- Eddystone-UID test: 1 call (server startup only)
-- Eddystone-URL test: 1 call (server startup only)
-
-**Optimization**: Tests use mocks and only verify that the beacon server starts successfully. Actual beacon advertising functionality is tested via the underlying bluetooth-ble protocol.
-
-## Expected Runtime
-
-- **Per test**: 5-10 seconds (LLM response + BLE scan duration)
-- **Total suite**: 30-50 seconds
-
-**Scan Duration**: BLE scanning requires 2-5 seconds to reliably detect advertising packets due to advertising
-intervals (typically 100ms-1s).
-
-## Test Environment Requirements
-
-### Hardware
-
-- **BLE adapter** required (USB dongle, built-in Bluetooth)
-- **Permissions**: No special permissions (scanning only, no pairing)
-
-### Platform Support
-
-- **Linux**: BlueZ with D-Bus permissions
-- **macOS**: Bluetooth enabled (system dialogs may appear)
-- **Windows**: Windows 10+ with Bluetooth
-
-### CI/CD Considerations
-
-- Tests **cannot run** in headless CI without BLE hardware
-- Mark as `#[ignore]` for CI, run manually on dev machines
-- Consider mocking BLE advertising for unit tests
-
-## Known Issues
-
-### Scan Timing
-
-- BLE advertising intervals vary (100ms-10s)
-- Tests may need longer scan durations for reliability
-- Retry logic recommended for flaky scanning
-
-### Platform Differences
-
-- **macOS**: System may cache advertising data, causing stale results
-- **Windows**: BLE stack may not support all advertising data types
-- **Linux**: Requires BlueZ daemon and D-Bus access
-
-### Beacon Detection
-
-- Multiple beacons advertising simultaneously may interfere
-- Tests should use unique UUIDs/namespaces to avoid conflicts
-- Stop previous beacon before starting next test
-
-## Test Fixtures
-
-### Beacon Scanner Helper
-
-```rust
-async fn scan_for_beacon(
-    timeout: Duration,
-    filter: impl Fn(&Advertisement) -> bool,
-) -> Option<Advertisement>
+```bash
+./cargo-isolated.sh test --no-default-features --features bluetooth-ble-beacon \
+    --test server bluetooth_ble_beacon -- --test-threads=100
 ```
 
-Scans for BLE beacons matching a filter predicate.
+On Linux hardware, add the ignored test:
 
-### UUID/Namespace Generators
-
-```rust
-fn random_uuid() -> String
-fn random_namespace() -> String
+```bash
+cargo test --no-default-features --features bluetooth-ble-beacon \
+    --test server bluetooth_ble_beacon -- --ignored --test-threads=100
+sudo btmon    # in another terminal: confirm the ADV_NONCONN_IND payload
 ```
 
-Generate unique identifiers to avoid beacon conflicts.
+## What still has no coverage
 
-## Limitations
-
-- **No connection testing**: Beacons don't accept connections
-- **No RSSI accuracy**: Cannot validate TX power calibration without physical measurement
-- **No Eddystone-EID**: Encrypted ephemeral IDs require key exchange (complex)
-- **No interleaved advertising**: Cannot test multiple beacon types simultaneously
-
-## References
-
-- iBeacon Spec: https://developer.apple.com/ibeacon/
-- Eddystone Spec: https://github.com/google/eddystone
-- btleplug Library: https://github.com/deviceplug/btleplug
+Everything past `Adapter::advertise`. Nothing in this repository has ever put a beacon frame on
+the air, and no test here can. Do not let a green run be read as "the beacon works" — it means
+"the bytes are right and the platform gate is honest".
