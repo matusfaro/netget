@@ -368,7 +368,7 @@ pub trait Server: Protocol {
     }
 }
 
-/// Report event types that declare no actions while their protocol declares sync actions.
+/// Report event types that leave the model without a protocol vocabulary to answer them.
 ///
 /// This is the item-56 defect: the model answering such an event is handed only
 /// `set_memory`/`append_memory`/`show_message`/`append_to_log`, so every protocol action it
@@ -377,6 +377,22 @@ pub trait Server: Protocol {
 /// `.with_no_actions()`, which this ignores.
 ///
 /// Returns one human-readable finding per offending event; empty means the protocol is clean.
+///
+/// # The hole this used to have
+///
+/// It early-returned when `get_sync_actions()` was empty, on the reasoning that "a protocol
+/// with nothing to advertise is not withholding anything". That reasoning is backwards, and it
+/// made the guard **pass hardest on the most broken protocol in the tree**: `usb-fido2`
+/// declared zero sync actions *and* three events with no actions, so it could not answer any
+/// event at all, and the audit waved it through with `0 findings`. A protocol that offers the
+/// model nothing is the worst case, not the exempt case.
+///
+/// The one legitimate shape is **delegation**: `doh` and `dot` return `DnsProtocol`'s sync
+/// actions from their own `get_sync_actions()` and attach them to their events, so they are
+/// non-empty on both counts and never reach this branch. Delegation that forwards another
+/// protocol's actions is therefore already covered — what is flagged is an event with an
+/// empty, non-intentional action list, whether or not the protocol declares sync actions of
+/// its own. The deliberate case is still `EventType::with_no_actions()`.
 ///
 /// # Where this belongs
 ///
@@ -389,30 +405,40 @@ pub trait Server: Protocol {
 ///
 /// `tests/event_action_declarations_test.rs` runs this over the whole registry, which
 /// catches the defect in CI for every protocol rather than only for the ones a run happens
-/// to start.
+/// to start — though only for the features that run happens to compile in, which is why the
+/// test also asserts a lower bound on how many protocols it inspected.
 pub fn audit_event_action_declarations(protocol: &dyn Protocol) -> Vec<String> {
     let sync_action_count = protocol.get_sync_actions().len();
-    if sync_action_count == 0 {
-        // A protocol with no sync actions has nothing to advertise, so an event with an
-        // empty action list is not withholding anything.
-        return Vec::new();
-    }
 
     protocol
         .get_event_types()
         .into_iter()
         .filter(|event_type| event_type.has_no_usable_actions())
         .map(|event_type| {
-            format!(
-                "event '{}' of protocol '{}' declares no actions of its own, so the model \
-                 would be offered none of the protocol's {} sync action(s) and anything \
-                 protocol-specific it returned would be rejected as an unknown action. Fix by \
-                 adding .with_actions(...) to the event type, or .with_no_actions() if it \
-                 genuinely needs none.",
-                event_type.id,
-                protocol.protocol_name(),
-                sync_action_count
-            )
+            if sync_action_count == 0 {
+                format!(
+                    "event '{}' of protocol '{}' declares no actions, and the protocol declares \
+                     no sync actions either, so this protocol offers the model nothing: every \
+                     protocol-specific action it could return would be rejected as unknown and \
+                     the event cannot be answered at all. Fix by declaring sync actions and \
+                     attaching them with .with_actions(...), by delegating another protocol's \
+                     action set (as doh/dot do for DNS), or by .with_no_actions() if the event \
+                     genuinely needs none.",
+                    event_type.id,
+                    protocol.protocol_name(),
+                )
+            } else {
+                format!(
+                    "event '{}' of protocol '{}' declares no actions of its own, so the model \
+                     would be offered none of the protocol's {} sync action(s) and anything \
+                     protocol-specific it returned would be rejected as an unknown action. Fix by \
+                     adding .with_actions(...) to the event type, or .with_no_actions() if it \
+                     genuinely needs none.",
+                    event_type.id,
+                    protocol.protocol_name(),
+                    sync_action_count
+                )
+            }
         })
         .collect()
 }
