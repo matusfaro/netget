@@ -33,6 +33,13 @@ pub struct ParsedSnmpInfo {
 }
 
 /// SNMP server that forwards requests to LLM
+/// SNMP `error-status` genErr (RFC 1157 §4.1.1, RFC 3416 §3): "the agent could not produce
+/// this response for reasons not covered by any other status".
+///
+/// Any non-zero error-status makes the Response PDU an error report rather than an answer, so
+/// no manager can read this as a value for the requested OID.
+pub const SNMP_ERROR_GEN_ERR: u8 = 5;
+
 pub struct SnmpServer;
 
 impl SnmpServer {
@@ -235,8 +242,60 @@ impl SnmpServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("SNMP LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ SNMP LLM error: {}", e));
+                                    // SNMP is UDP, but unlike bare UDP it carries a
+                                    // request-id, so a reply is unambiguously *this*
+                                    // request's answer and cannot be mistaken for anything
+                                    // else. Silence would leave the manager retrying until
+                                    // its own timeout and then reporting the agent as down -
+                                    // which is not what happened.
+                                    //
+                                    // genErr(5) is the generic "the agent could not produce
+                                    // this value" status. It is the only honest choice: the
+                                    // alternative, a Response PDU with error-status 0, means
+                                    // the varbinds *are* the answer, so an empty one would
+                                    // read as "this OID has no value" rather than "nobody
+                                    // looked". SNMP has no retryable error-status for a GET
+                                    // (resourceUnavailable(13) is defined for SET), so the
+                                    // overload distinction lives in the log rather than on
+                                    // the wire.
+                                    let overloaded = crate::llm::is_overload_error(&e);
+                                    error!(
+                                        "SNMP LLM call failed for request {} from {} (overload={}): {}",
+                                        request_id, peer_addr, overloaded, e
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[ERROR] SNMP replying genErr to {} for request {} (overload={}): {}",
+                                        peer_addr, request_id, overloaded, e
+                                    ));
+                                    match Self::build_response_message(
+                                        version,
+                                        request_id,
+                                        &community_clone,
+                                        SNMP_ERROR_GEN_ERR,
+                                        0,
+                                        vec![],
+                                    ) {
+                                        Ok(pdu) => {
+                                            if let Err(send_err) =
+                                                socket_clone.send_to(&pdu, peer_addr).await
+                                            {
+                                                error!(
+                                                    "Failed to send SNMP genErr response to {}: {}",
+                                                    peer_addr, send_err
+                                                );
+                                            }
+                                        }
+                                        Err(build_err) => {
+                                            error!(
+                                                "Failed to build SNMP genErr response for {}: {}",
+                                                peer_addr, build_err
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[ERROR] SNMP could not encode genErr for {}: {}",
+                                                peer_addr, build_err
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         });

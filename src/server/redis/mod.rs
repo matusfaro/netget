@@ -367,11 +367,25 @@ impl RedisHandler {
                                 }
                             }
                             Err(e) => {
-                                error!("LLM error for Redis command: {}", e);
-                                response.extend_from_slice(&encode_error(&format!(
-                                    "ERR LLM error: {}",
-                                    e
-                                )));
+                                // A RESP error is the only thing a client can do anything
+                                // with here, and `redis-rs`, `jedis` and `redis-py` all
+                                // surface it as an exception rather than a value - so it
+                                // cannot be mistaken for a reply to the command.
+                                //
+                                // `-LOADING` when the backend is merely saturated: clients
+                                // already know that prefix means "not ready yet, retry", and
+                                // several retry it automatically. Anything else is `-ERR`.
+                                let overloaded = crate::llm::is_overload_error(&e);
+                                error!(
+                                    "LLM error for Redis command '{}' on connection {} (overload={}): {}",
+                                    command_str, self.connection_id, overloaded, e
+                                );
+                                let message = redis_error_message(&e, overloaded);
+                                let _ = self.status_tx.send(format!(
+                                    "[ERROR] Redis connection {} replying: -{}",
+                                    self.connection_id, message
+                                ));
+                                response.extend_from_slice(&encode_error(&message));
                             }
                         }
 
@@ -460,6 +474,21 @@ fn encode_integer(i: i64) -> Vec<u8> {
 /// Encode an error response ("-ERR message\r\n")
 fn encode_error(msg: &str) -> Vec<u8> {
     format!("-{}\r\n", msg).into_bytes()
+}
+
+/// The RESP simple-error payload to send when the LLM backend fails.
+///
+/// A RESP simple error is terminated by CRLF and has no length prefix, so a newline anywhere
+/// in the text ends the frame early and the remainder is parsed as the *next* reply. Model and
+/// backend error strings are routinely multi-line (a timeout with a URL, a serde error with a
+/// snippet), so this is not theoretical: it would desynchronise the connection for good.
+fn redis_error_message(err: &anyhow::Error, overloaded: bool) -> String {
+    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
+    if overloaded {
+        format!("LOADING netget: backend at capacity, retry later: {reason}")
+    } else {
+        format!("ERR netget: {reason}")
+    }
 }
 
 /// Encode an array response.

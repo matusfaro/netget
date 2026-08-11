@@ -239,9 +239,32 @@ impl MemcachedServer {
                                 (bytes, close)
                             }
                             Err(e) => {
-                                error!("Memcached LLM call failed for {}: {}", peer_addr, e);
-                                let _ = status_tx.send(format!("✗ Memcached LLM error: {}", e));
-                                (b"SERVER_ERROR backend unavailable\r\n".to_vec(), false)
+                                // `SERVER_ERROR <text>` is the protocol's own way to say the
+                                // server failed on an otherwise valid command, and no client
+                                // treats it as data - so it can never be read as a cache hit,
+                                // a stored value or a successful delete.
+                                //
+                                // The reason is stripped of CR/LF: memcached replies are
+                                // CRLF-terminated with no length prefix, so a newline inside
+                                // the text would end the reply early and the rest would be
+                                // parsed as the next one.
+                                let overloaded = crate::llm::is_overload_error(&e);
+                                error!(
+                                    "Memcached LLM call failed for {} (overload={}): {}",
+                                    peer_addr, overloaded, e
+                                );
+                                let reason = crate::utils::truncate_for_log(&e.to_string(), 200)
+                                    .replace(['\r', '\n'], " ");
+                                let reply = if overloaded {
+                                    format!(
+                                        "SERVER_ERROR netget: backend at capacity, retry later: {reason}\r\n"
+                                    )
+                                } else {
+                                    format!("SERVER_ERROR netget: {reason}\r\n")
+                                };
+                                let _ = status_tx
+                                    .send(format!("[ERROR] Memcached replying: {}", reply.trim()));
+                                (reply.into_bytes(), false)
                             }
                         };
 

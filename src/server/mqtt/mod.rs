@@ -73,6 +73,15 @@ pub const PKT_PINGREQ: u8 = 12;
 pub const PKT_PINGRESP: u8 = 13;
 pub const PKT_DISCONNECT: u8 = 14;
 
+/// CONNACK return code 3, "Connection Refused, Server unavailable" (3.1.1 §3.2.2.3).
+///
+/// The spec requires the server to close the connection after any non-zero CONNACK, so this
+/// is a complete refusal rather than a warning the client can ignore.
+pub const CONNACK_SERVER_UNAVAILABLE: u8 = 3;
+
+/// SUBACK return code 0x80, "Failure" (3.1.1 §3.9.3). One per topic filter.
+pub const SUBACK_FAILURE: u8 = 0x80;
+
 /// MQTT broker
 pub struct MqttServer;
 
@@ -244,9 +253,17 @@ async fn handle_mqtt_connection(
                     warn!("MQTT protocol error from {}: {}", peer_addr, e);
                     console_warn!(status_tx, "MQTT protocol error from {}: {}", peer_addr, e);
                     // A malformed packet desynchronises the stream; the spec says close.
-                    drop(out_tx);
-                    let _ = writer_handle.await;
-                    cleanup(&app_state, server_id, connection_id, &client_id, &status_tx).await;
+                    finish_connection(
+                        protocol,
+                        out_tx,
+                        writer_handle,
+                        &app_state,
+                        server_id,
+                        connection_id,
+                        &client_id,
+                        &status_tx,
+                    )
+                    .await;
                     return Ok(());
                 }
             };
@@ -273,9 +290,17 @@ async fn handle_mqtt_connection(
             .await;
 
             if !keep_open {
-                drop(out_tx);
-                let _ = writer_handle.await;
-                cleanup(&app_state, server_id, connection_id, &client_id, &status_tx).await;
+                finish_connection(
+                    protocol,
+                    out_tx,
+                    writer_handle,
+                    &app_state,
+                    server_id,
+                    connection_id,
+                    &client_id,
+                    &status_tx,
+                )
+                .await;
                 return Ok(());
             }
         }
@@ -292,10 +317,56 @@ async fn handle_mqtt_connection(
         close_reason
     );
 
-    drop(out_tx);
-    let _ = writer_handle.await;
-    cleanup(&app_state, server_id, connection_id, &client_id, &status_tx).await;
+    finish_connection(
+        protocol,
+        out_tx,
+        writer_handle,
+        &app_state,
+        server_id,
+        connection_id,
+        &client_id,
+        &status_tx,
+    )
+    .await;
     Ok(())
+}
+
+/// Shut one connection down: flush whatever is still queued, then release everything.
+///
+/// The ordering is the whole point. The writer task ends when its receiver sees every sender
+/// gone, and there are three: the local `out_tx`, a clone inside `MqttProtocol` (so actions can
+/// write to this connection) and a clone in the global client directory (so *another*
+/// connection's `mqtt_publish` can). Awaiting the writer while any of them is still alive waits
+/// forever - which it did: `drop(out_tx); writer_handle.await;` on all three exit paths left
+/// every MQTT connection task and its socket parked permanently, including on the ordinary
+/// client-disconnect path and on `close_this_connection`.
+///
+/// So: unregister from the directory, drop the protocol handle, drop the local sender, and only
+/// then wait for the queue to drain. The wait is bounded anyway - a sender leaked by some
+/// future change must not be able to wedge a connection task again.
+#[allow(clippy::too_many_arguments)]
+async fn finish_connection(
+    protocol: Arc<MqttProtocol>,
+    out_tx: mpsc::UnboundedSender<Vec<u8>>,
+    writer_handle: tokio::task::JoinHandle<()>,
+    app_state: &Arc<AppState>,
+    server_id: crate::state::ServerId,
+    connection_id: ConnectionId,
+    client_id: &Option<String>,
+    status_tx: &mpsc::UnboundedSender<String>,
+) {
+    cleanup(app_state, server_id, connection_id, client_id, status_tx).await;
+    drop(protocol);
+    drop(out_tx);
+    if tokio::time::timeout(std::time::Duration::from_secs(5), writer_handle)
+        .await
+        .is_err()
+    {
+        warn!(
+            "MQTT connection {}: writer did not finish within 5s, abandoning it",
+            connection_id
+        );
+    }
 }
 
 async fn cleanup(
@@ -404,7 +475,8 @@ async fn dispatch_packet(
                 LlmOutcome::Responded => true,
                 LlmOutcome::Silent => {
                     // CONNACK is mandatory (3.2). Accept by default rather than let the
-                    // client sit in its connect timeout.
+                    // client sit in its connect timeout. Safe only because the handler ran
+                    // and declined to decide - see `LlmOutcome::Failed`.
                     console_warn!(
                         status_tx,
                         "MQTT no mqtt_connack from handler for '{}'; accepting by default",
@@ -412,6 +484,22 @@ async fn dispatch_packet(
                     );
                     let _ = out_tx.send(build_connack(0, false));
                     true
+                }
+                LlmOutcome::Failed => {
+                    // CONNACK return code 3 is "Server unavailable" (3.2.2.3). It refuses the
+                    // connection, and 3.2.2.3 requires the server to close afterwards - so a
+                    // client cannot proceed to PUBLISH or SUBSCRIBE on the strength of a
+                    // backend that never answered. Never code 0 here: that is an accepted
+                    // connection, and for a CONNECT carrying credentials it is an
+                    // authentication decision made by an outage.
+                    console_error!(
+                        status_tx,
+                        "MQTT refusing CONNECT from '{}' with CONNACK 3 (server unavailable): \
+                         backend failed",
+                        effective_id
+                    );
+                    let _ = out_tx.send(build_connack(CONNACK_SERVER_UNAVAILABLE, false));
+                    false
                 }
             }
         }
@@ -489,6 +577,24 @@ async fn dispatch_packet(
                     }
                     true
                 }
+                LlmOutcome::Failed => {
+                    // MQTT 3.1.1 has no failure code in PUBACK or PUBREC - the acknowledgement
+                    // is a two-byte packet identifier and nothing else - so there is no way to
+                    // say "received but not handled". Sending one anyway would tell the
+                    // publisher its message was taken, which is the one thing that must not
+                    // happen when nothing looked at it. The spec's only channel for a broker
+                    // error at this point is closing the connection, so that is what happens:
+                    // the publisher gets no acknowledgement, keeps the message, and retries
+                    // on reconnect exactly as QoS 1/2 promise.
+                    console_error!(
+                        status_tx,
+                        "MQTT closing connection: backend failed on PUBLISH (qos={}, id={}), \
+                         acknowledging it would claim delivery",
+                        qos,
+                        publish.packet_id
+                    );
+                    false
+                }
             }
         }
 
@@ -564,6 +670,22 @@ async fn dispatch_packet(
                     let _ = out_tx.send(build_suback(sub.packet_id, &granted));
                     true
                 }
+                LlmOutcome::Failed => {
+                    // SUBACK carries a per-filter return code, and 0x80 is Failure (3.9.3).
+                    // This is the one place in 3.1.1 where a refusal has a proper wire form,
+                    // so use it rather than granting: granting a subscription is an access
+                    // decision, and nothing decided it.
+                    let refused = vec![SUBACK_FAILURE; sub.topics.len()];
+                    console_error!(
+                        status_tx,
+                        "MQTT refusing all {} subscription(s) from '{}' with SUBACK 0x80: \
+                         backend failed",
+                        sub.topics.len(),
+                        name
+                    );
+                    let _ = out_tx.send(build_suback(sub.packet_id, &refused));
+                    true
+                }
             }
         }
 
@@ -609,6 +731,19 @@ async fn dispatch_packet(
                     let _ = out_tx.send(build_ack(PKT_UNSUBACK, unsub.packet_id));
                     true
                 }
+                LlmOutcome::Failed => {
+                    // Like PUBACK, UNSUBACK in 3.1.1 is a bare packet identifier with no
+                    // failure code, and it means "the subscriptions are gone". Claiming that
+                    // when nothing processed the request would leave the client believing it
+                    // had unsubscribed. Close instead.
+                    console_error!(
+                        status_tx,
+                        "MQTT closing connection: backend failed on UNSUBSCRIBE (id={}), \
+                         acknowledging it would claim the subscriptions were removed",
+                        unsub.packet_id
+                    );
+                    false
+                }
             }
         }
 
@@ -641,10 +776,27 @@ async fn dispatch_packet(
 enum LlmOutcome {
     /// The handler produced the packet the protocol owes this client.
     Responded,
-    /// The handler produced no such packet; the caller applies its protocol default.
+    /// The handler ran and produced no such packet; the caller applies its protocol default.
     Silent,
     /// The handler asked to close the connection.
     Closed,
+    /// The handler could not run at all - the LLM backend failed, timed out, or answered with
+    /// something unusable.
+    ///
+    /// This must stay distinct from [`LlmOutcome::Silent`], and the reason is the most
+    /// dangerous bug this module had: `Silent`'s CONNECT default is `build_connack(0, ...)`,
+    /// which is *Connection Accepted*. Collapsing a backend failure into `Silent` meant an
+    /// LLM outage authenticated every MQTT client that asked, credentials and all, and made a
+    /// model's explicit refusal indistinguishable from the backend being down. The `Silent`
+    /// defaults are permissive on purpose - they encode "the handler had nothing to say about
+    /// a decision the spec requires me to make" - and that is only safe when the handler
+    /// actually ran.
+    ///
+    /// There is no retryable/non-retryable split here because MQTT 3.1.1 has no wire form for
+    /// one: CONNACK's only "come back later" code is 3 (server unavailable), SUBACK's only
+    /// failure code is 0x80, and PUBACK/UNSUBACK have no code at all. The overload
+    /// distinction is therefore logged rather than encoded.
+    Failed,
 }
 
 /// Hand an event to the handler chain and report whether the mandatory reply was
@@ -697,14 +849,20 @@ async fn run_llm(
             }
         }
         Err(e) => {
-            error!("MQTT handler failed for {}: {}", event.event_type.id, e);
+            let overloaded = crate::llm::is_overload_error(&e);
+            error!(
+                "MQTT handler failed for {} on connection {} (overload={}): {}",
+                event.event_type.id, connection_id, overloaded, e
+            );
             console_error!(
                 status_tx,
-                "MQTT handler failed for {}: {}",
+                "MQTT handler failed for {} on connection {} (overload={}): {}",
                 event.event_type.id,
+                connection_id,
+                overloaded,
                 e
             );
-            LlmOutcome::Silent
+            LlmOutcome::Failed
         }
     }
 }

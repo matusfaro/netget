@@ -94,6 +94,18 @@ async fn test_mqtt_basic_connect() -> E2EResult<()> {
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "MQTT", "instruction": "MQTT broker accepting connections"}]))
                     .expect_calls(1)
                     .and()
+                    // The handler must actually run and accept. This rule used to be absent,
+                    // so the test passed on the CONNECT fail-open default (CONNACK return code
+                    // 0 whenever the handler produced nothing, including when it could not run
+                    // at all) - i.e. it asserted that a broker with a dead backend lets clients
+                    // in. A refusal is now the correct answer in that case, so the acceptance
+                    // this test is about has to be asked for.
+                    .on_event("mqtt_connect")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "mqtt_connack", "return_code": 0, "session_present": false}
+                    ]))
+                    .expect_calls(1)
+                    .and()
             });
 
     let test_state = start_netget_server(config).await?;
