@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 /// DNS server that integrates with LLM for query handling
 pub struct DnsServer;
@@ -221,9 +221,58 @@ impl DnsServer {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("DNS LLM call failed: {}", e);
+                                            // Answer SERVFAIL rather than dropping the query.
+                                            //
+                                            // Silence here costs the client its full per-server
+                                            // timeout (5s in glibc) before it tries anywhere
+                                            // else; SERVFAIL makes it move on at once. The
+                                            // query ID and question section are echoed, without
+                                            // which a stub resolver discards the packet and we
+                                            // are back to silence.
+                                            error!(
+                                                "DNS LLM call failed for query from {} ({}): {}",
+                                                peer_addr, connection_id, e
+                                            );
                                             let _ =
                                                 status_clone.send(format!("✗ DNS LLM error: {e}"));
+                                            if crate::llm::is_overload_error(&e) {
+                                                warn!(
+                                                    "DNS SERVFAIL to {}: LLM capacity exhausted",
+                                                    peer_addr
+                                                );
+                                            }
+
+                                            match actions::build_servfail(&query) {
+                                                Ok(packet) => {
+                                                    let _ = socket_clone
+                                                        .send_to(&packet, peer_addr)
+                                                        .await;
+                                                    state_clone
+                                                        .update_connection_stats(
+                                                            server_id,
+                                                            connection_id,
+                                                            None,
+                                                            Some(packet.len() as u64),
+                                                            None,
+                                                            Some(1),
+                                                        )
+                                                        .await;
+                                                    let _ = status_clone.send(format!(
+                                                        "→ DNS SERVFAIL to {} ({} bytes)",
+                                                        peer_addr,
+                                                        packet.len()
+                                                    ));
+                                                }
+                                                Err(build_err) => {
+                                                    error!(
+                                                        "DNS failed to build SERVFAIL for {}: {}",
+                                                        peer_addr, build_err
+                                                    );
+                                                    let _ = status_clone.send(format!(
+                                                        "✗ DNS failed to build SERVFAIL: {build_err}"
+                                                    ));
+                                                }
+                                            }
                                         }
                                     }
                                 }

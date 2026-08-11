@@ -377,3 +377,18 @@ When scripting enabled:
 - [RFC 3596: DNS Extensions to Support IPv6 (AAAA)](https://datatracker.ietf.org/doc/html/rfc3596)
 - [hickory-dns Documentation](https://docs.rs/hickory-proto/latest/hickory_proto/)
 - [DNS Query Types (IANA)](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4)
+
+## Failure behaviour: SERVFAIL, never silence
+
+When `call_llm` returns `Err` — backend down, overloaded, or no usable response — the query is
+answered with **SERVFAIL (RCODE 2)** rather than dropped. `actions::build_servfail` copies the
+transaction ID and the question section off the request and clears AA; a stub resolver that gets
+this stops waiting and moves to the next nameserver, where silence costs it a full per-server
+timeout (5s in glibc) first.
+
+The ID and question echo are not optional decoration: a resolver discards a response that fails
+either check, which turns the SERVFAIL back into silence. See §2b above — this is the same
+requirement the successful actions have, and it regressed once before (`6a384617`).
+
+Covered by `tests/server/dns/llm_failure_test.rs`, which asserts the RCODE nibble on the raw
+bytes as well as through a decoder.

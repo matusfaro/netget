@@ -287,7 +287,14 @@ impl StunProtocol {
     }
 
     /// Build STUN error response packet
-    fn build_error_response(
+    ///
+    /// `pub(crate)` so the server loop can answer a failed LLM call with a
+    /// Binding Error Response (500 Server Error) instead of dropping the
+    /// request. RFC 8489 §6.3.4 defines that response class precisely so a
+    /// server can say "I could not process this"; a silent drop is
+    /// indistinguishable from packet loss and costs the client its full
+    /// retransmission schedule (RFC 8489 §6.2.1: 7 retries, ~39.5s).
+    pub(crate) fn build_error_response(
         transaction_id: &[u8],
         error_code: u16,
         reason: &str,

@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -234,8 +234,42 @@ impl NtpServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("NTP LLM call failed: {}", e);
+                                    // Answer with a Kiss-o'-Death rather than dropping the
+                                    // request. Silence looks to the client like a slow server
+                                    // and it keeps polling; a KoD tells it to stop, and can
+                                    // never be mistaken for a time sample, so an outage cannot
+                                    // hand anyone a fabricated clock reading.
+                                    error!(
+                                        "NTP LLM call failed for request from {} ({}): {}",
+                                        peer_addr, connection_id, e
+                                    );
                                     let _ = status_clone.send(format!("✗ NTP LLM error: {}", e));
+
+                                    let overloaded = crate::llm::is_overload_error(&e);
+                                    // RATE says "you are polling too fast", which is the
+                                    // truthful shape of capacity exhaustion; INIT says "not
+                                    // synchronized yet", which is the truthful shape of
+                                    // everything else.
+                                    let kiss_code = if overloaded { "RATE" } else { "INIT" };
+                                    if overloaded {
+                                        warn!(
+                                            "NTP KoD RATE to {}: LLM capacity exhausted",
+                                            peer_addr
+                                        );
+                                    }
+
+                                    let packet = crate::server::ntp::actions::build_kod_packet(
+                                        client_version,
+                                        client_transmit_ntp,
+                                        kiss_code,
+                                    );
+                                    let _ = socket_clone.send_to(&packet, peer_addr).await;
+                                    let _ = status_clone.send(format!(
+                                        "→ NTP Kiss-o'-Death ({}) to {} ({} bytes)",
+                                        kiss_code,
+                                        peer_addr,
+                                        packet.len()
+                                    ));
                                 }
                             }
                         });

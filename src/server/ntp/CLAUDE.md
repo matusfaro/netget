@@ -354,3 +354,20 @@ When scripting enabled:
 - [NTP Timestamp Format](https://www.rfc-editor.org/rfc/rfc5905.html#section-6)
 - [NTP Stratum Levels](https://www.ntp.org/reflib/book/ch11/)
 - [ntpd-rs (Rust NTP daemon)](https://github.com/pendulum-project/ntpd-rs)
+
+## Failure behaviour: Kiss-o'-Death
+
+When `call_llm` returns `Err`, the request is answered with a **Kiss-o'-Death packet**
+(RFC 5905 §7.4) rather than dropped: LI 3 (unsynchronized), stratum 0, and a four-character
+kiss code in the reference identifier — `RATE` when `crate::llm::is_overload_error` says the
+failure was capacity exhaustion, `INIT` otherwise. `actions::build_kod_packet` builds it and
+the client's transmit timestamp is echoed as the origin timestamp, without which the reply is
+discarded as unrelated.
+
+`chrony`, `ntpd` and `ntpdate` recognise a KoD, refuse to take time from it, and stop polling.
+That matters twice: silence looks like a merely slow server so the client keeps retrying, and a
+KoD can never be mistaken for a time sample, so an outage cannot hand anyone a fabricated clock
+reading. Note this makes the "No Kiss-of-Death" limitation above only half true — KoD is not
+available to the *model*, but the server emits one on its own failure path.
+
+Covered by `tests/server/ntp/llm_failure_test.rs`, which decodes all 48 bytes by hand.

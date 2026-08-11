@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -111,9 +111,8 @@ impl StunServer {
                                 return;
                             }
 
-                            let transaction_id_hex = transaction_id
-                                .map(|tid| hex::encode(tid))
-                                .unwrap_or_default();
+                            let transaction_id_hex =
+                                transaction_id.as_ref().map(hex::encode).unwrap_or_default();
 
                             // Create STUN binding request event
                             let event_data = serde_json::json!({
@@ -210,8 +209,69 @@ impl StunServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("STUN LLM call failed: {}", e);
+                                    error!(
+                                        "STUN LLM call failed for request from {} ({}): {}",
+                                        peer_addr, connection_id, e
+                                    );
                                     let _ = status_clone.send(format!("✗ STUN LLM error: {}", e));
+
+                                    // Answer with a Binding Error Response rather than
+                                    // dropping the request. A silent drop is indistinguishable
+                                    // from packet loss, so the client works through its whole
+                                    // retransmission schedule (~39.5s) before giving up; a 500
+                                    // ends the transaction immediately. The transaction ID is
+                                    // echoed, without which the client discards the response.
+                                    let overloaded = crate::llm::is_overload_error(&e);
+                                    let reason = if overloaded {
+                                        "Server Error: capacity exhausted"
+                                    } else {
+                                        "Server Error"
+                                    };
+                                    if overloaded {
+                                        warn!("STUN 500 to {}: LLM capacity exhausted", peer_addr);
+                                    }
+
+                                    match transaction_id.as_ref() {
+                                        Some(tid) if tid.len() == 12 => {
+                                            match StunProtocol::build_error_response(
+                                                tid, 500, reason,
+                                            ) {
+                                                Ok(packet) => {
+                                                    let _ = socket_clone
+                                                        .send_to(&packet, peer_addr)
+                                                        .await;
+                                                    let _ = status_clone.send(format!(
+                                                        "→ STUN 500 error response to {} ({} bytes)",
+                                                        peer_addr,
+                                                        packet.len()
+                                                    ));
+                                                }
+                                                Err(build_err) => {
+                                                    error!(
+                                                        "STUN failed to build error response for {}: {}",
+                                                        peer_addr, build_err
+                                                    );
+                                                    let _ = status_clone.send(format!(
+                                                        "✗ STUN failed to build error response: {build_err}"
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            // Without a 12-byte transaction ID there is no
+                                            // response the client would accept, so silence is
+                                            // the only option. Say so rather than leaving it
+                                            // to be inferred.
+                                            warn!(
+                                                "STUN cannot answer {} with an error response: no usable transaction ID",
+                                                peer_addr
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "✗ STUN no transaction ID for {}, no error response possible",
+                                                peer_addr
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         });

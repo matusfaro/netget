@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -249,8 +249,38 @@ impl UdpServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("UDP LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ UDP LLM error: {}", e));
+                                    // Deliberately silent, and the one protocol in this group
+                                    // where that is the right answer.
+                                    //
+                                    // Bare UDP (RFC 768) has no error frame, no transaction
+                                    // identifier and no application semantics: this server does
+                                    // not know what the datagram meant, so it has nothing to
+                                    // say back that the peer could parse. Anything we invented
+                                    // would be indistinguishable from a real reply in whatever
+                                    // protocol the peer is actually speaking - a *worse*
+                                    // failure than silence, because the peer would act on it.
+                                    // Dropping the datagram is also normal, expected UDP
+                                    // behaviour that every UDP client already handles.
+                                    //
+                                    // A protocol layered on UDP that *does* have an error form
+                                    // must answer with it: see DNS (SERVFAIL), STUN (500
+                                    // Binding Error Response) and NTP (Kiss-o'-Death) in this
+                                    // same tree. So the silence is logged loudly here rather
+                                    // than left to be inferred.
+                                    error!(
+                                        "UDP LLM call failed for datagram from {} ({}): {} - no reply sent (bare UDP has no error form)",
+                                        peer_addr, connection_id, e
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "✗ UDP LLM error: {} (no reply possible: bare UDP has no error form)",
+                                        e
+                                    ));
+                                    if crate::llm::is_overload_error(&e) {
+                                        warn!(
+                                            "UDP datagram from {} dropped: LLM capacity exhausted",
+                                            peer_addr
+                                        );
+                                    }
                                 }
                             }
                         });

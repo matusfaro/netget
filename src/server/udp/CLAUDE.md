@@ -272,3 +272,24 @@ Respond with JSON: {"status": "ok", "echo": <received_data>}
 - [RFC 768: User Datagram Protocol](https://datatracker.ietf.org/doc/html/rfc768)
 - [Tokio UdpSocket](https://docs.rs/tokio/latest/tokio/net/struct.UdpSocket.html)
 - [UDP on Wikipedia](https://en.wikipedia.org/wiki/User_Datagram_Protocol)
+
+## Failure behaviour: silence, deliberately
+
+When `call_llm` returns `Err`, this server writes **nothing** — and unlike the rest of the
+protocol tree, that is the correct answer rather than the "reset to Idle and write nothing"
+defect.
+
+Bare UDP (RFC 768) has no error frame, no transaction identifier and no application semantics.
+The server does not know what the datagram meant, so any bytes it invented could be parsed as a
+real reply by whatever protocol the peer is actually speaking — a worse failure than dropping
+it, because the peer would act on the answer. Dropping a datagram is also ordinary UDP
+behaviour that every UDP client already handles.
+
+Protocols layered on UDP that *do* have an error form must use it, and do: DNS answers SERVFAIL,
+STUN answers a 500 Binding Error Response, NTP answers a Kiss-o'-Death.
+
+Because a silent drop is indistinguishable from the defect, it is logged loudly: ERROR on both
+the tracing and status channels, naming the peer and saying explicitly that no reply is
+possible, plus a WARN when `crate::llm::is_overload_error` identifies capacity exhaustion.
+`tests/server/udp/llm_failure_test.rs` asserts both halves — nothing on the wire, and the log
+line that explains it.

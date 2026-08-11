@@ -353,3 +353,18 @@ anyway).
 - RFC 5780: NAT Behavior Discovery Using STUN
 - WebRTC STUN Usage: https://developer.mozilla.org/en-US/docs/Web/API/RTCIceServer
 - STUN Message Structure: https://datatracker.ietf.org/doc/html/rfc8489#section-6
+
+## Failure behaviour: 500 Server Error
+
+When `call_llm` returns `Err`, the request is answered with a **Binding Error Response**
+(0x0111) carrying ERROR-CODE 500, built by `StunProtocol::build_error_response` with the
+request's transaction ID echoed. RFC 8489 §6.3.4 defines that class precisely so a server can
+say "I could not process this"; a silent drop is indistinguishable from packet loss, so the
+client works through its whole retransmission schedule (§6.2.1: 7 retries, ~39.5s) first.
+
+The one case that stays silent is a request with no usable 12-byte transaction ID — there is no
+response the client would accept — and that is logged at WARN saying so.
+
+This closes the "Error responses (400/500) not implemented" gap listed above for the server's
+own failure path; the model still has `send_stun_error_response` for deliberate errors. Covered
+by `tests/server/stun/llm_failure_test.rs`.

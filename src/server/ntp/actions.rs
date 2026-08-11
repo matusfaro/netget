@@ -320,7 +320,7 @@ impl NtpProtocol {
 
     /// Build a valid NTP response packet
     #[allow(clippy::too_many_arguments)]
-    fn build_ntp_packet(
+    pub(crate) fn build_ntp_packet(
         version: u8,
         leap_indicator: u8,
         stratum: u8,
@@ -413,6 +413,43 @@ impl NtpProtocol {
 
         packet
     }
+}
+
+/// Build a Kiss-o'-Death packet (RFC 5905 §7.4) for a request we cannot answer.
+///
+/// NTP has no error message, but it does have a defined way for a server to say
+/// "do not use me": stratum 0, leap indicator 3 (unsynchronized), and a
+/// four-character kiss code in the reference identifier. `chrony`, `ntpd` and
+/// `ntpdate` all recognise it, refuse to take time from the packet, and stop
+/// polling — which is exactly right when the backend that would have decided the
+/// answer is unavailable. Writing nothing instead leaves the client retrying
+/// against a server it believes is merely slow.
+///
+/// It also fails closed: a KoD can never be mistaken for a time sample, so an
+/// outage cannot silently hand a client a fabricated clock reading.
+///
+/// The client's transmit timestamp is echoed as the origin timestamp for the
+/// same reason a normal reply echoes it — a reply that fails that check is
+/// discarded, which would put us back at silence.
+///
+/// `kiss_code` should be one of the registered codes; this server uses `RATE`
+/// (reduce your polling rate) when the failure is capacity exhaustion and `INIT`
+/// (association not yet synchronized) for every other failure.
+pub fn build_kod_packet(version: u8, origin_timestamp: Option<u64>, kiss_code: &str) -> Vec<u8> {
+    NtpProtocol::build_ntp_packet(
+        version,
+        3,         // LI = 3, unsynchronized
+        0,         // stratum 0 — this is what marks the packet as a KoD
+        0,         // poll
+        0,         // precision
+        0.0,       // root delay
+        0.0,       // root dispersion
+        kiss_code, // reference identifier carries the kiss code
+        None,      // reference timestamp: now
+        origin_timestamp,
+        None, // receive timestamp: now
+        None, // transmit timestamp: now
+    )
 }
 
 fn send_ntp_time_response_action() -> ActionDefinition {

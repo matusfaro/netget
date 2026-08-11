@@ -234,6 +234,41 @@ fn new_response(
     Ok((message, name))
 }
 
+/// Build a SERVFAIL (RCODE 2) answer to `query`, for when the server cannot
+/// produce a real answer at all — the LLM backend is down, overloaded, or
+/// returned nothing usable.
+///
+/// RFC 1035 §4.1.1 gives exactly one code for "this server failed while
+/// processing your query", and a resolver that receives it stops waiting and
+/// moves to the next nameserver immediately. Writing nothing instead leaves the
+/// resolver blocked for its own full timeout (5s in glibc, per server).
+///
+/// The transaction ID and the question section are copied from the query, for
+/// the same reason `new_response` echoes them: a stub resolver discards any
+/// response whose ID or question does not match what it sent, which would turn
+/// this into silence again.
+///
+/// `AA` is deliberately *not* set: we are not answering authoritatively, we are
+/// failing.
+pub fn build_servfail(query: &DnsMessage) -> Result<Vec<u8>> {
+    let mut message = DnsMessage::new();
+    let mut header = Header::new();
+    header.set_id(query.id());
+    header.set_message_type(MessageType::Response);
+    header.set_op_code(query.op_code());
+    header.set_recursion_desired(query.recursion_desired());
+    header.set_response_code(ResponseCode::ServFail);
+    message.set_header(header);
+
+    for question in query.queries() {
+        message.add_query(question.clone());
+    }
+
+    message
+        .to_vec()
+        .context("Failed to serialize DNS SERVFAIL response")
+}
+
 /// Serialize a response message to DNS wire format.
 fn finish_response(message: DnsMessage) -> Result<ActionResult> {
     let bytes = message
