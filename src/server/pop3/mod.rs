@@ -391,8 +391,8 @@ impl Pop3Session {
 fn pop3_failure_reply(err: &anyhow::Error) -> String {
     // The reply is one line; a newline in the error text would forge a second response, and a
     // leading `.` would terminate a multiline block.
-    let sanitized = crate::utils::truncate::truncate_for_log(&err.to_string(), 200)
-        .replace(['\r', '\n'], " ");
+    let sanitized =
+        crate::utils::truncate::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
     if crate::llm::is_overload_error(err) {
         format!(
             "-ERR [SYS/TEMP] netget: backend at capacity, retry later ({})\r\n",

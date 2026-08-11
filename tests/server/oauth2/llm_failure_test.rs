@@ -65,8 +65,7 @@ async fn post_form(url: &str, body: &str) -> E2EResult<(u16, Value)> {
 /// `/token` must not blame the client's grant for our backend.
 #[tokio::test]
 async fn test_oauth2_token_reports_a_server_error_not_invalid_grant() -> E2EResult<()> {
-    let server =
-        start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
+    let server = start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (status, body) = post_form(
@@ -102,8 +101,7 @@ async fn test_oauth2_token_reports_a_server_error_not_invalid_grant() -> E2EResu
 /// `/introspect` must not assert that the token is inactive when nothing checked it.
 #[tokio::test]
 async fn test_oauth2_introspect_reports_a_server_error_not_inactive() -> E2EResult<()> {
-    let server =
-        start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
+    let server = start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (status, body) = post_form(
@@ -136,8 +134,7 @@ async fn test_oauth2_introspect_reports_a_server_error_not_inactive() -> E2EResu
 /// `/revoke` must not claim a revocation that never happened.
 #[tokio::test]
 async fn test_oauth2_revoke_reports_a_server_error_not_success() -> E2EResult<()> {
-    let server =
-        start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
+    let server = start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (status, _body) = post_form(
@@ -160,8 +157,7 @@ async fn test_oauth2_revoke_reports_a_server_error_not_success() -> E2EResult<()
 /// `/authorize` must not hand out a code, and must not blame the client.
 #[tokio::test]
 async fn test_oauth2_authorize_reports_a_server_error() -> E2EResult<()> {
-    let server =
-        start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
+    let server = start_netget_server(startup_only("Open oauth2 on port {AVAILABLE_PORT}.")).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let url = format!(

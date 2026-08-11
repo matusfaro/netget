@@ -558,8 +558,8 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
 #[cfg(feature = "imap")]
 fn imap_failure_code(err: &anyhow::Error) -> (&'static str, String) {
     // Response text is a single line; a newline in the error would forge a second response.
-    let sanitized = crate::utils::truncate::truncate_for_log(&err.to_string(), 200)
-        .replace(['\r', '\n'], " ");
+    let sanitized =
+        crate::utils::truncate::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
     if crate::llm::is_overload_error(err) {
         (
             "UNAVAILABLE",

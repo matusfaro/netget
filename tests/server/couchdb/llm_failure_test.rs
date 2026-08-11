@@ -74,7 +74,10 @@ async fn test_couchdb_answers_error_body_when_llm_fails() -> E2EResult<()> {
         "expected a server-side error name, got {kind:?}"
     );
     assert!(
-        body["reason"].as_str().unwrap_or_default().contains("netget"),
+        body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("netget"),
         "the reason should name the source of the failure: {text}"
     );
 

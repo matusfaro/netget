@@ -631,8 +631,8 @@ async fn handle_openid_request(
                 method, path, status, code, e
             ));
 
-            let description = crate::utils::truncate_for_log(&e.to_string(), 200)
-                .replace(['\r', '\n'], " ");
+            let description =
+                crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
             Ok(build_safe_response(
                 status,
                 [("content-type".to_string(), "application/json".to_string())],

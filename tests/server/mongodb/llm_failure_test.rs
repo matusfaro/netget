@@ -77,7 +77,10 @@ async fn test_mongodb_answers_ok_zero_when_llm_fails() -> E2EResult<()> {
         "the errmsg should name the source of the failure: {error:?}"
     );
     assert!(
-        !matches!(*error.kind, mongodb::error::ErrorKind::ServerSelection { .. }),
+        !matches!(
+            *error.kind,
+            mongodb::error::ErrorKind::ServerSelection { .. }
+        ),
         "a server-selection failure means the driver never got a reply at all - i.e. the \
          server went silent, which is the defect: {error:?}"
     );

@@ -115,8 +115,15 @@ async fn test_mqtt_refuses_connect_when_llm_fails() -> E2EResult<()> {
     let connack = read_exact_or_fail(&mut stream, 4, "CONNACK").await?;
     println!("MQTT CONNACK: {connack:02x?}");
 
-    assert_eq!(connack[0] >> 4, 2, "expected a CONNACK packet: {connack:02x?}");
-    assert_eq!(connack[1], 0x02, "CONNACK has a 2-byte body: {connack:02x?}");
+    assert_eq!(
+        connack[0] >> 4,
+        2,
+        "expected a CONNACK packet: {connack:02x?}"
+    );
+    assert_eq!(
+        connack[1], 0x02,
+        "CONNACK has a 2-byte body: {connack:02x?}"
+    );
     assert_ne!(
         connack[3], 0x00,
         "return code 0 is Connection Accepted. An LLM outage must never accept an MQTT \
@@ -175,7 +182,10 @@ async fn test_mqtt_refuses_subscribe_when_llm_fails() -> E2EResult<()> {
     stream.flush().await?;
 
     let connack = read_exact_or_fail(&mut stream, 4, "CONNACK").await?;
-    assert_eq!(connack[3], 0x00, "expected the mocked accept: {connack:02x?}");
+    assert_eq!(
+        connack[3], 0x00,
+        "expected the mocked accept: {connack:02x?}"
+    );
 
     stream
         .write_all(&build_subscribe(0x1234, "sensors/#", 1))

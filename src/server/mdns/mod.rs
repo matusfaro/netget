@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::{console_error, console_info};
 #[cfg(feature = "mdns")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "mdns")]
@@ -18,6 +17,7 @@ use crate::protocol::Event;
 use crate::server::MdnsProtocol;
 #[cfg(feature = "mdns")]
 use crate::state::app_state::AppState;
+use crate::{console_error, console_info};
 #[cfg(feature = "mdns")]
 use actions::MDNS_SERVER_STARTUP_EVENT;
 

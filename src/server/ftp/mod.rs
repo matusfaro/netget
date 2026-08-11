@@ -225,8 +225,8 @@ impl FtpSession {
                 // server sends when it is declining the session, and it closes afterwards -
                 // which is the same shape SMTP uses, for the same reason.
                 error!("FTP greeting handler failed on connection {connection_id}: {e}");
-                let reason = crate::utils::truncate_for_log(&e.to_string(), 200)
-                    .replace(['\r', '\n'], " ");
+                let reason =
+                    crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
                 let _ = status_tx.send(format!(
                     "[ERROR] FTP connection {connection_id} refused with 421: {reason}"
                 ));
@@ -238,9 +238,7 @@ impl FtpSession {
                 // 421 means the control connection is closing, so the session must not
                 // continue into the command loop. The caller propagates this with `?`, which
                 // ends the connection task and drops the socket.
-                return Err(anyhow::anyhow!(
-                    "FTP greeting refused with 421: {reason}"
-                ));
+                return Err(anyhow::anyhow!("FTP greeting refused with 421: {reason}"));
             }
         }
 
