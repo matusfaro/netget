@@ -36,6 +36,13 @@ No async actions: WHOIS is purely reactive.
 The connection loop keeps reading after a response, so a client may send several
 queries; each raises its own event. Most clients send one and close.
 
+**This is a non-conformance with a visible symptom.** RFC 3912 says the server
+closes as soon as its output is finished, and `whois(1)` reads until EOF — so a
+handler that answers with `send_whois_record` alone leaves a real client blocked
+forever. Answer with `close_connection` as well. The two `send_*` action
+descriptions say so, and `tests/server/whois/e2e_test.rs` proves the real client
+is satisfied when they are paired.
+
 ### Failure behavior
 
 An LLM or handler failure breaks the loop and closes the connection with nothing
@@ -81,9 +88,23 @@ Name Server: ns1.example.com
 Name Server: ns2.example.com
 ```
 
-macOS's `whois(1)` **segfaults** when given `-h HOST -p PORT` — it does so
-against a plain `nc` listener too, so it is a client bug, not a server one. Use
-`nc`, or a Linux `whois`, to exercise this server.
+And with the real client, which is what the `Beta` rating rests on
+(`tests/server/whois/e2e_test.rs::test_whois_with_real_whois_client`):
 
-`tests/server/whois/` exists but is **not declared in `tests/server/mod.rs`**, so
-it is never compiled or run.
+```
+$ whois -h localhost -p PORT example.com
+Domain Name: example.com
+Registrar: Test Registrar Inc.
+Registrant Name: Test Organization
+Admin Name: Test Admin
+Name Server: ns1.example.com
+Name Server: ns2.example.com
+```
+
+macOS's `whois(1)` **segfaults** when `-h` is given an **IP literal**
+(`-h 127.0.0.1`); it does so against a plain `nc` listener too, so it is a client
+bug. An earlier version of this file read that as "`-h HOST -p PORT` crashes" and
+concluded the real client was unusable — it is not. `-h localhost` works, and
+still resolves to loopback only.
+
+`tests/server/whois/` is declared in `tests/server/mod.rs` and runs.

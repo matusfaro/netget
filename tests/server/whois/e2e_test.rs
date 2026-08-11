@@ -1,15 +1,19 @@
-// BLOCKED (out of test-owner scope): all tests below are `#[ignore]`d. The
-// mandatory "read documentation before open_server" retry
-// (src/events/handler.rs:809 is_server_docs_read() gate; retry prompt in
-// src/events/errors.rs:201-218) forces a second LLM round-trip whose
-// synthetic prompt ("...you must first read the documentation... provide the
-// action again...") no longer contains the original instruction text, so the
-// mock harness's on_instruction_containing(...) rule never matches and the
-// call fails with "NO RULE MATCHED". This is a repo-wide regression, not
-// specific to this protocol: it reproduces deterministically on the
-// untouched, previously-stable tests/server/tcp/test.rs::test_simple_echo.
-// Fixing it needs changes to src/events/handler.rs and/or
-// tests/helpers/mock_builder.rs / mock_matcher.rs, both out of scope here.
+//! End-to-end WHOIS tests.
+//!
+//! The first test drives the real `whois(1)` binary, which is what the `Beta` rating rests
+//! on: it proves a real client accepts the framing this server produces. The remaining
+//! tests use a raw TCP socket for the cases `whois(1)` cannot reach - it sends exactly one
+//! query and then reads to EOF, so an error reply, a second query on the same connection,
+//! and connection logging all need a socket.
+//!
+//! Two things about `whois(1)` worth knowing before changing these tests:
+//!
+//! - macOS's `whois` **segfaults** when `-h` is given an IP literal (`-h 127.0.0.1`). It
+//!   does the same against a plain `nc` listener, so it is a client bug. `-h localhost`
+//!   works and still resolves to loopback only, which is what these tests use.
+//! - It reads until EOF. RFC 3912 has the server close as soon as its output is finished,
+//!   but this server keeps the connection open, so the handler must answer with
+//!   `close_connection` or `whois(1)` blocks forever.
 #[cfg(all(test, feature = "whois"))]
 mod whois_e2e_test {
     use crate::helpers::{start_netget_server, E2EResult, NetGetConfig};
@@ -37,6 +41,100 @@ mod whois_e2e_test {
             .expect("Failed to read response");
 
         String::from_utf8_lossy(&response[..n]).to_string()
+    }
+
+    /// The real `whois(1)` client must accept and print what this server writes.
+    ///
+    /// This is the evidence behind the `Beta` rating: a raw socket only proves bytes
+    /// arrived, whereas `whois` exiting 0 with the record on stdout proves the framing,
+    /// the CRLF line endings and the close are all acceptable to a real client.
+    #[tokio::test]
+    async fn test_whois_with_real_whois_client() -> E2EResult<()> {
+        let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via whois")
+            .with_log_level("info")
+            .with_mock(|mock| {
+                mock.on_instruction_containing("listen on port")
+                    .and_instruction_containing("whois")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "whois",
+                            "instruction": "Answer example.com with a full record, then close"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("whois_query")
+                    .and_event_data_contains("query", "example.com")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_whois_record",
+                            "domain": "example.com",
+                            "registrar": "Test Registrar Inc.",
+                            "registrant": "Test Organization",
+                            "admin_contact": "Test Admin",
+                            "name_servers": ["ns1.example.com", "ns2.example.com"]
+                        },
+                        // RFC 3912: whois(1) reads until EOF, so the server has to close.
+                        {"type": "close_connection"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
+
+        // `-h localhost` rather than `-h 127.0.0.1`: macOS whois(1) segfaults on an IP
+        // literal. localhost still resolves to loopback only, so nothing leaves the host.
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::process::Command::new("whois")
+                .arg("-h")
+                .arg("localhost")
+                .arg("-p")
+                .arg(server.port.to_string())
+                .arg("example.com")
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            "whois(1) did not exit within 30s - the server almost certainly never closed the \
+             connection, and whois reads until EOF"
+        })?
+        .map_err(|e| {
+            format!("could not run whois(1): {e}. Install the whois client to run this test.")
+        })?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        assert!(
+            output.status.success(),
+            "whois(1) exited with {:?}\nstdout: {stdout}\nstderr: {stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("Domain Name: example.com"),
+            "whois(1) did not print the domain line.\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            stdout.contains("Registrar: Test Registrar Inc."),
+            "whois(1) did not print the registrar.\nstdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("Registrant Name: Test Organization"),
+            "whois(1) did not print the registrant.\nstdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("Name Server: ns1.example.com")
+                && stdout.contains("Name Server: ns2.example.com"),
+            "whois(1) did not print both name servers.\nstdout: {stdout}"
+        );
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+        Ok(())
     }
 
     #[tokio::test]

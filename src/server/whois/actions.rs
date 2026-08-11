@@ -54,8 +54,18 @@ impl Protocol for WhoisProtocol {
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(43))
             .implementation("Manual TCP connection handling")
             .llm_control("WHOIS query responses (domain, registrant, contact info)")
-            .e2e_testing("whois command-line client")
-            .notes("Simple line-based protocol")
+            .e2e_testing(
+                "tests/server/whois/e2e_test.rs, 6 LLM calls. One test drives the real whois(1) \
+                 binary (`whois -h localhost -p PORT example.com`) and asserts the record it \
+                 prints; the rest use a raw TCP socket for the cases whois(1) cannot reach - an \
+                 error reply, two queries on one connection, and connection logging. Note macOS \
+                 whois(1) segfaults when -h is given an IP literal; a hostname works.",
+            )
+            .notes(
+                "Simple line-based protocol. RFC 3912 has the server close as soon as its output \
+                 is finished; this server keeps reading instead, so a handler that answers \
+                 without close_connection leaves whois(1) blocked on EOF.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -221,7 +231,10 @@ impl WhoisProtocol {
 fn send_whois_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_whois_response".to_string(),
-        description: "Send custom WHOIS response".to_string(),
+        description: "Send custom WHOIS response. RFC 3912 has the server close as soon as the \
+                      output is finished, and a real client (whois(1)) reads until EOF, so pair \
+                      this with close_connection unless you intend the client to block"
+            .to_string(),
         parameters: vec![Parameter {
             name: "response".to_string(),
             type_hint: "string".to_string(),
@@ -243,7 +256,10 @@ fn send_whois_response_action() -> ActionDefinition {
 fn send_whois_record_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_whois_record".to_string(),
-        description: "Send formatted WHOIS record".to_string(),
+        description: "Send formatted WHOIS record. RFC 3912 has the server close as soon as the \
+                      output is finished, and a real client (whois(1)) reads until EOF, so pair \
+                      this with close_connection unless you intend the client to block"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "domain".to_string(),

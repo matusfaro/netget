@@ -2,20 +2,40 @@
 
 ## Test Strategy
 
-Use TCP socket client to send WHOIS queries and validate responses.
+`tests/server/whois/e2e_test.rs`. Five tests, **6 LLM calls total**.
 
-**Client**: Manual TCP socket (no external `whois` client needed)
-**Approach**: Black-box testing with comprehensive prompts
+**`test_whois_with_real_whois_client` is what the `Beta` rating rests on**: it runs the real
+`whois(1)` binary and asserts the record it prints. A raw socket only proves bytes arrived; a
+real client exiting 0 with the record on stdout proves the framing, the CRLF line endings and
+the close are all acceptable to it. The remaining four tests use a raw `TcpStream` for the
+cases `whois(1)` cannot reach — it sends exactly one query and then reads to EOF, so an error
+reply, two queries on one connection, and connection logging all need a socket.
+
+Two facts about `whois(1)` to know before touching these tests:
+
+- macOS's `whois` **segfaults** when `-h` is given an **IP literal** (`-h 127.0.0.1`) — it does
+  so against a plain `nc` listener too, so it is a client bug. `-h localhost` works, and still
+  resolves to loopback only. An earlier note in `src/server/whois/CLAUDE.md` read this as "the
+  real client is unusable"; it is not.
+- It reads until EOF. RFC 3912 has the server close as soon as its output is finished, but this
+  server keeps the connection open, so **the handler must answer with `close_connection`** or
+  `whois(1)` blocks forever. The real-client test pairs `send_whois_record` with it, and both
+  `send_*` action descriptions now say so.
+
+The test hard-fails if `whois` is not installed, matching what the SNMP suite does with
+`snmpget`. `whois` is not in the CI feature set, so this does not gate PRs.
 
 ## LLM Call Budget
 
-**Target**: < 5 LLM calls total
+One startup call plus one per query:
 
-1. **Server startup** (1 call) - Initial LLM call to set up server
-2. **Basic query test** (1 call) - Query for example.com
-3. **Error handling test** (1 call) - Query for non-existent domain
-4. **Multiple queries** (1 call) - Test persistent connection
-5. **Close connection test** (1 call) - Test LLM-initiated close
+| Test | Calls |
+|---|---|
+| `test_whois_with_real_whois_client` | 1 + 1 = 2 |
+| `test_whois_basic_query` | 1 + 1 = 2 |
+| `test_whois_error_response` | 1 + 1 = 2 |
+| `test_whois_multiple_queries` | 1 + 2 = 3 |
+| `test_whois_connection_stats` | 1 + 1 = 2 |
 
 ## Runtime
 
@@ -99,19 +119,11 @@ None currently identified.
 ## Test Execution
 
 ```bash
-# Build first
-./cargo-isolated.sh build --release --no-default-features --features whois
-
-# Run WHOIS E2E tests
-./cargo-isolated.sh test --no-default-features --features whois --test whois_e2e_test
+./cargo-isolated.sh test --no-default-features --features whois \
+    --test server -- --test-threads=100 whois
 ```
 
-## Test Implementation Checklist
+## Not covered
 
-- [ ] Feature gate: `#[cfg(all(test, feature = "whois"))]`
-- [ ] Use `AVAILABLE_PORT` placeholder for dynamic port allocation
-- [ ] Test helper to start WHOIS server with instruction
-- [ ] Test helper to send query and read response
-- [ ] Assert on response content (domain info, errors)
-- [ ] Assert on connection stats
-- [ ] Clean shutdown between tests
+Referrals to another WHOIS server, WHOIS++ (RFC 1835), IDN, and non-ASCII queries. The server
+implements none of them.
