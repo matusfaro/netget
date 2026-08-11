@@ -4,6 +4,8 @@
 //! to provide their own action systems.
 
 use super::protocol_trait::Protocol;
+use super::ActionDefinition;
+use crate::state::app_state::AppState;
 use anyhow::Result;
 
 /// Result of executing a client action
@@ -118,4 +120,149 @@ pub trait Client: Protocol {
     /// * `Ok(ClientActionResult)` - Result of execution (data to send, disconnect, etc.)
     /// * `Err(_)` - If action execution failed
     fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult>;
+}
+
+/// The exact protocol-specific action set that
+/// [`crate::llm::action_helper::call_llm_for_client`] advertises to the model.
+///
+/// # Why this is a union, when the server path is a narrowing
+///
+/// `call_llm` (servers) advertises `event.event_type.actions` and treats that narrowing as
+/// authoritative: SSH's `ssh_auth` accepts `ssh_auth_decision` and nothing else, and unioning
+/// in `get_sync_actions()` there would offer the model `sftp_error` as a way to answer an
+/// authentication request. That works because servers have **two** LLM entry points — one for
+/// user input (async actions) and one for network events (sync/event actions) — so the
+/// async/sync split carries real meaning and an event can express a narrowing.
+///
+/// Clients have **one**. `call_llm_for_client` serves both the initial instruction
+/// (`event: None`) and every subsequent network event, so no client can express a narrowing:
+/// a "sync" action on a client is just an action that happens to make sense mid-connection.
+/// The split is vestigial, and the tree shows it — of 91 client protocols, 85 attach no
+/// actions to any event type at all, and roughly forty duplicate their entire list verbatim
+/// into both `get_async_actions()` and `get_sync_actions()` purely to work around this
+/// function's former shape.
+///
+/// # The defect this fixes
+///
+/// `call_llm_for_client` used to build its tool list from `get_async_actions()` **alone**. It
+/// never read `get_sync_actions()`, and it never read `event.event_type.actions`. Any action
+/// declared only as sync, or only attached to an event, was therefore rejected at runtime as
+/// an unknown action — advertised nowhere, so the model could not name it, and rejected when
+/// it guessed. TFTP was the case that surfaced it: `send_ack` was sync-only, so every DATA
+/// block came back `Unknown Action` and a transfer stalled at block 1. **53 of the 91 client
+/// protocols had at least one action invisible this way**, 11 of them a protocol-specific one
+/// (`send_privmsg`, `send_apdu`, `sign_request`, `write_characteristic`, …) and the rest
+/// `wait_for_more`, which left every stream client unable to say "that response was partial".
+///
+/// Ordering is `async`, then `sync`, then the event's own list, deduplicated by name with the
+/// first occurrence winning — so a protocol that declares an action in more than one list (the
+/// common shape) gets its async description, which is the one written for a model choosing
+/// what to do next.
+pub fn client_llm_action_set(
+    protocol: &dyn Client,
+    state: &AppState,
+    event: Option<&crate::protocol::Event>,
+) -> Vec<ActionDefinition> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<ActionDefinition> = Vec::new();
+
+    let event_actions = event
+        .map(|e| e.event_type.actions.clone())
+        .unwrap_or_default();
+
+    for action in protocol
+        .get_async_actions(state)
+        .into_iter()
+        .chain(protocol.get_sync_actions())
+        .chain(event_actions)
+    {
+        if seen.insert(action.name.clone()) {
+            out.push(action);
+        }
+    }
+
+    out
+}
+
+/// Audit a client protocol's action declarations against what the model can actually see.
+///
+/// This is the client-side counterpart of
+/// [`crate::llm::actions::protocol_trait::audit_event_action_declarations`], and it exists
+/// because the server audit walks the **server** registry only: ~90 registered clients had no
+/// guard of any kind, which is how the `get_async_actions()`-only tool list survived.
+///
+/// Two things are checked, and neither is vacuous:
+///
+/// 1. **The client offers the model something.** The effective set — what
+///    [`client_llm_action_set`] returns — must be non-empty for at least the no-event case.
+///    A client with no actions anywhere cannot be driven at all. (The server audit used to
+///    early-return when `get_sync_actions()` was empty and so passed hardest on the most
+///    broken protocol in the tree; that hole is deliberately not reproduced here.)
+/// 2. **Nothing the client declares is invisible.** Every action in `get_sync_actions()` and
+///    every action attached to an event type must appear in the effective set. This is the
+///    actual regression guard: revert `call_llm_for_client` to `get_async_actions()` alone
+///    and this fails for every client whose lists differ.
+///
+/// An event marked [`crate::protocol::EventType::with_no_actions`] is the deliberate case and
+/// contributes nothing to check.
+pub fn audit_client_action_declarations(protocol: &dyn Client, state: &AppState) -> Vec<String> {
+    let mut findings = Vec::new();
+
+    let visible = client_llm_action_set(protocol, state, None);
+    let visible_names: std::collections::HashSet<&str> =
+        visible.iter().map(|a| a.name.as_str()).collect();
+
+    if visible.is_empty() {
+        findings.push(format!(
+            "client '{}' advertises no actions at all: get_async_actions(), get_sync_actions() \
+             and every event type are empty, so the model is handed nothing protocol-specific \
+             and anything it returns is rejected as an unknown action. The client cannot be \
+             driven.",
+            protocol.protocol_name()
+        ));
+    }
+
+    let mut missing_sync: Vec<String> = protocol
+        .get_sync_actions()
+        .into_iter()
+        .filter(|a| !visible_names.contains(a.name.as_str()))
+        .map(|a| a.name)
+        .collect();
+    missing_sync.sort();
+    missing_sync.dedup();
+    if !missing_sync.is_empty() {
+        findings.push(format!(
+            "client '{}' declares {} sync action(s) the model is never shown: {}. \
+             call_llm_for_client must advertise the union of async, sync and the event's own \
+             actions (see client_llm_action_set); anything it omits is rejected at runtime as \
+             an unknown action.",
+            protocol.protocol_name(),
+            missing_sync.len(),
+            missing_sync.join(", ")
+        ));
+    }
+
+    for event_type in protocol.get_event_types() {
+        // An event with a deliberately empty list has nothing to hide.
+        let mut missing_event: Vec<String> = event_type
+            .actions
+            .iter()
+            .filter(|a| !visible_names.contains(a.name.as_str()))
+            .map(|a| a.name.clone())
+            .collect();
+        missing_event.sort();
+        missing_event.dedup();
+        if !missing_event.is_empty() {
+            findings.push(format!(
+                "client '{}' attaches action(s) to event '{}' that the model is never shown: \
+                 {}. Either add them to get_async_actions()/get_sync_actions(), or fix \
+                 call_llm_for_client to advertise the event's own list.",
+                protocol.protocol_name(),
+                event_type.id,
+                missing_event.join(", ")
+            ));
+        }
+    }
+
+    findings
 }

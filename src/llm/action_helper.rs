@@ -619,8 +619,18 @@ pub async fn call_llm_for_client(
     protocol: &dyn crate::llm::actions::client_trait::Client,
     status_tx: &tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<ClientLlmResult> {
-    // Get client actions
-    let mut all_actions = protocol.get_async_actions(state);
+    // Get client actions.
+    //
+    // This used to be `protocol.get_async_actions(state)` and nothing else — not
+    // `get_sync_actions()`, not `event.event_type.actions`. Any action declared only as sync,
+    // or only attached to an event, was advertised nowhere and then rejected as an unknown
+    // action if the model guessed it, which broke 53 of the 91 client protocols; TFTP's
+    // sync-only `send_ack` stalled every transfer at block 1. `client_llm_action_set` is the
+    // union, and `audit_client_action_declarations` (run over the whole client registry by
+    // `tests/event_action_declarations_test.rs`) fails the build if the two ever diverge again.
+    // See that function for why the client path unions where the server path narrows.
+    let mut all_actions =
+        crate::llm::actions::client_trait::client_llm_action_set(protocol, state, event);
 
     // Add provide_feedback action only if client has feedback_instructions configured
     // Parse client_id from string format "client-123"

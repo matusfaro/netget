@@ -121,25 +121,23 @@ pub static TFTP_CLIENT_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 // Implement Protocol trait (common functionality)
 impl crate::llm::actions::protocol_trait::Protocol for TftpClientProtocol {
-    /// Every action, including the ones that only make sense mid-transfer.
+    /// What a caller can ask for at any time: start a read, start a write, or give up.
     ///
-    /// This is not a copy-paste slip. **`call_llm_for_client` builds the model's tool list
-    /// from `get_async_actions()` alone** — it never looks at `get_sync_actions()`, and it
-    /// never looks at `event.event_type.actions` the way the server path does. An action
-    /// declared only as sync is therefore rejected at runtime as "Unknown Action".
+    /// The mid-transfer actions (`send_ack`, `send_data_block`) are deliberately **not**
+    /// repeated here — they belong to `get_sync_actions()` and to the events that need them.
+    /// This list carried them for a while as a workaround: `call_llm_for_client` used to build
+    /// the model's tool list from `get_async_actions()` alone, never `get_sync_actions()` and
+    /// never `event.event_type.actions`, so `send_ack` was advertised nowhere and every DATA
+    /// block came back "Unknown Action" with the transfer stalled at block 1
+    /// (`tests/client/tftp/e2e_test.rs::reads_a_two_block_file` catches exactly that).
     ///
-    /// That is exactly what happened here: `send_ack` lived only in `get_sync_actions()`, so
-    /// every DATA block was answered with an unknown-action error and the transfer stalled
-    /// at block 1 (`tests/client/tftp/e2e_test.rs::reads_a_two_block_file` catches it).
-    /// It is the client-side twin of the server defect the root `CLAUDE.md` describes, and
-    /// the RIP client already works around it the same way — its async and sync lists
-    /// overlap.
+    /// That is fixed centrally now — `client_llm_action_set` advertises the union of async,
+    /// sync and the firing event's own actions — so the honest declaration is back, and the
+    /// TFTP e2e test passing with `send_ack` sync-only is the proof the central fix works.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             tftp_read_file_action(),
             tftp_write_file_action(),
-            send_ack_action(),
-            send_data_block_action(),
             disconnect_action(),
         ]
     }
