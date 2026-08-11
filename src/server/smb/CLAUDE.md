@@ -8,7 +8,8 @@ file sharing where the LLM controls the virtual filesystem, authentication, and 
 **Protocol**: SMB 2.1 (dialect 0x0210)
 **Transport**: Direct TCP (port 445) or NetBIOS over TCP (port 139)
 **Port**: 445 (standard), configurable
-**Status**: Alpha
+**Status**: Experimental
+**Startup parameters**: none declared, none read.
 
 ## Library Choices
 
@@ -164,14 +165,21 @@ LLM maintains filesystem via instructions:
 - **CRITICAL**: Every file operation calls LLM (slow)
 - High latency (seconds per operation)
 - Not suitable for real file sharing workloads
-- Scripting mode not yet implemented for SMB
+- Script and static handlers do work: `call_llm` dispatches them, so an
+  `event_handlers` entry on `smb_operation` answers without a model round-trip
 
 ### Testing Limitations
 
 - Real SMB clients (Windows, smbclient) have strict requirements
 - Clients expect full SMB2 compliance
 - Some clients probe for SMB1 (not supported)
-- Testing uses raw TCP sockets, not real SMB clients
+- **Testing uses raw TCP sockets, not real SMB clients.** `metadata().e2e_testing` used to
+  claim "smbclient / Windows Explorer"; neither has ever been run against this server, and
+  the claim now says so.
+- The tests use `#[tokio::test(flavor = "multi_thread")]`. They must: the mocked Ollama
+  server runs in-process on the test's runtime, and the blocking `std::net::TcpStream`
+  reads these tests do would otherwise block the single-threaded runtime, so the mock
+  could never answer and every test needing an LLM call timed out.
 
 ## LLM Integration
 
@@ -195,56 +203,92 @@ LLM receives:
 - Operation name (session_setup, create, read, write, etc.)
 - Structured parameters (paths, offsets, sizes)
 
-### Action Response Format
+### Actions the model can return
 
-**smb_auth_success** / **allow_auth** - Allow authentication:
+Eight sync actions, and **every one has an executor branch** in `mod.rs`. That was not
+true before: `smb_write_file`, `smb_create_file`, `smb_delete_file`,
+`smb_create_directory` and `smb_delete_directory` were all declared in
+`get_sync_actions()` with no arm that read them, so a model emitting any of the five got
+silence. The two delete actions were removed (see below); the other three are routed.
+`tests/server/smb/e2e_test.rs::smb_declared_actions_are_all_routed` fails the build if the
+declared set and the event's action list drift apart again.
+
+| `operation` | Expected action | Effect on the wire |
+|---|---|---|
+| `session_setup` | `smb_auth_success` / `smb_auth_deny` | STATUS_SUCCESS with a session id, or STATUS_ACCESS_DENIED |
+| `create` | `smb_create_file` / `smb_create_directory` | FILE_ATTRIBUTE_NORMAL (0x80) or FILE_ATTRIBUTE_DIRECTORY (0x10) in the CREATE response, and the handle is recorded as one or the other |
+| `read` | `smb_read_file` | the decoded `content` becomes the READ response body |
+| `write` | `smb_write_file` | STATUS_SUCCESS with `bytes_written`; **absent action ⇒ STATUS_ACCESS_DENIED** |
+| `query_info` | `smb_get_file_info` | `size` in the QUERY_INFO response |
+| `query_directory` | `smb_list_directory` | the `files` array becomes the directory listing |
+
+**`smb_delete_file` / `smb_delete_directory` do not exist.** SMB2 has no DELETE command:
+a client deletes by opening the file and issuing SET_INFO with
+FileDispositionInformation (MS-SMB2 2.2.39). This server does not implement SET_INFO at
+all, so neither action could ever have been requested. Implementing delete means
+implementing SET_INFO first.
+
+**Write is fail-closed.** A `write` whose LLM response contains no `smb_write_file` is
+refused with STATUS_ACCESS_DENIED. Silence from the model, an LLM outage and an explicit
+denial must not be indistinguishable from approval (see the fail-open note in the root
+`CLAUDE.md`).
+
+### Payload encoding (read before writing prompts)
+
+SMB carries file contents, which are routinely not text, so **both directions carry an
+explicit `encoding` field** beside the payload string. There is no sniffing: `"SGVsbG8="`
+is simultaneously valid text and valid base64, and only the sender knows which it means.
+
+| Direction | Field | `encoding` values |
+|---|---|---|
+| Outbound (`smb_read_file`) | `content` | omitted / `"utf8"` (characters as-is, the default), `"base64"`, `"hex"` |
+| Inbound (`smb_operation` for `write`) | `data` | `"utf8"` when every byte is printable ASCII, otherwise `"base64"` |
+
+The pair is a bijection (`decode_smb_payload` / `encode_smb_payload` in `actions.rs`,
+pinned by `smb_payload_encoding_round_trips`): pass a write event's `data` and `encoding`
+straight into `smb_read_file` and the same bytes come back.
+
+**The defect this replaced** is the reference case in the root `CLAUDE.md`.
+`smb_read_file.content` was documented as "base64 encoded for binary" in two places while
+the executor did `.as_str()…as_bytes()`, so a model that followed the documentation
+delivered literal base64 ASCII as the file's contents. The inbound half was worse than
+asymmetric: it used `String::from_utf8_lossy`, replacing every non-UTF-8 byte with U+FFFD,
+so a written binary payload could not be echoed back even in principle. Undecodable
+`content` now fails the READ with STATUS_DATA_ERROR rather than putting the raw string on
+the wire.
+
+**Example** — a binary file:
 
 ```json
-{
-  "type": "smb_auth_success"
-}
+{"type": "smb_read_file", "path": "/documents/icon.png",
+ "content": "iVBORw0KGgo=", "encoding": "base64"}
 ```
 
-**smb_auth_deny** - Deny authentication:
+Same string without `"encoding"` delivers the twelve characters `iVBORw0KGgo=`.
 
-```json
-{
-  "type": "smb_auth_deny",
-  "message": "Access denied"
-}
-```
+### Wire-format bugs fixed alongside the encoding work
 
-**smb_read_file** - File content:
+All four were found by writing the first test that asserts response *bytes* rather than
+"the server answered":
 
-```json
-{
-  "type": "smb_read_file",
-  "content": "File content here"
-}
-```
-
-**smb_get_file_info** - File attributes:
-
-```json
-{
-  "type": "smb_get_file_info",
-  "size": 4096,
-  "is_directory": false,
-  "created": "2024-01-15T10:30:00Z"
-}
-```
-
-**smb_list_directory** - Directory listing:
-
-```json
-{
-  "type": "smb_list_directory",
-  "files": [
-    {"name": "readme.txt", "size": 1024, "is_directory": false},
-    {"name": "subdir", "size": 0, "is_directory": true}
-  ]
-}
-```
+- **`blocking_lock()` in an async task.** `build_session_setup_response_with_user` and
+  `build_tree_connect_response` called `tokio::sync::Mutex::blocking_lock()`, which panics
+  when called from a runtime thread. Every SESSION_SETUP therefore killed its connection
+  task the moment the LLM approved the login; `tokio::spawn` swallowed the panic, so the
+  server stayed `Running`, the log showed the auth succeeding, and the client hung until
+  its own timeout. Both are now `async fn` using `.lock().await`.
+- **READ response `DataOffset` did not point at the data.** The body wrote four extra
+  Reserved bytes after `DataOffset`, so the payload started at 84 while the response
+  advertised 80. A client reading at the offset the server declared got four zero bytes
+  and a truncated file.
+- **WRITE `Length` read from the wrong offset.** MS-SMB2 2.2.21 puts it at body offset 4;
+  the code read offset 0, which is `StructureSize`+`DataOffset` (0x00700031 for a
+  well-formed request) — so the first WRITE blocked in `read_exact` waiting for 7 MB that
+  never arrived. The length is now also capped at 8 MiB before allocating.
+- **CREATE file name located by a hardcoded offset.** `parse_smb2_path` indexed the
+  body-relative slice at 120, which is the *absolute* offset of the name buffer, so for a
+  well-formed request it read 64 bytes past the name and every CREATE resolved to
+  `/unknown`. It now honours `NameOffset`/`NameLength`.
 
 ### Error Handling
 
@@ -281,7 +325,9 @@ Provide /documents directory with readme.txt (content: "Welcome to NetGet SMB").
   "actions": [
     {
       "type": "smb_read_file",
-      "content": "Welcome to NetGet SMB"
+      "path": "/documents/readme.txt",
+      "content": "Welcome to NetGet SMB",
+      "encoding": "utf8"
     }
   ]
 }
@@ -362,7 +408,7 @@ presentation.pptx (4096 bytes), archive folder.
 Start an SMB file server on port 445. Accept file writes, log the content.
 ```
 
-**LLM Response (write):**
+**LLM Response (write):** the write is refused unless `smb_write_file` is returned.
 
 ```json
 {
@@ -370,6 +416,10 @@ Start an SMB file server on port 445. Accept file writes, log the content.
     {
       "type": "show_message",
       "message": "Client wrote 256 bytes to /documents/newfile.txt"
+    },
+    {
+      "type": "smb_write_file",
+      "path": "/documents/newfile.txt"
     }
   ]
 }

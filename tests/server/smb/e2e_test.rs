@@ -96,7 +96,7 @@ fn parse_smb2_status(response: &[u8]) -> Option<u32> {
 }
 
 /// Test: SMB2 Negotiate Protocol
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_negotiate() -> E2EResult<()> {
     println!("\n=== Test: SMB2 Negotiate Protocol ===");
 
@@ -168,7 +168,7 @@ async fn test_smb_negotiate() -> E2EResult<()> {
 }
 
 /// Test: SMB2 Session Setup (Guest Authentication)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_session_setup() -> E2EResult<()> {
     println!("\n=== Test: SMB2 Session Setup (Guest) ===");
 
@@ -256,7 +256,7 @@ async fn test_smb_session_setup() -> E2EResult<()> {
 }
 
 /// Test: Multiple Concurrent SMB Connections
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_concurrent_connections() -> E2EResult<()> {
     println!("\n=== Test: Multiple Concurrent SMB Connections ===");
 
@@ -339,7 +339,7 @@ async fn test_smb_concurrent_connections() -> E2EResult<()> {
 }
 
 /// Test: Server Responds to SMB Traffic
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_server_responsiveness() -> E2EResult<()> {
     println!("\n=== Test: SMB Server Responsiveness ===");
 
@@ -423,7 +423,7 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
 }
 
 /// Test: Verify Server Stack
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_correct_stack() -> E2EResult<()> {
     println!("\n=== Test: SMB Server Uses Correct Stack ===");
 
@@ -462,7 +462,7 @@ async fn test_smb_correct_stack() -> E2EResult<()> {
 }
 
 /// Test: SMB Authentication Success via LLM
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
     println!("\n=== Test: SMB LLM-Controlled Authentication ===");
 
@@ -474,9 +474,14 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: SMB operation events - MUST come before on_any()
+            // `smb_auth_deny` is the denial action. This used to send
+            // `{"type": "wait_for_more"}` with the comment "// Deny auth" - SMB declares no
+            // such action, so the response was rejected as an unknown action, the retry
+            // loop fired an extra LLM call, and `verify_mocks` failed on the call count.
+            // The test never actually exercised a denial.
             .on_event("smb_operation")
             .respond_with_actions(serde_json::json!([
-                {"type": "wait_for_more"}  // Deny auth
+                {"type": "smb_auth_deny", "username": "guest", "reason": "only alice may log in"}
             ]))
             .expect_at_least(1)
             .and()
@@ -531,22 +536,16 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
 
     println!("  [TEST] Session Setup response: {} bytes", n);
 
-    // Check if authentication succeeded
-    if let Some(status) = parse_smb2_status(&response) {
-        println!("  [TEST] Session Setup status: 0x{:08X}", status);
+    // The model denied guest, so the server must say so on the wire. Printing either
+    // outcome as a success - which this test used to do - means it passes whatever
+    // happens, including when the LLM response is rejected outright.
+    assert_eq!(
+        parse_smb2_status(&response),
+        Some(0xC0000016),
+        "smb_auth_deny must produce STATUS_ACCESS_DENIED"
+    );
 
-        // Status 0 = success, any other status means auth failed or more processing needed
-        if status == 0 {
-            println!("  [TEST] ✓ Guest authentication successful (LLM allowed)");
-        } else {
-            println!(
-                "  [TEST] Note: Authentication status 0x{:08X} (LLM may have denied guest)",
-                status
-            );
-        }
-    }
-
-    println!("  [TEST] ✓ Authentication flow completed");
+    println!("  [TEST] ✓ Denied login answered with STATUS_ACCESS_DENIED");
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -556,7 +555,7 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
 }
 
 /// Test: Connection Tracking in UI
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_connection_tracking() -> E2EResult<()> {
     println!("\n=== Test: SMB Connection Tracking ===");
 
@@ -621,4 +620,654 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
     println!("  [TEST] ✓ Test completed successfully\n");
 
     Ok(())
+}
+
+// ============================================================================
+// Wire-level tests for the payload encoding and the routed operation actions
+//
+// The tests above assert that the server answers; these assert *what* it puts on
+// the wire. That distinction is the whole point: `smb_read_file.content` was
+// documented as "base64 encoded for binary" while the executor did `.as_bytes()`,
+// so a model following the documentation delivered literal base64 ASCII as the
+// file's contents and every test still passed.
+// ============================================================================
+
+/// Helper: Build an SMB2 TREE_CONNECT-free CREATE request for `path`.
+///
+/// MS-SMB2 2.2.13. The name is UTF-16LE in the buffer at absolute offset 120, which is
+/// what NameOffset advertises - the server must locate it through NameOffset/NameLength.
+fn build_smb2_create(message_id: u64, path: &str) -> Vec<u8> {
+    let name_utf16: Vec<u8> = path.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+
+    let mut packet = Vec::new();
+
+    // SMB2 header
+    packet.extend_from_slice(b"\xFESMB");
+    packet.extend_from_slice(&[64, 0]); // Header length
+    packet.extend_from_slice(&[0; 2]); // Credit charge
+    packet.extend_from_slice(&[0; 4]); // Status
+    packet.extend_from_slice(&[0x05, 0x00]); // Command = CREATE
+    packet.extend_from_slice(&[1, 0]); // Credit request
+    packet.extend_from_slice(&[0; 4]); // Flags
+    packet.extend_from_slice(&[0; 4]); // Next command
+    packet.extend_from_slice(&message_id.to_le_bytes());
+    packet.extend_from_slice(&[0; 4]); // Reserved
+    packet.extend_from_slice(&[1, 0, 0, 0]); // Tree ID
+    packet.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // Session ID
+    packet.extend_from_slice(&[0; 16]); // Signature
+    assert_eq!(packet.len(), 64);
+
+    // CREATE request body (57 fixed bytes, then the name buffer)
+    packet.extend_from_slice(&[57, 0]); // StructureSize
+    packet.push(0); // SecurityFlags
+    packet.push(0); // RequestedOplockLevel
+    packet.extend_from_slice(&[0; 4]); // ImpersonationLevel
+    packet.extend_from_slice(&[0; 8]); // SmbCreateFlags
+    packet.extend_from_slice(&[0; 8]); // Reserved
+    packet.extend_from_slice(&[0x89, 0x00, 0x12, 0x00]); // DesiredAccess
+    packet.extend_from_slice(&[0x80, 0, 0, 0]); // FileAttributes = NORMAL
+    packet.extend_from_slice(&[0x07, 0, 0, 0]); // ShareAccess
+    packet.extend_from_slice(&[0x01, 0, 0, 0]); // CreateDisposition = FILE_OPEN
+    packet.extend_from_slice(&[0x40, 0, 0, 0]); // CreateOptions
+    packet.extend_from_slice(&120u16.to_le_bytes()); // NameOffset (from header start)
+    packet.extend_from_slice(&(name_utf16.len() as u16).to_le_bytes()); // NameLength
+    packet.extend_from_slice(&[0; 4]); // CreateContextsOffset
+    packet.extend_from_slice(&[0; 4]); // CreateContextsLength
+    assert_eq!(packet.len(), 120, "name buffer must start at absolute 120");
+    packet.extend_from_slice(&name_utf16);
+
+    packet
+}
+
+/// Helper: Build an SMB2 READ request for `file_id` (MS-SMB2 2.2.19, body is 49 bytes).
+fn build_smb2_read(message_id: u64, file_id: &[u8], length: u32) -> Vec<u8> {
+    let mut packet = Vec::new();
+
+    packet.extend_from_slice(b"\xFESMB");
+    packet.extend_from_slice(&[64, 0]);
+    packet.extend_from_slice(&[0; 2]);
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&[0x08, 0x00]); // Command = READ
+    packet.extend_from_slice(&[1, 0]);
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&message_id.to_le_bytes());
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&[1, 0, 0, 0]);
+    packet.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+    packet.extend_from_slice(&[0; 16]);
+
+    packet.extend_from_slice(&[49, 0]); // StructureSize
+    packet.push(0); // Padding
+    packet.push(0); // Flags
+    packet.extend_from_slice(&length.to_le_bytes()); // Length (offset 4)
+    packet.extend_from_slice(&0u64.to_le_bytes()); // Offset (offset 8)
+    packet.extend_from_slice(file_id); // FileId (offset 16, 16 bytes)
+    packet.extend_from_slice(&[0; 4]); // MinimumCount
+    packet.extend_from_slice(&[0; 4]); // Channel
+    packet.extend_from_slice(&[0; 4]); // RemainingBytes
+    packet.extend_from_slice(&[0; 2]); // ReadChannelInfoOffset
+    packet.extend_from_slice(&[0; 2]); // ReadChannelInfoLength
+    packet.push(0); // Buffer
+    assert_eq!(packet.len(), 64 + 49);
+
+    packet
+}
+
+/// Helper: Build an SMB2 WRITE request (MS-SMB2 2.2.21, 49-byte body then the data).
+fn build_smb2_write(message_id: u64, file_id: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut packet = Vec::new();
+
+    packet.extend_from_slice(b"\xFESMB");
+    packet.extend_from_slice(&[64, 0]);
+    packet.extend_from_slice(&[0; 2]);
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&[0x09, 0x00]); // Command = WRITE
+    packet.extend_from_slice(&[1, 0]);
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&message_id.to_le_bytes());
+    packet.extend_from_slice(&[0; 4]);
+    packet.extend_from_slice(&[1, 0, 0, 0]);
+    packet.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+    packet.extend_from_slice(&[0; 16]);
+
+    packet.extend_from_slice(&[49, 0]); // StructureSize
+    packet.extend_from_slice(&112u16.to_le_bytes()); // DataOffset (64 + 48)
+    packet.extend_from_slice(&(data.len() as u32).to_le_bytes()); // Length (offset 4)
+    packet.extend_from_slice(&0u64.to_le_bytes()); // Offset (offset 8)
+    packet.extend_from_slice(file_id); // FileId (offset 16)
+    packet.extend_from_slice(&[0; 4]); // Channel
+    packet.extend_from_slice(&[0; 4]); // RemainingBytes
+    packet.extend_from_slice(&[0; 2]); // WriteChannelInfoOffset
+    packet.extend_from_slice(&[0; 2]); // WriteChannelInfoLength
+    packet.extend_from_slice(&[0; 4]); // Flags
+    packet.push(0); // Buffer padding byte
+    assert_eq!(packet.len(), 64 + 49);
+
+    packet.extend_from_slice(data);
+    packet
+}
+
+/// Read exactly one SMB2 response message off the socket.
+///
+/// The server writes one response per request, so a single read suffices; loop until at
+/// least a full header has arrived so a split TCP segment does not fail the test.
+fn read_smb2_response(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let mut buf = vec![0u8; 65536];
+    let n = stream.read(&mut buf)?;
+    buf.truncate(n);
+    Ok(buf)
+}
+
+/// Extract the 16-byte FileId from a CREATE response.
+///
+/// MS-SMB2 2.2.14: the 89-byte body is StructureSize(2) OplockLevel(1) Flags(1)
+/// CreateAction(4) four 8-byte timestamps (32) AllocationSize(8) EndOfFile(8)
+/// FileAttributes(4) Reserved2(4) FileId(16) CreateContextsOffset(4)
+/// CreateContextsLength(4) Buffer(1), so FileId sits at body offset 64.
+fn create_response_file_id(response: &[u8]) -> Vec<u8> {
+    assert!(
+        response.len() >= 64 + 89,
+        "CREATE response too short: {} bytes",
+        response.len()
+    );
+    response[64 + 64..64 + 80].to_vec()
+}
+
+/// Extract the FileAttributes field of a CREATE response (body offset 56..60).
+fn create_response_file_attributes(response: &[u8]) -> u32 {
+    u32::from_le_bytes([
+        response[64 + 56],
+        response[64 + 57],
+        response[64 + 58],
+        response[64 + 59],
+    ])
+}
+
+/// Extract the data buffer of a READ response using its own DataOffset/DataLength.
+///
+/// MS-SMB2 2.2.20: StructureSize(2) DataOffset(1) Reserved(1) DataLength(4)
+/// DataRemaining(4) Reserved2(4). DataOffset is measured from the start of the SMB2
+/// header, so reading at it - rather than at a hardcoded position - is what makes this
+/// test catch a server whose declared offset disagrees with where it actually put the
+/// payload. It did.
+fn read_response_payload(response: &[u8]) -> Vec<u8> {
+    let data_offset = response[64 + 2] as usize;
+    let data_length = u32::from_le_bytes([
+        response[64 + 4],
+        response[64 + 5],
+        response[64 + 6],
+        response[64 + 7],
+    ]) as usize;
+    assert!(
+        data_offset + data_length <= response.len(),
+        "READ response claims {} bytes at offset {} but is only {} long",
+        data_length,
+        data_offset,
+        response.len()
+    );
+    response[data_offset..data_offset + data_length].to_vec()
+}
+
+/// Drive NEGOTIATE + SESSION_SETUP so the connection is ready for file operations.
+fn smb_handshake(stream: &mut TcpStream) -> E2EResult<()> {
+    stream.write_all(&build_smb2_negotiate())?;
+    stream.flush()?;
+    let _ = read_smb2_response(stream)?;
+
+    stream.write_all(&build_smb2_session_setup())?;
+    stream.flush()?;
+    let response = read_smb2_response(stream)?;
+    assert_eq!(
+        parse_smb2_status(&response),
+        Some(0),
+        "SESSION_SETUP must succeed for the rest of the flow"
+    );
+    Ok(())
+}
+
+/// Test: a binary file survives CREATE -> READ intact.
+///
+/// The model answers `smb_read_file` with base64 and `encoding: "base64"`; the bytes that
+/// come back in the READ response body must be the decoded bytes, not the base64 text.
+/// The payload is deliberately non-printable and not valid UTF-8, so `as_bytes()` on the
+/// documented base64 - the original defect - produces a visibly different, longer buffer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_smb_read_binary_content_is_decoded() -> E2EResult<()> {
+    println!("\n=== Test: SMB READ decodes base64 content ===");
+
+    // 0xff/0xfe cannot appear in UTF-8; 0xc3 0x28 is an invalid two-byte sequence.
+    const BINARY: &[u8] = &[0x00, 0xff, 0xfe, 0x01, 0x80, 0x7f, 0xc3, 0x28];
+    // Standard base64 of the above.
+    const BINARY_B64: &str = "AP/+AYB/wyg=";
+
+    assert!(
+        std::str::from_utf8(&BINARY.to_vec()).is_err(),
+        "the payload must not be valid UTF-8, or the test proves nothing"
+    );
+
+    let prompt = "Start an SMB file server via smb serving one binary file.";
+
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_event("smb_operation")
+            .and_event_data_contains("operation", "session_setup")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_auth_success", "username": "guest"}
+            ]))
+            .expect_at_least(1)
+            .and()
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "create")
+            // Asserts the CREATE path parser too: the mock only matches if the server
+            // located the UTF-16LE name through NameOffset/NameLength.
+            .and_event_data_contains("path", "/documents/binary.dat")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_create_file", "path": "/documents/binary.dat"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "read")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "smb_read_file",
+                    "path": "/documents/binary.dat",
+                    "content": BINARY_B64,
+                    "encoding": "base64"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": prompt}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server.port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+    smb_handshake(&mut stream)?;
+
+    stream.write_all(&build_smb2_create(2, "/documents/binary.dat"))?;
+    stream.flush()?;
+    let create_response = read_smb2_response(&mut stream)?;
+    assert_eq!(parse_smb2_status(&create_response), Some(0));
+    assert_eq!(
+        create_response_file_attributes(&create_response) & 0x10,
+        0,
+        "smb_create_file must NOT set FILE_ATTRIBUTE_DIRECTORY"
+    );
+    let file_id = create_response_file_id(&create_response);
+
+    stream.write_all(&build_smb2_read(3, &file_id, 4096))?;
+    stream.flush()?;
+    let read_response = read_smb2_response(&mut stream)?;
+    assert_eq!(parse_smb2_status(&read_response), Some(0));
+
+    let payload = read_response_payload(&read_response);
+    assert_eq!(
+        payload,
+        BINARY.to_vec(),
+        "READ must deliver the decoded bytes ({}), not the base64 text ({:?})",
+        BINARY.len(),
+        String::from_utf8_lossy(&payload)
+    );
+    println!("  [TEST] ✓ {} binary bytes returned intact", payload.len());
+
+    drop(stream);
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// Test: text content still works without an `encoding` field, and a directory handle
+/// carries FILE_ATTRIBUTE_DIRECTORY.
+///
+/// `utf8` is the default precisely so that every pre-existing prompt keeps working; a
+/// string that happens to look like base64 must be delivered literally when unmarked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_smb_default_encoding_is_literal_text() -> E2EResult<()> {
+    println!("\n=== Test: SMB default encoding is literal UTF-8 ===");
+
+    // Valid base64 *and* perfectly ordinary text. Without an explicit encoding the
+    // server must not guess - it must deliver these 8 characters.
+    const AMBIGUOUS: &str = "SGVsbG8=";
+
+    let prompt = "Start an SMB file server via smb.";
+
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_event("smb_operation")
+            .and_event_data_contains("operation", "session_setup")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_auth_success", "username": "guest"}
+            ]))
+            .expect_at_least(1)
+            .and()
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "create")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_create_directory", "path": "/documents"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "read")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_read_file", "path": "/documents", "content": AMBIGUOUS}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": prompt}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server.port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+    smb_handshake(&mut stream)?;
+
+    stream.write_all(&build_smb2_create(2, "/documents"))?;
+    stream.flush()?;
+    let create_response = read_smb2_response(&mut stream)?;
+    assert_eq!(
+        create_response_file_attributes(&create_response) & 0x10,
+        0x10,
+        "smb_create_directory must set FILE_ATTRIBUTE_DIRECTORY (0x10) in the CREATE response"
+    );
+    let file_id = create_response_file_id(&create_response);
+
+    stream.write_all(&build_smb2_read(3, &file_id, 4096))?;
+    stream.flush()?;
+    let read_response = read_smb2_response(&mut stream)?;
+
+    let payload = read_response_payload(&read_response);
+    assert_eq!(
+        payload,
+        AMBIGUOUS.as_bytes().to_vec(),
+        "without an 'encoding' field the content must be delivered literally, not base64-decoded"
+    );
+    println!("  [TEST] ✓ ambiguous string delivered literally");
+
+    drop(stream);
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// Test: a WRITE is refused unless the model returns `smb_write_file`.
+///
+/// Silence from the model must not read as approval (the fail-open pattern the project
+/// treats as its most dangerous). The same flow also asserts the inbound half of the
+/// encoding pair: a non-printable payload reaches the model base64-encoded rather than
+/// mangled by `from_utf8_lossy`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_smb_write_requires_model_approval() -> E2EResult<()> {
+    println!("\n=== Test: SMB WRITE is refused without smb_write_file ===");
+
+    // Bytes 0x00 and 0xff would both become U+FFFD under from_utf8_lossy.
+    const BINARY: &[u8] = &[0x00, 0xff, 0x41, 0x42, 0xfe];
+    const BINARY_B64: &str = "AP9BQv4=";
+
+    let prompt = "Start an SMB file server via smb that rejects all writes.";
+
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_event("smb_operation")
+            .and_event_data_contains("operation", "session_setup")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_auth_success", "username": "guest"}
+            ]))
+            .expect_at_least(1)
+            .and()
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "create")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_create_file", "path": "/documents/out.dat"}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Matching on the base64 form asserts the inbound encoding: the written
+            // bytes must reach the model losslessly.
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "write")
+            .and_event_data_contains("data", BINARY_B64)
+            .and_event_data_contains("encoding", "base64")
+            // Deliberately return no smb_write_file: the server must refuse.
+            .respond_with_actions(serde_json::json!([
+                {"type": "show_message", "message": "writes are not allowed"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": prompt}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server.port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+    smb_handshake(&mut stream)?;
+
+    stream.write_all(&build_smb2_create(2, "/documents/out.dat"))?;
+    stream.flush()?;
+    let create_response = read_smb2_response(&mut stream)?;
+    let file_id = create_response_file_id(&create_response);
+
+    stream.write_all(&build_smb2_write(3, &file_id, BINARY))?;
+    stream.flush()?;
+    let write_response = read_smb2_response(&mut stream)?;
+
+    assert_eq!(
+        parse_smb2_status(&write_response),
+        Some(0xC0000022),
+        "an unapproved WRITE must answer STATUS_ACCESS_DENIED, not STATUS_SUCCESS"
+    );
+    println!("  [TEST] ✓ unapproved write refused with STATUS_ACCESS_DENIED");
+
+    drop(stream);
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// Test: an approved WRITE succeeds and reports the byte count the model chose.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_smb_write_approved_reports_byte_count() -> E2EResult<()> {
+    println!("\n=== Test: SMB WRITE approved ===");
+
+    const PAYLOAD: &[u8] = b"hello smb write";
+
+    let prompt = "Start an SMB file server via smb that accepts writes.";
+
+    let config = crate::helpers::NetGetConfig::new(prompt).with_mock(|mock| {
+        mock.on_event("smb_operation")
+            .and_event_data_contains("operation", "session_setup")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_auth_success", "username": "guest"}
+            ]))
+            .expect_at_least(1)
+            .and()
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "create")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_create_file", "path": "/documents/out.txt"}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Printable ASCII must arrive as text, not base64.
+            .on_event("smb_operation")
+            .and_event_data_contains("operation", "write")
+            .and_event_data_contains("data", "hello smb write")
+            .and_event_data_contains("encoding", "utf8")
+            .respond_with_actions(serde_json::json!([
+                {"type": "smb_write_file", "path": "/documents/out.txt"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_any()
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": prompt}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server.port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+    smb_handshake(&mut stream)?;
+
+    stream.write_all(&build_smb2_create(2, "/documents/out.txt"))?;
+    stream.flush()?;
+    let create_response = read_smb2_response(&mut stream)?;
+    let file_id = create_response_file_id(&create_response);
+
+    stream.write_all(&build_smb2_write(3, &file_id, PAYLOAD))?;
+    stream.flush()?;
+    let write_response = read_smb2_response(&mut stream)?;
+
+    assert_eq!(parse_smb2_status(&write_response), Some(0));
+    let count = u32::from_le_bytes([
+        write_response[64 + 4],
+        write_response[64 + 5],
+        write_response[64 + 6],
+        write_response[64 + 7],
+    ]);
+    assert_eq!(
+        count as usize,
+        PAYLOAD.len(),
+        "WRITE response must report every byte the client sent as written"
+    );
+    println!("  [TEST] ✓ {} bytes acknowledged", count);
+
+    drop(stream);
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// The payload codec is a bijection: whatever the server shows the model on a write,
+/// feeding it straight back as `smb_read_file` content reproduces the exact bytes.
+#[test]
+fn smb_payload_encoding_round_trips() {
+    use netget::server::smb::actions::{decode_smb_payload, encode_smb_payload};
+
+    for original in [
+        b"Hello, SMB!".to_vec(),
+        vec![0x00, 0xff, 0xfe, 0x01, 0x80, 0x7f, 0xc3, 0x28],
+        (0u8..=255).collect::<Vec<u8>>(),
+        Vec::new(),
+    ] {
+        let (payload, encoding) = encode_smb_payload(&original);
+        let decoded = decode_smb_payload(&payload, Some(encoding))
+            .unwrap_or_else(|e| panic!("re-decoding {encoding} payload failed: {e}"));
+        assert_eq!(
+            decoded, original,
+            "round trip through {encoding} lost bytes"
+        );
+    }
+
+    // Ambiguous string: the declared encoding decides, never a guess.
+    assert_eq!(
+        decode_smb_payload("SGVsbG8=", None).unwrap(),
+        b"SGVsbG8=".to_vec()
+    );
+    assert_eq!(
+        decode_smb_payload("SGVsbG8=", Some("base64")).unwrap(),
+        b"Hello".to_vec()
+    );
+    assert_eq!(
+        decode_smb_payload("48656c6c6f", Some("hex")).unwrap(),
+        b"Hello".to_vec()
+    );
+    assert!(decode_smb_payload("!!!not base64!!!", Some("base64")).is_err());
+    assert!(decode_smb_payload("x", Some("rot13")).is_err());
+}
+
+/// Every action the model is offered on `smb_operation` must have an executor branch,
+/// and every action in `get_sync_actions()` must be offered.
+///
+/// Five of ten sync actions used to be routed nowhere: the model could emit
+/// `smb_delete_file`, `smb_create_directory` and three others and nothing whatsoever
+/// happened. Deletes were removed (SMB2 deletes via SET_INFO, which this server does not
+/// implement); the rest are now routed.
+#[test]
+fn smb_declared_actions_are_all_routed() {
+    use netget::llm::actions::protocol_trait::Protocol;
+    use netget::server::smb::actions::{SmbProtocol, SMB_OPERATION_EVENT};
+
+    let protocol = SmbProtocol::new();
+    let sync: Vec<String> = protocol
+        .get_sync_actions()
+        .iter()
+        .map(|a| a.name.clone())
+        .collect();
+    let on_event: Vec<String> = SMB_OPERATION_EVENT
+        .actions
+        .iter()
+        .map(|a| a.name.clone())
+        .collect();
+
+    for name in &sync {
+        assert!(
+            on_event.contains(name),
+            "{name} is in get_sync_actions() but not attached to smb_operation, so call_llm \
+             never offers it to the model"
+        );
+    }
+    for name in &on_event {
+        assert!(
+            sync.contains(name),
+            "{name} is offered on smb_operation but is not a declared sync action"
+        );
+    }
+
+    for removed in ["smb_delete_file", "smb_delete_directory"] {
+        assert!(
+            !sync.contains(&removed.to_string()),
+            "{removed} cannot be routed - SMB2 deletes via SET_INFO, which is not implemented"
+        );
+    }
+
+    // The exact set the executor in src/server/smb/mod.rs handles.
+    let mut expected = vec![
+        "smb_auth_success",
+        "smb_auth_deny",
+        "smb_list_directory",
+        "smb_read_file",
+        "smb_write_file",
+        "smb_get_file_info",
+        "smb_create_file",
+        "smb_create_directory",
+    ];
+    expected.sort_unstable();
+    let mut actual: Vec<&str> = sync.iter().map(|s| s.as_str()).collect();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
 }

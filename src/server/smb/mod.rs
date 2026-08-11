@@ -28,6 +28,14 @@ use crate::state::ServerId;
 use crate::{console_info, console_warn};
 use actions::SMB_OPERATION_EVENT;
 
+// NTSTATUS codes used in SMB2 response headers (MS-ERREF 2.3.1).
+const STATUS_ACCESS_DENIED: u32 = 0xC000_0022;
+const STATUS_DATA_ERROR: u32 = 0xC000_003E;
+
+// File attributes in the CREATE response (MS-SMB2 2.2.14 / MS-FSCC 2.6).
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
+
 /// SMB server that provides LLM-controlled file system
 pub struct SmbServer;
 
@@ -446,11 +454,9 @@ impl SmbServer {
                 let _ = status_tx.send(format!("→ SMB auth success: {}", username));
 
                 // Build successful session setup response
-                let response = Self::build_session_setup_response_with_user(
-                    _header,
-                    _state,
-                    username.clone(),
-                )?;
+                let response =
+                    Self::build_session_setup_response_with_user(_header, _state, username.clone())
+                        .await?;
 
                 // Get the session info from state to update connection tracking
                 let (session_id, _auth_username) = {
@@ -483,7 +489,7 @@ impl SmbServer {
 
                 // For simplicity, accept any tree connect with share name "share"
                 let response =
-                    Self::build_tree_connect_response(_header, _state, "share".to_string())?;
+                    Self::build_tree_connect_response(_header, _state, "share".to_string()).await?;
                 Ok(Some(response))
             }
             SMB2_CREATE => {
@@ -503,7 +509,7 @@ impl SmbServer {
                 let _ = status_tx.send(format!("[INFO] SMB CREATE: {}", path));
 
                 // Consult LLM to check if file exists and get info
-                let _actions = Self::consult_llm(
+                let actions = Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -517,6 +523,14 @@ impl SmbServer {
                 )
                 .await?;
 
+                // The model decides whether this handle is a file or a directory. That
+                // choice reaches the wire: FILE_ATTRIBUTE_DIRECTORY in the CREATE response
+                // is what makes a client issue QUERY_DIRECTORY instead of READ. Returning
+                // neither action means "regular file", which is the historical behaviour.
+                let is_directory = actions.iter().any(|a| {
+                    a.get("type").and_then(|t| t.as_str()) == Some("smb_create_directory")
+                });
+
                 // Generate file handle (16-byte GUID)
                 let file_id = Self::generate_file_handle();
 
@@ -528,13 +542,17 @@ impl SmbServer {
                         SmbFileHandle {
                             _file_id: file_id.clone(),
                             path: path.clone(),
-                            _is_directory: false, // TODO: Parse from LLM response
+                            _is_directory: is_directory,
                         },
                     );
                 }
 
-                debug!("SMB2 CREATE: allocated file handle for {}", path);
-                let response = Self::build_create_response(_header, &file_id)?;
+                debug!(
+                    "SMB2 CREATE: allocated {} handle for {}",
+                    if is_directory { "directory" } else { "file" },
+                    path
+                );
+                let response = Self::build_create_response(_header, &file_id, is_directory)?;
                 Ok(Some(response))
             }
             SMB2_CLOSE => {
@@ -607,15 +625,41 @@ impl SmbServer {
                 )
                 .await?;
 
-                // Extract file content from LLM response
-                let content = actions
+                // Extract file content from the LLM response, honouring the action's
+                // `encoding` field. Decoding is explicit: `content` is only base64 or hex
+                // when the action says so, because "SGVsbG8=" is simultaneously valid text
+                // and valid base64 and only the sender knows which it means.
+                let read_action = actions
                     .iter()
-                    .find(|a| a.get("type").and_then(|t| t.as_str()) == Some("smb_read_file"))
-                    .and_then(|a| a.get("content"))
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("File not found or empty")
-                    .as_bytes()
-                    .to_vec();
+                    .find(|a| a.get("type").and_then(|t| t.as_str()) == Some("smb_read_file"));
+
+                let content = match read_action {
+                    Some(action) => {
+                        let payload = action
+                            .get("content")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or_default();
+                        let encoding = action.get("encoding").and_then(|e| e.as_str());
+                        match crate::server::smb::actions::decode_smb_payload(payload, encoding) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                // Refuse rather than putting the undecodable string on the
+                                // wire, which is exactly the failure this field exists to
+                                // prevent.
+                                warn!("SMB read: {} - refusing with STATUS_DATA_ERROR", e);
+                                let _ = status_tx
+                                    .send(format!("✗ SMB read: bad content encoding: {}", e));
+                                let response = Self::build_error_response(
+                                    _header,
+                                    SMB2_READ,
+                                    STATUS_DATA_ERROR,
+                                )?;
+                                return Ok(Some(response));
+                            }
+                        }
+                    }
+                    None => b"File not found or empty".to_vec(),
+                };
 
                 debug!("SMB2 READ: returning {} bytes for {}", content.len(), path);
                 let response = Self::build_read_response(_header, &content)?;
@@ -631,9 +675,29 @@ impl SmbServer {
                 // Extract file ID (16 bytes at offset 16)
                 let file_id = body_buf[16..32].to_vec();
 
-                // Extract write offset and length
+                // Extract write offset and length.
+                //
+                // MS-SMB2 2.2.21: StructureSize(2) DataOffset(2) Length(4) Offset(8)
+                // FileId(16) ... so Length lives at body offset 4, not 0. Reading it from
+                // 0 picked up StructureSize+DataOffset (0x00700031 for a well-formed
+                // request) and then blocked in read_exact waiting for 7 MB that never
+                // arrived, hanging the connection on the first WRITE.
+                let length = u32::from_le_bytes(body_buf[4..8].try_into().unwrap());
                 let offset = u64::from_le_bytes(body_buf[8..16].try_into().unwrap());
-                let length = u32::from_le_bytes(body_buf[0..4].try_into().unwrap());
+
+                // `length` is attacker-controlled, so cap the allocation instead of
+                // trusting a peer to be honest about a 4 GB write.
+                const MAX_WRITE_LEN: u32 = 8 * 1024 * 1024;
+                if length > MAX_WRITE_LEN {
+                    warn!(
+                        "SMB2 WRITE: refusing {} byte write (max {})",
+                        length, MAX_WRITE_LEN
+                    );
+                    let _ = status_tx.send(format!("✗ SMB write too large: {} bytes", length));
+                    let response =
+                        Self::build_error_response(_header, SMB2_WRITE, STATUS_ACCESS_DENIED)?;
+                    return Ok(Some(response));
+                }
 
                 // Read data to write (variable length)
                 let mut data = vec![0u8; length as usize];
@@ -655,11 +719,19 @@ impl SmbServer {
                     path, offset, length
                 ));
 
-                // Convert data to string for LLM (assuming text files)
-                let content = String::from_utf8_lossy(&data).to_string();
+                // Render the written bytes for the model. Printable payloads stay readable;
+                // anything else is base64 rather than `from_utf8_lossy`, which silently
+                // replaced every non-UTF-8 byte with U+FFFD and made the round trip
+                // impossible. `encoding` says which of the two the model is looking at, and
+                // matches what smb_read_file accepts, so the model can hand the same bytes
+                // back on a later read.
+                let (content, data_encoding) =
+                    crate::server::smb::actions::encode_smb_payload(&data);
 
-                // Consult LLM to store file content
-                let _actions = Self::consult_llm(
+                // Consult the LLM. The write is refused unless the model returns
+                // smb_write_file: an LLM outage or a model that says nothing must not read
+                // as an approval.
+                let actions = Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -668,14 +740,41 @@ impl SmbServer {
                     serde_json::json!({
                         "path": path,
                         "offset": offset,
-                        "data": content
+                        "data": content,
+                        "encoding": data_encoding
                     }),
                     status_tx,
                 )
                 .await?;
 
-                debug!("SMB2 WRITE: wrote {} bytes to {}", length, path);
-                let response = Self::build_write_response(_header, length)?;
+                let write_action = actions
+                    .iter()
+                    .find(|a| a.get("type").and_then(|t| t.as_str()) == Some("smb_write_file"));
+
+                let Some(write_action) = write_action else {
+                    warn!(
+                        "SMB2 WRITE: no smb_write_file action for {} - refusing with \
+                         STATUS_ACCESS_DENIED",
+                        path
+                    );
+                    let _ = status_tx.send(format!("✗ SMB write denied: {}", path));
+                    let response =
+                        Self::build_error_response(_header, SMB2_WRITE, STATUS_ACCESS_DENIED)?;
+                    return Ok(Some(response));
+                };
+
+                // The model may report a short write; clamp to what the client actually sent.
+                let bytes_written = write_action
+                    .get("bytes_written")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v.min(length as u64) as u32)
+                    .unwrap_or(length);
+
+                debug!(
+                    "SMB2 WRITE: accepted {} of {} bytes to {}",
+                    bytes_written, length, path
+                );
+                let response = Self::build_write_response(_header, bytes_written)?;
                 Ok(Some(response))
             }
             SMB2_QUERY_INFO => {
@@ -914,64 +1013,10 @@ impl SmbServer {
         Ok(response)
     }
 
-    /// Build SMB2 Session Setup Response (Guest)
-    /// Accepts any session setup as guest
-    #[cfg(feature = "smb")]
-    fn _build_session_setup_response(
-        request_header: &[u8],
-        state: &Arc<Mutex<SmbConnectionState>>,
-    ) -> Result<Vec<u8>> {
-        let mut response = Vec::new();
-
-        // Allocate session ID
-        let session_id = {
-            let mut s = state.blocking_lock();
-            let sid = s.next_session_id;
-            s.next_session_id += 1;
-
-            // Create guest session
-            s.sessions.insert(
-                sid,
-                SmbSession {
-                    session_id: sid,
-                    username: "guest".to_string(),
-                    _authenticated: true,
-                },
-            );
-            sid
-        };
-
-        // SMB2 Header
-        response.extend_from_slice(b"\xFESMB");
-        response.extend_from_slice(&[64, 0]);
-        response.extend_from_slice(&[0, 0]);
-        response.extend_from_slice(&[0, 0, 0, 0]); // STATUS_SUCCESS
-        response.extend_from_slice(&[0x01, 0x00]); // Command (SESSION_SETUP)
-        response.extend_from_slice(&[1, 0]);
-
-        response.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // Flags (response)
-
-        // Copy message ID
-        response.extend_from_slice(&request_header[24..32]);
-
-        response.extend_from_slice(&[0; 8]);
-        response.extend_from_slice(&[0; 4]);
-        response.extend_from_slice(&session_id.to_le_bytes()); // Session ID
-        response.extend_from_slice(&[0; 16]); // Signature
-
-        // Session Setup Response body
-        response.extend_from_slice(&[9, 0]); // Structure size
-        response.extend_from_slice(&[0, 0]); // Session flags (guest)
-        response.extend_from_slice(&[0, 0]); // Security buffer offset
-        response.extend_from_slice(&[0, 0]); // Security buffer length
-
-        Ok(response)
-    }
-
     /// Build SMB2 Tree Connect Response
     /// Accepts all tree connects
     #[cfg(feature = "smb")]
-    fn build_tree_connect_response(
+    async fn build_tree_connect_response(
         request_header: &[u8],
         state: &Arc<Mutex<SmbConnectionState>>,
         share_name: String,
@@ -980,7 +1025,10 @@ impl SmbServer {
 
         // Allocate tree ID
         let tree_id = {
-            let mut s = state.blocking_lock();
+            // `.lock().await`, never `blocking_lock()`: this runs inside the connection
+            // task, and tokio's Mutex::blocking_lock panics when called from a runtime
+            // thread. See the note on build_session_setup_response_with_user.
+            let mut s = state.lock().await;
             let tid = s.next_tree_id;
             s.next_tree_id += 1;
 
@@ -1026,29 +1074,48 @@ impl SmbServer {
     /// Simplified parser - looks for UTF-16LE encoded path
     #[cfg(feature = "smb")]
     fn parse_smb2_path(body: &[u8]) -> Option<String> {
-        // SMB2 CREATE request structure:
-        // Offset 120+ contains the file name as UTF-16LE
-        if body.len() < 120 {
+        // MS-SMB2 2.2.13, CREATE request body (`body` starts after the 64-byte header):
+        //   44..46  NameOffset  - offset of the name from the start of the SMB2 *header*
+        //   46..48  NameLength  - length of the name in bytes
+        //   56..    Buffer      - where NameOffset normally points (64 + 56 = 120)
+        //
+        // The name must be located through those two fields. This used to index the
+        // body-relative slice at 120, which is the *absolute* offset of the buffer: for a
+        // well-formed request from a real client that lands 64 bytes past the name, so
+        // every CREATE resolved to "/unknown" and every subsequent READ/WRITE on the
+        // handle carried the wrong path to the model.
+        const FIXED_BODY_LEN: usize = 56;
+        const HEADER_LEN: usize = 64;
+
+        if body.len() < FIXED_BODY_LEN {
             return None;
         }
 
-        // Find the path - it's UTF-16LE after the fixed header
-        // Look for null-terminated UTF-16LE string
-        let mut path_bytes = Vec::new();
-        let mut i = 120;
-        while i + 1 < body.len() {
-            let char_bytes = [body[i], body[i + 1]];
-            if char_bytes == [0, 0] {
-                break; // Null terminator
-            }
-            path_bytes.extend_from_slice(&char_bytes);
-            i += 2;
+        let name_offset = u16::from_le_bytes([body[44], body[45]]) as usize;
+        let name_length = u16::from_le_bytes([body[46], body[47]]) as usize;
+
+        // Convert the header-relative offset to one within `body`, defaulting to the
+        // start of the buffer when the client left NameOffset zero.
+        let start = if name_offset >= HEADER_LEN {
+            name_offset - HEADER_LEN
+        } else {
+            FIXED_BODY_LEN
+        };
+
+        if name_length == 0 || name_length % 2 != 0 {
+            return None;
+        }
+        let end = start.checked_add(name_length)?;
+        if end > body.len() {
+            return None;
         }
 
-        // Convert UTF-16LE to String
-        let utf16_chars: Vec<u16> = path_bytes
+        let utf16_chars: Vec<u16> = body[start..end]
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            // A name is not null-terminated on the wire, but tolerate a client that
+            // includes the terminator in NameLength.
+            .take_while(|&c| c != 0)
             .collect();
 
         String::from_utf16(&utf16_chars).ok()
@@ -1073,7 +1140,11 @@ impl SmbServer {
 
     /// Build SMB2 CREATE Response
     #[cfg(feature = "smb")]
-    fn build_create_response(request_header: &[u8], file_id: &[u8]) -> Result<Vec<u8>> {
+    fn build_create_response(
+        request_header: &[u8],
+        file_id: &[u8],
+        is_directory: bool,
+    ) -> Result<Vec<u8>> {
         let mut response = Vec::new();
 
         // SMB2 Header
@@ -1108,7 +1179,16 @@ impl SmbServer {
 
         response.extend_from_slice(&[0; 8]); // Allocation size
         response.extend_from_slice(&[0, 0x10, 0, 0, 0, 0, 0, 0]); // End of file (4096 bytes)
-        response.extend_from_slice(&[0x80, 0, 0, 0]); // File attributes (normal)
+
+        // File attributes (MS-SMB2 2.2.14): FILE_ATTRIBUTE_DIRECTORY (0x10) or
+        // FILE_ATTRIBUTE_NORMAL (0x80). This is the field a client reads to decide
+        // whether to follow up with QUERY_DIRECTORY or READ.
+        let file_attributes: u32 = if is_directory {
+            FILE_ATTRIBUTE_DIRECTORY
+        } else {
+            FILE_ATTRIBUTE_NORMAL
+        };
+        response.extend_from_slice(&file_attributes.to_le_bytes());
 
         response.extend_from_slice(&[0; 4]); // Reserved
 
@@ -1117,6 +1197,7 @@ impl SmbServer {
 
         response.extend_from_slice(&[0; 4]); // Create contexts offset
         response.extend_from_slice(&[0; 4]); // Create contexts length
+        response.push(0); // Buffer - StructureSize 89 counts one byte of it
 
         Ok(response)
     }
@@ -1183,14 +1264,23 @@ impl SmbServer {
         response.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // Session ID
         response.extend_from_slice(&[0; 16]);
 
-        // READ Response body (17 bytes + data)
-        response.extend_from_slice(&[17, 0]); // Structure size
-        response.extend_from_slice(&[0x50, 0]); // Data offset (80 bytes from start)
-        response.extend_from_slice(&[0; 4]); // Reserved
+        // READ Response body (MS-SMB2 2.2.20): StructureSize(2) DataOffset(1)
+        // Reserved(1) DataLength(4) DataRemaining(4) Reserved2(4) = 16 bytes, then
+        // the payload. DataOffset is measured from the start of the SMB2 header, so
+        // 64 + 16 = 80 = 0x50.
+        //
+        // This used to write four extra Reserved bytes after DataOffset, putting the
+        // payload at 84 while still advertising 80 - so a client reading at the offset
+        // the server itself declared got four bytes of zero padding followed by a
+        // truncated file.
+        response.extend_from_slice(&[17, 0]); // StructureSize
+        response.push(0x50); // DataOffset (1 byte)
+        response.push(0); // Reserved
         let data_len = data.len() as u32;
-        response.extend_from_slice(&data_len.to_le_bytes()); // Data length
-        response.extend_from_slice(&[0; 4]); // Data remaining
-        response.extend_from_slice(&[0; 4]); // Reserved
+        response.extend_from_slice(&data_len.to_le_bytes()); // DataLength
+        response.extend_from_slice(&[0; 4]); // DataRemaining
+        response.extend_from_slice(&[0; 4]); // Reserved2
+        debug_assert_eq!(response.len(), 80, "READ payload must start at DataOffset");
 
         // Data (variable length)
         response.extend_from_slice(data);
@@ -1227,6 +1317,7 @@ impl SmbServer {
         response.extend_from_slice(&[0; 4]); // Remaining
         response.extend_from_slice(&[0, 0]); // Write channel info offset
         response.extend_from_slice(&[0, 0]); // Write channel info length
+        response.push(0); // Buffer - StructureSize 17 counts one byte of it
 
         Ok(response)
     }
@@ -1387,7 +1478,42 @@ impl SmbServer {
         }
     }
 
-    /// Build SMB2 ACCESS_DENIED response
+    /// Build an SMB2 ERROR Response (MS-SMB2 2.2.2) for an arbitrary command.
+    ///
+    /// The header carries the failing `status`; the body is the 9-byte error body with an
+    /// empty error-data buffer, which is what a client parses when the status is a failure.
+    /// Used to refuse an operation outright rather than answering STATUS_SUCCESS with
+    /// whatever the LLM did or did not say - a refusal must be distinguishable from silence.
+    #[cfg(feature = "smb")]
+    fn build_error_response(request_header: &[u8], command: u16, status: u32) -> Result<Vec<u8>> {
+        let mut response = Vec::new();
+
+        response.extend_from_slice(b"\xFESMB");
+        response.extend_from_slice(&[64, 0]); // Header length
+        response.extend_from_slice(&[0, 0]); // Credit charge
+        response.extend_from_slice(&status.to_le_bytes()); // NTSTATUS
+        response.extend_from_slice(&command.to_le_bytes()); // Command
+        response.extend_from_slice(&[1, 0]); // Credits granted
+        response.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // Flags (response)
+
+        // Copy message ID from the request so the client can correlate the reply
+        response.extend_from_slice(&request_header[24..32]);
+
+        response.extend_from_slice(&[0; 8]); // Reserved / next command
+        response.extend_from_slice(&[1, 0, 0, 0]); // Tree ID
+        response.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // Session ID
+        response.extend_from_slice(&[0; 16]); // Signature
+
+        // SMB2 ERROR Response body
+        response.extend_from_slice(&[9, 0]); // Structure size (9)
+        response.extend_from_slice(&[0, 0]); // ErrorContextCount + Reserved
+        response.extend_from_slice(&[0; 4]); // ByteCount = 0
+        response.push(0); // ErrorData (one padding byte when ByteCount is 0)
+
+        Ok(response)
+    }
+
+    /// Build SMB2 ACCESS_DENIED response for SESSION_SETUP
     #[cfg(feature = "smb")]
     fn build_auth_denied_response(request_header: &[u8]) -> Result<Vec<u8>> {
         let mut response = Vec::new();
@@ -1422,7 +1548,14 @@ impl SmbServer {
 
     /// Build SESSION_SETUP response with specific username
     #[cfg(feature = "smb")]
-    fn build_session_setup_response_with_user(
+    ///
+    /// Takes the state lock with `.lock().await`. It used to call
+    /// `tokio::sync::Mutex::blocking_lock()`, which **panics** when called from a runtime
+    /// thread - so every SESSION_SETUP killed its connection task the moment the LLM
+    /// approved the login. The panic is swallowed by `tokio::spawn`, so the server stayed
+    /// in Running, the access log showed the auth succeeding, and the client simply hung
+    /// until its own timeout. TREE_CONNECT had the identical bug.
+    async fn build_session_setup_response_with_user(
         request_header: &[u8],
         state: &Arc<Mutex<SmbConnectionState>>,
         username: String,
@@ -1431,7 +1564,7 @@ impl SmbServer {
 
         // Allocate session ID
         let session_id = {
-            let mut s = state.blocking_lock();
+            let mut s = state.lock().await;
             let sid = s.next_session_id;
             s.next_session_id += 1;
 

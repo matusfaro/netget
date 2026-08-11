@@ -96,7 +96,7 @@ fn parse_smb2_status(response: &[u8]) -> Option<u32> {
 }
 
 /// Test: LLM allows guest authentication
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
     println!("\n=== Test: LLM Allows Guest Authentication ===");
 
@@ -182,7 +182,7 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
 }
 
 /// Test: LLM denies specific users
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_denies_user() -> E2EResult<()> {
     println!("\n=== Test: LLM Denies Specific Users ===");
 
@@ -197,7 +197,11 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
                     // Mock 1: SMB operations - MUST come before on_any()
                     .on_event("smb_operation")
                     .respond_with_actions(serde_json::json!([
-                        {"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}
+                        // `smb_auth_deny`, not `smb_auth_denied`: the latter is not an
+                        // SMB action, so it was rejected as unknown, triggered the retry
+                        // loop, and made verify_mocks fail on the extra call. There is no
+                        // `status` parameter either - the server chooses the NTSTATUS.
+                        {"type": "smb_auth_deny", "username": "guest", "reason": "only alice may log in"}
                     ]))
                     .expect_at_least(1)
                     .and()
@@ -238,18 +242,16 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
 
     println!("  [TEST] Session Setup response: {} bytes", n);
 
-    // Check LLM denied authentication
-    if let Some(status) = parse_smb2_status(&response) {
-        println!("  [TEST] Status: 0x{:08X}", status);
-
-        if status == 0xC0000016 {
-            println!("  [TEST] ✓ LLM correctly denied authentication (ACCESS_DENIED)");
-        } else if status == 0 {
-            println!("  [TEST] Note: LLM allowed guest (may have interpreted prompt differently)");
-        } else {
-            println!("  [TEST] Note: Got status 0x{:08X}", status);
-        }
-    }
+    // The mocked model denied the login, so STATUS_ACCESS_DENIED is the only correct
+    // answer. This used to print "✓" for a denial, "Note:" for a success and "Note:" for
+    // anything else - i.e. it passed no matter what the server did, including when it
+    // granted the session the model had refused.
+    assert_eq!(
+        parse_smb2_status(&response),
+        Some(0xC0000016),
+        "smb_auth_deny must produce STATUS_ACCESS_DENIED, got a different status"
+    );
+    println!("  [TEST] ✓ LLM denial answered with STATUS_ACCESS_DENIED");
 
     // Check server output for denial
     let output = server.get_output().await;
@@ -269,7 +271,7 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
 }
 
 /// Test: LLM controls file creation
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_file_creation() -> E2EResult<()> {
     println!("\n=== Test: LLM Controls File Creation ===");
 
@@ -327,7 +329,7 @@ async fn test_smb_llm_file_creation() -> E2EResult<()> {
 }
 
 /// Test: LLM provides file content
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_file_content() -> E2EResult<()> {
     println!("\n=== Test: LLM Provides File Content ===");
 
@@ -379,7 +381,7 @@ async fn test_smb_llm_file_content() -> E2EResult<()> {
 }
 
 /// Test: LLM provides directory listing
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_directory_listing() -> E2EResult<()> {
     println!("\n=== Test: LLM Provides Directory Listing ===");
 
@@ -426,7 +428,7 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
 }
 
 /// Test: LLM tracks connections
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
     println!("\n=== Test: LLM Connection Tracking ===");
 
@@ -487,7 +489,7 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
 }
 
 /// Test: LLM receives SMB events
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_smb_llm_receives_events() -> E2EResult<()> {
     println!("\n=== Test: LLM Receives SMB Events ===");
 

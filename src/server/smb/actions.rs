@@ -32,6 +32,16 @@ impl Protocol for SmbProtocol {
         vec![disconnect_client_action()]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        // Every action listed here has an executor branch in src/server/smb/mod.rs and is
+        // attached to SMB_OPERATION_EVENT below, so the model can both see it and have it
+        // take effect.
+        //
+        // `smb_delete_file` and `smb_delete_directory` used to be listed and were removed:
+        // SMB2 has no DELETE command. A client deletes by opening the file and issuing
+        // SET_INFO with FileDispositionInformation (MS-SMB2 2.2.39 / 2.2.21), and this
+        // server does not implement SET_INFO at all - the command falls through to the
+        // "Unknown SMB2 command" arm. Advertising a delete action the server can never be
+        // asked to perform only gave the model a response that did nothing.
         vec![
             smb_auth_success_action(),
             smb_auth_deny_action(),
@@ -40,9 +50,7 @@ impl Protocol for SmbProtocol {
             smb_write_file_action(),
             smb_get_file_info_action(),
             smb_create_file_action(),
-            smb_delete_file_action(),
             smb_create_directory_action(),
-            smb_delete_directory_action(),
         ]
     }
     fn protocol_name(&self) -> &'static str {
@@ -60,9 +68,30 @@ impl Protocol for SmbProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("Manual SMB2 protocol (0x0210 dialect)")
-            .llm_control("Filesystem operations, authentication, directory listings")
-            .e2e_testing("smbclient / Windows Explorer")
-            .notes("SMB 2.1 only, guest auth only, no signing/encryption")
+            .llm_control(
+                "Authentication (allow/deny), directory listings, file metadata, file content on \
+                 read, file-vs-directory on create, and write authorisation. File payloads carry \
+                 an explicit `encoding` field (utf8/base64/hex) in both directions, so binary \
+                 content survives a read and a written binary payload is shown to the model \
+                 losslessly.",
+            )
+            .e2e_testing(
+                "Raw SMB2 packets over TCP against a mocked LLM \
+                 (tests/server/smb/e2e_test.rs). Verified at wire level: NEGOTIATE, \
+                 SESSION_SETUP allow and deny, a full NEGOTIATE -> SESSION_SETUP -> \
+                 TREE_CONNECT -> CREATE -> READ flow in which a non-UTF-8 byte string sent \
+                 as base64 comes back byte-for-byte in the READ response body, the \
+                 FILE_ATTRIBUTE_DIRECTORY bit set by smb_create_directory, and WRITE \
+                 answering STATUS_ACCESS_DENIED when the model does not return \
+                 smb_write_file. NOT verified against smbclient or Windows Explorer - no \
+                 real SMB client has ever been run against this server.",
+            )
+            .notes(
+                "SMB 2.1 only, guest auth only, no signing/encryption, no SET_INFO (so no \
+                 delete/rename), timestamps are zero, and tree/session IDs in responses are \
+                 hardcoded rather than echoed. Adjacent operations share no state beyond the \
+                 file-handle table: the model is the filesystem.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -161,29 +190,29 @@ pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "An SMB2 client asked for a filesystem operation. You are the filesystem: nothing is \
          read from or written to disk, so invent a consistent virtual tree and keep it in memory \
          across operations. Answer with the action matching 'operation': session_setup -> \
-         smb_auth_success or smb_auth_deny, read -> smb_read_file, query_info -> \
-         smb_get_file_info, query_directory -> smb_list_directory. The create and write \
-         operations are reported for context only - the server answers them itself and ignores \
-         whatever you return.",
+         smb_auth_success or smb_auth_deny, create -> smb_create_file or smb_create_directory \
+         (which one decides whether the client is told the handle is a directory), read -> \
+         smb_read_file, write -> smb_write_file (the write is REFUSED with STATUS_ACCESS_DENIED \
+         unless you return it), query_info -> smb_get_file_info, query_directory -> \
+         smb_list_directory.",
         json!({
             "type": "smb_read_file",
             "path": "/documents/file.txt",
-            "content": "Sample file content"
+            "content": "Sample file content",
+            "encoding": "utf8"
         }),
     )
-    // Only the actions the server actually reads back out of the LLM response (see
-    // src/server/smb/mod.rs: the session_setup, read, query_info and query_directory arms).
-    // smb_write_file, smb_create_file, smb_delete_file, smb_create_directory and
-    // smb_delete_directory are declared in get_sync_actions() but no SMB2 command arm ever looks
-    // for them - create and write discard the LLM's actions, and no arm routes delete at all -
-    // so advertising them here would offer the model responses that do nothing.
-    //
-    // Without this list `call_llm` offered none of them: it builds the model's tool list from
-    // the event type, not from get_sync_actions().
+    // Every action here has an executor branch in src/server/smb/mod.rs. `call_llm` builds the
+    // model's tool list from this list, not from get_sync_actions(), so anything missing here is
+    // invisible to the model and anything here without an executor branch is a no-op it can emit.
+    // Keep the two in sync.
     .with_actions(vec![
         smb_auth_success_action(),
         smb_auth_deny_action(),
+        smb_create_file_action(),
+        smb_create_directory_action(),
         smb_read_file_action(),
+        smb_write_file_action(),
         smb_get_file_info_action(),
         smb_list_directory_action(),
     ])
@@ -203,6 +232,25 @@ pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             description: "The file or directory path being accessed".to_string(),
             required: false,
         },
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "write only: the bytes the client wrote, rendered according to the \
+                          'encoding' field of this event. Absent for every other operation."
+                .to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "write only: how to read 'data'. \"utf8\" means 'data' is the written \
+                          bytes as literal text; \"base64\" means 'data' is the written bytes \
+                          base64-encoded, used whenever they are not all printable ASCII. To \
+                          hand the same bytes back on a later read, pass this 'data' and this \
+                          'encoding' straight into smb_read_file's 'content' and 'encoding'."
+                .to_string(),
+            required: false,
+        },
     ])
     .with_log_template(
         LogTemplate::new()
@@ -211,6 +259,115 @@ pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             .with_trace("SMB: {json_pretty(.)}"),
     )
 });
+
+// ============================================================================
+// Payload encoding
+//
+// SMB carries file *contents*, which are routinely not text. Both directions
+// therefore carry an explicit `encoding` field next to the payload string, and
+// there is deliberately no sniffing: "SGVsbG8=" is simultaneously valid text and
+// valid base64, and only the sender knows which it means. This is the same shape
+// as `send_tcp_data`'s `encoding` field (d70bb5b5); the defect fixed here was
+// that `smb_read_file.content` was documented as "base64 encoded for binary"
+// while the executor did `.as_bytes()`, so a model that followed the
+// documentation put literal base64 ASCII into the file.
+// ============================================================================
+
+/// Turn an outbound payload string into the exact bytes the server writes into an
+/// SMB2 response, honouring the action's optional `encoding` field.
+///
+/// - absent or `"utf8"`: the string's UTF-8 bytes, verbatim (default, backwards compatible)
+/// - `"base64"`: standard base64, so `"SGVsbG8="` yields the 5 bytes `Hello`
+/// - `"hex"`: two hex digits per byte, so `"48656c6c6f"` yields the same 5 bytes
+pub fn decode_smb_payload(payload: &str, encoding: Option<&str>) -> Result<Vec<u8>> {
+    use base64::Engine as _;
+
+    match encoding.unwrap_or("utf8") {
+        "utf8" | "text" => Ok(payload.as_bytes().to_vec()),
+        "base64" => {
+            // Models frequently wrap long base64 across lines; tolerate whitespace.
+            let cleaned: String = payload
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace())
+                .collect();
+            base64::engine::general_purpose::STANDARD
+                .decode(&cleaned)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid base64 in payload ({payload:?}): {e}. To send this string as \
+                         literal text instead, omit 'encoding' or set it to \"utf8\"."
+                    )
+                })
+        }
+        "hex" => {
+            let cleaned: String = payload
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace() && *c != ':')
+                .collect();
+            let cleaned = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
+            if cleaned.len() % 2 != 0 {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex in payload: expected an even number of hex digits, got {} \
+                     ({payload:?}). Each byte is two hex digits, e.g. \"48656c6c6f\" = \"Hello\".",
+                    cleaned.len()
+                ));
+            }
+            hex::decode(cleaned).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid hex in payload ({payload:?}): {e}. Use only 0-9/a-f, two digits per \
+                     byte. To send this string as literal text instead, omit 'encoding' or set \
+                     it to \"utf8\"."
+                )
+            })
+        }
+        other => Err(anyhow::anyhow!(
+            "Invalid 'encoding' value {other:?}. Valid values are \"utf8\" (default, the \
+             string's characters as-is), \"base64\" and \"hex\"."
+        )),
+    }
+}
+
+/// Render bytes received from the client for the model, together with the `encoding`
+/// name that says how to read them back.
+///
+/// Printable ASCII is passed through as text so ordinary text files stay readable in
+/// prompts and logs; anything else is base64-encoded rather than lossily converted.
+/// The pair is symmetric with [`decode_smb_payload`]: feeding the returned string and
+/// encoding back through it reproduces the original bytes exactly.
+pub fn encode_smb_payload(bytes: &[u8]) -> (String, &'static str) {
+    use base64::Engine as _;
+
+    if bytes
+        .iter()
+        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+    {
+        (String::from_utf8_lossy(bytes).to_string(), "utf8")
+    } else {
+        (
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+            "base64",
+        )
+    }
+}
+
+/// Shared `encoding` parameter for every action carrying an outbound payload string.
+fn encoding_parameter(payload_field: &str) -> Parameter {
+    Parameter {
+        name: "encoding".to_string(),
+        type_hint: "string".to_string(),
+        description: format!(
+            "How to turn '{payload_field}' into the bytes the client receives. \"utf8\" (the \
+             default when omitted) uses the characters of '{payload_field}' unchanged - use it \
+             for text files. \"base64\" decodes '{payload_field}' as standard base64 and \
+             \"hex\" as hex digits - use one of those for binary files, e.g. \
+             {{\"{payload_field}\": \"SGVsbG8=\", \"encoding\": \"base64\"}} delivers the 5 \
+             bytes 'Hello', whereas the same value without \"encoding\" delivers the 8 \
+             characters S-G-V-s-b-G-8-=. There is no auto-detection. No other values are \
+             accepted"
+        ),
+        required: false,
+    }
+}
 
 // Action definitions
 
@@ -278,7 +435,10 @@ fn smb_list_directory_action() -> ActionDefinition {
 fn smb_read_file_action() -> ActionDefinition {
     ActionDefinition {
         name: "smb_read_file".to_string(),
-        description: "Read file contents".to_string(),
+        description: "Answer a 'read' operation with the file's contents. The bytes in 'content' \
+                      (interpreted according to 'encoding') become the body of the SMB2 READ \
+                      response."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "path".to_string(),
@@ -289,14 +449,18 @@ fn smb_read_file_action() -> ActionDefinition {
             Parameter {
                 name: "content".to_string(),
                 type_hint: "string".to_string(),
-                description: "File content (base64 encoded for binary)".to_string(),
+                description: "File content. Interpreted according to 'encoding': by default the \
+                              characters of this string are delivered as-is (UTF-8)."
+                    .to_string(),
                 required: true,
             },
+            encoding_parameter("content"),
         ],
         example: json!({
             "type": "smb_read_file",
             "path": "/documents/file.txt",
-            "content": "Hello, World!"
+            "content": "Hello, World!",
+            "encoding": "utf8"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -309,29 +473,36 @@ fn smb_read_file_action() -> ActionDefinition {
 fn smb_write_file_action() -> ActionDefinition {
     ActionDefinition {
         name: "smb_write_file".to_string(),
-        description: "Write to a file".to_string(),
+        description: "Accept a 'write' operation. The client has already sent the bytes - they \
+                      are in the event's 'data' field - so this action does not carry them back; \
+                      it authorises the write and the server answers STATUS_SUCCESS. If you do \
+                      NOT return this action for a 'write' operation the write is refused with \
+                      STATUS_ACCESS_DENIED, so silence is a denial, not an approval."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "path".to_string(),
                 type_hint: "string".to_string(),
-                description: "File path to write".to_string(),
+                description: "File path being written (echo the event's 'path')".to_string(),
                 required: true,
             },
             Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "Data to write (base64 for binary)".to_string(),
-                required: true,
+                name: "bytes_written".to_string(),
+                type_hint: "number".to_string(),
+                description: "How many bytes to report as written. Omit to report all the bytes \
+                              the client sent, which is what a normal filesystem does. A smaller \
+                              number tells the client the write was partial."
+                    .to_string(),
+                required: false,
             },
         ],
         example: json!({
             "type": "smb_write_file",
-            "path": "/documents/file.txt",
-            "data": "New content"
+            "path": "/documents/file.txt"
         }),
         log_template: Some(
             LogTemplate::new()
-                .with_info("-> SMB WRITE {path}")
+                .with_info("-> SMB WRITE OK {path}")
                 .with_debug("SMB smb_write_file: path={path}"),
         ),
     }
@@ -385,11 +556,15 @@ fn smb_get_file_info_action() -> ActionDefinition {
 fn smb_create_file_action() -> ActionDefinition {
     ActionDefinition {
         name: "smb_create_file".to_string(),
-        description: "Create a new file".to_string(),
+        description: "Answer a 'create' operation: the path is (or becomes) a regular file. The \
+                      handle the client receives is marked FILE_ATTRIBUTE_NORMAL, so the client \
+                      will follow up with read/write rather than query_directory. This is also \
+                      the default when you return neither create action."
+            .to_string(),
         parameters: vec![Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),
-            description: "File path to create".to_string(),
+            description: "File path being opened or created".to_string(),
             required: true,
         }],
         example: json!({
@@ -404,36 +579,22 @@ fn smb_create_file_action() -> ActionDefinition {
     }
 }
 
-fn smb_delete_file_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "smb_delete_file".to_string(),
-        description: "Delete a file".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "File path to delete".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "smb_delete_file",
-            "path": "/documents/oldfile.txt"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SMB DELETE {path}")
-                .with_debug("SMB smb_delete_file: path={path}"),
-        ),
-    }
-}
+// `smb_delete_file` and `smb_delete_directory` used to be defined here. SMB2 has no DELETE
+// command - deletion is SET_INFO/FileDispositionInformation on an open handle - and this
+// server does not implement SET_INFO, so neither action could ever have been requested or
+// routed. They were removed rather than left advertised.
 
 fn smb_create_directory_action() -> ActionDefinition {
     ActionDefinition {
         name: "smb_create_directory".to_string(),
-        description: "Create a new directory".to_string(),
+        description: "Answer a 'create' operation: the path is (or becomes) a directory. The \
+                      handle the client receives carries FILE_ATTRIBUTE_DIRECTORY, which is what \
+                      makes the client issue query_directory against it instead of read."
+            .to_string(),
         parameters: vec![Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),
-            description: "Directory path to create".to_string(),
+            description: "Directory path being opened or created".to_string(),
             required: true,
         }],
         example: json!({
@@ -444,28 +605,6 @@ fn smb_create_directory_action() -> ActionDefinition {
             LogTemplate::new()
                 .with_info("-> SMB MKDIR {path}")
                 .with_debug("SMB smb_create_directory: path={path}"),
-        ),
-    }
-}
-
-fn smb_delete_directory_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "smb_delete_directory".to_string(),
-        description: "Delete a directory".to_string(),
-        parameters: vec![Parameter {
-            name: "path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Directory path to delete".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "smb_delete_directory",
-            "path": "/documents/olddir"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SMB RMDIR {path}")
-                .with_debug("SMB smb_delete_directory: path={path}"),
         ),
     }
 }
