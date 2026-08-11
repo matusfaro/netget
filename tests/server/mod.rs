@@ -94,6 +94,8 @@ pub mod isis;
 pub mod jsonrpc;
 #[cfg(feature = "kafka")]
 pub mod kafka;
+#[cfg(feature = "kubernetes-server")]
+pub mod kubernetes;
 #[cfg(feature = "ldap")]
 pub mod ldap;
 #[cfg(feature = "maven")]
@@ -122,8 +124,6 @@ pub mod nfs;
 pub mod nntp;
 #[cfg(feature = "npm")]
 pub mod npm;
-#[cfg(feature = "kubernetes-server")]
-pub mod kubernetes;
 #[cfg(feature = "ntp")]
 pub mod ntp;
 #[cfg(feature = "oauth2")]
