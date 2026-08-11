@@ -251,6 +251,29 @@ The other two events are declared `.with_no_actions()`, deliberately:
 Both can still use the common actions (`set_memory`, `append_memory`, `show_message`,
 `append_to_log`), which is how a handler records signaling flow.
 
+### When the LLM call fails
+
+All three call sites used to swallow the error (`if let Ok(..)` / `let _ =`). Only one of the
+three can honestly answer the peer, and the asymmetry follows directly from the action lists
+above:
+
+- `webrtc_signaling_peer_connected` — the peer may be waiting on what the model decides, so it
+  is sent `{"type": "error", "message": "Server-side handler for peer '<id>' failed; …"}`.
+  Registration itself is not undone: it succeeded, and `registered` was already sent. An
+  `error` frame is the only thing this server may put on the wire on the model's behalf; it
+  must never synthesise an `offer`, `answer` or `registered` the model did not produce.
+- `webrtc_signaling_message_received` — **deliberately silent.** It is `.with_no_actions()` and
+  fires after the relay has already happened and already been reported, so the model cannot
+  speak to the peer even on the success path. An error frame here would announce a failure the
+  peer's signaling did not suffer, and a real browser peer could abort a negotiation that in
+  fact succeeded.
+- `webrtc_signaling_peer_disconnected` — silent because the socket is already gone. Cleanup
+  still runs.
+
+All three log at ERROR on both channels (`error!` plus a `[ERROR]` status message).
+`tests/server/webrtc_signaling/llm_failure_test.rs` asserts the error frame, the silence, and
+that the relay itself is unaffected.
+
 ## State Management
 
 ### Peer Tracking

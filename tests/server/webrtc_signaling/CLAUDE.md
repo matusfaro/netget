@@ -128,6 +128,22 @@ End-to-end tests for the WebRTC Signaling server protocol implementation. These 
 
 ---
 
+### LLM-failure tests (`llm_failure_test.rs`)
+
+**LLM Calls**: 1 per test (server startup). Every signaling event is deliberately left
+unmocked, so the mock Ollama server answers HTTP 500 and `call_llm` returns `Err`.
+
+1. **`test_signaling_peer_connected_llm_failure_sends_error_frame`** — after `registered`, the
+   peer must receive `{"type": "error", …}` naming it. Before this existed the server wrote
+   nothing and the peer waited for a frame that never came.
+2. **`test_signaling_relay_survives_llm_failure_silently`** — alice's offer still reaches bob
+   with its SDP intact, and alice receives **nothing** afterwards. The observation call for
+   that offer fails, and that failure must not reach the wire: `webrtc_signaling_message_received`
+   is `.with_no_actions()` and fires after the relay, so an error frame would report a failure
+   that did not happen.
+
+Both assert on real WebSocket frames and both end with `verify_mocks()`.
+
 ## Event Types Tested
 
 1. **webrtc_signaling_peer_connected** - Triggered when peer registers via WebSocket

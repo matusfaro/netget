@@ -409,7 +409,7 @@ impl WebRtcSignalingServer {
                                         }),
                                     );
 
-                                    if let Ok(result) = call_llm(
+                                    match call_llm(
                                         &llm_client,
                                         &app_state,
                                         server_id,
@@ -419,8 +419,40 @@ impl WebRtcSignalingServer {
                                     )
                                     .await
                                     {
-                                        if Self::apply_results(result, &out_tx, &status_tx) {
-                                            break;
+                                        Ok(result) => {
+                                            if Self::apply_results(result, &out_tx, &status_tx) {
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            // This is the one signaling event the model can
+                                            // act on (`send_signaling_message`,
+                                            // `disconnect_peer`), so a peer may legitimately
+                                            // be waiting for what the model decides. Swallowed,
+                                            // that wait ended at the peer's own timeout. Say so
+                                            // in the protocol's own vocabulary instead - and
+                                            // never invent the reply the model did not give.
+                                            error!(
+                                                "LLM call failed for signaling peer_connected \
+                                                 ({}): {}",
+                                                new_peer_id, e
+                                            );
+                                            let _ = status_tx.send(format!(
+                                                "[ERROR] WebRTC signaling peer '{}': LLM call \
+                                                 failed ({}) - sent error frame",
+                                                new_peer_id, e
+                                            ));
+                                            let _ = Self::reply(
+                                                &out_tx,
+                                                &SignalingMessage::Error {
+                                                    message: format!(
+                                                        "Server-side handler for peer '{}' \
+                                                         failed; registration stands but no \
+                                                         handler response follows",
+                                                        new_peer_id
+                                                    ),
+                                                },
+                                            );
                                         }
                                     }
                                 }
@@ -503,10 +535,34 @@ impl WebRtcSignalingServer {
                             let llm = llm_client.clone();
                             let state = app_state.clone();
                             let proto = protocol.clone();
+                            let status = status_tx.clone();
+                            let observed = format!("{} {} -> {}", kind, from, to);
                             tokio::spawn(async move {
-                                let _ =
+                                if let Err(e) =
                                     call_llm(&llm, &state, server_id, None, &event, proto.as_ref())
-                                        .await;
+                                        .await
+                                {
+                                    // Deliberately silent on the wire, and that is the only
+                                    // correct answer here: `webrtc_signaling_message_received`
+                                    // is declared `.with_no_actions()` and fires *after* the
+                                    // relay has already been decided and already reported to
+                                    // the sender. The model cannot speak to the peer on the
+                                    // success path either, so an error frame on this path
+                                    // would announce a failure the peer's signaling did not
+                                    // suffer and could abort a negotiation that succeeded.
+                                    // The operator is who needs to know, so say it loudly
+                                    // there.
+                                    error!(
+                                        "LLM call failed for signaling message_received ({}): \
+                                         {} - relay already completed, nothing sent to the peer",
+                                        observed, e
+                                    );
+                                    let _ = status.send(format!(
+                                        "[ERROR] WebRTC signaling {}: LLM call failed ({}) - \
+                                         message was already relayed, no frame sent",
+                                        observed, e
+                                    ));
+                                }
                             });
                         }
                         other => {
@@ -541,7 +597,7 @@ impl WebRtcSignalingServer {
                 }),
             );
 
-            let _ = call_llm(
+            if let Err(e) = call_llm(
                 &llm_client,
                 &app_state,
                 server_id,
@@ -549,7 +605,23 @@ impl WebRtcSignalingServer {
                 &event,
                 protocol.as_ref(),
             )
-            .await;
+            .await
+            {
+                // Silence is forced here rather than chosen: this fires because the peer's
+                // socket has already gone, so there is nobody left to answer in any
+                // vocabulary. `webrtc_signaling_peer_disconnected` is declared
+                // `.with_no_actions()` for the same reason. Log it loudly and carry on with
+                // the cleanup below - the connection must still be torn down.
+                error!(
+                    "LLM call failed for signaling peer_disconnected ({}): {}",
+                    pid, e
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] WebRTC signaling peer '{}': LLM call failed on disconnect ({}) - \
+                     peer already gone, nothing sent",
+                    pid, e
+                ));
+            }
 
             // Remove connection from server
             if let Some(conn_id) = connection_id {
