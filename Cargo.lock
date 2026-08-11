@@ -7885,6 +7885,7 @@ dependencies = [
  "libc",
  "llama-cpp-2",
  "matchit 0.8.6",
+ "md-5 0.10.6",
  "mdns-sd",
  "memmap2",
  "mongodb",

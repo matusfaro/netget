@@ -150,6 +150,8 @@ pub mod proxy;
 pub mod pypi;
 #[cfg(feature = "quic")]
 pub mod quic;
+#[cfg(feature = "radius")]
+pub mod radius;
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "rip")]

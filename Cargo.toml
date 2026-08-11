@@ -58,6 +58,7 @@ portable-base = [
     "postgresql",
     "mongodb-server",
     "mongodb",
+    "radius",
     "redis",
     "rss",
     "proxy",
@@ -176,6 +177,7 @@ ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "dep:tokio-postgres"]
 mongodb-server = ["dep:bson"]  # MongoDB server with LLM-controlled database operations
 mongodb = ["dep:mongodb", "dep:bson"]  # MongoDB client
+radius = ["dep:md-5"]  # RADIUS AAA server (RFC 2865/2866) - hand-rolled codec, md-5 for the authenticators
 redis = ["dep:redis-protocol", "dep:redis"]
 rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
@@ -367,6 +369,7 @@ dist-windows = [
     "postgresql",
     "mongodb-server",
     "mongodb",
+    "radius",
     "redis",
     "rss",
     "webdav",
@@ -461,6 +464,7 @@ all-protocols = [
     "postgresql",
     "mongodb-server",
     "mongodb",
+    "radius",
     "redis",
     "rss",
     "proxy",
@@ -800,6 +804,7 @@ tor-cert = { version = "0.36", optional = true }  # Tor certificate handling
 tor-cell = { version = "0.36", optional = true }  # Tor cell encoding/decoding (RELAY, CREATE, etc.)
 ed25519-dalek = { version = "2.1", optional = true }  # Ed25519 signatures for relay identity
 sha2 = { version = "0.10", optional = true }  # SHA-256 for ntor handshake
+md-5 = { version = "0.10", optional = true }  # MD5 for the RADIUS authenticators (RFC 2865 §3, §5.2) - already in the tree transitively
 aes = { version = "0.8", optional = true }  # AES for relay cell encryption
 ctr = { version = "0.9", optional = true }  # CTR mode for AES
 hmac = { version = "0.12", optional = true }  # HMAC for ntor authentication

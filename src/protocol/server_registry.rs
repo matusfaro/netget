@@ -208,6 +208,9 @@ impl ServerRegistry {
             )));
         }
 
+        #[cfg(feature = "radius")]
+        self.register(Arc::new(crate::server::RadiusProtocol::new()));
+
         #[cfg(feature = "rss")]
         self.register(Arc::new(crate::server::RssProtocol::new()));
 
@@ -940,6 +943,7 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("MySQL", "mysql"),
     ("MSSQL", "mssql"),
     ("PostgreSQL", "postgresql"),
+    ("RADIUS", "radius"),
     ("Redis", "redis"),
     ("RSS", "rss"),
     ("Cassandra", "cassandra"),

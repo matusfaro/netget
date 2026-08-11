@@ -309,6 +309,13 @@ pub use postgresql::actions::PostgresqlProtocol;
 #[cfg(feature = "postgresql")]
 pub use postgresql::PostgresqlServer;
 
+#[cfg(feature = "radius")]
+pub mod radius;
+#[cfg(feature = "radius")]
+pub use radius::actions::RadiusProtocol;
+#[cfg(feature = "radius")]
+pub use radius::RadiusServer;
+
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "redis")]
