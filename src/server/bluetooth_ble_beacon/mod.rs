@@ -178,11 +178,13 @@ impl BluetoothBleBeacon {
         }
 
         // BLE has no IP address or port; the registry's display layer wants a SocketAddr, so
-        // derive a stable dummy the same way the bluetooth-ble base does.
-        let dummy_addr: std::net::SocketAddr =
-            format!("127.0.0.1:{}", 5900 + server_id.as_u32() % 100)
-                .parse()
-                .expect("literal loopback address with an in-range port always parses");
-        Ok(dummy_addr)
+        // report the "binds no listening socket" placeholder the same way the bluetooth-ble
+        // base does. Both used to return `127.0.0.1:{5900 + server_id % 100}`, which
+        // `server_startup::is_bound_addr` accepts (it only rejects port 0), so the TUI showed
+        // a loopback endpoint nothing had bound — on VNC's port, no less.
+        Ok(std::net::SocketAddr::from((
+            std::net::Ipv4Addr::UNSPECIFIED,
+            0,
+        )))
     }
 }

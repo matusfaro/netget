@@ -169,7 +169,19 @@ impl BluetoothBle {
         );
 
         info!("Calling LLM for initial Bluetooth server configuration");
-        let llm_result = call_llm(
+
+        // Bringing the adapter up must not require the model to be reachable: the LLM answers
+        // traffic, it does not open the radio. This call used to propagate with `?`, so an
+        // Ollama outage made `spawn()` return `Err` and the server never started.
+        //
+        // Unlike NFC and the USB smart card reader there is no useful default here — the
+        // configuration *is* the services and the advertisement — so a failure leaves a
+        // powered adapter advertising nothing. That is a much better outcome than a server
+        // that will not start, but it is not a working one, so it is logged at ERROR on both
+        // channels saying exactly that. The individual actions are non-fatal for the same
+        // reason `executor::execute_actions` does not abort a batch on one bad action:
+        // dropping the rest would suppress the services that were fine.
+        match call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -177,15 +189,35 @@ impl BluetoothBle {
             &started_event,
             protocol.as_ref(),
         )
-        .await?;
-
-        // Execute initial actions (add services, start advertising, etc.)
-        for action in llm_result.raw_actions {
-            debug!(
-                "Executing initial Bluetooth action: {:?}",
-                action.get("type")
-            );
-            Self::execute_action(&server_data, &device_name, action, &status_tx).await?;
+        .await
+        {
+            Ok(llm_result) => {
+                // Execute initial actions (add services, start advertising, etc.)
+                for action in llm_result.raw_actions {
+                    debug!(
+                        "Executing initial Bluetooth action: {:?}",
+                        action.get("type")
+                    );
+                    if let Err(e) =
+                        Self::execute_action(&server_data, &device_name, action, &status_tx).await
+                    {
+                        error!("Initial Bluetooth action failed: {}", e);
+                        let _ =
+                            status_tx.send(format!("[ERROR] Initial Bluetooth action failed: {e}"));
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Bluetooth startup configuration failed ({}); the adapter for '{}' is \
+                     powered but has no services and is NOT advertising",
+                    e, device_name
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] Bluetooth startup configuration failed: {e}. The adapter is up but \
+                     no services were added and it is not advertising."
+                ));
+            }
         }
 
         // Spawn event processing loop
@@ -208,13 +240,18 @@ impl BluetoothBle {
             .await;
         });
 
-        // Return a dummy SocketAddr (BLE doesn't use IP addresses)
-        // Use a unique "port" based on server_id for display purposes
-        let dummy_addr: std::net::SocketAddr =
-            format!("127.0.0.1:{}", 5900 + server_id.as_u32() % 100)
-                .parse()
-                .unwrap();
-        Ok(dummy_addr)
+        // BLE speaks to a radio, not a socket, so there is no endpoint to report.
+        //
+        // This used to return `127.0.0.1:{5900 + server_id % 100}` "for display purposes".
+        // `server_startup::is_bound_addr` only rejects port 0, so that address was recorded as
+        // `local_addr` and the TUI, `server_status` and every log reader were told the BLE
+        // server was listening on a loopback port that nothing had bound — and on 5900, which
+        // is VNC's port, so it could also collide with a real server in the display. Port 0 is
+        // this codebase's "binds no listening socket" placeholder and is recognised as such.
+        Ok(std::net::SocketAddr::from((
+            std::net::Ipv4Addr::UNSPECIFIED,
+            0,
+        )))
     }
 
     /// Execute a single LLM action

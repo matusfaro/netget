@@ -149,7 +149,17 @@ impl NfcServer {
                 "listen_addr": local_addr.to_string(),
             }),
         );
-        let result = call_llm(
+        // Opening a socket must not require the model to be reachable: the LLM answers
+        // traffic, it does not open listeners. This call used to propagate with `?`, so an
+        // Ollama outage made `spawn()` return `Err` and the server never started at all — a
+        // backend blip took down a server that would have worked fine for every reader that
+        // arrived after the backend came back.
+        //
+        // The tag is fully usable without it: `VirtualNfcTag::new` has already applied the
+        // requested type and UID and a default ATR, and every *reader* APDU still goes through
+        // `call_llm` with its own failure handling. So a failure here means "unconfigured, not
+        // broken", and is reported as exactly that rather than as a dead server.
+        match call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -157,16 +167,31 @@ impl NfcServer {
             &event,
             protocol.as_ref(),
         )
-        .await?;
-
-        for message in result.messages {
-            let _ = status_tx.send(message);
-        }
-        for action_result in result.protocol_results {
-            if let Err(e) =
-                Self::apply_startup_action(tag_state.clone(), action_result, &status_tx).await
-            {
-                console_error!(status_tx, "NFC startup action failed: {}", e);
+        .await
+        {
+            Ok(result) => {
+                for message in result.messages {
+                    let _ = status_tx.send(message);
+                }
+                for action_result in result.protocol_results {
+                    if let Err(e) =
+                        Self::apply_startup_action(tag_state.clone(), action_result, &status_tx)
+                            .await
+                    {
+                        console_error!(status_tx, "NFC startup action failed: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "NFC startup configuration failed ({}); the tag is listening on {} with its \
+                     built-in defaults (type={}, UID={}) and no model-supplied NDEF records",
+                    e, local_addr, tag_type, uid
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] NFC startup configuration failed: {e}. The tag is up with its \
+                     built-in defaults and carries no model-supplied NDEF records."
+                ));
             }
         }
 

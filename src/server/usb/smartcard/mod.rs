@@ -125,7 +125,14 @@ impl UsbSmartCardServer {
                 "atr_hex": hex::encode_upper(DEFAULT_ATR),
             }),
         );
-        let execution = call_llm(
+        // Opening a socket must not require the model to be reachable: the LLM answers
+        // traffic, it does not open listeners. This call used to propagate with `?`, so an
+        // Ollama outage made `spawn()` return `Err` and the reader never started at all.
+        //
+        // The reader is fully usable without it — `card` already holds `DEFAULT_ATR` and
+        // `card_present: true`, and every APDU from the host still goes through `call_llm`
+        // with its own failure handling — so a failure here means "unconfigured, not broken".
+        match call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -133,11 +140,28 @@ impl UsbSmartCardServer {
             &ready_event,
             protocol.as_ref(),
         )
-        .await?;
-        for message in execution.messages {
-            let _ = status_tx.send(message);
+        .await
+        {
+            Ok(execution) => {
+                for message in execution.messages {
+                    let _ = status_tx.send(message);
+                }
+                Self::apply_card_config(execution.protocol_results, &card, None, &status_tx);
+            }
+            Err(e) => {
+                error!(
+                    "USB smart card startup configuration failed ({}); the reader is listening \
+                     on {} with the default ATR {} and a card inserted",
+                    e,
+                    local_addr,
+                    hex::encode_upper(DEFAULT_ATR)
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] USB smart card startup configuration failed: {e}. The reader is up \
+                     with its default ATR; the model did not configure the card."
+                ));
+            }
         }
-        Self::apply_card_config(execution.protocol_results, &card, None, &status_tx);
 
         {
             let snapshot = lock_card(&card);
