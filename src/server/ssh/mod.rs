@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 /// SSH server configuration
 #[derive(Clone, Debug)]
@@ -421,8 +421,20 @@ impl SshHandler {
                 Ok(false)
             }
             Err(e) => {
-                error!("LLM error during SSH auth: {}", e);
-                // Default to deny on error
+                // Deny. This is the fail-closed branch and it must stay that way: an
+                // unreachable backend is not consent, and the client gets a real
+                // SSH_MSG_USERAUTH_FAILURE rather than a hung authentication.
+                error!(
+                    "LLM error during SSH auth for '{}' on connection {}: {}",
+                    username, self.connection_id, e
+                );
+                let _ = self.status_tx.send(format!(
+                    "✗ SSH auth denied for '{}': LLM error: {}",
+                    username, e
+                ));
+                if crate::llm::is_overload_error(&e) {
+                    warn!("SSH auth denied for '{}': LLM capacity exhausted", username);
+                }
                 Ok(false)
             }
         }
@@ -466,7 +478,16 @@ impl SshHandler {
                 Ok(None)
             }
             Err(e) => {
-                error!("LLM error getting shell banner: {}", e);
+                // A missing banner is cosmetic - the shell still opens and the server writes
+                // its own "$ " prompt, so the peer is not left waiting. Report it on both
+                // channels rather than only in the log.
+                error!(
+                    "LLM error getting shell banner on connection {}: {}",
+                    self.connection_id, e
+                );
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SSH banner unavailable: {}", e));
                 Ok(None)
             }
         }
@@ -553,8 +574,21 @@ impl SshHandler {
                 Ok((output, close_connection))
             }
             Err(e) => {
-                error!("LLM error handling shell command: {}", e);
-                Ok((None, false))
+                // Propagate instead of returning `Ok((None, false))`.
+                //
+                // That old value was worse than silence: the caller's `if let Ok(..)` matched
+                // it, wrote no output, and then wrote the "$ " prompt anyway — so a backend
+                // outage was indistinguishable from a command that ran successfully and
+                // printed nothing. The caller now sends an SSH disconnect with a reason code
+                // instead, which is a real answer the client reports to the user.
+                error!(
+                    "LLM error handling shell command on connection {}: {}",
+                    self.connection_id, e
+                );
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SSH shell command LLM error: {}", e));
+                Err(e)
             }
         }
     }
@@ -1013,9 +1047,44 @@ impl russh::server::Handler for SshHandler {
                             is_first_input, is_empty_cmd, has_ctrl_c
                         );
 
-                        if let Ok((output, close_connection)) =
-                            self.llm_shell_command(&line, is_first_input).await
-                        {
+                        let command_result = self.llm_shell_command(&line, is_first_input).await;
+
+                        // A failed handler call ends the session with a reason code rather
+                        // than leaving the peer at a prompt that will never answer.
+                        // SSH_DISCONNECT_SERVICE_NOT_AVAILABLE (7) is the closest reason
+                        // RFC 4253 §11.1 defines, and ssh(1) prints it verbatim.
+                        if let Err(ref e) = command_result {
+                            let overloaded = crate::llm::is_overload_error(e);
+                            let description = if overloaded {
+                                "netget: backend at capacity, try again later"
+                            } else {
+                                "netget: command handler unavailable"
+                            };
+                            if overloaded {
+                                warn!(
+                                    "SSH disconnecting channel {}: LLM capacity exhausted",
+                                    channel_id
+                                );
+                            }
+                            let notice = CryptoVec::from_slice(
+                                format!("\r\n{}\r\n", description).as_bytes(),
+                            );
+                            session.data(channel_id, notice);
+                            session.exit_status_request(channel_id, 1);
+                            session.eof(channel_id);
+                            session.close(channel_id);
+                            session.disconnect(
+                                russh::Disconnect::ServiceNotAvailable,
+                                description,
+                                "en",
+                            );
+                            let _ = self.status_tx.send(format!(
+                                "✗ SSH disconnected channel {} after LLM error",
+                                channel_id
+                            ));
+                        }
+
+                        if let Ok((output, close_connection)) = command_result {
                             // Send output if present
                             if let Some(output_text) = output {
                                 let response = CryptoVec::from_slice(output_text.as_bytes());

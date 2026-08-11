@@ -196,3 +196,24 @@ read with sftp_file_content, and anything outside the tree with sftp_error no_su
 - [RFC 4253: SSH Transport Layer Protocol](https://datatracker.ietf.org/doc/html/rfc4253)
 - [RFC 4254: SSH Connection Protocol](https://datatracker.ietf.org/doc/html/rfc4254)
 - [russh](https://docs.rs/russh/latest/russh/) · [russh-sftp](https://docs.rs/russh-sftp/latest/russh_sftp/)
+
+## Failure behaviour
+
+The three integration points fail in different directions, on purpose.
+
+| Path | On `call_llm` error |
+|---|---|
+| `ssh_auth` | **Deny.** An unreachable backend is not consent; the client gets a real `SSH_MSG_USERAUTH_FAILURE` rather than a hung authentication. |
+| `ssh_banner` | No banner. Cosmetic — the shell still opens and the server writes its own `"$ "` prompt, so nothing waits. Logged on both channels. |
+| `ssh_shell_command` | **Disconnect.** A notice, `exit-status 1`, channel close, and `SSH_MSG_DISCONNECT` with reason 7 (`SSH_DISCONNECT_SERVICE_NOT_AVAILABLE`, RFC 4253 §11.1). |
+
+The shell case is the one that changed shape. It used to return "no output, do not close", which
+the caller's `if let Ok(..)` accepted and then followed with the usual `"$ "` prompt — so a
+backend outage was indistinguishable from a command that ran and printed nothing.
+`llm_shell_command` now returns `Err` and the caller tears the session down.
+
+Note libssh2 never shows the in-band notice: `_libssh2_channel_read` drains all pending packets
+and returns as soon as one errors, so the disconnect short-circuits the already-queued
+CHANNEL_DATA. The bytes are on the wire and OpenSSH prints them. Covered by
+`tests/server/ssh/llm_failure_test.rs`, which asserts the auth refusal and, for the shell, the
+non-zero exit status and the closed channel.
