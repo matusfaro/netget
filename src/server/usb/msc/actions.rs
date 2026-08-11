@@ -28,10 +28,12 @@ pub static USB_MSC_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_attached",
         "A USB/IP host attached to this virtual mass-storage device and can now read and write \
-         sectors. Mount a disk image to give it contents, set write protection, or wait_for_more \
-         to leave the currently mounted image in place.",
+         sectors. The drive starts empty: answer with serve_files to say what it contains, and \
+         netget lays those files out as a FAT16 volume the host can read. wait_for_more leaves \
+         it empty.",
         json!({
-            "type": "wait_for_more"
+            "type": "serve_files",
+            "files": [{"name": "hello.txt", "content": "world"}]
         }),
     )
     .with_parameters(vec![
@@ -55,6 +57,7 @@ pub static USB_MSC_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![
+        serve_files_action(),
         mount_disk_action(),
         eject_disk_action(),
         set_write_protect_action(),
@@ -83,9 +86,10 @@ pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_read",
-        "The host read sectors from the mass-storage device. Informational: the read has already \
-         been served from the mounted image. Answer wait_for_more unless you want to swap the \
-         image or change write protection in response.",
+        "The host read sectors from the mass-storage device. Informational: the read has \
+         already been served from the current volume, so this is a notification and not a \
+         request. Answer wait_for_more unless you want to replace the contents with \
+         serve_files or change write protection in response.",
         json!({
             "type": "wait_for_more"
         }),
@@ -117,6 +121,7 @@ pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![
+        serve_files_action(),
         mount_disk_action(),
         eject_disk_action(),
         set_write_protect_action(),
@@ -128,9 +133,10 @@ pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_write",
-        "The host wrote sectors to the mass-storage device. Informational: the write has already \
-         been applied to the mounted image. Answer wait_for_more unless you want to swap the \
-         image or write-protect it in response.",
+        "The host wrote sectors to the mass-storage device. Informational: the write has \
+         already been applied to the current volume, so this is a notification and not a \
+         request. Answer wait_for_more unless you want to replace the contents with \
+         serve_files or write-protect it in response.",
         json!({
             "type": "wait_for_more"
         }),
@@ -162,6 +168,7 @@ pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         },
     ])
     .with_actions(vec![
+        serve_files_action(),
         mount_disk_action(),
         eject_disk_action(),
         set_write_protect_action(),
@@ -226,11 +233,15 @@ impl UsbMscProtocol {
             .lock()
             .map_err(|_| anyhow::anyhow!("USB MSC handler registry poisoned"))?;
 
-        // Models emit ids both as numbers and as strings; accept either.
+        // All three forms a model can produce: the number, the number as a string, and the
+        // `conn-N` form the events themselves carry. That last one matters — every event
+        // reports `connection_id.to_string()`, which is `"conn-2"`, not `2`, so a model quoting
+        // the event's own field back would otherwise never match.
         let requested = action["connection_id"].as_u64().or_else(|| {
-            action["connection_id"]
-                .as_str()
-                .and_then(|s| s.trim().parse::<u64>().ok())
+            action["connection_id"].as_str().and_then(|s| {
+                let s = s.trim();
+                s.strip_prefix("conn-").unwrap_or(s).parse::<u64>().ok()
+            })
         });
 
         if let Some(id) = requested {
@@ -286,10 +297,14 @@ impl Protocol for UsbMscProtocol {
         vec![crate::llm::actions::ParameterDefinition {
             name: "disk_image".to_string(),
             type_hint: "string".to_string(),
-            description: "Path to disk image file (default: ./tmp/netget_msc_disk.img, will be created if doesn't exist)"
+            description: "OPTIONAL path to a disk image file to serve instead of an \
+                          LLM-supplied volume. Leave it out for the normal case: the device \
+                          then starts with an empty in-memory FAT16 volume and the model fills \
+                          it with serve_files. Naming a path here is host state you are \
+                          choosing to expose; it is created if it does not exist."
                 .to_string(),
             required: false,
-            example: serde_json::json!("./tmp/netget_msc_disk.img"),
+            example: serde_json::json!("/tmp/prepared.img"),
         }]
     }
 
@@ -299,6 +314,7 @@ impl Protocol for UsbMscProtocol {
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
+            serve_files_action(),
             mount_disk_action(),
             eject_disk_action(),
             set_write_protect_action(),
@@ -334,28 +350,38 @@ impl Protocol for UsbMscProtocol {
                 "Virtual USB mass storage over USB/IP: BOT plus a SCSI-2 subset (INQUIRY, \
                  TEST UNIT READY, READ CAPACITY(10), READ(10), WRITE(10), REQUEST SENSE, \
                  MODE SENSE(6), PREVENT/ALLOW MEDIUM REMOVAL, READ FORMAT CAPACITIES) served \
-                 synchronously from a memory-mapped disk image. usbip::handler runs on the \
-                 accepted socket, so the listen port is whatever the caller asks for.",
+                 synchronously. The protocol owns the transport, the SCSI layer and the FAT16 \
+                 layout; the LLM owns the contents. usbip::handler runs on the accepted \
+                 socket, so the listen port is whatever the caller asks for.",
             )
             .llm_control(
-                "mount_disk swaps the image (existing images keep their own size), eject_disk \
-                 makes every medium command report NOT READY, set_write_protect toggles \
-                 DATA PROTECT on WRITE(10). All four events fire: usb_msc_attached on connect, \
+                "serve_files is the main one: the model names files and their text, and netget \
+                 lays them out as a FAT16 volume in memory that the host reads back through \
+                 READ(10). mount_disk serves a host file instead (opt-in), eject_disk makes \
+                 every medium command report NOT READY, set_write_protect toggles DATA PROTECT \
+                 on WRITE(10). All four events fire: usb_msc_attached on connect, \
                  usb_msc_read / usb_msc_write after sector transfers (coalesced - a mount does \
                  hundreds), usb_msc_detached when the USB/IP session ends.",
             )
             .e2e_testing(
                 "E2E drives a real USB/IP client over TCP (OP_REQ_IMPORT, then CBW/CSW over \
-                 the bulk endpoints) against a FAT16 image built in the test, and asserts the \
-                 sectors the host reads contain the file. No usbip kernel module or root.",
+                 the bulk endpoints). The headline test has the *model* supply the files, then \
+                 walks the volume the way a host does - parse the BPB from sector 0, find the \
+                 directory entry, follow it to its cluster - and asserts the content that \
+                 arrives is what the model asked for. No usbip kernel module or root.",
             )
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
             .notes(
-                "Storage is a disk image file on the host, which sits awkwardly with the \
-                 no-storage rule; an LLM-driven file mode is the intended direction. Attaching \
-                 from a real host still needs vhci-hcd and root on the client side and is \
-                 untested - the E2E harness proves the device side, not that an OS mounts the \
-                 filesystem. Single LUN only.",
+                "The default medium is an empty in-memory FAT16 volume the model fills with \
+                 serve_files; nothing is written to the filesystem. It used to memory-map \
+                 ./tmp/netget_msc_disk.img by default, which made the protocol implement \
+                 storage - the sectors a host read came from a file netget created rather than \
+                 from the model. A file is used only when the caller names one in \
+                 startup_params.disk_image or in mount_disk. serve_files takes text, not \
+                 base64, so a binary payload cannot be expressed; names must be FAT 8.3 and \
+                 are rejected rather than truncated. Attaching from a real host still needs \
+                 vhci-hcd and root on the client side and is untested - the E2E harness proves \
+                 the device side, not that an OS mounts the filesystem. Single LUN only.",
             )
             .build()
     }
@@ -461,6 +487,62 @@ impl Server for UsbMscProtocol {
             .context("Action must have 'type' field")?;
 
         match action_type {
+            // The LLM-driven path: the model says what files the drive holds, and the protocol
+            // lays them out as a FAT16 volume in memory. This is the action that makes the
+            // sectors a host reads *the model's* data rather than a file netget put on disk.
+            "serve_files" => {
+                let files = action["files"]
+                    .as_array()
+                    .context("serve_files requires a 'files' array")?;
+                if files.is_empty() {
+                    anyhow::bail!(
+                        "serve_files needs at least one file; use eject_disk to present an \
+                         empty drive"
+                    );
+                }
+
+                let specs: Vec<super::fat16::FileSpec> = files
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| {
+                        let name = f["name"]
+                            .as_str()
+                            .with_context(|| format!("files[{}] needs a 'name'", i))?
+                            .to_string();
+                        let content = f["content"].as_str().unwrap_or("").to_string();
+                        Ok(super::fat16::FileSpec { name, content })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                let label = action["volume_label"].as_str().unwrap_or("NETGET");
+                let total_sectors = super::fat16::DEFAULT_TOTAL_SECTORS;
+
+                // Build before touching the device: an unusable file name must not leave the
+                // handler holding half a volume.
+                let image = super::fat16::build_volume(&specs, total_sectors, label)?;
+                let disk = super::disk::DiskImage::in_memory(image)?;
+                let sectors = disk.total_sectors();
+                let disk = std::sync::Arc::new(std::sync::Mutex::new(disk));
+
+                // A drive whose contents the model just declared is read-only unless it says
+                // otherwise: a host that writes would be editing the model's answer.
+                let write_protect = action["write_protect"].as_bool().unwrap_or(true);
+
+                self.with_msc_handler(&action, |msc| {
+                    msc.mount_disk(disk);
+                    msc.set_write_protect(write_protect);
+                })?;
+
+                tracing::info!(
+                    "USB MSC: serving {} LLM-supplied file(s) as a {} sector FAT16 volume \
+                     '{}' (write_protect={})",
+                    specs.len(),
+                    sectors,
+                    label,
+                    write_protect
+                );
+                Ok(ActionResult::NoAction)
+            }
             "mount_disk" => {
                 let disk_image_path = action["disk_image"]
                     .as_str()
@@ -534,6 +616,53 @@ fn connection_id_parameter() -> Parameter {
             required (copy it from the event) when there are several."
             .to_string(),
         required: false,
+    }
+}
+
+/// Declare what the drive contains. The LLM-driven path, and the one to reach for first.
+#[cfg(feature = "usb-msc")]
+fn serve_files_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "serve_files".to_string(),
+        description: "Put files on the virtual drive. netget lays them out as a FAT16 volume in \
+                      memory and serves the sectors; nothing is written to disk. Names must be \
+                      FAT 8.3 (at most 8 characters, a dot, at most 3 more) and content is \
+                      text. This is how the drive gets its contents - prefer it over mount_disk."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "files".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of {\"name\": \"hello.txt\", \"content\": \"world\"} \
+                              objects placed in the root directory"
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "volume_label".to_string(),
+                type_hint: "string".to_string(),
+                description: "Volume label a host shows for the drive (default NETGET)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "write_protect".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether the host may write to the drive. Defaults to true: the \
+                              contents are your answer, and a host write would edit it."
+                    .to_string(),
+                required: false,
+            },
+            connection_id_parameter(),
+        ],
+        example: serde_json::json!({
+            "type": "serve_files",
+            "files": [{"name": "hello.txt", "content": "world"}]
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> USB MSC serve files")
+                .with_debug("USB-MSC serve_files: label={volume_label}"),
+        ),
     }
 }
 

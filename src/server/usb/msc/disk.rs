@@ -1,7 +1,20 @@
-//! Virtual disk image management for USB Mass Storage Class
+//! Sector storage behind the virtual USB mass storage device.
 //!
-//! This module provides sector-based read/write operations for virtual disk images
-//! using memory-mapped I/O for performance.
+//! Two backings, and which one is the **default** is the whole point:
+//!
+//! * [`Backing::Memory`] — a `Vec<u8>` that never touches the filesystem. This is the default,
+//!   and it is what an LLM-supplied file map is laid out into
+//!   (`super::fat16::build_volume`). Nothing persists, nothing is created in the working
+//!   directory, and the only data on the wire is data the model supplied.
+//! * [`Backing::Mapped`] — a memory-mapped file, reached only when the caller **names a path**
+//!   in `startup_params.disk_image` or in a `mount_disk` action.
+//!
+//! It used to be file-only, and the default path was `./tmp/netget_msc_disk.img` relative to
+//! the process's working directory. That made the protocol *implement storage*, which the
+//! project rule forbids: the sectors a host read came from a file on disk, not from the model,
+//! and the read/write events were decorative notifications about data nobody had been asked
+//! for. A path the caller names is host state the model refers to — the same shape as `proxy`'s
+//! `ca_export_path` — and it is opt-in now rather than the default.
 
 #[cfg(feature = "usb-msc")]
 use anyhow::{Context, Result};
@@ -14,12 +27,46 @@ use std::path::Path;
 #[cfg(feature = "usb-msc")]
 use tracing::{debug, info, trace};
 
-/// Virtual disk image with memory-mapped I/O
+/// Where a `DiskImage`'s sectors actually live.
+#[cfg(feature = "usb-msc")]
+#[derive(Debug)]
+enum Backing {
+    /// In-process bytes. Nothing is written to the filesystem and nothing outlives the server.
+    Memory(Vec<u8>),
+    /// A memory-mapped file the caller named.
+    Mapped(MmapMut),
+}
+
+#[cfg(feature = "usb-msc")]
+impl Backing {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Backing::Memory(bytes) => bytes,
+            Backing::Mapped(mmap) => mmap,
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        match self {
+            Backing::Memory(bytes) => bytes,
+            Backing::Mapped(mmap) => mmap,
+        }
+    }
+
+    /// Push writes through to the file, if there is one.
+    fn flush(&self) -> Result<()> {
+        match self {
+            Backing::Memory(_) => Ok(()),
+            Backing::Mapped(mmap) => mmap.flush().context("Failed to flush disk writes"),
+        }
+    }
+}
+
+/// Virtual disk: a flat array of sectors, in memory or memory-mapped from a file.
 #[cfg(feature = "usb-msc")]
 #[derive(Debug)]
 pub struct DiskImage {
-    /// Memory-mapped file for fast sector access
-    mmap: MmapMut,
+    backing: Backing,
     /// Total number of sectors
     total_sectors: u32,
     /// Bytes per sector (typically 512)
@@ -41,6 +88,32 @@ impl DiskImage {
     ///
     /// # Returns
     /// DiskImage instance with memory-mapped file
+    /// A disk whose sectors are held in memory and never written anywhere.
+    ///
+    /// This is how an LLM-supplied file map becomes a device: `super::fat16::build_volume`
+    /// produces the bytes, and this wraps them. `bytes` is rounded up to a whole sector so a
+    /// partial trailing sector cannot make `read_sectors` slice past the end.
+    pub fn in_memory(mut bytes: Vec<u8>) -> Result<Self> {
+        let bytes_per_sector: u32 = 512;
+
+        let rounded = bytes.len().div_ceil(bytes_per_sector as usize) * bytes_per_sector as usize;
+        bytes.resize(rounded, 0);
+
+        let total_sectors = u32::try_from(rounded / bytes_per_sector as usize)
+            .context("in-memory disk is too large to address in 32-bit sectors")?;
+        if total_sectors == 0 {
+            anyhow::bail!("in-memory disk is smaller than one 512-byte sector");
+        }
+
+        debug!("Created in-memory disk ({} sectors)", total_sectors);
+
+        Ok(Self {
+            backing: Backing::Memory(bytes),
+            total_sectors,
+            bytes_per_sector,
+        })
+    }
+
     pub fn open_or_create(path: &Path, default_size_mb: u32) -> Result<Self> {
         let bytes_per_sector: u32 = 512;
 
@@ -98,7 +171,7 @@ impl DiskImage {
             unsafe { MmapMut::map_mut(&file).context("Failed to memory-map disk image file")? };
 
         Ok(Self {
-            mmap,
+            backing: Backing::Mapped(mmap),
             total_sectors,
             bytes_per_sector,
         })
@@ -148,7 +221,7 @@ impl DiskImage {
             length
         );
 
-        Ok(self.mmap[offset..offset + length].to_vec())
+        Ok(self.backing.as_slice()[offset..offset + length].to_vec())
     }
 
     /// Write sectors to disk image
@@ -186,10 +259,10 @@ impl DiskImage {
             offset
         );
 
-        self.mmap[offset..offset + length].copy_from_slice(data);
+        self.backing.as_mut_slice()[offset..offset + length].copy_from_slice(data);
 
-        // Flush to disk
-        self.mmap.flush().context("Failed to flush disk writes")?;
+        // Push through to the file, if this disk has one.
+        self.backing.flush()?;
 
         Ok(count)
     }
@@ -218,10 +291,8 @@ impl DiskImage {
 
         debug!("Zeroing {} sectors from LBA {}", count, lba);
 
-        self.mmap[offset..offset + length].fill(0);
-        self.mmap
-            .flush()
-            .context("Failed to flush zero operation")?;
+        self.backing.as_mut_slice()[offset..offset + length].fill(0);
+        self.backing.flush()?;
 
         Ok(())
     }

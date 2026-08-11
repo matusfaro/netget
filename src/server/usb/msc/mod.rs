@@ -29,6 +29,9 @@ pub use actions::UsbMscProtocol;
 pub mod disk;
 
 #[cfg(feature = "usb-msc")]
+pub mod fat16;
+
+#[cfg(feature = "usb-msc")]
 pub mod handler;
 
 #[cfg(feature = "usb-msc")]
@@ -218,14 +221,32 @@ impl UsbMscServer {
             connection_id, remote_addr
         );
 
-        let disk_path = disk_image.unwrap_or_else(|| PathBuf::from("./tmp/netget_msc_disk.img"));
         let write_protect = true; // Start write-protected for safety
 
-        // Create or open disk image. An image that already exists keeps its own size.
-        let disk = Arc::new(std::sync::Mutex::new(
-            disk::DiskImage::open_or_create(&disk_path, DEFAULT_DISK_SIZE_MB)
-                .context("Failed to create disk image")?,
-        ));
+        // The medium. Default is an **empty in-memory FAT16 volume**, which the model then
+        // fills with `serve_files` in response to `usb_msc_attached`. A path is used only when
+        // the caller named one.
+        //
+        // The default used to be `./tmp/netget_msc_disk.img` in the process's working
+        // directory, which made the protocol implement storage: the sectors a host read came
+        // from a file netget created, not from the model, and the read/write events were
+        // notifications about data nobody had been asked for.
+        let (disk, medium) = match &disk_image {
+            Some(path) => (
+                disk::DiskImage::open_or_create(path, DEFAULT_DISK_SIZE_MB)
+                    .with_context(|| format!("Failed to open disk image {}", path.display()))?,
+                path.display().to_string(),
+            ),
+            None => (
+                disk::DiskImage::in_memory(
+                    fat16::build_volume(&[], fat16::DEFAULT_TOTAL_SECTORS, "NETGET")
+                        .context("Failed to build the empty in-memory volume")?,
+                )
+                .context("Failed to create the in-memory disk")?,
+                "in-memory FAT16 volume (use serve_files to fill it)".to_string(),
+            ),
+        };
+        let disk = Arc::new(std::sync::Mutex::new(disk));
 
         let (total_sectors, bytes_per_sector) = {
             let d = disk
@@ -244,11 +265,8 @@ impl UsbMscServer {
         );
 
         info!(
-            "USB MSC device: disk={}, sectors={}, bytes_per_sector={}, write_protect={}",
-            disk_path.display(),
-            total_sectors,
-            bytes_per_sector,
-            write_protect
+            "USB MSC device: medium={}, sectors={}, bytes_per_sector={}, write_protect={}",
+            medium, total_sectors, bytes_per_sector, write_protect
         );
 
         // Sector transfers arrive on a synchronous URB callback, which cannot await an LLM
@@ -290,7 +308,7 @@ impl UsbMscServer {
 
         let _ = status_tx.send(format!(
             "USB MSC device ready: {} ({} sectors, {:.1} MB) - run: sudo usbip attach -r {} -b 0-0-0",
-            disk_path.display(),
+            medium,
             total_sectors,
             capacity_mb,
             remote_addr.ip()

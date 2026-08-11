@@ -3,12 +3,26 @@
 ## What these prove, and what they do not
 
 The tests answer one concrete question: *pretend to be a USB drive and serve a single file
-`hello.txt` containing `world`* — does that work?
+`hello.txt` containing `world`* — does that work, **with the model supplying the contents**?
 
 They drive a **real USB/IP client over TCP** (`tests/helpers/usbip_client.rs`): `OP_REQ_DEVLIST`
-and `OP_REQ_IMPORT`, then Bulk-Only Transport CBW/CSW pairs carrying real SCSI commands. A FAT16
-volume is built in-process (`fat16.rs`), handed to the server as `startup_params.disk_image`, and
-read back sector by sector with `READ(10)`. The assertions are on the bytes the host receives.
+and `OP_REQ_IMPORT`, then Bulk-Only Transport CBW/CSW pairs carrying real SCSI commands. The
+assertions are on the bytes the host receives.
+
+In the headline test **nothing names a file on disk**. The model answers `usb_msc_attached` with
+
+```json
+{"type": "serve_files", "files": [{"name": "hello.txt", "content": "world"}]}
+```
+
+and the test then walks the volume the way a host would: read sector 0, parse the BPB to find the
+root directory and the data region, find the `HELLO   TXT` entry, follow its first-cluster field
+to the right LBA, read it. `world` arriving there can only have come from the mock's response —
+which is what makes this a test of the LLM-driven path rather than of a file netget wrote.
+
+The geometry is computed from the served bytes, not from constants shared with the
+implementation. A volume laid out wrongly sends the test to the wrong sector and the content
+assertion fails. That is deliberate: a host does exactly this walk.
 
 **This is the device side only.** There is no `vhci-hcd`, no `/dev/sdX`, no kernel filesystem
 driver — macOS has no USB/IP client, which is why the protocol is spoken directly. A passing run
@@ -25,6 +39,11 @@ of the seven tests were `#[ignore]`d with product-gap notes; two more passed whi
 payloads used parameter names the executor rejects.
 
 ## The FAT16 builder (`fat16.rs`)
+
+The test fixture, used by the two tests that exercise the **file-backed** mode
+(`startup_params.disk_image` and `mount_disk`). It is deliberately a *separate* implementation
+from `src/server/usb/msc/fat16.rs`: building an image with the code under test and reading it
+back with the same code proves only self-consistency.
 
 Built rather than committed as a binary, so the layout is visible and the bytes reproducible —
 every field is fixed, including the volume id and timestamps.
@@ -63,7 +82,7 @@ been — that is what a failed command looks like without an endpoint stall.
 
 | Test | Proves | LLM calls |
 |---|---|---|
-| `test_usb_msc_serves_hello_txt` | devlist advertises 08/06/50; import; Get Max LUN; INQUIRY; capacity follows the image; boot sector, root directory and file cluster read back as a FAT16 volume containing `world`; a write is refused with DATA PROTECT and does not land; `usb_msc_read` fires | 3 |
+| `test_usb_msc_serves_hello_txt` | devlist advertises 08/06/50; import; Get Max LUN; INQUIRY; the **model's** two files are laid out as a FAT16 volume with the label it chose; the BPB's sector count agrees with READ CAPACITY(10); both directory entries are found with the right sizes and distinct clusters; following `hello.txt`'s cluster yields `world`; a write is refused with DATA PROTECT and does not land; `usb_msc_read` fires | 3 |
 | `test_usb_msc_write_and_detach` | `set_write_protect(false)` lets WRITE(10) through; the host reads back what it wrote; the bytes are flushed to the image file on disk; `usb_msc_write` and `usb_msc_detached` fire | 4 |
 | `test_usb_msc_mount_then_eject` | `mount_disk` swaps in a different image at its own size and serves it; the read event's handler ejects; TEST UNIT READY then fails NOT READY / MEDIUM NOT PRESENT and READ(10) returns no data | 3 |
 
@@ -93,6 +112,8 @@ About 1 second for the suite. **Run it twice**: the first run after a source edi
 ## Not covered
 
 - Attaching from a real Linux host (`sudo usbip attach`) — needs `vhci-hcd` and root.
+- Binary file contents. `serve_files` takes text, so there is nothing to test.
+- Rejected 8.3 names, and files that overflow the data region.
 - Mounting the volume through a real filesystem driver.
 - Multiple hosts attached at once, and therefore the `connection_id`-required branch of
   `resolve_handler`.

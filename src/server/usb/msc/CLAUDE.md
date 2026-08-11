@@ -3,10 +3,12 @@
 ## Overview
 
 A virtual USB flash drive exported over USB/IP. The device presents a Mass Storage interface
-(class 0x08, subclass 0x06 SCSI transparent, protocol 0x50 Bulk-Only Transport) backed by a
-memory-mapped disk image, and answers a SCSI-2 subset. A Linux host that imports it sees
-`/dev/sdX`; anything that speaks USB/IP over TCP can read and write sectors with no kernel
-module.
+(class 0x08, subclass 0x06 SCSI transparent, protocol 0x50 Bulk-Only Transport) and answers a
+SCSI-2 subset. A Linux host that imports it sees `/dev/sdX`; anything that speaks USB/IP over TCP
+can read and write sectors with no kernel module.
+
+**The protocol owns the drive; the model owns the contents.** That split is the point: netget
+does BOT, SCSI, geometry and the FAT16 layout, and the LLM says what files are on it.
 
 **State: Experimental**, but now actually exercised — see Testing.
 
@@ -16,7 +18,8 @@ module.
 |---|---|
 | `mod.rs` | Accept loop, USB/IP session, the four events, connection state machine |
 | `handler.rs` | `UsbMscHandler` — the `usbip::UsbInterfaceHandler`, BOT state machine, SCSI |
-| `disk.rs` | `DiskImage` — memory-mapped sector I/O |
+| `disk.rs` | `DiskImage` — sector I/O over a `Vec<u8>` (default) or a memory-mapped file |
+| `fat16.rs` | Lays an LLM-supplied file map out as a FAT16 volume, in memory |
 | `actions.rs` | Action/event definitions, per-connection handler registry, `execute_action` |
 
 ## Three things that were broken and are worth remembering
@@ -75,21 +78,67 @@ the next command cleared — an "ejected" device kept serving sectors. There is 
 while it is clear, and REQUEST SENSE re-arms the condition after reporting it. INQUIRY still
 answers, because that is how a host learns the device exists.
 
-## Disk images
+## The medium: in memory by default
 
-`DiskImage::open_or_create(path, default_size_mb)` **keeps the size of an image that already
-exists**; `default_size_mb` (10) applies only when creating one. It used to `set_len` to 10 MB
-unconditionally, which silently truncated or padded a prepared filesystem image — the exact case
-`startup_params.disk_image` is for. A partial trailing sector is rounded up so the mapping is a
-whole number of sectors.
+`usb-msc` used to violate the project's no-storage rule outright. `DiskImage::open_or_create`
+memory-mapped a real file, and the default path was `./tmp/netget_msc_disk.img` relative to the
+process's working directory. **The protocol was the storage**: the sectors a host read came from
+a file netget created, not from the model, and `usb_msc_read` / `usb_msc_write` were decorative —
+notifications about data nobody had been asked for. Its own docs called this out as "awkward".
 
-Storage in a protocol sits awkwardly with the project's no-storage rule. The image is host state
-the model *names*, not a database the protocol implements, but an LLM-supplied file mode would
-be the cleaner shape.
+Now:
+
+- **Default (no `disk_image`)**: an empty in-memory FAT16 volume, 8192 sectors / 4 MiB. Nothing
+  touches the filesystem and nothing outlives the server. The model fills it by answering
+  `usb_msc_attached` with `serve_files`.
+- **Opt-in (`startup_params.disk_image`, or `mount_disk`)**: a memory-mapped file the caller
+  **named**. That is host state the model refers to — the same shape as `proxy`'s
+  `ca_export_path` — rather than storage the protocol invented.
+
+`DiskImage::open_or_create` **keeps the size of an image that already exists**; `default_size_mb`
+(10) applies only when creating one. It used to `set_len` to 10 MB unconditionally, which
+silently truncated or padded a prepared filesystem image. A partial trailing sector is rounded up
+so the mapping is a whole number of sectors, and `in_memory` does the same.
+
+## The FAT16 layout (`fat16.rs`)
+
+512-byte sectors, one sector per cluster, 8192 sectors by default:
+
+| LBA | Contents |
+|---|---|
+| 0 | Boot sector / BPB |
+| 1..33 | FAT #1 |
+| 33..65 | FAT #2 |
+| 65..97 | Root directory (512 entries) |
+| 97.. | Data; cluster *n* at `97 + n - 2` |
+
+The size is chosen so the **cluster count** lands in FAT16's 4085..65525 window, and
+`build_volume` refuses anything outside it. That window is the definition of FAT16 — below it a
+host must read the FAT with 12-bit entries, above it with 32-bit ones — so a volume that misses
+it is not "a small FAT16", it is a volume the host decodes with the wrong entry width.
+
+Names are 8.3 and are **rejected rather than truncated**. A model that asks for
+`configuration.json` and silently gets `CONFIGUR.JSO` has been lied to, and the file it then
+describes to the user does not exist.
+
+Content is **text**, not base64. A model cannot reliably produce or read base64, and the project
+rule forbids raw bytes in an action payload — so a binary payload simply cannot be expressed
+here. That is a real limitation, not an oversight.
 
 ## LLM Actions
 
-**mount_disk** — swap the image. An existing image is served at its own size; a missing one is
+**serve_files** — say what the drive contains. The one to reach for.
+
+```json
+{"type": "serve_files",
+ "files": [{"name": "hello.txt", "content": "world"}],
+ "volume_label": "NETGET"}
+```
+
+netget builds a FAT16 volume from that and mounts it. `write_protect` defaults to **true**: the
+contents are the model's answer, and a host write would be editing it.
+
+**mount_disk** — serve a host file instead. Opt-in, for a prepared image. An existing image is served at its own size; a missing one is
 created (`size_mb`, default 10). `write_protect` defaults to **true**, matching how the device
 starts up; a model that wants writes must say so.
 
@@ -103,14 +152,16 @@ starts up; a model that wants writes must say so.
 ### `connection_id` is optional
 
 Every action takes an optional `connection_id`. With exactly one host attached it is inferred;
-with several, omitting it is an error naming the candidates. It used to be required *and*
-string-typed, so a model that emitted a number got "Invalid connection_id format"; both forms
-are accepted now.
+with several, omitting it is an error naming the candidates. Three forms are accepted — the
+number, the number as a string, and the `conn-N` form the **events themselves carry**. That last
+one matters: events report `connection_id.to_string()`, which is `"conn-2"`, not `2`, so a model
+quoting the event's own field back would otherwise never match. (The same defect made every
+`usb-keyboard` action fail at runtime; see that protocol's notes.)
 
 ## LLM Events
 
 - `usb_msc_attached` — a host connected. Fields: `connection_id`, `remote_addr`,
-  `total_sectors`, `capacity_mb`.
+  `total_sectors`, `capacity_mb`. Answer with `serve_files` to give the drive contents.
 - `usb_msc_read` — the host read sectors. Fields: `connection_id`, `lba`, `sector_count`,
   `bytes_read`.
 - `usb_msc_write` — the host wrote sectors. Same shape, `bytes_written`.
@@ -133,6 +184,7 @@ round-trips.
 
 ## Known limitations
 
+- **`serve_files` content is text only.** No binary files, and no way to express one.
 - **Real host attach is untested.** `sudo usbip attach -r <host> -b 0-0-0` needs `vhci-hcd` and
   root on the client; macOS has no USB/IP client at all. The E2E tests speak USB/IP directly.
 - **Single LUN.** `Get Max LUN` answers 0 and the CBW's LUN field is ignored.

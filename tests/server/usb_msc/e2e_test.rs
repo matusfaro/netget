@@ -63,60 +63,126 @@ mod usb_msc_e2e {
         dir.path().join(name).to_string_lossy().to_string()
     }
 
-    /// Assert that a root-directory sector lists `hello.txt` pointing at cluster 2.
-    fn assert_lists_hello_txt(root_dir: &[u8]) {
-        assert!(
-            root_dir.len() >= 32,
-            "root directory sector is {} bytes, expected at least one 32-byte entry",
-            root_dir.len()
-        );
-        let entry = &root_dir[..32];
-        assert_eq!(
-            &entry[0..11],
-            b"HELLO   TXT",
-            "the first root directory entry must be HELLO.TXT, got {:?}",
-            String::from_utf8_lossy(&entry[0..11])
-        );
-        let first_cluster = u16::from_le_bytes([entry[26], entry[27]]);
-        assert_eq!(first_cluster, 2, "hello.txt should start at cluster 2");
-        let size = u32::from_le_bytes([entry[28], entry[29], entry[30], entry[31]]);
-        assert_eq!(size, 5, "hello.txt is 5 bytes long");
+    /// Decode the fields of a FAT16 BIOS Parameter Block from a boot sector.
+    ///
+    /// The test computes the volume geometry from the bytes the *device* served rather than
+    /// from constants it shares with the implementation. If netget laid the volume out wrongly,
+    /// this walks to the wrong sector and the content assertion fails — which is the point: a
+    /// host does exactly this walk, and it is the only thing that makes "the file is on the
+    /// drive" mean anything.
+    struct Bpb {
+        bytes_per_sector: u32,
+        sectors_per_cluster: u32,
+        root_dir_lba: u32,
+        data_start_lba: u32,
     }
 
-    /// The headline case: a read-only USB drive serving `hello.txt` containing `world`.
+    fn parse_bpb(boot: &[u8]) -> Bpb {
+        assert_eq!(boot.len(), 512, "a boot sector is one 512-byte sector");
+        assert_eq!(
+            [boot[510], boot[511]],
+            [0x55, 0xAA],
+            "boot sector signature missing"
+        );
+        assert_eq!(&boot[54..62], b"FAT16   ", "volume should be FAT16");
+
+        let bytes_per_sector = u16::from_le_bytes([boot[11], boot[12]]) as u32;
+        let sectors_per_cluster = boot[13] as u32;
+        let reserved = u16::from_le_bytes([boot[14], boot[15]]) as u32;
+        let num_fats = boot[16] as u32;
+        let root_entries = u16::from_le_bytes([boot[17], boot[18]]) as u32;
+        let fat_sectors = u16::from_le_bytes([boot[22], boot[23]]) as u32;
+
+        let root_dir_lba = reserved + num_fats * fat_sectors;
+        let root_dir_sectors = (root_entries * 32).div_ceil(bytes_per_sector);
+
+        Bpb {
+            bytes_per_sector,
+            sectors_per_cluster,
+            root_dir_lba,
+            data_start_lba: root_dir_lba + root_dir_sectors,
+        }
+    }
+
+    impl Bpb {
+        fn cluster_lba(&self, cluster: u32) -> u32 {
+            self.data_start_lba + (cluster - 2) * self.sectors_per_cluster
+        }
+    }
+
+    /// Find a file's directory entry in a root-directory sector.
+    ///
+    /// Returns `(first cluster, size)`.
+    fn find_entry(root_dir: &[u8], name_8_3: &[u8; 11]) -> (u32, u32) {
+        for entry in root_dir.chunks_exact(32) {
+            if entry[0] == 0x00 {
+                break; // no more entries
+            }
+            if &entry[0..11] == name_8_3.as_slice() {
+                let first_cluster = u16::from_le_bytes([entry[26], entry[27]]) as u32;
+                let size = u32::from_le_bytes([entry[28], entry[29], entry[30], entry[31]]);
+                return (first_cluster, size);
+            }
+        }
+        panic!(
+            "no root directory entry named {:?}",
+            String::from_utf8_lossy(name_8_3)
+        );
+    }
+
+    /// The headline case: *pretend to be a USB drive serving `hello.txt` containing `world`* —
+    /// with the **model** supplying the contents.
+    ///
+    /// Nothing in this test names a file on disk. The model answers `usb_msc_attached` with
+    /// `serve_files`, netget lays that out as a FAT16 volume in memory, and the test walks the
+    /// filesystem the way a host would: parse the BPB, find the directory entry, follow it to
+    /// its cluster, read the sector. `world` arriving there can only have come from the mock's
+    /// response.
+    ///
+    /// The previous version handed the server a prepared image via `startup_params.disk_image`
+    /// and read it back. That passed while the protocol implemented storage — a memory-mapped
+    /// file, defaulting to `./tmp/netget_msc_disk.img` — and while the read/write events were
+    /// notifications about data the model had never been asked for.
     ///
     /// LLM calls: 3 (startup, attach, read)
     #[tokio::test]
     async fn test_usb_msc_serves_hello_txt() -> E2EResult<()> {
-        let (_dir, image) = hello_world_image()?;
-
         let config = NetGetConfig::new(
             "Pretend to be a USB drive serving a single file hello.txt.".to_string(),
         )
-        .with_mock({
-            let image = image.to_string_lossy().to_string();
-            move |mock| {
-                mock.on_event("usb_msc_attached")
-                    .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
-                    .expect_calls(1)
-                    .and()
-                    // Reads are coalesced, so how many events a burst produces is timing
-                    // dependent; that at least one fires is the point.
-                    .on_event("usb_msc_read")
-                    .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
-                    .expect_at_least(1)
-                    .and()
-                    .on_instruction_containing("USB drive")
-                    .respond_with_actions(serde_json::json!([{
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-MassStorage",
-                        "instruction": "Serve hello.txt",
-                        "startup_params": { "disk_image": image }
-                    }]))
-                    .expect_calls(1)
-                    .and()
-            }
+        .with_mock(|mock| {
+            mock.on_event("usb_msc_attached")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "serve_files",
+                    "volume_label": "MODELDATA",
+                    "files": [
+                        {"name": "hello.txt", "content": "world"},
+                        {"name": "notes.txt", "content": "second file"}
+                    ]
+                }]))
+                .expect_calls(1)
+                .and()
+                // Reads are coalesced, so how many events a burst produces is timing
+                // dependent; that at least one fires is the point.
+                .on_event("usb_msc_read")
+                .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
+                .expect_at_least(1)
+                .and()
+                .on_event("usb_msc_detached")
+                .respond_with_actions(serde_json::json!([
+                    { "type": "show_message", "message": "detached" }
+                ]))
+                .expect_at_least(0)
+                .and()
+                .on_instruction_containing("USB drive")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "USB-MassStorage",
+                    "instruction": "Serve hello.txt"
+                }]))
+                .expect_calls(1)
+                .and()
         });
 
         let mut server = start_netget_server(config).await?;
@@ -134,7 +200,8 @@ mod usb_msc_e2e {
             "the interface must advertise Mass Storage / SCSI transparent / Bulk-Only"
         );
 
-        // 2. Attach.
+        // 2. Attach. The attach handler is what puts the model's files on the drive, so
+        //    everything below depends on the call having completed.
         let imported = client.import("0-0-0").await?;
         assert_eq!(imported.bus_id, "0-0-0");
         server.wait_for_log(ATTACH_CALL_LOG, 10).await?;
@@ -153,51 +220,74 @@ mod usb_msc_e2e {
             "vendor id, space padded to 8 bytes"
         );
 
-        // 5. READ CAPACITY(10): the FAT16 volume is 8192 sectors of 512 bytes.
+        // 5. READ CAPACITY(10) and TEST UNIT READY.
         let (last_lba, block_size) = client.scsi_read_capacity_10().await?;
         assert_eq!(block_size, 512);
-        assert_eq!(
-            last_lba,
-            fat16::TOTAL_SECTORS as u32 - 1,
-            "the image must be served at its own size, not padded to the 10MB default"
+        assert!(
+            last_lba > 0,
+            "a mounted volume must report a non-zero capacity"
         );
-
-        // 6. TEST UNIT READY.
         assert!(
             client.scsi_test_unit_ready().await?.passed(),
             "a mounted medium must report ready"
         );
 
-        // 7. Read the boot sector and confirm it is the FAT16 volume we built.
+        // 6. Boot sector: is this a FAT16 volume, and where is everything?
         let (boot, csw) = client.scsi_read_10(0, 1).await?;
         assert!(csw.passed(), "READ(10) of the boot sector failed");
-        assert_eq!(boot.len(), 512);
+        let bpb = parse_bpb(&boot);
+        assert_eq!(bpb.bytes_per_sector, 512);
         assert_eq!(
-            [boot[510], boot[511]],
-            [0x55, 0xAA],
-            "boot sector signature missing"
+            &boot[43..54],
+            b"MODELDATA  ",
+            "the volume label must be the one the model asked for"
         );
-        assert_eq!(&boot[54..62], b"FAT16   ", "volume should be FAT16");
+        assert_eq!(
+            u16::from_le_bytes([boot[19], boot[20]]) as u32,
+            last_lba + 1,
+            "the BPB's total-sector count must agree with READ CAPACITY(10)"
+        );
 
-        // 8. Read the root directory and find hello.txt.
-        let (root_dir, csw) = client.scsi_read_10(fat16::ROOT_DIR_LBA, 1).await?;
+        // 7. Root directory: both of the model's files must be listed.
+        let (root_dir, csw) = client.scsi_read_10(bpb.root_dir_lba, 1).await?;
         assert!(csw.passed(), "READ(10) of the root directory failed");
-        assert_lists_hello_txt(&root_dir);
+        let (hello_cluster, hello_size) = find_entry(&root_dir, b"HELLO   TXT");
+        assert_eq!(hello_size, 5, "hello.txt is 5 bytes long");
+        let (notes_cluster, notes_size) = find_entry(&root_dir, b"NOTES   TXT");
+        assert_eq!(notes_size, 11, "notes.txt is 11 bytes long");
+        assert_ne!(
+            hello_cluster, notes_cluster,
+            "two files must not share a cluster"
+        );
 
-        // 9. Read the file's own cluster. This is the whole point of the exercise.
-        let (data, csw) = client.scsi_read_10(fat16::cluster_lba(2), 1).await?;
+        // 8. Follow hello.txt to its own cluster. This is the whole point of the exercise, and
+        //    `world` can only have come from the model's serve_files answer.
+        let (data, csw) = client
+            .scsi_read_10(bpb.cluster_lba(hello_cluster), 1)
+            .await?;
         assert!(csw.passed(), "READ(10) of the file data failed");
         assert_eq!(data.len(), 512);
         assert_eq!(
             &data[..5],
             b"world",
-            "the sectors the host reads must contain the file contents; got {:?}",
+            "the sectors the host reads must contain the contents the model supplied; got {:?}",
             String::from_utf8_lossy(&data[..5.min(data.len())])
         );
 
-        // 10. The device is write-protected by default, so a host cannot corrupt it.
+        // And the second file, at its own cluster.
+        let (notes, _) = client
+            .scsi_read_10(bpb.cluster_lba(notes_cluster), 1)
+            .await?;
+        assert_eq!(
+            &notes[..11],
+            b"second file",
+            "every file the model listed must be readable"
+        );
+
+        // 9. A drive whose contents the model declared is write-protected: a host write would
+        //    be editing the model's answer.
         let csw = client
-            .scsi_write_10(fat16::cluster_lba(2), &[b'X'; 512])
+            .scsi_write_10(bpb.cluster_lba(hello_cluster), &[b'X'; 512])
             .await?;
         assert_eq!(
             csw.status,
@@ -213,7 +303,9 @@ mod usb_msc_e2e {
         assert_eq!(sense.asc, 0x27, "ASC 0x27 is WRITE PROTECTED");
 
         // And the refusal really did leave the medium alone.
-        let (data, _) = client.scsi_read_10(fat16::cluster_lba(2), 1).await?;
+        let (data, _) = client
+            .scsi_read_10(bpb.cluster_lba(hello_cluster), 1)
+            .await?;
         assert_eq!(
             &data[..5],
             b"world",
