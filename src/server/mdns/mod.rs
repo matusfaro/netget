@@ -26,6 +26,20 @@ use actions::MDNS_SERVER_STARTUP_EVENT;
 #[cfg(feature = "mdns")]
 const DEFAULT_ADVERTISED_PORT: u16 = 8080;
 
+/// The IPv4 multicast group and port mDNS announces on (RFC 6762).
+///
+/// Reported as *information*, never as this server's endpoint: joining a group is not
+/// binding it, and nobody owns it. See the return value of `spawn_with_llm_actions`.
+#[cfg(feature = "mdns")]
+const MDNS_GROUP: &str = "224.0.0.251:5353";
+
+/// Port component of the "this protocol binds no listening socket" placeholder address.
+///
+/// `server_startup::is_bound_addr` treats port 0 as exactly that — the OS never resolves a
+/// real bind to port 0 — and declines to advertise an endpoint for it.
+#[cfg(feature = "mdns")]
+const NO_LISTENING_SOCKET_PORT: u16 = 0;
+
 /// mDNS server that advertises services based on LLM instructions
 pub struct MdnsServer;
 
@@ -229,11 +243,33 @@ impl MdnsServer {
         // Register the task so stop_server can abort it and stop advertising.
         app_state.register_server_task(server_id, handle).await;
 
-        // mDNS does not bind a listening socket of its own; report the
-        // well-known IPv4 multicast group it announces on.
+        // The group is real information, but it is not this server's endpoint —
+        // so it is reported as what it is, on the status stream, rather than
+        // smuggled into `local_addr`.
+        info!(
+            "mDNS announcing on the {MDNS_GROUP} multicast group; this server binds no \
+             listening socket of its own"
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] mDNS announcing on the {MDNS_GROUP} multicast group (not a listening \
+             endpoint: mdns-sd owns its sockets and does not expose them)"
+        ));
+
+        // No socket of our own to report.
+        //
+        // This used to return `224.0.0.251:5353`, the group it announces on, which the TUI
+        // and `server_status` then displayed as if it were the server's listening endpoint.
+        // It is not an endpoint at all: joining a multicast group is not binding it, nobody
+        // owns it, and a stray `zeroconf` on the same machine makes it look occupied whether
+        // or not NetGet is running. `mdns_sd::ServiceDaemon` binds its sockets internally and
+        // exposes none of them, so there is no real address to substitute — and
+        // `0.0.0.0:0` is this codebase's established "I listen on nothing" placeholder, which
+        // `server_startup::is_bound_addr` recognises and declines to advertise (WebRTC, the
+        // device-backed protocols and others already return it). Showing no endpoint is the
+        // truth; showing a group address was not.
         Ok(SocketAddr::from((
-            std::net::Ipv4Addr::new(224, 0, 0, 251),
-            5353,
+            std::net::Ipv4Addr::UNSPECIFIED,
+            NO_LISTENING_SOCKET_PORT,
         )))
     }
 }

@@ -39,12 +39,17 @@
 //!   endpoint for them. It is reported as a distinct bucket rather than a pass,
 //!   because it is the one bucket this test cannot verify.
 //! * **`RunningUnverifiable`** — `Running` with an address that is not a local
-//!   endpoint and so cannot be probed. mDNS is the case that exists: it deliberately
-//!   reports the `224.0.0.251:5353` multicast **group** it announces on rather than a
-//!   socket it owns (`src/server/mdns/mod.rs`). Probing such an address says nothing
-//!   about NetGet — on a machine where anything else has joined the group (a stray
-//!   `zeroconf` process is enough) it reads as held whether or not NetGet is running,
-//!   which would produce both false passes and false port-leak reports.
+//!   endpoint and so cannot be probed. Probing such an address says nothing about
+//!   NetGet — on a machine where anything else has joined the same multicast group (a
+//!   stray `zeroconf` process is enough) it reads as held whether or not NetGet is
+//!   running, which would produce both false passes and false port-leak reports.
+//!   **No protocol lands here any more.** mDNS did: it reported the `224.0.0.251:5353`
+//!   multicast *group* it announces on as though it were its endpoint. It now returns
+//!   the `0.0.0.0:0` "no listening socket" placeholder like every other socketless
+//!   protocol and shows up as `RunningNoSocket`, with the group reported on the status
+//!   stream where it belongs (`src/server/mdns/mod.rs`). The bucket stays because the
+//!   distinction is real and the next protocol to make that mistake should be named,
+//!   not silently passed.
 //!
 //! ## Isolation
 //!
