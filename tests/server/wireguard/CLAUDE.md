@@ -1,308 +1,96 @@
-# WireGuard E2E Tests
+# WireGuard Tests
 
-## Test Overview
+## What these tests validate (and the hard limit they work around)
 
-Tests WireGuard honeypot functionality by sending crafted WireGuard handshake packets to NetGet. **Note**: These tests
-currently treat WireGuard as a honeypot (packet detection only), not a full VPN server.
+NetGet's WireGuard server is a **thin orchestration layer over `defguard_wireguard_rs`**. NetGet implements *none* of
+the WireGuard protocol itself - no Noise_IK handshake, no ChaCha20-Poly1305, no packet parsing. That all lives in the
+platform backend defguard drives: the kernel module on Linux/FreeBSD/Windows, and the **external `wireguard-go` binary
+on macOS**. Creating the interface therefore needs **root** (and, on macOS, wireguard-go installed and in PATH).
 
-**Important**: The actual WireGuard implementation in `src/server/wireguard/mod.rs` is a **full VPN server** with tunnel
-support. These tests, however, focus on packet detection without requiring elevated privileges.
+Two consequences shape this suite:
 
-## Test Strategy
+1. **There is no NetGet-authored handshake/crypto code to unit-test** with real curve25519 keys. That layer does not
+   exist in this repo. So the strongest CI-able evidence anyone hoped for - "drive the server's own handshake" - is
+   not applicable here.
+2. **A real end-to-end handshake needs a running server, which needs root + a backend.** It has never been run and
+   cannot run in CI. It exists here only as a root-gated `#[ignore]`d harness that **fails loudly** (never
+   skips-as-pass).
 
-### Honeypot Testing Approach
+So the suite validates the code NetGet *actually owns* and can run unprivileged: the action executors that implement
+the LLM's control surface, and the event/action declarations that decide what the model may answer with.
 
-Tests send raw WireGuard packets and verify server logs them:
+### Why `boringtun` was evaluated and NOT added
 
-- **No actual VPN tunnel**: Tests don't establish connections through defguard_wireguard_rs
-- **Packet detection only**: Verify server receives and logs WireGuard packets
-- **No privilege requirement**: Honeypot mode doesn't require root/admin
+`boringtun` (Cloudflare, BSD-3-Clause) is a genuine in-process WireGuard peer and would be an excellent handshake
+driver. But it needs something to handshake *against*. On this host the NetGet server cannot start (no root, and
+`wireguard-go` is not installed), so a boringtun initiator has no responder. A boringtun-against-boringtun test would
+validate Cloudflare's library, not NetGet - so it would be theater. It was deliberately left out. If the design bug
+below is fixed and a privileged environment is available, boringtun is the recommended driver for a real interop test.
 
-### Why Not Full VPN Testing?
+### The design bug this work surfaced
 
-Full VPN server testing would require:
+WireGuard responders **drop a handshake whose static public key is not already a configured peer**. NetGet only learns
+of a peer by polling `read_interface_data()` *after* it appears - and an unconfigured peer never appears. There is also
+no user-triggered action to pre-add a peer. So `wireguard_peer_connected` can effectively never fire for a genuinely
+new peer, and the LLM authorize/reject flow is unreachable in practice. Earning `Stable` requires fixing this first
+(pre-register the peer's public key), then proving a real client completes a handshake and exchanges a transport
+packet. Documented in `src/server/wireguard/CLAUDE.md` and the protocol's `metadata()` notes.
 
-- Root/admin privileges for TUN interface creation
-- Real WireGuard client (wg, wg-quick, or wireguard-go)
-- Network configuration (routing, IP forwarding)
-- Cross-platform testing (different TUN APIs per OS)
+## Test inventory
 
-**Decision**: E2E tests focus on packet detection. Manual testing required for full VPN functionality.
+All tests except the last are pure and unprivileged; they construct `WireguardProtocol::new()` directly and need no
+mock Ollama, no network, and no root.
 
-## LLM Call Budget
+### Action executors (the LLM control surface)
 
-### Per-Test Breakdown
+- `authorize_peer_returns_structured_authorization` / `authorize_peer_endpoint_is_optional` - valid input yields an
+  `Output` JSON blob carrying `action`/`public_key`/`allowed_ips`/`endpoint`/`message` for the server to apply;
+  endpoint and message are optional with a sane default.
+- `authorize_peer_rejects_missing_public_key` / `_rejects_empty_allowed_ips` / `_rejects_missing_allowed_ips` -
+  fail-closed on bad input rather than pushing a useless peer to the interface. The error names the offending field.
+- `disconnect_peer_returns_structured_disconnect` / `disconnect_peer_defaults_reason_and_requires_public_key` -
+  structured disconnect output, default reason, mandatory public_key.
+- `reject_peer_is_a_noop_result` / `set_peer_traffic_limit_is_unenforced_noop` - both resolve to `NoAction`. The
+  traffic-limit case pins that the **unenforced** limit never pretends to have applied anything.
+- `unknown_action_is_rejected` / `missing_type_is_rejected` - dispatch errors on garbage input.
 
-1. **test_wireguard_handshake_detection**: 1 LLM call
-    - Server startup (prompt interpretation)
-    - No LLM calls for packet handling (honeypot mode)
+### Declaration integrity
 
-2. **test_wireguard_multiple_packet_types**: 1 LLM call
-    - Server startup only
+`call_llm` builds the model's tool list from `EventType.actions`, **not** from `get_sync_actions()`, so these guard
+what the model is actually offered:
 
-3. **test_wireguard_concurrent_connections**: 1 LLM call
-    - Server startup only
+- `peer_connected_event_advertises_the_interface_changing_actions` - the `wireguard_peer_connected` event offers
+  exactly `authorize_peer` / `reject_peer` / `disconnect_peer`, and does **not** advertise the unenforced
+  `set_peer_traffic_limit` (which would promise enforcement that never happens).
+- `protocol_exposes_no_user_triggered_actions` - `get_async_actions()` is empty (also documents that there is no way
+  to pre-add a peer before it handshakes).
+- `metadata_is_beta_not_stable` - the rating is `Beta`. This assertion is the tripwire: if a future change earns
+  `Stable` via a real interop test, it must be updated together with the metadata and both CLAUDE.md files.
 
-**Total: 3 LLM calls** (well under 10 limit)
+### Root-gated real-backend harness
 
-### Why So Few Calls?
+- `test_wireguard_real_backend_startup` - `#[ignore]`d. Drives NetGet's real spawn path and requires the interface to
+  actually come up ("Interface created successfully" in the server log); it **panics** if it does not, so it can never
+  masquerade as a pass. Run it explicitly under privilege:
 
-Honeypot mode doesn't invoke LLM for each packet - just logs them. Full VPN mode would require LLM calls for peer
-authorization decisions.
+  ```bash
+  sudo ./cargo-isolated.sh test --features wireguard --test server -- \
+      wireguard::e2e_test::test_wireguard_real_backend_startup --ignored --test-threads=1
+  ```
 
-## Scripting Usage
+  Note: even with root, a real client will not currently drive `wireguard_peer_connected` (see the design bug above).
 
-**Scripting: Not applicable** - Honeypot mode doesn't use scripting. Packets are logged directly without LLM
-interpretation.
-
-## Client Library
-
-### Manual Packet Construction
-
-**Why manual**: No Rust WireGuard client library suitable for testing. Tests build raw packets:
-
-```rust
-fn build_wireguard_handshake_init() -> Vec<u8> {
-    let mut packet = Vec::new();
-    packet.push(1);  // Message Type: Handshake Initiation
-    packet.extend_from_slice(&[0x00, 0x00, 0x00]);  // Reserved
-    packet.extend_from_slice(&0x12345678u32.to_le_bytes());  // Sender Index
-    packet.extend_from_slice(&[0xAA; 32]);  // Unencrypted Ephemeral
-    packet.extend_from_slice(&[0xBB; 48]);  // Encrypted Static
-    packet.extend_from_slice(&[0xCC; 28]);  // Encrypted Timestamp
-    packet.extend_from_slice(&[0xDD; 16]);  // MAC1
-    packet.extend_from_slice(&[0xEE; 16]);  // MAC2
-    packet
-}
-```
-
-**Packet types**:
-
-- **Handshake Initiation** (Type 1): 148 bytes
-- **Handshake Response** (Type 2): 92 bytes
-- **Data** (Type 4): Variable length (minimum 32 bytes)
-
-### WireGuard Packet Format
-
-From [WireGuard Protocol](https://www.wireguard.com/protocol/):
-
-**Handshake Initiation**:
-
-```
-| Type (1) | Reserved (3) | Sender Index (4) |
-| Unencrypted Ephemeral (32) |
-| Encrypted Static (48) |
-| Encrypted Timestamp (28) |
-| MAC1 (16) | MAC2 (16) |
-```
-
-**Handshake Response**:
-
-```
-| Type (2) | Reserved (3) | Sender Index (4) | Receiver Index (4) |
-| Unencrypted Ephemeral (32) |
-| Encrypted Nothing (16) |
-| MAC1 (16) | MAC2 (16) |
-```
-
-**Data**:
-
-```
-| Type (4) | Reserved (3) | Receiver Index (4) |
-| Counter (8) |
-| Encrypted Data (variable) |
-```
-
-## Expected Runtime
-
-**Model**: qwen3-coder:30b (or configured model)
-**Runtime**: ~10-15 seconds for full test suite
-**Breakdown**:
-
-- Server startup: 2-5 seconds per test
-- Packet sending: <1 second per test
-- LLM calls: 2-3 seconds each (startup only)
-
-**Fast because**: No LLM calls for packet handling, only server startup.
-
-## Failure Rate
-
-**Low** (<5%) - Occasional timeout if Ollama is slow on startup.
-
-**Stable tests** - No flakiness, packet detection is deterministic.
-
-## Test Cases
-
-### 1. test_wireguard_handshake_detection
-
-**What it tests**:
-
-- Server starts with WireGuard stack
-- Sends Handshake Initiation packet
-- Verifies packet detected in logs
-
-**Assertions**:
-
-```rust
-assert!(output_contains_wg, "Server should be running WireGuard stack");
-assert!(has_wireguard, "Server output should contain WireGuard handshake detection");
-```
-
-**Expected output**:
-
-```
-[INFO] Starting WireGuard VPN server on 0.0.0.0:XXXXX
-[TRACE] WireGuard: Handshake Initiation packet from 127.0.0.1:XXXXX
-```
-
-### 2. test_wireguard_multiple_packet_types
-
-**What it tests**:
-
-- Sends three packet types: Handshake Init, Handshake Response, Data
-- Verifies all packets logged
-
-**Packet sequence**:
-
-1. Handshake Initiation (Type 1)
-2. Handshake Response (Type 2)
-3. Data (Type 4)
-
-**Expected behavior**: Server logs all packet types without crashing.
-
-### 3. test_wireguard_concurrent_connections
-
-**What it tests**:
-
-- Three concurrent clients send handshakes
-- Verifies server handles concurrent UDP packets
-
-**Concurrency**: Uses tokio::spawn for parallel packet sends.
-
-**Expected behavior**: No packet loss, all handshakes logged.
-
-## Known Issues
-
-### Honeypot vs. Full Server Mismatch
-
-**Issue**: Tests treat WireGuard as honeypot, but implementation is full server.
-
-**Why**: Full server testing requires:
-
-- Root/admin privileges (TUN interface)
-- Platform-specific setup (different per OS)
-- Complex network configuration
-
-**Solution**: Tests focus on packet detection. Manual testing for full VPN:
+## Running
 
 ```bash
-# Manual testing workflow (requires root):
-sudo ./cargo-isolated.sh run --release --all-features -- "start wireguard vpn on port 51820"
-
-# In separate terminal, configure WireGuard client:
-sudo wg-quick up /path/to/client.conf
+# Unprivileged tests (run in CI):
+./cargo-isolated.sh test --no-default-features --features wireguard --test server -- \
+    wireguard::e2e_test --test-threads=100
 ```
 
-### No Peer Authorization Testing
+## History
 
-**Issue**: Tests don't verify LLM peer authorization logic.
-
-**Why**: Authorization requires full VPN mode with TUN interface.
-
-**Future work**: Add privileged E2E tests that:
-
-1. Start server with root
-2. Connect real WireGuard client
-3. Verify LLM authorizes peer
-4. Test actual tunnel traffic
-
-### UDP Socket Limitations
-
-**Issue**: Standard UDP client cannot establish WireGuard tunnel.
-
-**Why**: WireGuard requires crypto handshake with valid keys.
-
-**Acceptable**: Honeypot tests verify packet detection, which is sufficient for current scope.
-
-## Running Tests
-
-### Prerequisites
-
-```bash
-# Build release binary with all features
-./cargo-isolated.sh build --release --all-features
-```
-
-### Run Tests
-
-```bash
-# Run WireGuard E2E tests
-./cargo-isolated.sh test --features wireguard --test server::wireguard::e2e_test
-
-# Run with output
-./cargo-isolated.sh test --features wireguard --test server::wireguard::e2e_test -- --nocapture
-
-# Run specific test
-./cargo-isolated.sh test --features wireguard --test server::wireguard::e2e_test -- test_wireguard_handshake_detection
-```
-
-### Expected Output
-
-```
-running 3 tests
-test test_wireguard_handshake_detection ... ok
-test test_wireguard_multiple_packet_types ... ok
-test test_wireguard_concurrent_connections ... ok
-
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.34s
-```
-
-## Future Improvements
-
-### Privileged Tests
-
-Create separate test suite for full VPN testing:
-
-```rust
-#[cfg(all(feature = "wireguard", feature = "privileged-tests"))]
-mod privileged {
-    #[tokio::test]
-    async fn test_wireguard_full_tunnel() {
-        // Requires root/admin
-        // Creates TUN interface
-        // Tests actual VPN traffic
-    }
-}
-```
-
-### Real Client Integration
-
-Use wireguard-go or kernel WireGuard as client:
-
-```rust
-// Spawn wg-quick or wireguard-go
-let client = Command::new("wg-quick")
-    .arg("up")
-    .arg("./tmp/test-client.conf")
-    .spawn()?;
-```
-
-### Peer Authorization Tests
-
-Test LLM authorization decisions:
-
-```rust
-async fn test_peer_authorization() {
-    let server = start_server("authorize peers with allowed_ips 10.20.30.0/24").await;
-    // Connect client with public key
-    // Verify LLM authorizes with correct allowed_ips
-    // Verify client receives VPN IP
-}
-```
-
-## References
-
-- [WireGuard Protocol Spec](https://www.wireguard.com/protocol/)
-- [WireGuard White Paper](https://www.wireguard.com/papers/wireguard.pdf)
-- [defguard_wireguard_rs](https://docs.rs/defguard_wireguard_rs/)
-- [NetGet WireGuard Implementation](../../../src/server/wireguard/CLAUDE.md)
+The previous version of this file described a "honeypot" packet-detection suite that did not match the
+implementation: its tests mocked a `wireguard_packet_received` event and a `log_packet` action that **do not exist**
+(the server raises `wireguard_peer_connected` and has no packet-sniffing path), and every test was `#[ignore]`d behind
+root, so the mismatch never surfaced. Replaced wholesale.

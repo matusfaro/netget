@@ -117,22 +117,45 @@ impl Protocol for WireguardProtocol {
         };
 
         ProtocolMetadataV2::builder()
-            .state(DevelopmentState::Stable)
+            // Beta, not Stable. Demoted from Stable because it has NEVER been validated
+            // end-to-end against a real WireGuard client, and by the project's own rule
+            // Stable requires exactly that. See the notes below and tests/server/wireguard/.
+            .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::Root)
             .implementation(
-                "defguard_wireguard_rs v0.7 - real WireGuard interfaces (kernel on \
-                 Linux/FreeBSD/Windows, userspace wireguard-go on macOS)",
+                "Thin orchestration layer over defguard_wireguard_rs v0.7 - NetGet \
+                 implements NONE of the WireGuard protocol itself (no Noise_IK, no crypto, \
+                 no packet handling). All of that lives in the platform backend: the kernel \
+                 module on Linux/FreeBSD/Windows, and the EXTERNAL wireguard-go binary on \
+                 macOS (defguard shells out to `wireguard-go`, which must be installed).",
             )
             .llm_control(
                 "Post-handshake peer policy: on wireguard_peer_connected the LLM can \
                  set allowed IPs (authorize_peer) or remove the peer \
-                 (disconnect_peer/reject_peer). The handshake itself happens inside \
-                 WireGuard and cannot be gated.",
+                 (disconnect_peer/reject_peer). The handshake itself happens inside the \
+                 backend and cannot be gated.",
             )
-            .e2e_testing("wg CLI or WireGuard client libraries (requires root)")
+            .e2e_testing(
+                "Non-root tests exercise NetGet's own logic (the authorize/reject/disconnect \
+                 action executors and the event's action declarations). A real handshake \
+                 needs root + a WireGuard backend (kernel, or wireguard-go on macOS) and has \
+                 never been run; it is a root-gated #[ignore]d harness only.",
+            )
             .notes(
-                "The only VPN protocol in NetGet with a real, working data plane. \
-                 Requires root/CAP_NET_ADMIN. Traffic limits are not enforced.",
+                "Real data plane (via the platform backend), but Beta because it has never \
+                 been validated against a real client and cannot be in CI: creating the \
+                 interface needs root, and on macOS also the external wireguard-go binary. \
+                 Two substantive caveats found while resolving the rating: (1) The reactive \
+                 authorization model is backwards for WireGuard. A responder drops a handshake \
+                 whose static public key is not ALREADY a configured peer, but NetGet only \
+                 learns of a peer by polling read_interface_data() AFTER it appears - and an \
+                 unconfigured peer never appears. There is also no user-triggered action to \
+                 pre-add a peer (get_async_actions is empty). So wireguard_peer_connected can \
+                 effectively never fire for a genuinely new peer, leaving the LLM \
+                 authorize/reject flow unreachable in practice; it works only for peers \
+                 configured out-of-band. (2) set_peer_traffic_limit is recorded but NOT \
+                 enforced (no tc/iptables). Still the closest thing to a working tunnel in \
+                 NetGet - openvpn/ipsec do not carry traffic at all.",
             )
             .build()
     }

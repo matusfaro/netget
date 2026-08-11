@@ -2,17 +2,39 @@
 
 ## Overview
 
-Full-featured WireGuard VPN server implementing the WireGuard protocol with actual tunnel support. This is NetGet's
-**only fully-functional VPN protocol** - it creates real TUN interfaces and establishes encrypted tunnels for clients.
+A WireGuard VPN server that stands up a real tunnel by delegating **entirely** to `defguard_wireguard_rs`. This is the
+closest thing NetGet has to a working VPN - OpenVPN (`src/server/openvpn/`) has a stubbed control channel and is marked
+`Incomplete`, and IPSec (`src/server/ipsec/`) is a parse-and-log honeypot - but read the honesty note below before
+treating it as a reference implementation.
 
-Use WireGuard as the reference for what a NetGet VPN protocol should look like. The other two VPN protocols do not
-meet this bar: OpenVPN (`src/server/openvpn/`) has a stubbed control channel with hardcoded key material and is marked
-`Incomplete`; IPSec (`src/server/ipsec/`) is a parse-and-log honeypot that never replies.
-
-**Status**: `DevelopmentState::Stable`, fully implemented data plane
-**Privileges**: `PrivilegeRequirement::Root` (interface creation needs root / CAP_NET_ADMIN)
+**Status**: `DevelopmentState::Beta` (demoted from Stable - see below)
+**Privileges**: `PrivilegeRequirement::Root` (interface creation needs root / CAP_NET_ADMIN, and on macOS the external
+`wireguard-go` binary in PATH)
 **Protocol Spec**: [WireGuard White Paper](https://www.wireguard.com/papers/wireguard.pdf)
 **Port**: UDP 51820 (default)
+
+### Honesty note: this is a thin wrapper, and Beta not Stable
+
+NetGet implements **none** of the WireGuard protocol itself - no Noise_IK handshake, no ChaCha20-Poly1305, no packet
+parsing. All of it lives in the platform backend that `defguard_wireguard_rs` drives: the kernel module on
+Linux/FreeBSD/Windows, and the **external `wireguard-go` binary on macOS** (`wgapi_userspace.rs` does
+`Command::new("wireguard-go")` and talks to it over `/var/run/wireguard/<iface>.sock`). NetGet only generates a
+keypair, configures the interface, polls it every 5s, and applies LLM peer actions.
+
+It was demoted from `Stable` to `Beta` because the project's rule for `Stable` is "real spec compliance, **validated
+against a real client**", and this protocol has **never** been validated end-to-end against any real WireGuard client.
+It cannot be, in CI or unprivileged: creating the interface needs root, and on macOS also `wireguard-go` installed.
+That is the same defect that got `tor_relay` and `openvpn` demoted - claiming a rating the evidence doesn't support.
+
+**Known design bug (not yet fixed): the reactive authorization model is backwards for WireGuard.** A WireGuard
+responder decrypts the initiator's static public key from the handshake and **drops the handshake if that key is not
+already a configured peer**. But NetGet only learns of a peer by polling `read_interface_data()` *after* it appears -
+and an unconfigured peer never appears. There is also no user-triggered action to pre-add a peer
+(`get_async_actions()` is empty). So `wireguard_peer_connected` can effectively never fire for a genuinely new peer,
+and the entire LLM authorize/reject flow is unreachable in practice; it only works for peers configured out-of-band.
+Earning `Stable` requires fixing this (accept the peer's public key ahead of the handshake, e.g. via a startup
+parameter or an "expected peers" list) and then proving a real client completes a handshake and exchanges a transport
+packet. See `tests/server/wireguard/`.
 
 ## Library Choices
 
