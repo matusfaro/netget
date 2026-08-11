@@ -292,9 +292,25 @@ pub struct Args {
     #[clap(
         long = "llm-max-concurrent",
         value_name = "NUM",
-        help = "Maximum number of concurrent LLM requests. Default: 1 for sequential processing. Increase for higher throughput with local Ollama."
+        help = "Maximum number of LLM requests in flight at once. Default: 1, i.e. sequential processing - additional requests QUEUE and are served in turn (bounded by --llm-queue-timeout and --llm-max-queued), they are not dropped. Increase for higher throughput with local Ollama."
     )]
     pub llm_max_concurrent: Option<usize>,
+
+    /// How long a network request waits for a concurrency permit
+    #[clap(
+        long = "llm-queue-timeout",
+        value_name = "SECONDS",
+        help = "How long a network-triggered LLM request waits for a free slot under --llm-max-concurrent before the protocol answers the peer with an overload error instead. Default: 120 (one backend request timeout). 0 waits forever."
+    )]
+    pub llm_queue_timeout: Option<u64>,
+
+    /// How many network requests may wait for a concurrency permit at once
+    #[clap(
+        long = "llm-max-queued",
+        value_name = "NUM",
+        help = "How many network-triggered LLM requests may wait for a free slot at once. Beyond this the protocol answers the peer with an overload error immediately rather than growing the queue. Default: 128. 0 is unbounded."
+    )]
+    pub llm_max_queued: Option<usize>,
 
     /// Token limit per time window (optional, for cloud API usage control)
     #[clap(
@@ -699,6 +715,12 @@ impl Args {
             max_concurrent: self.llm_max_concurrent.unwrap_or(1),
             token_limit: self.llm_token_limit,
             token_window_secs: self.llm_token_window,
+            queue_timeout_secs: self
+                .llm_queue_timeout
+                .unwrap_or(crate::llm::DEFAULT_QUEUE_TIMEOUT_SECS),
+            max_queued: self
+                .llm_max_queued
+                .unwrap_or(crate::llm::DEFAULT_MAX_QUEUED),
         }
     }
 }

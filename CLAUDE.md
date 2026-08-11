@@ -512,7 +512,22 @@ Read before assuming a subsystem is sound:
 - `git` and `mercurial` call `generate_with_retry` directly, bypassing the rate limiter, the
   retry/repair loop, and event-handler dispatch — script/static handlers are ignored for them.
 - On LLM failure most protocols reset to Idle and write nothing, leaving the peer to hang
-  until its own timeout.
+  until its own timeout. Still true for **70 of the 79** server `mod.rs` files with a
+  recognisable LLM-error branch — 6 answer on every branch, 3 on some. `http` (500, or 503 +
+  `Retry-After` when the error is an overload) and `tcp` (half-close, so the peer reads EOF)
+  are fixed; copy one of those shapes when you touch a protocol. Re-derive the count with a
+  grep for `LLM error` in `src/server/*/mod.rs` and check whether the following ~18 lines
+  write anything.
+- Related and now fixed, but worth knowing as the reference case: the rate limiter used to
+  `try_acquire` for `RequestSource::Network` and bail on contention, so at the shipped default
+  of `--llm-max-concurrent 1` any request overlapping an in-flight LLM call was **discarded** —
+  two simultaneous `curl`s were enough — while the flag's help text promised "sequential
+  processing". Network requests now wait for a permit, bounded by `--llm-queue-timeout`
+  (default 120s) and `--llm-max-queued` (default 128), and both bounds fail with a typed
+  `RateLimitError` that `crate::llm::is_overload_error` detects. It survived for so long
+  because `tests/helpers/netget.rs` passes `--llm-max-concurrent 1000` to every E2E test, so
+  the shipped value was exercised by no test at all; `tests/llm_concurrency_default_test.rs`
+  now runs with the flag omitted entirely.
 - Per-connection tasks are untracked, so `stop_server` does not cancel in-flight connections.
 - `AppState` is one global `RwLock` over everything — a throughput ceiling, not a deadlock.
 - ~50 of the 63 root markdown files are one-off session/status reports last touched in 2025.

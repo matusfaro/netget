@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
@@ -601,11 +601,34 @@ impl TcpServer {
                 Err(e) => {
                     error!("LLM error for TCP data: {}", e);
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
-                    connections
-                        .lock()
-                        .await
-                        .entry(connection_id)
-                        .and_modify(|conn| conn.state = ConnectionState::Idle);
+
+                    // Say *something* on the wire. Raw TCP has no error frame, so
+                    // the only honest signal is FIN: half-close the connection so
+                    // the peer's next read returns EOF immediately.
+                    //
+                    // This path used to reset the state to Idle and write
+                    // nothing, which left the peer blocked until its own timeout
+                    // with no indication anything had gone wrong — the visible
+                    // half of the concurrency-drop bug, and the same shape as the
+                    // "reset to Idle and write nothing" pattern noted in
+                    // CLAUDE.md's known systemic issues.
+                    if crate::llm::is_overload_error(&e) {
+                        warn!(
+                            "TCP connection {} closed: LLM capacity exhausted",
+                            connection_id
+                        );
+                    }
+                    {
+                        let mut write = write_half.lock().await;
+                        let _ = write.shutdown().await;
+                    }
+                    connections.lock().await.remove(&connection_id);
+                    app_state
+                        .close_connection_on_server(server_id, connection_id)
+                        .await;
+                    let _ = status_tx.send(format!(
+                        "✗ Closed connection {connection_id} after LLM error"
+                    ));
                     return;
                 }
             }

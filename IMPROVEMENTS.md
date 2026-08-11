@@ -222,9 +222,24 @@ LLM-initiated `CloseServer` leaves entries in `AppState` forever.
 
 `is_available()` exists (`src/llm/ollama_client.rs:1315`) but nothing calls it. With Ollama
 down, every request independently waits the full 120s timeout, and with `max_concurrent: 1`
-(`src/llm/rate_limiter.rs:48`) N queued connections serialize into N×120s. On failure most
-protocols reset to Idle and write nothing (`src/server/tcp/mod.rs:580-589`), so peers hang
-until their own timeout rather than getting a protocol-appropriate error.
+(`src/llm/rate_limiter.rs`) N connections serialize into N×120s.
+
+Two corrections to the version of this item that stood here before. First, those N connections
+did **not** queue: `RequestSource::Network` used `try_acquire_owned()` and bailed on contention,
+so at the shipped default of `max_concurrent: 1` every request overlapping an in-flight LLM call
+was *discarded* — two simultaneous `curl`s were enough, and the flag's own help text promised
+"sequential processing". That is fixed: network requests now wait for a permit, bounded by
+`--llm-queue-timeout` (default 120s, one backend request timeout) and `--llm-max-queued`
+(default 128), and both bounds fail with a typed `RateLimitError` rather than silence.
+
+Second, "on failure most protocols reset to Idle and write nothing" was right in general but
+wrong about the two protocols it cited. HTTP always answered (500, now 503 + `Retry-After` when
+the error is an overload) and TCP now half-closes the connection so the peer reads EOF instead
+of blocking. The pattern survives in 70 of the 79 server `mod.rs` files with a recognisable
+LLM-error branch — see the systemic-issues list in CLAUDE.md.
+
+What remains of this item is the circuit breaker proper: nothing calls `is_available()`, so a
+backend that is down is rediscovered by every request paying the full timeout.
 
 ### 20b. Startup still does not consult the dependency system **[static]**
 

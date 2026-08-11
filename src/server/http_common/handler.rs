@@ -245,6 +245,19 @@ pub fn build_error_response(
     );
     let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, error));
 
+    // Overload is transient and retryable, which 500 does not say. Report it as
+    // 503 + Retry-After so a client backs off and tries again instead of
+    // recording a permanent server fault — this is the path a second concurrent
+    // request takes when `--llm-max-concurrent` is saturated and the queue is
+    // full or the wait timed out.
+    if crate::llm::is_overload_error(&error) {
+        return Ok(Response::builder()
+            .status(503)
+            .header(hyper::header::RETRY_AFTER, "1")
+            .body(Full::new(Bytes::from("Service Unavailable")))
+            .unwrap());
+    }
+
     Ok(Response::builder()
         .status(500)
         .body(Full::new(Bytes::from("Internal Server Error")))

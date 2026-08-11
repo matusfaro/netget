@@ -100,7 +100,8 @@ pub use hybrid_manager::{ActiveBackend, HybridLLMManager};
 
 // Rate limiter
 pub use rate_limiter::{
-    RateLimiter, RateLimiterConfig, RateLimiterPermit, RateLimiterStats, RequestSource,
+    is_overload_error, RateLimitError, RateLimiter, RateLimiterConfig, RateLimiterPermit,
+    RateLimiterStats, RequestSource, DEFAULT_MAX_QUEUED, DEFAULT_QUEUE_TIMEOUT_SECS,
 };
 
 /// Format text with indentation and ANSI dim styling for log output.
