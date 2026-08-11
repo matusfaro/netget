@@ -643,3 +643,19 @@ destinations.
 4. Keep action-based API unchanged (transparent to LLM)
 
 **Estimated Effort**: 2-3 days for full rsipstack integration
+
+## Failure behaviour: 503 Service Unavailable
+
+When `call_llm` returns `Err`, the request is answered with **503 Service Unavailable** plus
+`Retry-After` (RFC 3261 §20.33), built through the normal `build_sip_response` path so Via —
+with its branch — From, To, Call-ID and CSeq are all copied from the request. Those are what let
+the UAC match the response to its transaction; without them the response is ignored and the UAC
+retransmits on timer E until timer F fires 32 seconds later.
+
+**ACK is the exception and stays silent**, because RFC 3261 §17 makes ACK a message that takes
+no response at all — answering it would be the bug. That is logged rather than left to be
+inferred.
+
+`build_sip_response` now also honours an optional `retry_after` field, so a handler can set one
+on a 503 of its own. Covered by `tests/server/sip/llm_failure_test.rs`, which checks the
+correlation headers and that an ACK gets nothing.

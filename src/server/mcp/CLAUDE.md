@@ -118,8 +118,13 @@ this code — axum rejects it with an HTTP 400 and a plain-text body rather than
   deliberate one. `serde_json`'s 128-level recursion limit is what stops deep nesting.
 - Bind uses `?`; `axum::serve`'s handle is registered via `register_server_task()`, so
   `stop_server` releases the port.
-- LLM failures return `-32603` rather than leaving the caller hanging, which is better than the
-  project-wide default of writing nothing.
+- LLM failures return a JSON-RPC error with the request `id` echoed, rather than leaving the
+  caller hanging. All seven handlers route through `llm_failure_error`, so the shape is
+  identical across them: `-32603` (InternalError) normally, and `-32000` with
+  `"retryable": true` when `crate::llm::is_overload_error` says the backend is merely at
+  capacity — JSON-RPC 2.0 reserves -32000..=-32099 for exactly that. Reporting overload as
+  -32603 would tell the caller the server is broken when it is only busy. Covered by
+  `tests/server/mcp/llm_failure_test.rs`.
 
 ## Known limitations
 

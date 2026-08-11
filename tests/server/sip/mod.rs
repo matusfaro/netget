@@ -1,2 +1,4 @@
 #[cfg(all(test, feature = "sip"))]
 mod e2e_test;
+#[cfg(all(test, feature = "sip"))]
+mod llm_failure_test;

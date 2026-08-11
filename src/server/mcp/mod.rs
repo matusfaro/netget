@@ -81,6 +81,13 @@ const MAX_TRACE_BYTES: usize = 4096;
 #[cfg(feature = "mcp")]
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18"];
 
+/// Implementation-defined JSON-RPC error code for "the backend is at capacity, retry".
+///
+/// JSON-RPC 2.0 reserves -32000..=-32099 for server-defined errors. Reporting overload as
+/// -32603 (InternalError) would tell the caller the server is broken when it is only busy.
+#[cfg(feature = "mcp")]
+const MCP_SERVER_BUSY_CODE: i32 = -32000;
+
 /// Offered when the client asks for a revision not in the list above.
 #[cfg(feature = "mcp")]
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -108,6 +115,40 @@ fn mcp_error_from_action(data: &Value) -> JsonRpcError {
             .unwrap_or("Internal error")
             .to_string(),
         data: data.get("data").cloned(),
+    }
+}
+
+/// Turn a failed LLM call into the JSON-RPC error the caller gets back.
+///
+/// Every MCP method routes its failure through here so the shape is identical
+/// across all seven, and so the caller always receives a response - `handle_jsonrpc`
+/// re-attaches the request `id` to whatever this returns, which is what lets the
+/// client match the failure to its request instead of waiting on a reply that
+/// never comes.
+///
+/// Overload is reported separately because it is transient: `-32603` says the
+/// server is broken, while a server-defined `-32000` with a retry hint says it is
+/// merely full. The JSON-RPC 2.0 spec reserves -32000..=-32099 for exactly this.
+#[cfg(feature = "mcp")]
+fn llm_failure_error(state: &McpServerState, e: anyhow::Error) -> JsonRpcError {
+    let overloaded = crate::llm::is_overload_error(&e);
+    error!("MCP LLM call failed (overload={}): {}", overloaded, e);
+    let _ = state
+        .status_tx
+        .send(format!("[ERROR] MCP LLM call failed: {}", e));
+
+    if overloaded {
+        return JsonRpcError {
+            code: MCP_SERVER_BUSY_CODE,
+            message: "Server busy: request capacity exhausted, retry later".to_string(),
+            data: Some(serde_json::json!({"error": e.to_string(), "retryable": true})),
+        };
+    }
+
+    JsonRpcError {
+        code: ErrorCode::InternalError as i32,
+        message: "Internal server error".to_string(),
+        data: Some(serde_json::json!({"error": e.to_string(), "retryable": false})),
     }
 }
 
@@ -394,15 +435,7 @@ async fn handle_initialize_inner(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 
@@ -503,15 +536,7 @@ async fn handle_resources_list(state: &McpServerState) -> Result<Value, JsonRpcE
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 
@@ -579,15 +604,7 @@ async fn handle_resources_read(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 
@@ -693,15 +710,7 @@ async fn handle_tools_list(state: &McpServerState) -> Result<Value, JsonRpcError
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 
@@ -772,15 +781,7 @@ async fn handle_tools_call(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 
@@ -841,15 +842,7 @@ async fn handle_prompts_list(state: &McpServerState) -> Result<Value, JsonRpcErr
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 
@@ -920,15 +913,7 @@ async fn handle_prompts_get(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("MCP LLM call failed: {}", e);
-            let _ = state
-                .status_tx
-                .send(format!("[ERROR] MCP LLM call failed: {}", e));
-            return Err(JsonRpcError {
-                code: ErrorCode::InternalError as i32,
-                message: "Internal server error".to_string(),
-                data: Some(serde_json::json!({"error": e.to_string()})),
-            });
+            return Err(llm_failure_error(state, e));
         }
     };
 

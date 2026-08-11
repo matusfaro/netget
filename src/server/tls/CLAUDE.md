@@ -435,3 +435,21 @@ Implement simple database over TLS:
 - [tokio-rustls Documentation](https://docs.rs/tokio-rustls/latest/tokio_rustls/)
 - [rustls Documentation](https://docs.rs/rustls/latest/rustls/)
 - [rcgen Documentation](https://docs.rs/rcgen/latest/rcgen/)
+
+## Failure behaviour: close_notify, then EOF
+
+When `call_llm` returns `Err` — on the banner path or the data path — the connection is shut
+down rather than reset to Idle in silence. `shutdown()` on the TLS write half emits a real
+**close_notify alert record**, not just a FIN, so the peer's next read returns a clean end of
+stream immediately instead of blocking until its own timeout. The connection is then removed
+from the map and marked closed in `AppState`, so nothing is left wedged in `Processing`.
+
+There is no application-level error to send here: the application protocol is whatever the
+handler invents, so TLS's own alert protocol is the only vocabulary available. A *fatal*
+`internal_error` alert would be more precise, but rustls 0.23 keeps
+`CommonState::send_fatal_alert` `pub(crate)`, and forging a plaintext alert record onto the TCP
+socket underneath would violate TLS 1.3 record protection. close_notify is the strongest in-spec
+signal reachable through rustls' public API.
+
+`tests/server/tls/llm_failure_test.rs` asserts `read() -> Ok(0)`, which is exactly the
+distinction: an abrupt close without the alert surfaces as `UnexpectedEof` instead.

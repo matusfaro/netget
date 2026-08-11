@@ -170,9 +170,61 @@ impl SipServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("SIP LLM error: {}", e);
+                                    error!(
+                                        "SIP LLM error for {} from {} (Call-ID {}): {}",
+                                        sip_message.method, peer_addr, sip_message.call_id, e
+                                    );
                                     let _ =
                                         status_clone.send(format!("[ERROR] SIP LLM error: {}", e));
+
+                                    // ACK is the one method that must never be answered
+                                    // (RFC 3261 §17: ACK is not a transaction that takes a
+                                    // response), so silence is correct there and only there.
+                                    if sip_message.method == "ACK" {
+                                        let _ = status_clone.send(
+                                            "[DEBUG] SIP ACK needs no response; nothing sent"
+                                                .to_string(),
+                                        );
+                                        return;
+                                    }
+
+                                    // Everything else gets a 503 Service Unavailable built
+                                    // from the request, so the Via/From/To/Call-ID/CSeq match
+                                    // and the client's transaction actually completes. Left
+                                    // silent, the UAC retransmits on timers A/E and only gives
+                                    // up after Timer B/F (32s).
+                                    if crate::llm::is_overload_error(&e) {
+                                        warn!(
+                                            "SIP 503 to {} (Call-ID {}): LLM capacity exhausted",
+                                            peer_addr, sip_message.call_id
+                                        );
+                                    }
+                                    let response = Self::build_sip_response(
+                                        &sip_message,
+                                        &serde_json::json!({
+                                            "status_code": 503,
+                                            "reason_phrase": "Service Unavailable",
+                                            "retry_after": 5
+                                        }),
+                                    );
+                                    match socket_clone.send_to(&response, peer_addr).await {
+                                        Ok(sent) => {
+                                            let _ = status_clone.send(format!(
+                                                "→ SIP 503 Service Unavailable to {} ({} bytes)",
+                                                peer_addr, sent
+                                            ));
+                                        }
+                                        Err(send_err) => {
+                                            error!(
+                                                "SIP failed to send 503 to {}: {}",
+                                                peer_addr, send_err
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[ERROR] SIP failed to send 503: {}",
+                                                send_err
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -394,6 +446,13 @@ impl SipServer {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3600);
             response.push_str(&format!("Expires: {}\r\n", expires));
+        }
+
+        // Add Retry-After when the action asks for one. RFC 3261 §20.33: a 503 SHOULD
+        // carry it, so the caller retries after a bounded wait instead of failing over
+        // to another proxy or giving up on the URI entirely.
+        if let Some(retry_after) = response_data.get("retry_after").and_then(|v| v.as_u64()) {
+            response.push_str(&format!("Retry-After: {}\r\n", retry_after));
         }
 
         // Add Allow header for OPTIONS responses

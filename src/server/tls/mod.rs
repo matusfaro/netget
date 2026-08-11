@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
@@ -415,8 +415,37 @@ impl TlsServer {
                     }
                 }
                 Err(e) => {
-                    error!("LLM error generating banner: {}", e);
+                    // A `send_first` server owes the peer a greeting; without one the peer
+                    // waits for a banner that will never come. Close the TLS connection with
+                    // a close_notify alert so it reads EOF instead. (See the data path below
+                    // for why this is close_notify and not a fatal alert.)
+                    error!(
+                        "LLM error generating TLS banner on {}: {}",
+                        connection_id, e
+                    );
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                    if crate::llm::is_overload_error(&e) {
+                        warn!(
+                            "TLS connection {} closed before banner: LLM capacity exhausted",
+                            connection_id
+                        );
+                    }
+                    {
+                        let mut write = write_half.lock().await;
+                        if let Err(shutdown_err) = write.shutdown().await {
+                            debug!(
+                                "TLS shutdown on {} returned: {}",
+                                connection_id, shutdown_err
+                            );
+                        }
+                    }
+                    connections.lock().await.remove(&connection_id);
+                    app_state
+                        .close_connection_on_server(server_id, connection_id)
+                        .await;
+                    let _ = status_tx.send(format!(
+                        "✗ Closed TLS connection {connection_id} after banner LLM error"
+                    ));
                 }
             }
         }
@@ -647,13 +676,45 @@ impl TlsServer {
                     }
                 }
                 Err(e) => {
-                    error!("LLM error for TLS data: {}", e);
+                    error!("LLM error for TLS data on {}: {}", connection_id, e);
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
-                    connections
-                        .lock()
-                        .await
-                        .entry(connection_id)
-                        .and_modify(|conn| conn.state = ConnectionState::Idle);
+
+                    // Say something on the wire instead of resetting to Idle in silence.
+                    //
+                    // TLS carries no application-level error - the application protocol here
+                    // is whatever the handler invents, so there is no reply we could phrase in
+                    // it. What TLS does have is the alert protocol, and `shutdown()` emits a
+                    // real close_notify alert record (not just a FIN), which every TLS client
+                    // surfaces as a clean end of stream immediately rather than blocking until
+                    // its own timeout.
+                    //
+                    // A *fatal* `internal_error` alert would be more precise, but rustls 0.23
+                    // keeps `CommonState::send_fatal_alert` `pub(crate)`; close_notify is the
+                    // strongest in-spec signal reachable through its public API. Forging a
+                    // plaintext alert record onto the TCP socket underneath would violate
+                    // TLS 1.3 record protection, so it is not done.
+                    if crate::llm::is_overload_error(&e) {
+                        warn!(
+                            "TLS connection {} closed: LLM capacity exhausted",
+                            connection_id
+                        );
+                    }
+                    {
+                        let mut write = write_half.lock().await;
+                        if let Err(shutdown_err) = write.shutdown().await {
+                            debug!(
+                                "TLS shutdown on {} returned: {}",
+                                connection_id, shutdown_err
+                            );
+                        }
+                    }
+                    connections.lock().await.remove(&connection_id);
+                    app_state
+                        .close_connection_on_server(server_id, connection_id)
+                        .await;
+                    let _ = status_tx.send(format!(
+                        "✗ Closed TLS connection {connection_id} after LLM error"
+                    ));
                     return;
                 }
             }
