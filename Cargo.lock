@@ -2658,6 +2658,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "coap"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27fe68a67ce9f45ff09e5ef7e61777f08451e7d6e6c94a813bd3b7cbefff401c"
+dependencies = [
+ "async-trait",
+ "coap-lite",
+ "futures",
+ "log",
+ "percent-encoding",
+ "pkcs8 0.10.2",
+ "rand 0.9.2",
+ "rcgen 0.11.3",
+ "regex",
+ "rustls 0.21.12",
+ "rustls-pemfile 2.2.0",
+ "sec1 0.7.3",
+ "serde",
+ "serde_html_form",
+ "serde_json",
+ "serde_path_to_error",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "url",
+ "webrtc-dtls 0.8.0",
+ "webrtc-util 0.8.1",
+]
+
+[[package]]
+name = "coap-lite"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87d56a0c1bcd331e7758fd3dd95ed7dd87d118a3b7dc57d60332e17bc97c3f91"
+dependencies = [
+ "coap-message 0.2.3",
+ "coap-message 0.3.7",
+ "lru_time_cache",
+]
+
+[[package]]
+name = "coap-message"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cc888e15f6be910b58fda4f056f673f58fb9348ea45da014283a14e6d2b58ec"
+
+[[package]]
+name = "coap-message"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5716ce4b1742dcb19c3a0afa4837a7052b4a7f13a2bd71cd28a05e90877377d4"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "coarsetime"
 version = "0.1.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7121,6 +7177,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "lru_time_cache"
+version = "0.11.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9106e1d747ffd48e6be5bb2d97fa706ed25b144fbee4d5c02eae110cd8d6badd"
+
+[[package]]
 name = "lz4"
 version = "1.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7837,6 +7899,8 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "clap",
+ "coap",
+ "coap-lite",
  "cosmic-text",
  "couch_rs",
  "crossterm",
@@ -10406,6 +10470,18 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52c4f3084aa3bc7dfbba4eff4fab2a54db4324965d8872ab933565e6fbd83bc6"
+dependencies = [
+ "pem 3.0.6",
+ "ring 0.16.20",
+ "time",
+ "yasna 0.5.2",
+]
+
+[[package]]
+name = "rcgen"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
@@ -12012,6 +12088,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.109",
+]
+
+[[package]]
+name = "serde_html_form"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2f2d7ff8a2140333718bb329f5c40fc5f0865b84c426183ce14c97d2ab8154f"
+dependencies = [
+ "form_urlencoded",
+ "indexmap 2.12.0",
+ "itoa",
+ "ryu",
+ "serde_core",
 ]
 
 [[package]]
@@ -15579,7 +15668,7 @@ dependencies = [
  "url",
  "waitgroup",
  "webrtc-data",
- "webrtc-dtls",
+ "webrtc-dtls 0.10.0",
  "webrtc-ice",
  "webrtc-mdns",
  "webrtc-media",
@@ -15601,6 +15690,42 @@ dependencies = [
  "tokio",
  "webrtc-sctp",
  "webrtc-util 0.9.0",
+]
+
+[[package]]
+name = "webrtc-dtls"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32b140b953f986e97828aa33ec6318186b05d862bee689efbc57af04a243e832"
+dependencies = [
+ "aes 0.8.4",
+ "aes-gcm 0.10.3",
+ "async-trait",
+ "bincode 1.3.3",
+ "byteorder",
+ "cbc",
+ "ccm",
+ "der-parser 8.2.0",
+ "hkdf",
+ "hmac 0.12.1",
+ "log",
+ "p256 0.13.2",
+ "p384",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "rcgen 0.11.3",
+ "ring 0.16.20",
+ "rustls 0.21.12",
+ "sec1 0.7.3",
+ "serde",
+ "sha1",
+ "sha2",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+ "webrtc-util 0.8.1",
+ "x25519-dalek",
+ "x509-parser 0.15.1",
 ]
 
 [[package]]
@@ -15795,6 +15920,26 @@ dependencies = [
  "url",
  "winapi 0.2.8",
  "x509-parser 0.9.2",
+]
+
+[[package]]
+name = "webrtc-util"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e85154ef743d9a2a116d104faaaa82740a281b8b4bed5ee691a2df6c133d873"
+dependencies = [
+ "async-trait",
+ "bitflags 1.3.2",
+ "bytes",
+ "ipnet",
+ "lazy_static",
+ "libc",
+ "log",
+ "nix 0.26.4",
+ "rand 0.8.5",
+ "thiserror 1.0.69",
+ "tokio",
+ "winapi 0.3.9",
 ]
 
 [[package]]

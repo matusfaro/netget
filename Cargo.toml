@@ -76,6 +76,7 @@ portable-base = [
     "nntp",
     "mqtt",
     "modbus",
+    "coap",
     "amqp",
     "socks5",
     "elasticsearch",
@@ -205,6 +206,7 @@ pop3 = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-root
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
 modbus = []  # Modbus TCP server (ICS/SCADA) - hand-rolled MBAP+PDU codec, no extra deps
+coap = []  # CoAP server (RFC 7252, IoT over UDP) - hand-rolled codec, no extra deps
 amqp = ["dep:lapin"]  # AMQP broker and client for RabbitMQ compatibility
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
@@ -388,6 +390,7 @@ dist-windows = [
     "nntp",
     "mqtt",
     "modbus",
+    "coap",
     "amqp",
     "socks5",
     "elasticsearch",
@@ -490,6 +493,7 @@ all-protocols = [
     "nntp",
     "mqtt",
     "modbus",
+    "coap",
     "amqp",
     "socks5",
     "elasticsearch",
@@ -991,6 +995,10 @@ quinn = "0.11"
 # from src/server/modbus/codec.rs, which is hand-rolled: decoding our frames with someone
 # else's codec is what makes the test evidence rather than a tautology.
 tokio-modbus = { version = "0.17", default-features = false, features = ["tcp"] }
+# CoAP codec + client for the coap server e2e tests, for the same reason: coap-lite is an
+# independent RFC 7252 implementation, and the coap crate is a full client on top of it.
+coap-lite = "0.13"
+coap = "0.27"
 # BitTorrent client for e2e integration tests
 # Using cratetorrent library for programmatic testing, also supports transmission-cli/aria2
 sha1 = "0.10"  # For info_hash calculation

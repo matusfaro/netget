@@ -154,6 +154,9 @@ impl ServerRegistry {
         #[cfg(feature = "modbus")]
         self.register(Arc::new(crate::server::ModbusProtocol::new()));
 
+        #[cfg(feature = "coap")]
+        self.register(Arc::new(crate::server::CoapProtocol::new()));
+
         #[cfg(feature = "amqp")]
         self.register(Arc::new(crate::server::AmqpProtocol::new()));
 
@@ -944,6 +947,7 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("NNTP", "nntp"),
     ("MQTT", "mqtt"),
     ("Modbus", "modbus"),
+    ("CoAP", "coap"),
     ("AMQP", "amqp"),
     ("mDNS", "mdns"),
     ("LDAP", "ldap"),

@@ -478,6 +478,13 @@ pub use modbus::actions::ModbusProtocol;
 #[cfg(feature = "modbus")]
 pub use modbus::ModbusServer;
 
+#[cfg(feature = "coap")]
+pub mod coap;
+#[cfg(feature = "coap")]
+pub use coap::actions::CoapProtocol;
+#[cfg(feature = "coap")]
+pub use coap::CoapServer;
+
 #[cfg(feature = "amqp")]
 pub mod amqp;
 #[cfg(feature = "amqp")]
