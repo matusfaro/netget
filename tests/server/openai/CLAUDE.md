@@ -2,8 +2,22 @@
 
 ## Test Overview
 
-Tests OpenAI-compatible API server with real OpenAI clients (reqwest, async-openai) to validate compatibility with the
-OpenAI API specification.
+Two views of the same server:
+
+- **`async-openai` 0.26, the real Rust OpenAI client** — the evidence behind the `Beta`
+  rating. It deserializes our responses into its own types with no fallback path, so a field
+  we get wrong is a hard failure rather than a lenient string match. It is a normal dependency
+  of the `openai` feature, not a test-only stub.
+- **`reqwest`** for the raw JSON envelope an SDK hides: field names, the `object`
+  discriminators, and the shape of the error object.
+
+**No Python SDK is involved.** The protocol's `e2e_testing` metadata claimed one for a long
+time; it was never true.
+
+The error path is checked through both: `reqwest` asserts the 404 body has `error.message` and
+`error.type`, and `async-openai` must turn the same shape into `OpenAIError::ApiError` with
+those values. A server whose error body the SDK cannot parse surfaces to callers as a transport
+failure instead of a 404, which they handle very differently.
 
 ## Test Strategy
 
@@ -18,26 +32,19 @@ Tests use **hardcoded server behavior** (no LLM prompting for server logic), foc
 
 ## LLM Call Budget
 
-### Breakdown by Test Function
+Every request raises an `openai_request` event, so each HTTP request costs one call on top of
+the server-startup call. The server does **not** talk to Ollama itself — the model answers each
+request through the event/action system.
 
-1. **`test_openai_list_models`** - **0 LLM calls**
-    - Direct Ollama API call (not LLM generation)
-    - Validates `/v1/models` endpoint format
+| Test | Calls |
+|---|---|
+| `test_openai_list_models` | 1 startup + 1 `GET /v1/models` = 2 |
+| `test_openai_chat_completion` | 1 startup + 1 `POST /v1/chat/completions` = 2 |
+| `test_openai_invalid_endpoint` | 1 startup + `GET /v1/invalid` + `GET /v1/models/no-such-model` = 3 |
+| `test_openai_with_rust_client` | 1 startup + models + chat = 3 |
 
-2. **`test_openai_chat_completion`** - **1 LLM call**
-    - 1 Ollama generation for chat response
-    - Validates `/v1/chat/completions` response format
-
-3. **`test_openai_invalid_endpoint`** - **0 LLM calls**
-    - Hardcoded 404 error response
-    - Validates error handling
-
-4. **`test_openai_with_rust_client`** - **1-2 LLM calls**
-    - 0 calls for models list
-    - 1-2 calls for chat completion (depends on retry logic)
-    - Validates full SDK compatibility
-
-**Total: 2-4 LLM calls** (well under 10 limit)
+**Total: 10.** At the ceiling — fold a scenario into an existing server rather than adding a
+fifth test.
 
 ## Scripting Usage
 
@@ -98,10 +105,11 @@ OpenAI API format and Ollama calls.
 
 ### 3. Invalid Endpoint (`test_openai_invalid_endpoint`)
 
-**Validates**: Error handling
+**Validates**: Error handling, from both sides
 
-- Returns 404 for `/v1/invalid`
-- Error object with `message`, `type`, `code`
+- `reqwest`: 404 for `/v1/invalid`, error object with `message` and `type`
+- `async-openai`: `models().retrieve("no-such-model")` must fail with
+  `OpenAIError::ApiError` carrying the same message and type — not a parse or transport error
 
 ### 4. Rust Client Integration (`test_openai_with_rust_client`)
 

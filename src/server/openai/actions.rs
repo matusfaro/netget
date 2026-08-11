@@ -112,7 +112,15 @@ impl Protocol for OpenAiProtocol {
             .state(DevelopmentState::Beta)
             .implementation("hyper with OpenAI-compatible HTTP endpoints")
             .llm_control("Event/action system - LLM generates OpenAI responses")
-            .e2e_testing("openai Python SDK and async-openai Rust client")
+            .e2e_testing(
+                "tests/server/openai/e2e_test.rs, 10 LLM calls. Verified against the real \
+                 async-openai 0.26 Rust client: models().list(), chat().create() and the 404 \
+                 path, all deserialized into the SDK's own types (a malformed error body would \
+                 surface as a transport failure, not OpenAIError::ApiError). reqwest covers the \
+                 raw JSON envelope the SDK hides. No Python SDK is involved - an earlier version \
+                 of this field claimed one. Streaming, function calling and embeddings are \
+                 untested.",
+            )
             .notes("OpenAI-compatible API with LLM-driven responses")
             .build()
     }

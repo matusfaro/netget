@@ -1,7 +1,15 @@
-//! End-to-end OpenAI API tests for NetGet
+//! End-to-end OpenAI API tests for NetGet.
 //!
-//! These tests spawn the actual NetGet binary with OpenAI API prompts
-//! and validate the responses using HTTP clients.
+//! Two views of the same server:
+//!
+//! - `reqwest` for the raw JSON envelope, which an SDK hides (field names, the `object`
+//!   discriminators, the error object's shape).
+//! - **`async-openai` 0.26, the real Rust OpenAI client**, for the thing that actually
+//!   matters: that a client written against the OpenAI API deserializes our responses into
+//!   its own types without a fallback path. It is a normal dependency of the `openai`
+//!   feature, not a test-only stub.
+//!
+//! LLM call budget: 2 (models) + 2 (chat) + 3 (error paths) + 3 (SDK) = 10.
 
 #![cfg(feature = "openai")]
 
@@ -328,6 +336,19 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // Mock 3: the same error, on a path the real SDK can be pointed at
+            .on_event("openai_request")
+            .and_event_data_contains("path", "/v1/models/no-such-model")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "openai_error_response",
+                    "message": "The model 'no-such-model' does not exist",
+                    "error_type": "invalid_request_error",
+                    "status": 404
+                }
+            ]))
+            .expect_calls(1)
+            .and()
     });
 
     let server = helpers::start_netget_server(config).await?;
@@ -378,6 +399,42 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
         "Expected error 'message' field"
     );
     assert!(error.get("type").is_some(), "Expected error 'type' field");
+
+    // The raw shape above is only half the story: the real client has to be able to turn it
+    // into its own error type. An OpenAI-compatible server whose error body the SDK cannot
+    // deserialize surfaces as a transport/JSON error, which callers handle very differently
+    // from an API error.
+    let sdk = async_openai::Client::with_config(
+        async_openai::config::OpenAIConfig::new()
+            .with_api_base(format!("http://127.0.0.1:{}/v1", server.port))
+            .with_api_key("dummy-key"),
+    );
+
+    let sdk_result = tokio::time::timeout(
+        Duration::from_secs(15),
+        sdk.models().retrieve("no-such-model"),
+    )
+    .await
+    .map_err(|_| "async-openai models().retrieve() timed out")?;
+
+    match sdk_result {
+        Ok(model) => panic!("expected a 404 from the SDK, got model {:?}", model.id),
+        Err(async_openai::error::OpenAIError::ApiError(api_error)) => {
+            assert_eq!(
+                api_error.message, "The model 'no-such-model' does not exist",
+                "the SDK must surface the message the server sent"
+            );
+            assert_eq!(
+                api_error.r#type.as_deref(),
+                Some("invalid_request_error"),
+                "the SDK must surface the error type the server sent"
+            );
+        }
+        Err(other) => panic!(
+            "async-openai could not parse the error body as an API error, which means a real \
+             client sees a transport failure instead of a 404: {other}"
+        ),
+    }
 
     // Verify mock expectations
     server.verify_mocks().await?;
