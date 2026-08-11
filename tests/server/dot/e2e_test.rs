@@ -116,8 +116,11 @@ fn answer_a(response: &DnsMessage) -> Option<std::net::Ipv4Addr> {
 }
 
 /// Certificate verifier that accepts all certificates (for testing only)
+///
+/// `pub(crate)` so `llm_failure_test` can reuse it rather than growing a second copy that
+/// drifts from this one.
 #[derive(Debug)]
-struct NoCertificateVerification;
+pub(crate) struct NoCertificateVerification;
 
 impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(

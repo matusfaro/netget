@@ -33,6 +33,22 @@ async fn test_ftp_greeting() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // The greeting the test is about. This rule used to be missing, so the handler
+            // could not produce a banner at all - and because the server then wrote nothing,
+            // the read below timed out and fell into the `Note: No greeting received` branch,
+            // which asserts nothing. The test passed for ten seconds of doing nothing. The
+            // server now answers 421 on that path, which is what surfaced it.
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_ftp_response",
+                    "code": 220,
+                    "message": "FTP Server Ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
     });
 
     let server = helpers::start_netget_server(config).await?;
@@ -61,13 +77,16 @@ async fn test_ftp_greeting() -> E2EResult<()> {
             println!("FTP greeting (220) verified");
         }
         Ok(Ok(_)) => {
-            println!("Note: Connection closed without greeting");
+            panic!("FTP closed the connection without sending a greeting");
         }
         Ok(Err(e)) => {
-            println!("Note: Read error: {}", e);
+            panic!("FTP read error while waiting for the greeting: {}", e);
         }
         Err(_) => {
-            println!("Note: No greeting received (timeout)");
+            panic!(
+                "No FTP greeting within 10s. This branch used to print a note and let the \
+                 test pass, which is how a server that greeted nobody went unnoticed."
+            );
         }
     }
 

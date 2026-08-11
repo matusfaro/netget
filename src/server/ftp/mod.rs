@@ -219,10 +219,28 @@ impl FtpSession {
                 }
             }
             Err(e) => {
-                // Swallowing this used to leave the client waiting for a greeting that never
-                // came, with nothing logged to explain the hang.
+                // Logging it was an improvement on silence for *us*; the client still sat
+                // waiting for a greeting that never came, because an FTP client may not send
+                // a command until it has read one. RFC 959 defines 421 as the greeting a
+                // server sends when it is declining the session, and it closes afterwards -
+                // which is the same shape SMTP uses, for the same reason.
                 error!("FTP greeting handler failed on connection {connection_id}: {e}");
-                let _ = status_tx.send(format!("[ERROR] FTP greeting failed: {e}"));
+                let reason = crate::utils::truncate_for_log(&e.to_string(), 200)
+                    .replace(['\r', '\n'], " ");
+                let _ = status_tx.send(format!(
+                    "[ERROR] FTP connection {connection_id} refused with 421: {reason}"
+                ));
+                let reply = format!(
+                    "421 Service not available, closing control connection (netget: {reason})\r\n"
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+                let _ = stream.flush().await;
+                // 421 means the control connection is closing, so the session must not
+                // continue into the command loop. The caller propagates this with `?`, which
+                // ends the connection task and drops the socket.
+                return Err(anyhow::anyhow!(
+                    "FTP greeting refused with 421: {reason}"
+                ));
             }
         }
 

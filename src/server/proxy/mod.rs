@@ -567,11 +567,21 @@ impl ProxyServer {
             )
             .await
             .unwrap_or_else(|e| {
-                error!("LLM consultation failed: {}", e);
-                let _ = status_tx.send(format!("✗ LLM error: {}", e));
-                // Default to blocking on error for safety
+                // Blocking on failure was already right here; the HTTP path above is the one
+                // that fell open.
+                error!(
+                    "Proxy LLM consultation failed for CONNECT {}:{}: {} - blocking",
+                    dest_host, dest_port, e
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] Proxy blocking CONNECT {}:{}: {}",
+                    dest_host, dest_port, e
+                ));
                 HttpsConnectionAction::Block {
-                    reason: Some(format!("LLM consultation failed: {}", e)),
+                    reason: Some(format!(
+                        "netget proxy: no filtering decision could be obtained ({})",
+                        crate::utils::truncate_for_log(&e.to_string(), 200)
+                    )),
                 }
             });
 
@@ -826,10 +836,32 @@ impl ProxyServer {
             )
             .await
             .unwrap_or_else(|e| {
-                error!("LLM consultation failed: {}", e);
-                let _ = status_tx.send(format!("✗ LLM error: {}", e));
-                // Default to passing through on error
-                RequestAction::Pass
+                // Fail closed. This used to default to `Pass`, which forwarded the request to
+                // its destination unfiltered - so a proxy whose entire purpose is to let the
+                // model decide what may leave the network became an open relay for exactly as
+                // long as the backend was down, and the access log recorded each request as
+                // having been passed on purpose. The HTTPS half of this same handler has
+                // always defaulted to Block; only this one fell open.
+                //
+                // 502 is the proxy's own "I could not complete this on your behalf"; 503 when
+                // the backend is merely saturated, which a client retries.
+                let overloaded = crate::llm::is_overload_error(&e);
+                let status = if overloaded { 503 } else { 502 };
+                error!(
+                    "Proxy LLM consultation failed for {} {} (overload={}): {} - blocking",
+                    request_info.method, request_info.url, overloaded, e
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] Proxy blocking {} {} with {}: {}",
+                    request_info.method, request_info.url, status, e
+                ));
+                RequestAction::Block {
+                    status,
+                    body: format!(
+                        "netget proxy: no filtering decision could be obtained, request refused ({})",
+                        crate::utils::truncate_for_log(&e.to_string(), 200)
+                    ),
+                }
             });
 
             match action {

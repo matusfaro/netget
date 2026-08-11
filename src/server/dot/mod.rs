@@ -336,7 +336,51 @@ impl DotServer {
                     }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "DoT LLM call failed: {}", e);
+                    // DoT is DNS: the client is a stub resolver blocked on an answer, and
+                    // `continue` gave it nothing until its own timeout expired - the same
+                    // defect plain DNS had, and worse here, because a TLS connection is
+                    // expensive enough that resolvers pin one and serialise queries over it.
+                    //
+                    // SERVFAIL makes the resolver move on to another server at once. The
+                    // query id and question section must be echoed or a stub resolver
+                    // discards the packet as unsolicited and we are back to silence, so this
+                    // reuses the DNS server's own builder rather than synthesising a header.
+                    let overloaded = crate::llm::is_overload_error(&e);
+                    error!(
+                        "DoT LLM call failed for query from {} (overload={}): {}",
+                        peer_addr, overloaded, e
+                    );
+                    console_error!(
+                        status_tx,
+                        "DoT answering SERVFAIL to {} (overload={}): {}",
+                        peer_addr,
+                        overloaded,
+                        e
+                    );
+                    match crate::server::dns::actions::build_servfail(&dns_message) {
+                        Ok(packet) => {
+                            // RFC 7858 uses the DNS-over-TCP framing: a two-byte length
+                            // prefix in front of every message.
+                            let mut framed = (packet.len() as u16).to_be_bytes().to_vec();
+                            framed.extend_from_slice(&packet);
+                            if let Err(send_err) = tls_stream.write_all(&framed).await {
+                                console_error!(
+                                    status_tx,
+                                    "DoT failed to send SERVFAIL to {}: {}",
+                                    peer_addr,
+                                    send_err
+                                );
+                            }
+                        }
+                        Err(build_err) => {
+                            console_error!(
+                                status_tx,
+                                "DoT failed to build SERVFAIL for {}: {}",
+                                peer_addr,
+                                build_err
+                            );
+                        }
+                    }
                     continue;
                 }
             }
