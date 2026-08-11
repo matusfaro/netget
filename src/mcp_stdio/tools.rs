@@ -414,12 +414,74 @@ impl NetGetMcpService {
     /// see the same servers/clients.
     pub(crate) async fn create_shared_state(
         args: &Args,
-        _settings: Settings,
+        settings: Settings,
     ) -> anyhow::Result<Arc<SharedState>> {
         let lock_enabled = args.ollama_lock;
 
-        // Create app state
-        let app_state = AppState::new();
+        // Create app state.
+        //
+        // This is the same startup configuration the TUI (`cli::run`), the
+        // one-shot runner (`cli::non_interactive`) and `--client` all perform.
+        // MCP used to skip every bit of it — it built a bare `AppState::new()`,
+        // which hard-codes `RateLimiterConfig::default()`, `ScriptingMode::On`
+        // and `include_disabled_protocols: false`. So `--llm-max-concurrent`,
+        // `--llm-token-limit`, `--llm-token-window`, `--env`, `--no-scripts`,
+        // `--handler` and `--include-disabled-protocols` were all accepted and
+        // silently ignored in the mode this project documents as its primary
+        // programmatic surface. Anything added to the TUI's startup below
+        // belongs here too.
+        let base_url = args
+            .openai_url
+            .clone()
+            .or_else(|| args.ollama_url.clone())
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
+        let app_state =
+            AppState::new_with_options(args.include_disabled_protocols, lock_enabled, base_url);
+
+        app_state
+            .configure_rate_limiter(args.build_rate_limiter_config())
+            .await?;
+
+        // Scripting mode: CLI arg > saved setting. Unlike the TUI we do not
+        // validate availability by bailing, because there is no operator to read
+        // the message: an unavailable runtime is reported and the mode is left
+        // alone rather than killing the transport at handshake time.
+        if let Some(mode) = args
+            .parse_scripting_mode()?
+            .or_else(|| settings.parse_scripting_mode())
+        {
+            let scripting_env = app_state.get_scripting_env().await;
+            let available = match mode {
+                crate::state::app_state::ScriptingMode::On
+                | crate::state::app_state::ScriptingMode::Off => true,
+                crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
+                crate::state::app_state::ScriptingMode::JavaScript => {
+                    scripting_env.javascript.is_some()
+                }
+                crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
+                crate::state::app_state::ScriptingMode::Perl => scripting_env.perl.is_some(),
+            };
+            if available {
+                app_state.set_selected_scripting_mode(mode).await;
+            } else {
+                tracing::warn!(
+                    "Requested scripting environment {} is not available on this system; leaving scripting mode unchanged",
+                    mode
+                );
+            }
+        }
+
+        if let Some(handler_mode) = args.parse_event_handler_mode()? {
+            app_state.set_event_handler_mode(handler_mode).await;
+        }
+
+        // Web search: ASK needs a TUI to prompt with, and MCP has none, so it
+        // degrades to OFF exactly as the non-interactive runner does.
+        let mut web_search_mode = settings.get_web_search_mode();
+        if web_search_mode == crate::state::app_state::WebSearchMode::Ask {
+            web_search_mode = crate::state::app_state::WebSearchMode::Off;
+        }
+        app_state.set_web_search_mode(web_search_mode).await;
 
         // Build the LLM client. Three mutually-exclusive sources:
         //   --llm-agent      → queue requests for the calling MCP agent (no model)
@@ -441,16 +503,33 @@ impl NetGetMcpService {
             }
             (client, Some(queue))
         } else {
-            let client = crate::cli::create_llm_client(args, lock_enabled)?;
+            // `with_app_state` is what records token usage against AppState (the
+            // `/usage` accounting); `with_mock_config_file` is what lets a test
+            // drive this transport without a model. Both were missing here while
+            // every other startup path set them.
+            let client = crate::cli::create_llm_client(args, lock_enabled)?
+                .with_mock_config_file(args.mock_config_file.clone())
+                .with_app_state(app_state.clone());
             (client, None)
         };
 
         // Status channel (messages go to stderr in MCP mode)
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
-        // Set up model if specified
-        if let Some(ref model) = args.model {
-            app_state.set_ollama_model(Some(model.clone())).await;
+        // Set up model if specified: CLI arg > saved setting, matching every
+        // other startup path (MCP used to read only the CLI arg, so a model
+        // chosen in the TUI and persisted to settings was ignored here).
+        // (`--llm-agent` is excluded from the fallback: it pre-seeded the
+        // placeholder "agent" model above and contacts no model at all.)
+        let configured_model = args.model.clone().or_else(|| {
+            if args.llm_agent {
+                None
+            } else {
+                settings.model.clone()
+            }
+        });
+        if let Some(model) = configured_model {
+            app_state.set_ollama_model(Some(model)).await;
         }
 
         // Reap stopped servers, closed connections and finished conversations.

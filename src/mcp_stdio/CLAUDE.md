@@ -183,6 +183,24 @@ every protocol without per-protocol wiring.
 Limitation: only successfully-handled events are logged; a request whose LLM call
 errors out does not produce an entry.
 
+## Startup configuration
+
+`create_shared_state` is MCP's equivalent of the TUI's startup block, and must stay in
+step with it. `--mcp` / `--mcp-http` return from `cli::run()` **before** every
+`configure_rate_limiter` / `set_selected_scripting_mode` / `set_event_handler_mode` call
+site, so anything the TUI or `non_interactive` applies has to be applied here too or the
+flag is silently dead in headless mode. It used to build a bare `AppState::new()`, which
+hard-codes `RateLimiterConfig::default()`, `ScriptingMode::On` and
+`include_disabled_protocols: false` — so `--llm-max-concurrent`, `--llm-token-limit`,
+`--llm-token-window`, `--env`, `--no-scripts`, `--handler` and
+`--include-disabled-protocols` were all accepted and ignored, and the LLM client was built
+without `with_app_state` (no token accounting) or `with_mock_config_file`.
+
+All of those are wired now, plus the model falling back to the saved setting and `Ask`
+web-search degrading to `Off` (MCP has no terminal to prompt on, same as the
+non-interactive runner). `tests/mcp_startup_config_test.rs` asserts each one from the
+service's `app_state()`, so a new flag that skips this path fails a test.
+
 ## LLM Backend
 
 Protocol servers started via `start_server` are driven by NetGet's own configured
