@@ -736,7 +736,7 @@ impl TorRelaySession {
                 );
 
                 // Get LLM response for how to handle this
-                if let Ok(execution_result) = call_llm(
+                match call_llm(
                     &self.llm_client,
                     &self.app_state,
                     self.server_id,
@@ -746,19 +746,67 @@ impl TorRelaySession {
                 )
                 .await
                 {
-                    // Execute protocol actions
-                    for protocol_result in execution_result.protocol_results {
-                        match protocol_result {
-                            ActionResult::Output(data) => {
-                                // LLM wants to send a response
-                                return Ok(Some(data));
-                            }
-                            ActionResult::CloseConnection => {
-                                debug!("LLM requested connection close");
-                                return Err(anyhow::anyhow!("LLM requested close"));
-                            }
-                            _ => {}
+                    Ok(execution_result) => {
+                        for message in execution_result.messages {
+                            let _ = self.status_tx.send(message);
                         }
+                        // Execute protocol actions
+                        for protocol_result in execution_result.protocol_results {
+                            match protocol_result {
+                                ActionResult::Output(data) => {
+                                    // LLM wants to send a response
+                                    return Ok(Some(data));
+                                }
+                                ActionResult::CloseConnection => {
+                                    debug!("LLM requested connection close");
+                                    return Err(anyhow::anyhow!("LLM requested close"));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // This branch is reached only for RELAY commands the relay does not
+                        // implement itself (EXTEND, TRUNCATE, RESOLVE, DROP, ...), so the
+                        // model was the entire answer. Swallowing the error left the peer
+                        // waiting on a circuit that would never say anything again.
+                        //
+                        // Tor's own vocabulary for "this relay cannot carry on with your
+                        // circuit" is DESTROY (tor-spec 5.4), with reason 2 INTERNAL: an
+                        // error at the relay, not at the client and not a protocol violation.
+                        // It needs no relay-cell encryption, so it is still deliverable when
+                        // the circuit crypto is the thing that is unhappy, and it is the one
+                        // answer that cannot be mistaken for the EXTENDED/RESOLVED/TRUNCATED
+                        // the peer asked for. There is no "try again" cell here to express an
+                        // overload with, so overload and outage are answered identically and
+                        // distinguished only in the log.
+                        error!(
+                            "LLM call failed for RELAY {} on circuit {}: {} - destroying the \
+                             circuit with reason INTERNAL",
+                            relay_cmd_name,
+                            circuit_id.as_u32(),
+                            e
+                        );
+                        let _ = self.status_tx.send(format!(
+                            "[ERROR] Tor relay circuit 0x{:08x}: LLM call failed on RELAY {} \
+                             ({}) - sent DESTROY (reason 2 INTERNAL)",
+                            circuit_id.as_u32(),
+                            relay_cmd_name,
+                            e
+                        ));
+                        if crate::llm::is_overload_error(&e) {
+                            warn!(
+                                "Tor relay circuit {} destroyed: LLM capacity exhausted",
+                                circuit_id.as_u32()
+                            );
+                        }
+                        // Drop the circuit's own state too, so the DESTROY we send and what
+                        // this relay believes are the same thing.
+                        self.circuit_manager.destroy_circuit(circuit_id).await;
+                        return Ok(Some(self.create_destroy_cell_with_reason(
+                            circuit_id,
+                            DESTROY_REASON_INTERNAL,
+                        )));
                     }
                 }
             }
@@ -1359,14 +1407,19 @@ impl TorRelaySession {
         Ok(())
     }
 
-    /// Create DESTROY cell
-    fn create_destroy_cell(&self, circuit_id: CircuitId) -> Vec<u8> {
-        let mut cell = Vec::with_capacity(514);
+    /// Create a DESTROY cell (tor-spec 5.4) carrying `reason`.
+    fn create_destroy_cell_with_reason(&self, circuit_id: CircuitId, reason: u8) -> Vec<u8> {
+        let mut cell = Vec::with_capacity(FIXED_CELL_LEN);
         cell.extend_from_slice(&circuit_id.to_bytes());
         cell.push(4); // DESTROY command
-        cell.push(1); // Reason: protocol error
-        cell.resize(514, 0); // Pad to 514 bytes
+        cell.push(reason);
+        cell.resize(FIXED_CELL_LEN, 0); // Pad to 514 bytes
         cell
+    }
+
+    /// Create DESTROY cell for a malformed or unprocessable cell.
+    fn create_destroy_cell(&self, circuit_id: CircuitId) -> Vec<u8> {
+        self.create_destroy_cell_with_reason(circuit_id, DESTROY_REASON_PROTOCOL)
     }
 }
 
@@ -1384,6 +1437,12 @@ const LINK_PROTOCOL_VERSION: u16 = 4;
 const CELL_COMMAND_VERSIONS: u8 = 7;
 /// Fixed cell size for link protocol v4: 4 (circuit id) + 1 (command) + 509 (payload).
 const FIXED_CELL_LEN: usize = 514;
+
+/// tor-spec 5.4 DESTROY reason: "a protocol error occurred".
+const DESTROY_REASON_PROTOCOL: u8 = 1;
+/// tor-spec 5.4 DESTROY reason: "internal error at the relay". The relay tearing a circuit
+/// down because of a fault of its own, which is exactly what an LLM backend failure is.
+const DESTROY_REASON_INTERNAL: u8 = 2;
 
 /// One cell framed off the wire.
 #[derive(Debug)]

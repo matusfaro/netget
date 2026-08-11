@@ -1,12 +1,14 @@
 # Tor Relay E2E Tests
 
-`tests/server/tor_relay/e2e_test.rs`. One test, **2 LLM calls**, not `#[ignore]`d.
+`tests/server/tor_relay/e2e_test.rs` (one test, **2 LLM calls**, not `#[ignore]`d) and
+`tests/server/tor_relay/llm_failure_test.rs` (one test, 2 *mocked* LLM calls plus one that is
+deliberately answered with HTTP 500). Both drive the relay with the Tor client in `peer.rs`.
 
 ## Strategy
 
-The peer is a Tor client written from tor-spec **in the test file** — the ntor handshake
-(5.1.4), its 92-byte KDF layout (5.2.2) and AES-128-CTR relay-cell crypto (6.1). It does not
-call into the server's `circuit.rs`, and that independence is the whole point: if the relay's
+The peer is a Tor client written from tor-spec, in `peer.rs` in this directory — the ntor
+handshake (5.1.4), its 92-byte KDF layout (5.2.2) and AES-128-CTR relay-cell crypto (6.1). It
+does not call into the server's `circuit.rs`, and that independence is the whole point: if the relay's
 key derivation, its forward/backward key assignment, or its cell layout is wrong by a byte, the
 client derives different keys, the AUTH check fails, and the test fails.
 
@@ -32,6 +34,18 @@ bootstrap, and it would hide exactly the implementation details being tested.
 fits in a cell — both fail loudly if the backward keystream has drifted, which is otherwise a
 silent corruption.
 
+## What `llm_failure_test.rs` proves
+
+The startup instruction and `tor_relay_circuit_created` are mocked, so the circuit comes up
+normally; `tor_relay_relay_cell` is deliberately left unmocked, so the mock answers HTTP 500
+and `call_llm` returns `Err`. A RELAY/EXTEND — a command this relay does not implement, so the
+model is the whole answer — must then be answered with a **DESTROY cell, reason 2 INTERNAL**,
+514 bytes with the rest of the payload zero. It asserts the reply is *not* a RELAY cell (the
+peer would read that as the EXTENDED it asked for) and that the DESTROY carries the right
+reason. Before this the branch was `if let Ok(..)` and the peer got nothing at all.
+
+No exit stream is opened and nothing outside 127.0.0.1 is contacted.
+
 ## What it does not prove
 
 No real `tor` or Arti binary is involved and cannot be: the link handshake stops after VERSIONS
@@ -41,8 +55,10 @@ the list lives in `src/server/tor_relay/CLAUDE.md`.
 
 ## LLM call budget
 
-1 for server startup, 1 for the `tor_relay_circuit_created` event. The data path (BEGIN, DATA,
-END, SENDME) is decided in Rust and raises no events.
+1 for server startup, 1 for the `tor_relay_circuit_created` event, in each of the two test
+files. The data path (BEGIN, DATA, END, SENDME) is decided in Rust and raises no events.
+`llm_failure_test.rs` additionally provokes one `tor_relay_relay_cell` call that has no rule and
+is therefore answered 500 — that failure is the thing under test, so it carries no expectation.
 
 **The circuit-created mock must answer with an action that produces no output.**
 `detect_relay_cell` is the right one: an `Output` action from that event *replaces* the CREATED2

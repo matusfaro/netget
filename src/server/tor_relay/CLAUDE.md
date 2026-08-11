@@ -301,6 +301,18 @@ logic" for server logic that never existed. Relay state lives in the per-server 
 which the synchronous `execute_action` cannot reach and could not await if it could. They were
 removed rather than left advertised to the model.
 
+**When the LLM call fails**, `tor_relay_relay_cell` answers with a **DESTROY cell (tor-spec
+5.4) carrying reason 2 INTERNAL** for that circuit, and drops the circuit's own state so the
+cell and the relay's belief agree. That branch is the only answer the peer was ever going to
+get — the commands reaching it are the ones this relay does not implement in Rust — and
+`if let Ok(execution_result) = call_llm(...)` used to discard it, leaving a circuit that had
+accepted a cell and would never speak again. DESTROY is the right vocabulary because it needs
+no relay-cell encryption (so it survives a circuit whose crypto is the problem) and cannot be
+mistaken for the EXTENDED/RESOLVED/TRUNCATED the peer asked for. There is no retryable cell, so
+an overload is answered identically and distinguished only in the log.
+`tor_relay_circuit_created` already handled its error and still sends CREATED2, which is
+correct: the handshake succeeded in Rust and the model was only being told about it.
+
 **Exit policy is not enforced.** `configure_exit_policy` was one of the dead actions, and
 `handle_begin_cell` connects to whatever address the BEGIN cell names. Any peer that establishes
 a circuit can open a TCP stream to anything this host can reach.
