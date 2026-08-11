@@ -61,6 +61,18 @@ impl IcmpServer {
         // Running while never receiving a packet.
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
 
+        // `JoinHandle::abort()` cannot interrupt a thread parked in a blocking receive, so the
+        // receive loop is stopped cooperatively: it polls this flag every iteration, and the
+        // task registered with `register_server_task` below trips it when `stop_server` aborts
+        // it. Without this the raw socket kept receiving (and kept calling the LLM) after the
+        // server was stopped, until the process exited. The socket is non-blocking and the loop
+        // sleeps 10ms on `WouldBlock`, so a stop is noticed within ~10ms.
+        // See `crate::utils::shutdown`.
+        let stop = crate::utils::StopSignal::new();
+        let stop_in_loop = stop.clone();
+        // Retained by this function; the receive task takes ownership of `app_state`.
+        let app_state_reg = app_state.clone();
+
         let interface_clone = interface.clone();
         let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
@@ -109,6 +121,14 @@ impl IcmpServer {
             // Receive loop
             let mut buffer = vec![std::mem::MaybeUninit::uninit(); 65535];
             loop {
+                if stop_in_loop.is_stopped() {
+                    console_info!(
+                        status_tx,
+                        "ICMP receive loop on {} stopping",
+                        interface_clone
+                    );
+                    break;
+                }
                 // Use recv_from with timeout
                 match socket.recv_from(&mut buffer) {
                     Ok((n, _src_addr)) => {
@@ -410,6 +430,11 @@ impl IcmpServer {
                     }
                 }
             }
+
+            // Close both raw sockets. `send_socket` is an `Arc` shared with in-flight reply
+            // tasks, so it closes once the last of them finishes.
+            drop(socket);
+            drop(send_socket);
         });
 
         // Wait for the blocking task to report whether the raw sockets actually opened.
@@ -423,6 +448,12 @@ impl IcmpServer {
                 ))
             }
         }
+
+        // Only now that the sockets are genuinely open: `stop_server` aborts this parked task,
+        // which trips `stop` and ends the blocking loop above.
+        app_state_reg
+            .register_server_task(server_id, stop.park_task())
+            .await;
 
         console_info!(status_tx_ready, "ICMP raw sockets active on {}", interface);
 

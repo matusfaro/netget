@@ -140,6 +140,16 @@ impl IsisServer {
         // ARP, DataLink and ICMP were fixed for exactly this; IS-IS was missed at the time.
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<()>>();
 
+        // `JoinHandle::abort()` cannot interrupt a thread parked in `next_packet()`, so the
+        // capture loop is stopped cooperatively: it polls this flag every iteration, and the
+        // task registered with `register_server_task` below trips it when `stop_server` aborts
+        // it. Without this the capture kept running (and kept calling the LLM) after the server
+        // was stopped, until the process exited. See `crate::utils::shutdown`.
+        let stop = crate::utils::StopSignal::new();
+        let stop_in_loop = stop.clone();
+        // Retained by this function; the capture task takes ownership of `app_state`.
+        let app_state_reg = app_state.clone();
+
         let interface_clone = interface.clone();
         let protocol_clone = protocol.clone();
         tokio::task::spawn_blocking(move || {
@@ -211,8 +221,13 @@ impl IsisServer {
             // Store capture handle in Arc for packet injection
             let cap_arc = Arc::new(std::sync::Mutex::new(cap));
 
-            // Capture loop
+            // Capture loop. The pcap read timeout (1000ms, set above) is what bounds how long
+            // a stop takes to be noticed on an idle interface.
             loop {
+                if stop_in_loop.is_stopped() {
+                    console_info!(status_tx, "IS-IS capture on {} stopping", interface_clone);
+                    break;
+                }
                 let mut cap_guard = cap_arc.lock().unwrap_or_else(|e| e.into_inner());
                 match cap_guard.next_packet() {
                     Ok(packet) => {
@@ -318,6 +333,10 @@ impl IsisServer {
                     }
                 }
             }
+
+            // The capture handle is shared with in-flight injection tasks, so it closes once
+            // the last of them finishes.
+            drop(cap_arc);
         });
 
         // Wait for the blocking task to report whether the capture actually came up.
@@ -331,6 +350,12 @@ impl IsisServer {
                 ))
             }
         }
+
+        // Only now that the capture is genuinely live: `stop_server` aborts this parked task,
+        // which trips `stop` and ends the blocking loop above.
+        app_state_reg
+            .register_server_task(server_id, stop.park_task())
+            .await;
 
         console_info!(status_tx_ready, "IS-IS capture active on {}", interface);
 
