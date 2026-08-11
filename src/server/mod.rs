@@ -499,6 +499,13 @@ pub use npm::actions::NpmProtocol;
 #[cfg(feature = "npm")]
 pub use npm::NpmServer;
 
+#[cfg(feature = "oci-registry")]
+pub mod oci_registry;
+#[cfg(feature = "oci-registry")]
+pub use oci_registry::actions::OciRegistryProtocol;
+#[cfg(feature = "oci-registry")]
+pub use oci_registry::OciRegistryServer;
+
 // Kubernetes API server. Gated on `kubernetes-server`, NOT on the `kubernetes` client
 // feature: the server is JSON-only and pulls in neither kube nor k8s-openapi.
 #[cfg(feature = "kubernetes-server")]

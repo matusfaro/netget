@@ -126,6 +126,8 @@ pub mod kubernetes;
 pub mod ntp;
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
+#[cfg(feature = "oci-registry")]
+pub mod oci_registry;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 #[cfg(feature = "openai")]
