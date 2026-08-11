@@ -58,6 +58,7 @@ portable-base = [
     "postgresql",
     "mongodb-server",
     "mongodb",
+    "memcached",
     "radius",
     "redis",
     "rss",
@@ -177,6 +178,7 @@ ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "dep:tokio-postgres"]
 mongodb-server = ["dep:bson"]  # MongoDB server with LLM-controlled database operations
 mongodb = ["dep:mongodb", "dep:bson"]  # MongoDB client
+memcached = []  # Memcached text-protocol server - hand-rolled, no dependencies, stores nothing
 radius = ["dep:md-5"]  # RADIUS AAA server (RFC 2865/2866) - hand-rolled codec, md-5 for the authenticators
 redis = ["dep:redis-protocol", "dep:redis"]
 rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
@@ -369,6 +371,7 @@ dist-windows = [
     "postgresql",
     "mongodb-server",
     "mongodb",
+    "memcached",
     "radius",
     "redis",
     "rss",
@@ -464,6 +467,7 @@ all-protocols = [
     "postgresql",
     "mongodb-server",
     "mongodb",
+    "memcached",
     "radius",
     "redis",
     "rss",

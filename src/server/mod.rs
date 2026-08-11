@@ -309,6 +309,13 @@ pub use postgresql::actions::PostgresqlProtocol;
 #[cfg(feature = "postgresql")]
 pub use postgresql::PostgresqlServer;
 
+#[cfg(feature = "memcached")]
+pub mod memcached;
+#[cfg(feature = "memcached")]
+pub use memcached::actions::MemcachedProtocol;
+#[cfg(feature = "memcached")]
+pub use memcached::MemcachedServer;
+
 #[cfg(feature = "radius")]
 pub mod radius;
 #[cfg(feature = "radius")]

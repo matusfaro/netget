@@ -102,6 +102,8 @@ pub mod maven;
 pub mod mcp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+#[cfg(feature = "memcached")]
+pub mod memcached;
 #[cfg(feature = "mercurial")]
 pub mod mercurial;
 #[cfg(feature = "mongodb-server")]

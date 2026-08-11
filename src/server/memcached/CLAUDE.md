@@ -1,0 +1,113 @@
+# Memcached Server (text protocol)
+
+TCP 11211. The model is the cache.
+
+Files: `protocol.rs` (pure parsing and reply framing), `actions.rs` (LLM vocabulary +
+executor), `mod.rs` (listener, per-connection loop).
+
+## The rule this protocol exists to demonstrate: it stores nothing
+
+There is **no map, no table, no file, no persistence of any kind** in this server. Grep for
+`HashMap` in `src/server/memcached/` and you will find none. Every `get` is a question put to
+the model; every `set` asks the model whether it would have stored the item.
+
+That is the project rule — protocols must not implement storage — and here it is also the
+whole point. A hash map is not worth emulating. A model deciding what `session:42` holds is.
+
+The visible consequence, documented in `metadata().notes` so nobody is surprised: **two
+successive `get`s of the same key are two independent questions and may legitimately return
+different values.** If a key must keep its value, use a script handler (deterministic, no LLM
+call) or the generic SQLite facility in `src/state/sqlite.rs` that the model opts into at
+runtime. Neither belongs in this directory.
+
+## Wire format
+
+Text protocol only. The binary protocol was deprecated in memcached 1.6 (2020) and is no
+longer documented upstream; the meta commands (`mg`/`ms`/`md`) are the sensible next
+addition, not binary.
+
+Implemented commands: `get`, `gets`, `set`, `add`, `replace`, `append`, `prepend`, `cas`,
+`delete`, `incr`, `decr`, `touch`, `stats`, `version`, `flush_all`, `quit`.
+
+**Byte counting is the thing to get right.** A storage command is
+`<cmd> <key> <flags> <exptime> <bytes> [<cas>] [noreply]\r\n` followed by *exactly* `<bytes>`
+octets and then `\r\n`. The data block may itself contain `\r\n`, so `parse_storage` counts
+rather than scans — searching for a delimiter is the classic memcached implementation bug and
+it corrupts every subsequent command on the connection.
+
+Retrieval framing:
+
+```text
+VALUE <key> <flags> <bytes>[ <cas unique>]\r\n
+<data block>\r\n
+...
+END\r\n
+```
+
+`<bytes>` is computed by `encode_values` from the actual payload length and is **never taken
+from the model**. A count that disagrees with the payload desynchronises the client parser
+for the rest of the connection, and a model asked to count bytes will eventually miscount.
+An empty value list is a cache miss: `END\r\n` alone.
+
+`noreply` is honoured on storage, delete, arithmetic, touch and flush_all: the LLM call still
+happens, only the write is skipped.
+
+`quit` is handled in `mod.rs` without an LLM call — it has no reply, so there is nothing to
+decide.
+
+## Events and actions
+
+Nine events, one per command shape. Every one is raised by `mod.rs::event_for`, and every one
+carries `.with_actions(...)`:
+
+| Event | Raised by | Typical answer |
+|---|---|---|
+| `memcached_get` | `get` / `gets` | `send_memcached_values` |
+| `memcached_store` | `set`/`add`/`replace`/`append`/`prepend`/`cas` | `send_memcached_status` |
+| `memcached_delete` | `delete` | `DELETED` / `NOT_FOUND` |
+| `memcached_arithmetic` | `incr` / `decr` | `send_memcached_number` |
+| `memcached_touch` | `touch` | `TOUCHED` / `NOT_FOUND` |
+| `memcached_stats` | `stats` | `send_memcached_stats` |
+| `memcached_version` | `version` | `send_memcached_version` |
+| `memcached_flush_all` | `flush_all` | `OK` |
+| `memcached_unknown_command` | any other verb | `send_memcached_error` |
+
+Values carry an explicit `value_encoding` of `"utf8"` (default) or `"hex"`, in both
+directions, and the executor really decodes hex (`decode_value`). This follows the
+`send_tcp_data` fix in `d70bb5b5`: `"48656c6c6f"` is simultaneously valid text and valid hex,
+so sniffing cannot work and only the sender knows what it meant. Cache values are frequently
+binary, so this matters here rather than being theoretical.
+
+## Failure behaviour
+
+Memcached clients block waiting for a reply, so silence hangs them until their own timeout.
+When the model returns nothing usable, or the LLM call fails, `mod.rs` writes
+`SERVER_ERROR ...` — the protocol's own way of saying this server failed. It never fabricates
+a cache hit or a `STORED`, because inventing a successful store is the caching equivalent of
+the OAuth2 fail-open.
+
+Malformed commands get `CLIENT_ERROR <reason>` and the connection continues, matching
+upstream behaviour.
+
+## Concurrency
+
+Each connection is one task that reads, parses, calls the LLM, and writes, strictly in order.
+This is deliberately *not* the Idle/Processing/Accumulating machine other connection-oriented
+protocols hand-roll: that machine exists to prevent two concurrent LLM calls on one
+connection, and a single sequential task achieves the same thing by construction. Data
+arriving mid-call waits in the socket buffer.
+
+## Ports and privilege
+
+11211 is above 1023, so `privilege_requirement` is `None`. Declaring `PrivilegedPort(11211)`
+would be dead code — the `svn`/`PrivilegedPort(3690)` mistake.
+
+## Known limitations
+
+- Text protocol only; no binary, no meta commands, no SASL authentication.
+- `exptime` is reported to the model but nothing expires, because nothing is stored.
+- `cas_unique` is reported and can be echoed, but uniqueness is not tracked; a `cas` conflict
+  is whatever the model says it is.
+- One LLM call per command. A client that pipelines a hundred `get`s costs a hundred calls;
+  use a script handler for anything throughput-shaped.
+- UDP memcached (the legacy `-U` mode) is not implemented.

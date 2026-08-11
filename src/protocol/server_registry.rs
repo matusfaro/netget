@@ -208,6 +208,9 @@ impl ServerRegistry {
             )));
         }
 
+        #[cfg(feature = "memcached")]
+        self.register(Arc::new(crate::server::MemcachedProtocol::new()));
+
         #[cfg(feature = "radius")]
         self.register(Arc::new(crate::server::RadiusProtocol::new()));
 
@@ -943,6 +946,7 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("MySQL", "mysql"),
     ("MSSQL", "mssql"),
     ("PostgreSQL", "postgresql"),
+    ("Memcached", "memcached"),
     ("RADIUS", "radius"),
     ("Redis", "redis"),
     ("RSS", "rss"),
