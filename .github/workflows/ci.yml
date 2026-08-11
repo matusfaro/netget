@@ -180,7 +180,10 @@ jobs:
       # Each of these asserts something about EVERY registered protocol: that no event
       # is advertised without usable actions, that no response example is left as a
       # placeholder, that keyword resolution is unambiguous, that declared dependencies
-      # and privilege requirements are coherent.
+      # and privilege requirements are coherent, and — protocol_startup_smoke_test —
+      # that every protocol can actually be started through the real startup path,
+      # reports an honest status, and releases its socket on stop. That last one is the
+      # only job here that runs protocol code rather than reading its declarations.
       - name: cargo test --all-features (registry audits)
         continue-on-error: true
         run: |
@@ -192,7 +195,8 @@ jobs:
             --test advertised_actions_test \
             --test protocol_dependencies_test \
             --test privilege_requirement_test \
-            -- --test-threads=100
+            --test protocol_startup_smoke_test \
+            -- --test-threads=100 --nocapture
 
   test:
     name: Test
