@@ -36,35 +36,38 @@ use tokio::net::TcpStream;
 // There is no Rust NFSv3 *server-side* test client, and `nfs3_client`'s builder does not
 // take a port, so the wire format is hand-rolled here. It is small: RPC over TCP is
 // record-marked, and only three procedures are needed.
+//
+// `RpcClient`, `Xdr` and `xdr_opaque` are `pub` because `llm_failure_test.rs` in this
+// directory drives the same wire format; there is one RPC implementation, not two.
 // ---------------------------------------------------------------------------
 
-const NFS_PROGRAM: u32 = 100003;
-const MOUNT_PROGRAM: u32 = 100005;
+pub const NFS_PROGRAM: u32 = 100003;
+pub const MOUNT_PROGRAM: u32 = 100005;
 const RPC_VERSION: u32 = 2;
 
-const NFS_V3: u32 = 3;
-const MOUNT_V3: u32 = 3;
+pub const NFS_V3: u32 = 3;
+pub const MOUNT_V3: u32 = 3;
 
-const PROC_NULL: u32 = 0;
-const MOUNTPROC3_MNT: u32 = 1;
-const NFSPROC3_GETATTR: u32 = 1;
-const NFSPROC3_LOOKUP: u32 = 3;
+pub const PROC_NULL: u32 = 0;
+pub const MOUNTPROC3_MNT: u32 = 1;
+pub const NFSPROC3_GETATTR: u32 = 1;
+pub const NFSPROC3_LOOKUP: u32 = 3;
 
 /// Sequential reader over an XDR-encoded buffer.
 ///
 /// Every accessor asserts it has the bytes it needs, so a truncated or misencoded reply
 /// fails the test at the field that is wrong rather than producing a plausible value.
-struct Xdr<'a> {
+pub struct Xdr<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Xdr<'a> {
-    fn new(buf: &'a [u8]) -> Self {
+    pub fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
     }
 
-    fn u32(&mut self, what: &str) -> u32 {
+    pub fn u32(&mut self, what: &str) -> u32 {
         assert!(
             self.pos + 4 <= self.buf.len(),
             "reply ended before {what} at offset {}",
@@ -75,14 +78,14 @@ impl<'a> Xdr<'a> {
         v
     }
 
-    fn u64(&mut self, what: &str) -> u64 {
+    pub fn u64(&mut self, what: &str) -> u64 {
         let hi = self.u32(what) as u64;
         let lo = self.u32(what) as u64;
         (hi << 32) | lo
     }
 
     /// XDR variable-length opaque: 4-byte length, then the bytes padded to a 4-byte boundary.
-    fn opaque(&mut self, what: &str) -> Vec<u8> {
+    pub fn opaque(&mut self, what: &str) -> Vec<u8> {
         let len = self.u32(what) as usize;
         assert!(
             self.pos + len <= self.buf.len(),
@@ -93,7 +96,7 @@ impl<'a> Xdr<'a> {
         bytes
     }
 
-    fn remaining(&self) -> usize {
+    pub fn remaining(&self) -> usize {
         self.buf.len().saturating_sub(self.pos)
     }
 }
@@ -140,13 +143,13 @@ fn read_fattr3(xdr: &mut Xdr<'_>) -> Fattr3 {
 }
 
 /// An RPC connection to the server under test.
-struct RpcClient {
+pub struct RpcClient {
     stream: TcpStream,
     next_xid: u32,
 }
 
 impl RpcClient {
-    async fn connect(port: u16) -> E2EResult<Self> {
+    pub async fn connect(port: u16) -> E2EResult<Self> {
         Ok(Self {
             stream: TcpStream::connect(format!("127.0.0.1:{port}")).await?,
             next_xid: 0x5A5A_0001,
@@ -159,7 +162,13 @@ impl RpcClient {
     /// Asserts the whole RPC envelope: the reply must be a REPLY, MSG_ACCEPTED, SUCCESS, and
     /// must echo the call's xid. A server that got any of that wrong would be rejected by
     /// every real client.
-    async fn call(&mut self, prog: u32, vers: u32, proc: u32, args: &[u8]) -> E2EResult<Vec<u8>> {
+    pub async fn call(
+        &mut self,
+        prog: u32,
+        vers: u32,
+        proc: u32,
+        args: &[u8],
+    ) -> E2EResult<Vec<u8>> {
         let xid = self.next_xid;
         self.next_xid += 1;
 
@@ -218,7 +227,7 @@ impl RpcClient {
 }
 
 /// XDR-encode a variable-length opaque (used for dirpath, filename and file handles).
-fn xdr_opaque(bytes: &[u8]) -> Vec<u8> {
+pub fn xdr_opaque(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
     out.extend_from_slice(bytes);

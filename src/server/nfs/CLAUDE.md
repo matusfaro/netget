@@ -84,6 +84,25 @@ NFS3ERR_NOENT, `read`/`write`/`setattr`/`create`/`mkdir`/`rename` → NFS3ERR_AC
 NFS3ERR_NOTDIR, `create_exclusive` → NFS3ERR_EXIST, `readlink` → NFS3ERR_INVAL). Returning
 `"error": "Is a directory"` will not produce NFS3ERR_ISDIR.
 
+### When the model does not answer at all
+
+Those codes are for the model *rejecting* an operation. Two other things can happen, and both
+used to be answered as if the model had rejected it:
+
+| situation | status | why |
+|---|---|---|
+| `call_llm` returned `Err` (backend down, malformed response) | **NFS3ERR_SERVERFAULT** (10006) | RFC 1813's "an error occurred on the server which does not map to any of the legal NFSv3 error values" |
+| `call_llm` returned `Err` and `crate::llm::is_overload_error` matches | **NFS3ERR_JUKEBOX** (10008) | "resource temporarily unavailable" — retryable, the NFS equivalent of HTTP's 503 + `Retry-After` |
+| the model answered, but with no usable `nfs_*_response` | **NFS3ERR_SERVERFAULT** | silence is not a denial |
+
+`LlmNfsFileSystem::llm_failure` and `llm_no_answer` are the only two places that produce these,
+and both log at ERROR on both channels. The point is that a no-answer must never be reported as
+a *definite* one: NFS3ERR_NOENT told the client the file does not exist when in truth the server
+never managed to ask, and NFS3ERR_IO claimed a hard I/O error on the object. `nfsserve` builds
+the RPC reply (MSG_ACCEPTED / SUCCESS, xid echoed) from whatever status is returned, so the
+client gets a failed operation rather than an RPC that never completes.
+`tests/server/nfs/llm_failure_test.rs` asserts exactly that on the wire.
+
 `mode` is a **decimal** number in JSON: 420 is `0644`, 493 is `0755`.
 
 ### Removed

@@ -191,6 +191,64 @@ impl LlmNfsFileSystem {
         Ok(execution_result.raw_actions)
     }
 
+    /// Answer the client in NFS's own vocabulary when the LLM backend fails.
+    ///
+    /// Fail closed, and answer. `nfsserve` turns the returned status into a well-formed reply
+    /// - MSG_ACCEPTED / SUCCESS at the RPC layer, carrying the call's own xid, with this
+    /// status as the procedure result - so the client sees a failed operation instead of
+    /// hanging until its own RPC timeout. Nothing here can fabricate a success.
+    ///
+    /// The status is deliberately *not* one of the definite ones. Returning NFS3ERR_NOENT
+    /// when the server could not even ask the model tells the client "that file does not
+    /// exist", which it will cache and act on. RFC 1813 has a status for exactly this
+    /// situation: NFS3ERR_SERVERFAULT (10006), "an error occurred on the server which does
+    /// not map to any of the legal NFS version 3 protocol error values".
+    ///
+    /// An overload is retryable and NFSv3 can say so, so `is_overload_error` is answered with
+    /// NFS3ERR_JUKEBOX (10008) - "resource temporarily unavailable, try again later" - which
+    /// is the NFS equivalent of the 503 + `Retry-After` the HTTP server sends.
+    fn llm_failure(&self, operation: &str, e: &anyhow::Error) -> nfsstat3 {
+        if crate::llm::is_overload_error(e) {
+            error!(
+                "LLM overloaded for NFS {}: {} - answering NFS3ERR_JUKEBOX",
+                operation, e
+            );
+            let _ = self.status_tx.send(format!(
+                "[ERROR] NFS {}: LLM overloaded ({}) - answered NFS3ERR_JUKEBOX, client may retry",
+                operation, e
+            ));
+            nfsstat3::NFS3ERR_JUKEBOX
+        } else {
+            error!(
+                "LLM consultation failed for NFS {}: {} - answering NFS3ERR_SERVERFAULT",
+                operation, e
+            );
+            let _ = self.status_tx.send(format!(
+                "[ERROR] NFS {}: LLM call failed ({}) - answered NFS3ERR_SERVERFAULT",
+                operation, e
+            ));
+            nfsstat3::NFS3ERR_SERVERFAULT
+        }
+    }
+
+    /// The model answered, but with nothing this operation can use.
+    ///
+    /// Structurally distinct from a model *rejection*: an action carrying `"error"` is the
+    /// model saying no, and still maps to the operation's own status (NFS3ERR_NOENT,
+    /// NFS3ERR_ACCES, ...). Silence is not a no, and must not be reported to the client as
+    /// one, so it lands on NFS3ERR_SERVERFAULT alongside a backend failure.
+    fn llm_no_answer(&self, operation: &str, expected: &str) -> nfsstat3 {
+        error!(
+            "No valid {} action in LLM response for NFS {} - answering NFS3ERR_SERVERFAULT",
+            expected, operation
+        );
+        let _ = self.status_tx.send(format!(
+            "[ERROR] NFS {}: no {} action in LLM response - answered NFS3ERR_SERVERFAULT",
+            operation, expected
+        ));
+        nfsstat3::NFS3ERR_SERVERFAULT
+    }
+
     /// Parse file type from LLM response
     fn parse_ftype(&self, file_type: &str) -> ftype3 {
         match file_type {
@@ -306,13 +364,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_lookup_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_NOENT)
+                Err(self.llm_no_answer("lookup", "nfs_lookup_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for lookup: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("lookup", &e)),
         }
     }
 
@@ -345,13 +399,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_getattr_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_NOENT)
+                Err(self.llm_no_answer("getattr", "nfs_getattr_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for getattr: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("getattr", &e)),
         }
     }
 
@@ -408,13 +458,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_setattr_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_ACCES)
+                Err(self.llm_no_answer("setattr", "nfs_setattr_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for setattr: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("setattr", &e)),
         }
     }
 
@@ -459,13 +505,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         return Ok((data, eof));
                     }
                 }
-                error!("No valid nfs_read_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_IO)
+                Err(self.llm_no_answer("read", "nfs_read_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for read: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("read", &e)),
         }
     }
 
@@ -504,13 +546,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_write_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_ACCES)
+                Err(self.llm_no_answer("write", "nfs_write_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for write: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("write", &e)),
         }
     }
 
@@ -573,13 +611,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_create_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_ACCES)
+                Err(self.llm_no_answer("create", "nfs_create_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for create: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("create", &e)),
         }
     }
 
@@ -616,13 +650,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_create_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_EXIST)
+                Err(self.llm_no_answer("create", "nfs_create_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for create_exclusive: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("create_exclusive", &e)),
         }
     }
 
@@ -676,13 +706,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_mkdir_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_ACCES)
+                Err(self.llm_no_answer("mkdir", "nfs_mkdir_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for mkdir: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("mkdir", &e)),
         }
     }
 
@@ -708,13 +734,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         return Ok(());
                     }
                 }
-                error!("No valid nfs_remove_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_NOENT)
+                Err(self.llm_no_answer("remove", "nfs_remove_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for remove: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("remove", &e)),
         }
     }
 
@@ -749,13 +771,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         return Ok(());
                     }
                 }
-                error!("No valid nfs_rename_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_ACCES)
+                Err(self.llm_no_answer("rename", "nfs_rename_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for rename: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("rename", &e)),
         }
     }
 
@@ -851,13 +869,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         return Ok(ReadDirResult { entries, end });
                     }
                 }
-                error!("No valid nfs_readdir_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_NOTDIR)
+                Err(self.llm_no_answer("readdir", "nfs_readdir_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for readdir: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("readdir", &e)),
         }
     }
 
@@ -911,13 +925,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
                     }
                 }
-                error!("No valid nfs_create_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_ACCES)
+                Err(self.llm_no_answer("symlink", "nfs_create_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for symlink: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("symlink", &e)),
         }
     }
 
@@ -953,13 +963,9 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         return Ok(nfsserve::nfs::nfsstring(target_bytes));
                     }
                 }
-                error!("No valid nfs_read_response action in LLM response");
-                Err(nfsstat3::NFS3ERR_IO)
+                Err(self.llm_no_answer("readlink", "nfs_read_response"))
             }
-            Err(e) => {
-                error!("LLM consultation failed for readlink: {}", e);
-                Err(nfsstat3::NFS3ERR_IO)
-            }
+            Err(e) => Err(self.llm_failure("readlink", &e)),
         }
     }
 }

@@ -2,7 +2,7 @@
 
 ## Test Overview
 
-Seven tests in `test.rs` covering NFSv3 (RFC 1813) over ONC RPC (RFC 5531) on TCP. The server side is
+Seven tests in `test.rs` plus one in `llm_failure_test.rs`, covering NFSv3 (RFC 1813) over ONC RPC (RFC 5531) on TCP. The server side is
 `nfsserve`, which handles RPC/XDR framing and the MOUNT protocol; the LLM answers every filesystem
 operation through actions.
 
@@ -29,7 +29,8 @@ Only three procedures are needed: `NULL` (both programs), `MOUNTPROC3_MNT`, `NFS
 
 ## LLM Call Budget
 
-**Total: 9.**
+**Total: 10.** (9 below, plus 1 startup call in `llm_failure_test.rs`; every NFS
+operation in that test is deliberately answered with HTTP 500.)
 
 Six lifecycle tests are 1 startup call each and perform no NFS operation.
 `test_nfs_mount_and_lookup` is 1 startup + `getattr` (`expect_at_least(1)`) + `lookup`
@@ -67,6 +68,17 @@ RPC layer.
   post-op attributes for both object (`fileid` 42, the value the handler chose) and directory
   (`fileid` 1), with no trailing bytes.
 
+8. **`test_nfs_answers_serverfault_when_llm_fails`** (`llm_failure_test.rs`) — the LLM-failure
+   path. Mocks the startup instruction only, so `nfs_operation` matches no rule and the mock
+   answers HTTP 500. GETATTR and LOOKUP must both come back `NFS3ERR_SERVERFAULT` (10006), not
+   `NFS3ERR_IO` and emphatically not `NFS3ERR_NOENT` — a client acts on "no such file". It also
+   asserts the reply carries no trailing bytes (a malformed reply is just a timeout) and that
+   the RPC session survives. `MOUNTPROC3_MNT "/"` reaches no LLM call, so it still succeeds and
+   serves as the control.
+
+The RPC client is shared: `RpcClient`, `Xdr` and `xdr_opaque` are `pub` in `test.rs` and reused
+by `llm_failure_test.rs`. There is one RPC implementation in this directory, not two.
+
 ## Client Library
 
 None for NFS — see above. `tokio::net::TcpStream` carries the hand-rolled RPC.
@@ -77,5 +89,6 @@ None for NFS — see above. `tokio::net::TcpStream` carries the hand-rolled RPC.
 
 ## Not Covered
 
-READ, WRITE, READDIR, CREATE, REMOVE, SETATTR; error paths (`NFS3ERR_NOENT`, `NFS3ERR_ACCES`);
+READ, WRITE, READDIR, CREATE, REMOVE, SETATTR; model-rejection error paths (`NFS3ERR_NOENT`,
+`NFS3ERR_ACCES` from an action carrying `"error"` — the *backend-failure* path is covered);
 AUTH_UNIX credentials; multi-fragment requests; UDP transport; script mode.
