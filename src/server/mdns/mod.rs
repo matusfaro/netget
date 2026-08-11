@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::console_info;
+use crate::{console_error, console_info};
 #[cfg(feature = "mdns")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "mdns")]
@@ -167,7 +167,12 @@ impl MdnsServer {
 
             // Get LLM's service registration instructions
             // mDNS manually processes register_mdns_service actions using raw_actions
-            if let Ok(execution_result) = call_llm(
+            //
+            // Silence is the correct answer on failure here, and deliberately so - see the
+            // `else` branch below for why. It is *not* correct to swallow the error, which is
+            // what `if let Ok(..)` did: the daemon came up announcing nothing and said nothing
+            // about why.
+            let llm_outcome = call_llm(
                 &llm_client,
                 &app_state,
                 server_id,
@@ -175,8 +180,34 @@ impl MdnsServer {
                 &event,
                 protocol.as_ref(),
             )
-            .await
-            {
+            .await;
+
+            if let Err(ref e) = llm_outcome {
+                // Nothing goes on the wire. mDNS has no unicast error frame and no request to
+                // answer - this call is a *startup* event asking what services to advertise,
+                // not a reply to a querier - so there is no peer waiting on a response and
+                // nothing that could be sent.
+                //
+                // More than that, inventing one would be actively harmful in a way a
+                // unicast protocol's error reply is not: an mDNS answer is multicast to the
+                // whole link and every listener on it caches the record for its TTL. A
+                // fabricated PTR/SRV/A set would propagate a service that does not exist to
+                // every machine in the subnet and keep it there after the backend recovered.
+                // This is the `udp` case, one step worse.
+                //
+                // So: announce nothing, and be loud about it on both channels.
+                error!(
+                    "mDNS service-registration handler failed; the responder is running but                      will advertise nothing: {}",
+                    e
+                );
+                console_error!(
+                    status_tx,
+                    "mDNS advertising nothing: service-registration handler failed: {}",
+                    e
+                );
+            }
+
+            if let Ok(execution_result) = llm_outcome {
                 // Display messages from LLM
                 for message in &execution_result.messages {
                     console_info!(status_tx, "{}", message);
