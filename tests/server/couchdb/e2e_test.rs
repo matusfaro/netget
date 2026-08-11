@@ -71,15 +71,6 @@ async fn test_couchdb_database_operations() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Server info
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "server_info")
-                .respond_with_actions(json!([{
-                    "type": "send_server_info",
-                    "version": "3.5.1"
-                }]))
-                .expect_calls(1)
-                .and()
                 // Create database
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "db_create")
@@ -158,10 +149,14 @@ async fn test_couchdb_document_crud() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Create document
+                // Create document. A create carries no `_rev` in its body; the update
+                // below does, and that is the only thing separating the two PUTs — they
+                // share method, path, operation and doc_id. Without it both rules match
+                // identically, the first one answers twice and the second never fires.
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
                 .and_event_data_contains("doc_id", "user1")
+                .and_event_data_contains("request_body", "\"age\":30")
                 .respond_with_actions(json!([{
                     "type": "send_doc_response",
                     "success": true,
@@ -183,10 +178,11 @@ async fn test_couchdb_document_crud() -> E2EResult<()> {
                 }]))
                 .expect_calls(1)
                 .and()
-                // Update document
+                // Update document (body carries `_rev`, unlike the create above)
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
                 .and_event_data_contains("doc_id", "user1")
+                .and_event_data_contains("request_body", "_rev")
                 .respond_with_actions(json!([{
                     "type": "send_doc_response",
                     "success": true,
@@ -367,7 +363,9 @@ async fn test_couchdb_bulk_operations() -> E2EResult<()> {
         .json(&docs)
         .send()
         .await?;
-    assert_eq!(resp.status(), 200);
+    // Real CouchDB answers POST /{db}/_bulk_docs with 201 Created, and so does
+    // `send_bulk_docs_response`.
+    assert_eq!(resp.status(), 201);
     let body: serde_json::Value = resp.json().await?;
     assert_eq!(body.as_array().unwrap().len(), 2);
 
@@ -443,22 +441,23 @@ async fn test_couchdb_basic_auth() -> E2EResult<()> {
                             "type": "open_server",
                             "port": 0,
                             "base_stack": "CouchDB",
-                            "instruction": "Handle CouchDB protocol events with authentication"
+                            "instruction": "Handle CouchDB protocol events with authentication",
+                            "startup_params": {
+                                "enable_auth": true,
+                                "admin_username": "admin",
+                                "admin_password": "secret"
+                            }
                         }
                     ]))
                     .and()
-                    // Unauthorized request
+                    // Only the *authenticated* request reaches the LLM. Basic auth is
+                    // enforced in the server before `call_llm`, so an unauthenticated
+                    // request is refused with 401 without consulting the model at all —
+                    // fail closed. A rule keyed on `server_info` alone would match both
+                    // requests, so declaring one per request made the first answer twice.
                     .on_event("couchdb_request")
                     .and_event_data_contains("operation", "server_info")
-                    .respond_with_actions(json!([{
-                        "type": "send_auth_required",
-                        "realm": "CouchDB"
-                    }]))
-                    .expect_calls(1)
-                    .and()
-                    // Authorized request
-                    .on_event("couchdb_request")
-                    .and_event_data_contains("operation", "server_info")
+                    .and_event_data_contains("authorization", "***")
                     .respond_with_actions(json!([{
                         "type": "send_server_info",
                         "version": "3.5.1"
@@ -472,8 +471,24 @@ async fn test_couchdb_basic_auth() -> E2EResult<()> {
     let client = reqwest::Client::new();
     let base_url = format!("http://127.0.0.1:{}", port);
 
-    // Request without auth
+    // Request without auth: refused by the server itself, no LLM call
     let resp = client.get(&base_url).send().await?;
+    assert_eq!(resp.status(), 401);
+    assert!(
+        resp.headers()
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .starts_with("Basic"),
+        "401 must carry a Basic challenge"
+    );
+
+    // Wrong credentials are refused too
+    let resp = client
+        .get(&base_url)
+        .basic_auth("admin", Some("wrong"))
+        .send()
+        .await?;
     assert_eq!(resp.status(), 401);
 
     // Request with auth

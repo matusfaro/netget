@@ -51,7 +51,7 @@ E2E tests for CouchDB server implementation using real HTTP clients (reqwest) an
 ### 5. Bulk Operations (`test_couchdb_bulk_operations`)
 - Tests: Bulk docs insert, all docs listing
 - Endpoints: `POST /{db}/_bulk_docs`, `GET /{db}/_all_docs`
-- Verifies: Array responses, result counts
+- Verifies: `201 Created` for `_bulk_docs` (as real CouchDB answers), array responses, result counts
 - Mocks: `send_bulk_docs_response`, `send_all_docs`
 - LLM calls: 0
 
@@ -64,10 +64,15 @@ E2E tests for CouchDB server implementation using real HTTP clients (reqwest) an
 
 ### 7. Basic Authentication (`test_couchdb_basic_auth`)
 - Tests: HTTP Basic Auth challenge and success
-- Endpoint: `GET /` with/without auth header
-- Verifies: 401 Unauthorized, 200 OK with valid credentials
-- Mocks: `send_auth_required`, `send_server_info`
-- LLM calls: 0
+- Endpoint: `GET /` with no auth header, with wrong credentials, and with valid credentials
+- Verifies: 401 + `WWW-Authenticate: Basic` twice, then 200 OK
+- Starts the server with `startup_params: {enable_auth, admin_username, admin_password}` —
+  without them `AuthConfig::enabled` is false and the test proves nothing about auth
+- Mocks: `send_server_info` only. Auth is enforced in `handle_couchdb_request_with_llm`
+  **before** `call_llm`, so an unauthenticated request never reaches the model. Only the
+  authenticated request produces an LLM call, and its rule is keyed on
+  `authorization == "***"` to say so
+- LLM calls: 0 (mocked); 1 mock rule invocation
 
 ### 8. Changes Feed (`test_couchdb_changes_feed`)
 - Tests: Document change notifications
@@ -102,7 +107,14 @@ server.verify_mocks().await?;  // Ensures all expected calls happened
 
 ## Known Issues
 
-None. All tests pass reliably with mocks.
+**Two mock rules with identical matchers are a silent trap.** Rules are evaluated in
+declaration order and the *first* match answers, so a suite that declares one rule per
+request — rather than one rule per distinguishable request — has the first rule answer
+every time and the later one never fire. `test_couchdb_document_crud` (create vs. update
+`PUT /testdb/user1`) and `test_couchdb_basic_auth` (unauthenticated vs. authenticated
+`GET /`) both had this shape and both failed only at `verify_mocks()`, long after the wrong
+response had already gone out on the wire. Give every rule something that distinguishes it:
+`request_body` contains `_rev` for the update, `authorization` for the authenticated request.
 
 ## Future Enhancements
 

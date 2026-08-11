@@ -946,6 +946,7 @@ mod e2e_imap_client {
             .map_err(|_| "Logout timeout")??;
         println!("  [TEST] ✓ LOGOUT successful");
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
