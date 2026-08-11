@@ -141,6 +141,59 @@ jobs:
           cargo clippy --locked --no-default-features --features "$FEATURES" --all-targets \
             -- -D clippy::correctness -D clippy::suspicious
 
+  # ADVISORY, deliberately. These test binaries walk the protocol REGISTRIES rather
+  # than any one protocol, so what they actually cover is decided entirely by which
+  # features are compiled in - and every other job here compiles 6 of 116. That blind
+  # spot is not hypothetical: `usb-fido2` shipped advertising three events to the model
+  # with no actions attached, and `cargo test --features usb-fido2,tcp` reported
+  # "3 passed" because the audit early-returned on a protocol with no sync actions at
+  # all. The rule was tightened and, re-run at --all-features, flagged exactly that one
+  # protocol and produced no false positives across the other 115.
+  #
+  # This is the only job that installs the system libraries --all-features needs, and it
+  # builds the whole tree to do it (~10 min cold). Kept advisory until it has been green
+  # for a while: a wide build that has never run in CI should not be the thing that
+  # blocks an unrelated PR on day one. Promote it to blocking once it has proven stable.
+  registry-audit:
+    name: Registry-wide audits (--all-features, advisory)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: registry-audit
+
+      # --all-features reaches every protocol, which means every protocol's system
+      # dependency. Keep this list in sync with the "Features unavailable in Claude
+      # Code for Web" table in CLAUDE.md - they are the same set for the same reason.
+      - name: Install system libraries for --all-features
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler libpcap-dev libdbus-1-dev libusb-1.0-0-dev libpcsclite-dev
+
+      # Each of these asserts something about EVERY registered protocol: that no event
+      # is advertised without usable actions, that no response example is left as a
+      # placeholder, that keyword resolution is unambiguous, that declared dependencies
+      # and privilege requirements are coherent.
+      - name: cargo test --all-features (registry audits)
+        continue-on-error: true
+        run: |
+          echo "::notice::Advisory only. Covers all registered protocols, not just CI_FEATURES."
+          cargo test --locked --all-features \
+            --test event_action_declarations_test \
+            --test placeholder_examples_test \
+            --test base_stack_test \
+            --test advertised_actions_test \
+            --test protocol_dependencies_test \
+            --test privilege_requirement_test \
+            -- --test-threads=100
+
   test:
     name: Test
     runs-on: ubuntu-22.04
