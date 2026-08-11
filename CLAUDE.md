@@ -117,11 +117,28 @@ value the model could send would ever have worked. Check the emit side, not just
 grep -rn "_EVENT" src/server/<p>/mod.rs   # which events does the server actually raise?
 ```
 
-**A fifth variant, on the client side: `call_llm_for_client` builds its tool list from
-`get_async_actions()` alone.** It reads neither `get_sync_actions()` nor
-`event.event_type.actions`, so the two paths do not agree about what an action is. The TFTP
-client declared `send_ack` sync-only and every DATA block came back `Unknown Action`, stalling
-every transfer at block 1. Check a client's declarations against the async list specifically.
+**A fifth variant, on the client side, and it was the widest of all: `call_llm_for_client` built
+its tool list from `get_async_actions()` alone.** It read neither `get_sync_actions()` nor
+`event.event_type.actions`. **53 of the 91 registered clients** had at least one action the model
+could never see — 11 hiding something protocol-specific (`irc`'s send_privmsg/notice/raw, `nfc`'s
+send_apdu, `icmp`'s send_echo_request, whose async list was empty outright) and 42 hiding
+`wait_for_more`, so no stream client could say "that response was partial". TFTP declared
+`send_ack` sync-only, so every DATA block came back `Unknown Action` and every transfer stalled
+at block 1.
+
+**Clients union; servers narrow — and that asymmetry is deliberate.** A server has two LLM entry
+points, so its async/sync split is real and `ssh_auth` can legitimately narrow to
+`ssh_auth_decision`. A client has one: `call_llm_for_client` serves both the initial instruction
+(`event: None`) and every network event, so no client *can* express a narrowing. Hence
+`client_llm_action_set(...)` = async ∪ sync ∪ the firing event's actions. The tree confirms the
+split was never meaningful there — 85 of 91 clients attach no actions to any event type, and ~40
+duplicated their whole list into both methods purely to work around this.
+
+`tests/event_action_declarations_test.rs` now walks **both** registries, and additionally
+round-trips each advertised name through the protocol's own executor — which caught a sixth
+variant, *advertised but unexecutable* (`ssh_agent/modify_instruction`,
+`pop3/modify_pop3_instruction`, and four more that were removed as unimplementable). A static
+declaration check cannot find those.
 
 The whole `bluetooth_ble_*` family was a third variant: `BluetoothBle::spawn_with_llm_actions`
 hardcodes `BluetoothBleProtocol` when it calls `call_llm`, so all sixteen profiles' own actions
@@ -257,8 +274,12 @@ unusable protocols with install hints.
 
 Client protocols follow the same shape against `client_registry.rs`, `src/client/mod.rs`,
 `tests/client/mod.rs`, and the `Client` trait. Consult `CLIENT_PROTOCOL_FEASIBILITY.md` first.
-Note clients are less finished than servers: their `JoinHandle` is never stored, so
-`remove_client()` does not stop the network loop.
+Clients are less finished than servers, but the blanket claim that their `JoinHandle` is never
+stored is **stale** — `register_client_task` now has ~80 of 85 adopters (`bgp`, `ssh_agent` and
+others among them). Check the specific client rather than assuming. Where it does bite, the
+subtler form is worth knowing: aborting a task does **not** abort tasks it spawned, so BGP's
+keepalive timer kept the socket alive after `remove_client()` even though the read loop was
+registered. Register every task you spawn, not just the top one.
 
 **Startup parameters**: every key a caller may pass must be declared in
 `get_startup_parameters()`. `StartupParams::new` and all `get_*` accessors return
