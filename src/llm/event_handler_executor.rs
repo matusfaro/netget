@@ -14,12 +14,25 @@ use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
 use tracing::{debug, error, warn};
 
+/// Heading under which a `{"type":"llm","instruction":"…"}` handler's instruction is
+/// added to the event trigger message.
+///
+/// It is deliberately distinct from any wording the server-wide instruction uses, so a
+/// test (and a human reading `netget.log`) can tell the two apart.
+pub const HANDLER_INSTRUCTION_HEADER: &str = "Handler instruction for this event";
+
 /// Result from checking event handlers
 pub enum EventHandlerResult {
     /// Handler executed successfully with result
     Handled(ExecutionResult),
-    /// No handler configured or handler requested LLM fallback
-    FallbackToLlm,
+    /// No handler configured or handler requested LLM fallback.
+    ///
+    /// `instruction` is `Some` only for an explicit `{"type":"llm","instruction":"…"}`
+    /// handler; the caller must add it to the prompt for this event. It used to be
+    /// dropped here behind a `// TODO`, which meant an MCP caller could configure a
+    /// per-event instruction, get no error, and silently receive the server-wide
+    /// instruction instead.
+    FallbackToLlm { instruction: Option<String> },
 }
 
 /// Check and execute event handler for the given event
@@ -35,7 +48,7 @@ pub enum EventHandlerResult {
 ///
 /// # Returns
 /// * `Ok(EventHandlerResult::Handled(...))` - Handler executed successfully
-/// * `Ok(EventHandlerResult::FallbackToLlm)` - No handler or fallback requested
+/// * `Ok(EventHandlerResult::FallbackToLlm { instruction: None })` - No handler or fallback requested
 /// * `Err(_)` - Handler execution failed critically
 pub async fn try_execute_event_handler(
     state: &AppState,
@@ -51,25 +64,27 @@ pub async fn try_execute_event_handler(
 
     let Some(config) = event_handler_config else {
         // No event handler configuration - use LLM
-        return Ok(EventHandlerResult::FallbackToLlm);
+        return Ok(EventHandlerResult::FallbackToLlm { instruction: None });
     };
 
     // Find matching handler for this event type
     let Some(handler_type) = config.find_handler(event_type_id) else {
         // No matching handler - use LLM
         debug!("No handler matches event '{}', using LLM", event_type_id);
-        return Ok(EventHandlerResult::FallbackToLlm);
+        return Ok(EventHandlerResult::FallbackToLlm { instruction: None });
     };
 
     match handler_type {
         EventHandlerType::Llm { instruction } => {
-            // LLM handler explicitly configured with instruction
+            // LLM handler explicitly configured with instruction: hand it back to the
+            // caller, which adds it to this event's prompt.
             debug!(
                 "LLM handler configured for event '{}' with instruction: {}",
                 event_type_id, instruction
             );
-            // TODO: Pass instruction to LLM call (currently just falls back to default LLM)
-            Ok(EventHandlerResult::FallbackToLlm)
+            Ok(EventHandlerResult::FallbackToLlm {
+                instruction: Some(instruction.to_string()),
+            })
         }
 
         EventHandlerType::Script { language, code } => {
@@ -125,7 +140,7 @@ async fn execute_script_handler(
             "Server #{} not found for script execution",
             server_id.as_u32()
         );
-        return Ok(EventHandlerResult::FallbackToLlm);
+        return Ok(EventHandlerResult::FallbackToLlm { instruction: None });
     };
 
     // Build connection context if available
@@ -173,7 +188,7 @@ async fn execute_script_handler(
                 "Unknown script language '{}', falling back to LLM",
                 language
             );
-            return Ok(EventHandlerResult::FallbackToLlm);
+            return Ok(EventHandlerResult::FallbackToLlm { instruction: None });
         }
     };
 
@@ -184,7 +199,7 @@ async fn execute_script_handler(
             "Script language {} not available, falling back to LLM",
             script_language.as_str()
         );
-        return Ok(EventHandlerResult::FallbackToLlm);
+        return Ok(EventHandlerResult::FallbackToLlm { instruction: None });
     }
 
     // Build ScriptConfig for execution
@@ -239,7 +254,7 @@ async fn execute_script_handler(
         }
         Err(e) => {
             warn!("Script execution failed: {}, falling back to LLM", e);
-            Ok(EventHandlerResult::FallbackToLlm)
+            Ok(EventHandlerResult::FallbackToLlm { instruction: None })
         }
     }
 }

@@ -85,6 +85,7 @@ pub async fn call_llm_with_actions(
     // TRY EVENT HANDLER FIRST if configured
     let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
 
+    let handler_instruction: Option<String>;
     match crate::llm::event_handler_executor::try_execute_event_handler(
         state,
         server_id,
@@ -100,8 +101,10 @@ pub async fn call_llm_with_actions(
             // Handler executed successfully (script or static)
             return Ok(result);
         }
-        crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm => {
-            // No handler or handler requested LLM fallback - proceed with LLM call
+        crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm { instruction } => {
+            // No handler, or an explicit `{"type":"llm","instruction":"…"}` handler whose
+            // instruction must be added to this event's prompt.
+            handler_instruction = instruction;
         }
     }
 
@@ -183,7 +186,10 @@ pub async fn call_llm_with_actions(
     // Add event trigger as a user message
     let event_trigger =
         PromptBuilder::build_event_trigger_message(event_description, context_json.clone());
-    conversation.add_user_message(event_trigger);
+    conversation.add_user_message(apply_handler_instruction(
+        event_trigger,
+        handler_instruction.as_deref(),
+    ));
 
     // Get web search mode and approval channel
     let web_search_mode = state.get_web_search_mode().await;
@@ -414,6 +420,7 @@ pub async fn call_llm(
     }
 
     // TRY EVENT HANDLER FIRST if configured (includes scripts and static responses)
+    let handler_instruction: Option<String>;
     match crate::llm::event_handler_executor::try_execute_event_handler(
         state,
         server_id,
@@ -432,8 +439,10 @@ pub async fn call_llm(
                 .await;
             return Ok(result);
         }
-        crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm => {
-            // No handler or handler requested LLM fallback - proceed with LLM call
+        crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm { instruction } => {
+            // No handler, or an explicit `{"type":"llm","instruction":"…"}` handler whose
+            // instruction must be added to this event's prompt.
+            handler_instruction = instruction;
         }
     }
 
@@ -550,7 +559,10 @@ pub async fn call_llm(
         &event_description,
         event.data.clone(),
     );
-    conversation.add_user_message(event_trigger);
+    conversation.add_user_message(apply_handler_instruction(
+        event_trigger,
+        handler_instruction.as_deref(),
+    ));
 
     // Generate response with retry (no tool calling for network events)
     let actions = conversation
@@ -859,4 +871,30 @@ pub async fn call_llm_for_feedback(
     }
 
     Ok(actions)
+}
+
+/// Append a per-event handler instruction to the event trigger message.
+///
+/// A `{"type":"llm","instruction":"…"}` entry in `event_handlers` configures an
+/// instruction for one event type. It used to be parsed, logged, and thrown away, so an
+/// MCP caller who configured one silently got the server-wide instruction instead. The
+/// instruction goes in the *user* trigger message rather than the system prompt because
+/// the system prompt is built per server, not per event, and because it must be adjacent
+/// to the event it qualifies.
+fn apply_handler_instruction(event_trigger: String, instruction: Option<&str>) -> String {
+    match instruction {
+        Some(instruction) if !instruction.trim().is_empty() => {
+            debug!(
+                "Applying per-event handler instruction ({} bytes) to the event prompt",
+                instruction.len()
+            );
+            format!(
+                "{}\n\n{}:\n{}",
+                event_trigger,
+                crate::llm::event_handler_executor::HANDLER_INSTRUCTION_HEADER,
+                instruction
+            )
+        }
+        _ => event_trigger,
+    }
 }
