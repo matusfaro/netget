@@ -1459,7 +1459,11 @@ impl StickyFooter {
                     let mut char_count = 0;
                     let mut found = false;
                     for (wrap_idx, wrapped_line) in wrapped.iter().enumerate() {
-                        let line_end = char_count + wrapped_line.len();
+                        // `cursor_col` is a character index (see input_state's module
+                        // docs), so the wrapped segments must be measured in characters
+                        // too. `.len()` here counted bytes, which put the cursor several
+                        // columns to the right of the text on any non-ASCII line.
+                        let line_end = char_count + wrapped_line.chars().count();
                         if cursor_in_line <= line_end {
                             visual_row += wrap_idx as u16;
                             visual_col += (cursor_in_line - char_count) as u16;
