@@ -5,6 +5,35 @@
 The Tor client enables NetGet to make anonymous connections through the Tor network using the Arti library (a pure Rust
 implementation of Tor).
 
+## It does not reach the internet by default (read this first)
+
+`arti_client::TorClient::create_bootstrapped()` contacts the **real Tor directory authorities
+before it ever looks at the requested address** - measured at 14 seconds in an unguarded run.
+So merely *opening* a Tor client made outbound connections to third parties, whatever
+destination the caller asked for, in a tool that binds loopback everywhere else. It also made
+the client impossible to exercise offline: the whole-registry startup smoke test carried a
+named exclusion for Tor rather than run it.
+
+`connect()` now refuses unless the caller states where to bootstrap from
+(`bootstrap_target()` in `mod.rs`):
+
+| `directory_server` | `allow_public_tor_network` | Outcome |
+|---|---|---|
+| set | unset/false | bootstrap from that directory (normally a local `tor_relay`) |
+| unset | `true` | bootstrap from the public Tor directory authorities, logged at WARN |
+| unset | unset/false | **`Err`**, naming both parameters and saying why - the default |
+| set | `true` | **`Err`**: contradictory, and guessing is how a "local test" reaches the internet |
+
+Deferring the bootstrap until "a request needs the network" was considered and rejected:
+`connect()` is *given* the destination, so the need is immediate and the bootstrap would happen
+milliseconds later anyway, with the failure surfacing somewhere with worse reporting than
+`connect()`'s `Err`. Laziness would hide the reach, not prevent it. The property worth having
+is that the reach is a decision the caller made.
+
+Pinned by `tests/client/tor/test.rs`, including a `connect()` that must refuse in under 3s -
+anything near 14s means it contacted a directory authority before refusing. The smoke test's
+`CLIENT_SKIPS` is now empty and Tor is swept like every other client.
+
 ## Library Choice
 
 **Arti** (`arti-client` v0.36)
@@ -355,12 +384,16 @@ TorClient::connect_with_llm_actions(
 }
 ```
 
-**Alternative**: For production use, omit `directory_server` to use real Tor network:
+**Alternative**: for the real Tor network, opt in explicitly. Omitting both parameters is
+refused, not defaulted - see *It does not reach the internet by default* above:
 ```json
 {
   "type": "open_client",
   "protocol": "Tor",
-  "remote_addr": "example.com:80"
+  "remote_addr": "example.com:80",
+  "startup_params": {
+    "allow_public_tor_network": true
+  }
 }
 ```
 

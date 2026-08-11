@@ -94,12 +94,17 @@ const LOCAL_HOSTS: &[&str] = &["127.0.0.1", "0.0.0.0", "::1", "::", "localhost",
 /// the report next to the protocol, so it reads as "not tested, here is why" rather than
 /// as a pass. Nothing belongs here except a protocol that cannot be exercised without
 /// leaving the machine.
-const CLIENT_SKIPS: &[(&str, &str)] = &[(
-    "Tor",
-    "connect() calls arti's TorClient::create_bootstrapped(), which bootstraps against \
-     the real Tor directory authorities on the public internet before it ever looks at \
-     the requested address — running it here would make a smoke test reach the network",
-)];
+/// Empty, and worth keeping that way.
+///
+/// `Tor` was the one entry: `connect()` called arti's `TorClient::create_bootstrapped()`,
+/// which bootstraps against the real Tor directory authorities before it ever looks at the
+/// requested address, so running it here would have put a smoke test on the public internet.
+/// That was fixed at the source rather than skipped — the client now refuses to bootstrap
+/// unless the caller passes `directory_server` or `allow_public_tor_network: true`
+/// (`src/client/tor/mod.rs::bootstrap_target`) — so it is swept like everything else and shows
+/// up as `refused cleanly`. Fixing the protocol is always available; excluding it is the last
+/// resort, and an exclusion here is a standing admission that one protocol is untested.
+const CLIENT_SKIPS: &[(&str, &str)] = &[];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Verdict {

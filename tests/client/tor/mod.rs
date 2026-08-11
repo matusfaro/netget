@@ -2,3 +2,6 @@
 
 #[cfg(all(test, feature = "tor"))]
 pub mod e2e_test;
+
+#[cfg(all(test, feature = "tor"))]
+pub mod test;

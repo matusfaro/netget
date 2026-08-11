@@ -94,13 +94,22 @@ impl TorClientProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for TorClientProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![ParameterDefinition {
-            name: "directory_server".to_string(),
-            type_hint: "string".to_string(),
-            description: "Optional: Custom Tor relay address (e.g., '127.0.0.1:9001') for testing. When provided, the Tor client will bootstrap from this local relay using BEGIN_DIR (directory over circuit) instead of the public Tor network. Useful for local testing with tor_relay server.".to_string(),
-            required: false,
-            example: json!("127.0.0.1:9001"),
-        }]
+        vec![
+            ParameterDefinition {
+                name: "directory_server".to_string(),
+                type_hint: "string".to_string(),
+                description: "Custom Tor relay address (e.g., '127.0.0.1:9001') to bootstrap from, using BEGIN_DIR (directory over circuit) instead of the public Tor network. Pair with a local tor_relay server for offline use. Exactly one of this or allow_public_tor_network must be given; without either the client refuses to start.".to_string(),
+                required: false,
+                example: json!("127.0.0.1:9001"),
+            },
+            ParameterDefinition {
+                name: crate::client::tor::ALLOW_PUBLIC_TOR_NETWORK_PARAM.to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Opt in to bootstrapping against the REAL Tor directory authorities on the public internet. Off by default: bootstrapping contacts third parties before the requested destination is even looked at, so opening a Tor client would otherwise reach the internet no matter what you asked it to connect to. Set true only when you intend outbound public traffic.".to_string(),
+                required: false,
+                example: json!(true),
+            },
+        ]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -250,6 +259,16 @@ impl Protocol for TorClientProtocol {
             .implementation("Arti Tor client (pure Rust Tor implementation)")
             .llm_control("Full control over data sent/received through Tor circuits")
             .e2e_testing("Connect to onion services or regular hosts through Tor")
+            .notes(
+                "REACHES THE PUBLIC INTERNET ONLY ON EXPLICIT OPT-IN. arti's \
+                 create_bootstrapped() contacts the real Tor directory authorities BEFORE it \
+                 looks at the requested address (~14s), so merely opening this client used to \
+                 make outbound connections to third parties whatever the destination was. It \
+                 now refuses to start unless the caller passes either `directory_server` (a \
+                 directory to bootstrap from, e.g. a local `127.0.0.1:9001` tor_relay) or \
+                 `allow_public_tor_network: true`. Passing both is refused rather than \
+                 guessed. Bootstrap is 10-30s even when permitted.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -266,11 +285,17 @@ impl Protocol for TorClientProtocol {
         use serde_json::json;
 
         StartupExamples::new(
-            // LLM mode: LLM controls Tor connection
+            // LLM mode: LLM controls Tor connection.
+            //
+            // Every example carries a bootstrap choice, because without one the client refuses
+            // to start. An example a model can copy verbatim into a refusal is worse than no
+            // example. The public network is the opt-in here; swap in
+            // `{"directory_server": "127.0.0.1:9001"}` to bootstrap from a local tor_relay.
             json!({
                 "type": "open_client",
                 "remote_addr": "example.com:80",
                 "base_stack": "tor",
+                "startup_params": {"allow_public_tor_network": true},
                 "instruction": "Connect to the destination through Tor and send an HTTP GET request"
             }),
             // Script mode: Code-based Tor handling
@@ -278,6 +303,7 @@ impl Protocol for TorClientProtocol {
                 "type": "open_client",
                 "remote_addr": "example.com:80",
                 "base_stack": "tor",
+                "startup_params": {"allow_public_tor_network": true},
                 "event_handlers": [{
                     "event_pattern": "tor_connected",
                     "handler": {
@@ -292,6 +318,7 @@ impl Protocol for TorClientProtocol {
                 "type": "open_client",
                 "remote_addr": "example.com:80",
                 "base_stack": "tor",
+                "startup_params": {"allow_public_tor_network": true},
                 "event_handlers": [
                     {
                         "event_pattern": "tor_connected",

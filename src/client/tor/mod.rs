@@ -108,6 +108,76 @@ impl RelayInfo {
     }
 }
 
+/// Startup parameter that opts a Tor client in to the public Tor network.
+///
+/// Named as a constant because it appears in four places that must agree: the parameter
+/// declaration, the refusal message, this module's check, and the test that pins all of it.
+pub const ALLOW_PUBLIC_TOR_NETWORK_PARAM: &str = "allow_public_tor_network";
+
+/// Where a Tor client is allowed to bootstrap from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapTarget {
+    /// A directory the caller named explicitly — normally a local `tor_relay`.
+    CustomDirectory(String),
+    /// The real Tor directory authorities, on the public internet. Opt-in only.
+    PublicNetwork,
+}
+
+/// Decide what `connect()` may bootstrap against, and refuse rather than reach the internet.
+///
+/// # Why this exists
+///
+/// `arti_client::TorClient::create_bootstrapped()` contacts the real Tor directory authorities
+/// **before it ever looks at the requested address** — measured at 14 seconds in an unguarded
+/// run. So merely *opening* a Tor client made outbound connections to third parties, whatever
+/// the user asked it to connect to. That is surprising for a tool that binds loopback
+/// everywhere else, and it made the client impossible to exercise offline: the whole-registry
+/// smoke test had to carve out a named exclusion for Tor because running it would have put a
+/// smoke test on the public internet.
+///
+/// # Why refuse rather than make it lazy
+///
+/// Deferring the bootstrap until a request "genuinely needs the network" buys nothing here:
+/// `connect()` is *given* the destination, so the need is immediate and the bootstrap would
+/// happen a few milliseconds later anyway — with the failure now surfacing somewhere with
+/// worse reporting than `connect()`'s `Err`. Deferral would hide the reach, not prevent it.
+/// The property worth having is that the reach is a **decision the caller made**, and the only
+/// way to express that is an explicit opt-in.
+///
+/// # The rule
+///
+/// * `directory_server` set → the caller named the directory to bootstrap from (normally a
+///   local `tor_relay`). That is already an explicit choice, so it is allowed as-is.
+/// * `allow_public_tor_network: true` → the caller explicitly asked for the real network.
+/// * Neither → `Err`, naming the parameter. **This is the default.**
+///
+/// Setting both is a contradiction and is refused rather than silently resolved: which one the
+/// caller meant is not inferable, and guessing is how a "local test" ends up on the public
+/// internet.
+pub fn bootstrap_target(
+    directory_server: Option<&str>,
+    allow_public_tor_network: bool,
+) -> Result<BootstrapTarget> {
+    match (directory_server, allow_public_tor_network) {
+        (Some(dir), false) => Ok(BootstrapTarget::CustomDirectory(dir.to_string())),
+        (None, true) => Ok(BootstrapTarget::PublicNetwork),
+        (Some(dir), true) => Err(anyhow::anyhow!(
+            "Tor client: `directory_server` ({dir}) and `{ALLOW_PUBLIC_TOR_NETWORK_PARAM}` are \
+             mutually exclusive — the first bootstraps from the directory you named, the second \
+             from the public Tor directory authorities. Pass exactly one."
+        )),
+        (None, false) => Err(anyhow::anyhow!(
+            "Tor client refused to start: bootstrapping contacts the real Tor directory \
+             authorities on the public internet, and does so before it looks at the address you \
+             asked for — so opening this client would make outbound connections to third \
+             parties regardless of the destination. NetGet does not do that by default. Either \
+             pass `directory_server` (e.g. \"127.0.0.1:9001\", a local `tor_relay`) to bootstrap \
+             locally, or pass `{ALLOW_PUBLIC_TOR_NETWORK_PARAM}: true` to opt in to the public \
+             Tor network."
+        )),
+    }
+}
+
 /// Tor client that connects through the Tor network
 pub struct TorClient;
 
@@ -124,9 +194,21 @@ impl TorClient {
         info!("Tor client {} initializing...", client_id);
         let _ = status_tx.send(format!("[CLIENT] Tor client {} initializing...", client_id));
 
-        // Create Tor client config - use custom directory if provided
-        let config = if let Some(ref params) = startup_params {
-            if let Some(directory_server) = params.get_optional_string("directory_server")? {
+        // Choose the directory to bootstrap from — and refuse to reach the public Tor network
+        // unless the caller asked for it. See `bootstrap_target` for the reasoning.
+        let directory_server = match startup_params {
+            Some(ref params) => params.get_optional_string("directory_server")?,
+            None => None,
+        };
+        let allow_public = match startup_params {
+            Some(ref params) => params
+                .get_optional_bool(ALLOW_PUBLIC_TOR_NETWORK_PARAM)?
+                .unwrap_or(false),
+            None => false,
+        };
+
+        let config = match bootstrap_target(directory_server.as_deref(), allow_public)? {
+            BootstrapTarget::CustomDirectory(directory_server) => {
                 info!(
                     "Tor client {} using custom directory server: {}",
                     client_id, directory_server
@@ -136,11 +218,22 @@ impl TorClient {
                     client_id, directory_server
                 ));
                 Self::create_custom_config(&directory_server)?
-            } else {
+            }
+            BootstrapTarget::PublicNetwork => {
+                // Loud, because this is the one path that leaves the machine.
+                warn!(
+                    "Tor client {} is bootstrapping against the PUBLIC Tor directory \
+                     authorities ({}=true): this makes outbound connections to third parties \
+                     before any traffic is sent to {}",
+                    client_id, ALLOW_PUBLIC_TOR_NETWORK_PARAM, remote_addr
+                );
+                let _ = status_tx.send(format!(
+                    "[CLIENT] ⚠ Tor client {} contacting the PUBLIC Tor directory authorities \
+                     (opted in via {})",
+                    client_id, ALLOW_PUBLIC_TOR_NETWORK_PARAM
+                ));
                 TorClientConfig::default()
             }
-        } else {
-            TorClientConfig::default()
         };
 
         let tor_client = ArtiClient::create_bootstrapped(config)
