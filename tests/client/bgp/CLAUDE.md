@@ -54,8 +54,38 @@ Three tests that could not pass and could not fail informatively:
 - Sleeps are 500ms after each server start and 3s after the client, covering
   OPEN → OPEN → KEEPALIVE → KEEPALIVE → UPDATE with an LLM round trip at three steps.
 
+## `hold_timer_test.rs` — a raw socket peer, no harness
+
+The mock-Ollama harness is the wrong shape for the hold timer twice over: the peer has to go
+*deliberately silent*, which a working NetGet server never does, and the assertion is about
+specific octets rather than an event firing. So these two drive `BgpClient::connect_with_llm_actions`
+directly against a `TcpStream` that speaks BGP by hand.
+
+| Test | Asserts | LLM calls |
+|---|---|---|
+| `silent_peer_earns_hold_timer_expired_notification_and_close` | after a handshake with a 3s negotiated hold time and total peer silence: a NOTIFICATION arrives whose 21 octets are checked field by field (marker, length 21, type 3, **error code 4**, subcode 0); it took between 1.5s and 10s, so it is the timer and not an unrelated close; at least one keepalive preceded it; the socket then reaches EOF; the client is `Disconnected` in `AppState` | 1, failed |
+| `keepaliving_peer_is_not_dropped` | a peer sending a KEEPALIVE every second for 7s — more than two hold times — receives no NOTIFICATION, is never closed on, gets at least 4 keepalives back, and the client is still `Connected` | 1, failed |
+
+**~7s wall clock, both in parallel.** No Ollama: the model name is pinned in `AppState` so
+`ensure_model_selected` cannot probe `localhost:11434`, and the endpoint is `127.0.0.1:1`, so
+the one call each test makes (on `bgp_connected`) fails with connection-refused and is logged.
+That the hold timer fires anyway, while the read loop is off in a failing LLM call, is part of
+what is being tested.
+
+**Mutation-checked**, three ways:
+
+| Mutation | Result |
+|---|---|
+| expiry branch disabled (`if false && silent >= hold`) | `silent_peer_…` fails at the 12s bound; `keepaliving_…` still passes |
+| hold timer never reset (`last_received.store` removed) | `keepaliving_…` fails at 3s with the NOTIFICATION octets in the message; `silent_peer_…` still passes |
+| `tokio::select!` replaced by a plain `read_exact` | `silent_peer_…` fails on "sent NOTIFICATION 4/0 but kept the connection open" — the NOTIFICATION goes out but the parked read is never preempted |
+
+The first mutation also caught a defect in the test itself: a per-read 12s timeout is reset by
+every keepalive, so a client that keepalives forever hung the test instead of failing it. The
+deadline is now for the whole wait.
+
 ## Not covered
 
-Hold-timer expiry (the client does not enforce one), NOTIFICATION handling, the client's
-`disconnect` and `send_notification` actions reaching a peer, multiple simultaneous peers, and
-interoperability with a real BGP daemon (none is installed).
+NOTIFICATION handling, the client's `disconnect` and `send_notification` actions reaching a
+peer, multiple simultaneous peers, hold time 0 (no ticker is spawned; only the code path is
+inspected), and interoperability with a real BGP daemon (none is installed).

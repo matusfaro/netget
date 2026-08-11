@@ -28,10 +28,11 @@ pub use actions::BgpClientProtocol;
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Notify};
 use tracing::{debug, error, info, trace, warn};
 
 use netgauze_bgp_pkt::{capabilities::BgpCapability, BgpMessage};
@@ -89,6 +90,34 @@ struct ClientData {
 /// zero on either side turns the timers off for both.
 fn negotiate_hold(ours: u16, theirs: u16) -> u16 {
     ours.min(theirs)
+}
+
+/// Session shutdown signal, mirroring the BGP server's (`src/server/bgp/mod.rs`).
+///
+/// The flag is the source of truth and the `Notify` only interrupts a parked read. `Notify`
+/// alone is not enough: `notify_waiters` wakes tasks that are *already* waiting, so a signal
+/// raised while the read loop is inside an LLM call would be dropped and the session would hang
+/// until the peer closed the socket.
+///
+/// This is what makes hold-timer enforcement possible at all on the client. The read loop parks
+/// in `read_exact`, which no ticker can interrupt on its own; the loop selects over this
+/// `Notify` and the read, so an expiry preempts a blocked read instead of waiting for TCP to
+/// notice a peer that may never come back.
+#[derive(Default)]
+struct Shutdown {
+    flag: AtomicBool,
+    notify: Notify,
+}
+
+impl Shutdown {
+    fn set(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    fn is_set(&self) -> bool {
+        self.flag.load(Ordering::SeqCst)
+    }
 }
 
 /// BGP client that connects to a BGP peer
@@ -253,7 +282,11 @@ impl BgpClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_data: Arc<Mutex<ClientData>>,
     ) -> Result<()> {
-        let mut keepalive_task: Option<tokio::task::JoinHandle<()>> = None;
+        let shutdown = Arc::new(Shutdown::default());
+        let last_received = Arc::new(AtomicU64::new(0));
+        let started = std::time::Instant::now();
+
+        let mut timer_task: Option<tokio::task::AbortHandle> = None;
         let result = Self::read_loop_inner(
             &mut read_half,
             &write_half,
@@ -262,13 +295,27 @@ impl BgpClient {
             &app_state,
             &status_tx,
             &client_data,
-            &mut keepalive_task,
+            &mut timer_task,
+            &shutdown,
+            &last_received,
+            started,
         )
         .await;
 
-        if let Some(task) = keepalive_task {
+        // Teardown, in this order: stop the timers first so nothing can write to a socket that
+        // is about to close, then shut the write half down explicitly. Relying on the `Arc`
+        // refcount to drop the write half would leave the peer waiting for a FIN that only
+        // arrives once every clone happens to go away.
+        if let Some(task) = timer_task {
             task.abort();
         }
+        let _ = write_half.lock().await.shutdown().await;
+
+        app_state
+            .update_client_status(client_id, ClientStatus::Disconnected)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
         result
     }
 
@@ -281,15 +328,32 @@ impl BgpClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
-        keepalive_task: &mut Option<tokio::task::JoinHandle<()>>,
+        timer_task: &mut Option<tokio::task::AbortHandle>,
+        shutdown: &Arc<Shutdown>,
+        last_received: &Arc<AtomicU64>,
+        started: std::time::Instant,
     ) -> Result<()> {
         loop {
+            if shutdown.is_set() {
+                break;
+            }
+
             // The negotiated four-octet-AS state decides how AS_PATH is read. Copy it out
             // rather than holding the guard across the read.
             let peer_asn4 = client_data.lock().await.peer_asn4;
 
             let mut header = [0u8; wire::BGP_HEADER_LEN];
-            match read_half.read_exact(&mut header).await {
+            // A parked `read_exact` is exactly what a hold timer has to be able to interrupt:
+            // the peer that has to be dropped is by definition the one sending nothing. The
+            // timer task raises `shutdown` after writing its NOTIFICATION, and this select
+            // turns that into an immediate exit rather than a wait for TCP to give up.
+            let read_result = tokio::select! {
+                biased;
+                _ = shutdown.notify.notified() => break,
+                r = read_half.read_exact(&mut header) => r,
+            };
+
+            match read_result {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     info!("BGP client {} disconnected", client_id);
@@ -336,6 +400,12 @@ impl BgpClient {
                     .context("BGP message body truncated")?;
             }
 
+            // RFC 4271 section 6.5 / section 10: the Hold Timer restarts on every KEEPALIVE,
+            // UPDATE or NOTIFICATION received. Recording it here, once the whole message is off
+            // the wire, covers all three without a per-type branch — and a peer that keeps
+            // talking is a peer that must not be dropped.
+            last_received.store(started.elapsed().as_secs(), Ordering::Relaxed);
+
             trace!(
                 "BGP client {} received message type={} length={}",
                 client_id,
@@ -359,6 +429,7 @@ impl BgpClient {
                     app_state,
                     status_tx,
                     client_data,
+                    shutdown,
                 )
                 .await;
                 // RFC 4271 section 4.5: a NOTIFICATION closes the connection and is never
@@ -381,22 +452,45 @@ impl BgpClient {
                 BgpMessage::Open(open) => {
                     Self::handle_open_message(open, write_half, client_id, status_tx, client_data)
                         .await?;
+
+                    // RFC 4271 section 8.2.2: the timers start at OpenConfirm, not at
+                    // Established. From the moment our KEEPALIVE went out the peer is entitled
+                    // to expect the negotiated cadence from us — and we are entitled to expect
+                    // one back, which is what the hold timer enforces. A second OPEN leaves
+                    // `timer_task` already set and is ignored here as it is there.
+                    if timer_task.is_none() {
+                        let hold = client_data.lock().await.negotiated_hold_time;
+                        if let Some(handle) = Self::spawn_timers(
+                            write_half.clone(),
+                            hold,
+                            client_id,
+                            last_received.clone(),
+                            started,
+                            shutdown.clone(),
+                            status_tx.clone(),
+                        ) {
+                            // The abort handle stays here for normal teardown; the `JoinHandle`
+                            // itself goes to `AppState` so `remove_client` aborts it too.
+                            // Aborting the read-loop task does NOT abort tasks it spawned, so an
+                            // unregistered timer task would outlive the client, holding the
+                            // write half — and with it the socket — open while it kept sending
+                            // keepalives to a peer nobody is reading.
+                            *timer_task = Some(handle.abort_handle());
+                            app_state.register_client_task(client_id, handle).await;
+                        }
+                    }
                 }
                 BgpMessage::KeepAlive => {
-                    let established = Self::handle_keepalive_message(
+                    Self::handle_keepalive_message(
                         client_id,
                         llm_client,
                         app_state,
                         status_tx,
                         client_data,
                         write_half,
+                        shutdown,
                     )
                     .await?;
-                    if established && keepalive_task.is_none() {
-                        let hold = client_data.lock().await.negotiated_hold_time;
-                        *keepalive_task =
-                            Self::spawn_keepalive(write_half.clone(), hold, client_id);
-                    }
                 }
                 BgpMessage::Update(update) => {
                     Self::handle_update_message(
@@ -406,6 +500,7 @@ impl BgpClient {
                         app_state,
                         status_tx,
                         client_data,
+                        shutdown,
                     )
                     .await;
                 }
@@ -509,7 +604,9 @@ impl BgpClient {
         Ok(())
     }
 
-    /// Handle a KEEPALIVE. Returns `true` when this one moved the session to Established.
+    /// Handle a KEEPALIVE. The hold timer has already been reset by the caller, which is the
+    /// entire semantics of a KEEPALIVE; the only other thing one can do is complete the
+    /// handshake the first time it arrives.
     #[allow(clippy::too_many_arguments)]
     async fn handle_keepalive_message(
         client_id: ClientId,
@@ -518,7 +615,8 @@ impl BgpClient {
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
         write_half: &SharedWriter,
-    ) -> Result<bool> {
+        shutdown: &Arc<Shutdown>,
+    ) -> Result<()> {
         debug!("BGP client {} received KEEPALIVE", client_id);
 
         let (became_established, peer_as, peer_router_id, hold_time, peer_asn4) = {
@@ -538,7 +636,7 @@ impl BgpClient {
 
         if !became_established {
             let _ = status_tx.send("[CLIENT] BGP KEEPALIVE received".to_string());
-            return Ok(false);
+            return Ok(());
         }
 
         info!("BGP client {} session established", client_id);
@@ -569,13 +667,15 @@ impl BgpClient {
             status_tx,
             client_data,
             Some(write_half),
+            shutdown,
         )
         .await;
 
-        Ok(true)
+        Ok(())
     }
 
     /// Handle a peer UPDATE: report the decoded routes to the handler.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_update_message(
         update: &netgauze_bgp_pkt::update::BgpUpdateMessage,
         client_id: ClientId,
@@ -583,6 +683,7 @@ impl BgpClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
+        shutdown: &Arc<Shutdown>,
     ) {
         info!(
             "BGP client {} received UPDATE: {} withdrawn, {} announced",
@@ -613,6 +714,7 @@ impl BgpClient {
             status_tx,
             client_data,
             None,
+            shutdown,
         )
         .await;
     }
@@ -627,6 +729,7 @@ impl BgpClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
+        shutdown: &Arc<Shutdown>,
     ) {
         let name = wire::error_name(error_code);
         let subcode_name = wire::error_subcode_name(error_code, error_subcode);
@@ -658,6 +761,7 @@ impl BgpClient {
             status_tx,
             client_data,
             None,
+            shutdown,
         )
         .await;
     }
@@ -677,6 +781,7 @@ impl BgpClient {
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
         write_half: Option<&SharedWriter>,
+        shutdown: &Arc<Shutdown>,
     ) {
         let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
             return;
@@ -704,7 +809,8 @@ impl BgpClient {
                     client_data.lock().await.memory = mem;
                 }
                 if let Some(write_half) = write_half {
-                    Self::execute_actions(actions, write_half, client_id, &protocol).await;
+                    Self::execute_actions(actions, write_half, client_id, &protocol, shutdown)
+                        .await;
                 } else if !actions.is_empty() {
                     // Silently dropping them would look like they had been sent.
                     warn!(
@@ -732,18 +838,40 @@ impl BgpClient {
         }
     }
 
-    /// Keep the session alive at the negotiated cadence.
+    /// Keepalive cadence and hold-timer enforcement, in one task.
     ///
-    /// RFC 4271 section 10: KeepaliveTime is a third of the negotiated HoldTime. Without this
-    /// the client sent a KEEPALIVE only in reply to one, so any peer enforcing its hold timer
-    /// dropped the session after `hold_time` seconds of silence. A zero hold time disables
-    /// both timers, so there is nothing to schedule.
-    fn spawn_keepalive(
+    /// Two RFC 4271 obligations, both on the same clock:
+    ///
+    /// * section 10 — KeepaliveTime is a third of the negotiated HoldTime, at least one second.
+    ///   Without this the client sent a KEEPALIVE only in reply to one, so any peer enforcing
+    ///   its hold timer dropped the session after `hold_time` seconds of silence.
+    /// * sections 4.2 and 6.5 — when the Hold Timer expires, the speaker MUST send a
+    ///   NOTIFICATION with error code 4 (Hold Timer Expired) and close the session. Until this
+    ///   existed a silent peer was noticed only when TCP eventually noticed, which can be many
+    ///   minutes and, on a half-open connection with no traffic, never.
+    ///
+    /// It runs in its own task for the same reason the server's does: the read loop can be
+    /// parked in an LLM call, and a hold timer that only ticks between model calls is not a
+    /// timer. Expiry raises `shutdown`, which the read loop selects on, so the teardown happens
+    /// even mid-read.
+    ///
+    /// A zero hold time disables both timers (RFC 4271 section 4.2), so nothing is scheduled —
+    /// spinning a zero-second ticker would busy-loop and expire instantly.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_timers(
         write_half: SharedWriter,
         hold_time: u16,
         client_id: ClientId,
+        last_received: Arc<AtomicU64>,
+        started: std::time::Instant,
+        shutdown: Arc<Shutdown>,
+        status_tx: mpsc::UnboundedSender<String>,
     ) -> Option<tokio::task::JoinHandle<()>> {
         if hold_time == 0 {
+            debug!(
+                "BGP client {} negotiated hold time 0: keepalive and hold timers disabled",
+                client_id
+            );
             return None;
         }
         let interval = std::time::Duration::from_secs(u64::from(hold_time).div_ceil(3).max(1));
@@ -751,6 +879,34 @@ impl BgpClient {
             let keepalive = wire::encode_keepalive();
             loop {
                 tokio::time::sleep(interval).await;
+
+                let silent = started
+                    .elapsed()
+                    .as_secs()
+                    .saturating_sub(last_received.load(Ordering::Relaxed));
+                if silent >= u64::from(hold_time) {
+                    error!(
+                        "BGP client {} hold timer expired after {}s of silence (hold {}s)",
+                        client_id, silent, hold_time
+                    );
+                    let _ = status_tx.send(format!(
+                        "[CLIENT] BGP hold timer expired after {silent}s of silence, closing session"
+                    ));
+                    // Written from here rather than signalled to the read loop: the read loop
+                    // may be inside an LLM call, and RFC 4271 wants the NOTIFICATION out before
+                    // the connection goes away.
+                    match wire::encode_notification(wire::ERR_HOLD_TIMER_EXPIRED, 0, &[]) {
+                        Ok(bytes) => {
+                            let _ = write_half.lock().await.write_all(&bytes).await;
+                        }
+                        Err(e) => {
+                            error!("BGP client {client_id} could not encode NOTIFICATION 4/0: {e}")
+                        }
+                    }
+                    shutdown.set();
+                    return;
+                }
+
                 if write_half.lock().await.write_all(&keepalive).await.is_err() {
                     debug!(
                         "BGP client {} keepalive task stopping: write failed",
@@ -769,11 +925,12 @@ impl BgpClient {
         write_half: &SharedWriter,
         client_id: ClientId,
         protocol: &dyn Client,
+        shutdown: &Arc<Shutdown>,
     ) {
         for action in actions {
             match protocol.execute_action(action) {
                 Ok(result) => {
-                    if Self::apply_result(result, write_half, client_id).await {
+                    if Self::apply_result(result, write_half, client_id, shutdown).await {
                         break;
                     }
                 }
@@ -789,6 +946,7 @@ impl BgpClient {
         result: ClientActionResult,
         write_half: &SharedWriter,
         client_id: ClientId,
+        shutdown: &Arc<Shutdown>,
     ) -> bool {
         match result {
             ClientActionResult::SendData(bytes) => {
@@ -800,6 +958,10 @@ impl BgpClient {
             }
             ClientActionResult::Disconnect => {
                 info!("BGP client {} disconnecting", client_id);
+                // Stopping the action loop is not stopping the session: without this the read
+                // loop went straight back to `read_exact` and the `disconnect` action's own
+                // description ("sends a Cease NOTIFICATION, then closes") was half true.
+                shutdown.set();
                 true
             }
             ClientActionResult::WaitForMore | ClientActionResult::NoAction => false,
@@ -808,7 +970,7 @@ impl BgpClient {
             // shutdown its own action description promised never reached the wire.
             ClientActionResult::Multiple(results) => {
                 for inner in results {
-                    if Box::pin(Self::apply_result(inner, write_half, client_id)).await {
+                    if Box::pin(Self::apply_result(inner, write_half, client_id, shutdown)).await {
                         return true;
                     }
                 }

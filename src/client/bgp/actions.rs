@@ -329,8 +329,11 @@ impl Protocol for BgpClientProtocol {
             .e2e_testing("NetGet BGP server")
             .notes(
                 "Query mode only, no active route announcement, no RIB. Four-octet ASNs \
-                    are advertised and parsed; the client sends keepalives at a third of the \
-                    negotiated hold time but does not enforce its own hold timer.",
+                    are advertised and parsed. Keepalives go at a third of the negotiated hold \
+                    time and the hold timer is enforced: a peer that sends nothing for the \
+                    negotiated hold time earns NOTIFICATION 4/0 and the session closes, proven \
+                    end to end in tests/client/bgp/hold_timer_test.rs. Never peered against a \
+                    real BGP daemon.",
             )
             .build()
     }
