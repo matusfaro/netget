@@ -72,6 +72,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "usb-fido2")]
+use crate::console_error;
+#[cfg(feature = "usb-fido2")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "usb-fido2")]
 use crate::llm::ollama_client::OllamaClient;
@@ -829,6 +831,7 @@ impl UsbFido2Server {
             &llm_client,
             &app_state,
             &protocol,
+            &status_tx,
             server_id,
             connection_id,
             Event::new(
@@ -854,6 +857,7 @@ impl UsbFido2Server {
                         &protocol,
                         &handle,
                         &hid_handler,
+                        &status_tx,
                         server_id,
                         connection_id,
                         details,
@@ -873,6 +877,7 @@ impl UsbFido2Server {
             &llm_client,
             &app_state,
             &protocol,
+            &status_tx,
             server_id,
             connection_id,
             Event::new(
@@ -900,6 +905,7 @@ impl UsbFido2Server {
         protocol: &Arc<UsbFido2Protocol>,
         handle: &Arc<Fido2ServerHandle>,
         hid_handler: &SharedHandler,
+        status_tx: &mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         connection_id: ConnectionId,
         details: ApprovalDetails,
@@ -930,16 +936,47 @@ impl UsbFido2Server {
             OperationType::Authenticate => "authenticate",
         };
 
-        Self::raise(
+        let answered = Self::raise(
             llm_client,
             app_state,
             protocol,
+            status_tx,
             server_id,
             connection_id,
             event,
             what,
         )
         .await;
+
+        // The LLM call itself failed — an outage, an overload, an unparseable reply. Waiting
+        // out `approval_timeout_secs` would get to the same denial, but only after the host has
+        // sat on KEEPALIVE(UPNEEDED) for up to 30s for an answer that is never coming. Say it
+        // now, in CTAP2's own vocabulary: the parked command is refused and the handler replies
+        // `CTAP2_ERR_OPERATION_DENIED` (0x27), or U2F `SW_CONDITIONS_NOT_SATISFIED`.
+        //
+        // There is deliberately no other branch here. A failed call must never become an
+        // approval: nothing below can synthesise an assertion or an attestation, and the
+        // denial is the same one an explicit `deny_request` produces. `auto_approve` still
+        // wins, because `wait()` short-circuits before reading the channel — that mode is an
+        // explicit development opt-in that never consults the model in the first place.
+        if !answered {
+            match handle.approvals.deny(approval_id) {
+                Ok(()) => console_error!(
+                    status_tx,
+                    "USB FIDO2 {} request {} on connection {} DENIED (fail closed): the model \
+                     could not be reached, so the host gets CTAP2_ERR_OPERATION_DENIED rather \
+                     than waiting out the approval window",
+                    what,
+                    approval_id,
+                    connection_id
+                ),
+                // Already resolved (the TUI, or a racing action). Its decision stands.
+                Err(e) => debug!(
+                    "FIDO2 approval {} was already resolved when the LLM failure path ran: {}",
+                    approval_id, e
+                ),
+            }
+        }
 
         // If the model answered inline, the decision is already on the channel and this
         // returns immediately. Otherwise it waits out the configured window — a user can still
@@ -962,20 +999,26 @@ impl UsbFido2Server {
         }
     }
 
-    /// Raise one event with the LLM.
+    /// Raise one event with the LLM. Returns whether the call produced an answer at all.
     ///
     /// Unlike the MSC server there is no Idle/Processing gate: a parked command blocks the
     /// device at the CTAPHID layer (a second command gets CHANNEL_BUSY), so overlapping calls
     /// on one connection cannot arise.
+    ///
+    /// `false` means the *call* failed, which is not the same as the model declining: a
+    /// decision the model made arrives as an action and is invisible here. Only `decide` acts
+    /// on the return value, and only ever by denying.
+    #[allow(clippy::too_many_arguments)]
     async fn raise(
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         protocol: &Arc<UsbFido2Protocol>,
+        status_tx: &mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
         connection_id: ConnectionId,
         event: Event,
         what: &str,
-    ) {
+    ) -> bool {
         match call_llm(
             llm_client,
             app_state,
@@ -988,14 +1031,23 @@ impl UsbFido2Server {
         {
             // Event kind before the id, so a test can wait on one specific event with a
             // substring match.
-            Ok(_) => info!(
-                "USB FIDO2 LLM call completed ({}) for connection {}",
-                what, connection_id
-            ),
-            Err(e) => error!(
-                "LLM call failed for USB FIDO2 connection {} ({}): {}",
-                connection_id, what, e
-            ),
+            Ok(_) => {
+                info!(
+                    "USB FIDO2 LLM call completed ({}) for connection {}",
+                    what, connection_id
+                );
+                true
+            }
+            Err(e) => {
+                console_error!(
+                    status_tx,
+                    "LLM call failed for USB FIDO2 connection {} ({}): {}",
+                    connection_id,
+                    what,
+                    e
+                );
+                false
+            }
         }
     }
 }
