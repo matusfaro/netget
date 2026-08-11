@@ -22,8 +22,31 @@ items when fifteen were already fixed and seventeen were findings rather than wo
 `DevelopmentState::Incomplete` is down from twelve to **zero**. The last one,
 `bluetooth_ble_beacon`, was a platform limit rather than unfinished work, and was closed by
 implementing the BlueZ path and making the macOS refusal explicit — see the maturity section of
-`CLAUDE.md`. Test suite is **415 passed / 0 failed / 36 ignored** on the CI feature set (+
-`sqlite`), clippy clean, `cargo fmt --check` clean.
+`CLAUDE.md`.
+
+Measured at `5d18c9fb` in a throwaway worktree, not on a dirty tree:
+
+| Check | Result |
+|---|---|
+| `cargo test`, CI feature set | **486 passed / 0 failed / 37 ignored** (run twice, identical) |
+| `cargo check --all-features --tests` | clean |
+| Registry audits at `--all-features` (6 binaries) | **53 passed / 0 failed** |
+| `cargo fmt --check` | clean |
+| clippy `-D correctness -D suspicious --all-targets` | clean |
+| `protocol_startup_smoke_test` | see below |
+
+**Every registered protocol has now been started through the real startup path**
+(`tests/protocol_startup_smoke_test.rs`, wired into the advisory `registry-audit` CI job).
+**121 servers registered, 92 listening** — 76 accepting a TCP connection, 16 holding a datagram
+socket, 3 running without a socket by design. **26 refuse cleanly, 0 defects, 0 port leaks, 0
+hangs, 0 panics.** The 26 refusals are all honest environment limits on this unprivileged macOS
+host: 15 BLE profiles with no adapter, 3 raw-socket, 3 packet-capture, `wireguard` (root), and
+four platform refusals. Clients: 91 registered, 44 refuse cleanly, 0 hung, 0 panicked.
+
+That "0 defects" line is the one worth re-deriving rather than trusting — it means no protocol
+reported `Running` while nothing was listening, which is a bug this repo has shipped four times
+(arp, datalink, icmp, isis). The harness checks *listening*, not merely *bound*, because its
+first version did not and would have passed a socket that never called `listen()`.
 
 Three gates were added because the green result was worth less than it looked (see archived
 items 5, 79, 80, 81):
@@ -51,15 +74,37 @@ items 5, 79, 80, 81):
    `#[ignore]`d test in `tests/server/bluetooth_ble_beacon/e2e_test.rs` is the starting point,
    and `btmon` is the confirmation. Also note the release `dist` (Linux) feature set excludes
    all `bluetooth-ble*` for libdbus reasons, so the shipped Linux binary does not contain it.
-2. **BGP client has no hold-timer enforcement.** It sends keepalives at the negotiated cadence
-   but only notices a silent peer when TCP does. Needs a shutdown `Notify` so the ticker can
-   interrupt a blocked `read_exact`, as the server has.
-3. **Item 48** — auditing library panics reachable from the wire is standing practice, not a
+2. **The first BLE server start in a process poisons every subsequent one.** Proven by
+   isolation: `bluetooth_ble_thermometer` alone powers on in 569ms; started second it burns
+   10,565ms and reports *"Bluetooth adapter failed to power on after 10 seconds"* — a false
+   diagnosis, the adapter is fine. Inside `ble_peripheral_rust`'s CoreBluetooth backend, reached
+   from `src/server/bluetooth_ble/mod.rs:123-146`. Needs a shared `Peripheral`, not a reworded
+   error. Costs ~3 minutes of the startup sweep.
+3. **`bluetooth_ble/mod.rs` calls `futures::executor::block_on` in async context** — the
+   antipattern that bit usb-msc, usb-fido2 and smb (see `CLAUDE.md`, Known systemic issues).
+   Panic swallowed by `tokio::spawn`, server reports healthy.
+4. **`grpc handle_unary` answers "no action" with an empty message and `grpc-status: 0`** — a
+   fail-open of the model-said-nothing kind. The caller cannot distinguish a deliberate empty
+   response from the model never answering.
+5. **MCP still has no scheduled-task timer.** It gained a feedback drain, but `schedule_task`
+   over MCP creates tasks nothing fires.
+6. **Item 48** — auditing library panics reachable from the wire is standing practice, not a
    discrete fix. `pgwire` (item 77) is the open one and is upstream.
-4. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
-5. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
+7. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
+8. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
+9. `src/server/usb/{msc,serial,fido2}/CLAUDE.md` describe pre-fix behaviour and are stale.
 
 ### Patterns worth auditing for
+
+**Collapsing "the handler declined to decide" into "the handler could not run."** This is the
+general form of the OAuth2 disaster and it kept recurring: MQTT answered `CONNACK 0 = ACCEPTED`
+when the LLM call failed, so an outage admitted every client and a model's denial was
+indistinguishable from a dead backend; the proxy defaulted to `Pass` and forwarded unfiltered,
+while its HTTPS twin always blocked; LDAP's search answered resultCode 0 with zero entries,
+which is *success* meaning "nothing matched", so an outage read as a directory decision. In every
+case the permissive default was right for "the model considered this and had nothing to add" and
+catastrophic for "the model never ran". **Wherever a protocol has a default for "no answer",
+check what a backend failure reaches.**
 
 **A mechanism fully built and wired, with nothing flowing through it.** Found repeatedly:
 `get_dependencies()` with every protocol inheriting an empty default; `PacketCapture` defined
@@ -73,6 +118,24 @@ returns `Ok(())` when the capability is missing, an async call without `.await`,
 matches nothing (`on_event("*")` was compared literally), a suite that starts a server and never
 connects a client. These count as passing coverage, which is worse than none because it is
 counted.
+
+Two further shapes, both found repeatedly in this sweep and neither visible by reading the test
+alone:
+
+* **A suite written against a vocabulary the code never had.** `tests/server/proxy/test.rs` named
+  events with a `_received` suffix that does not exist and actions like `proxy_forward_request`
+  when the real one is `handle_request_pass`; the IRC client suite named `irc_data_received` for
+  `irc_message_received`; the SSH suite mocked `sftp_readdir`/`sftp_stat` when the server emits
+  one `sftp_operation` event with an `operation` field. No rule ever matched — and because the
+  protocol did something reasonable anyway, the assertions still passed while the LLM path was
+  entirely dead. `tests/mock_action_names.rs` now catches the action half.
+* **A suite that asks for a feature in prompt prose but never passes the `startup_params` that
+  enable it.** The couchdb basic-auth test asserted a 401 that came from its own *mock*, not from
+  the server, because `AuthConfig::enabled` was false the whole time. Worth a sweep.
+
+**Two mock rules with identical matchers.** Rules match in declaration order and the first one
+answers, so the second never fires and one rule replies twice. It surfaces only at
+`verify_mocks()`, long after the wrong bytes went out — and if `verify_mocks()` is missing, never.
 
 **An `#[ignore]` citing a defect elsewhere.** It goes stale silently when that defect is fixed.
 43 tests were parked on one such reason.
