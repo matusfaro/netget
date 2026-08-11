@@ -178,8 +178,11 @@ mod proxy_server_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "Proxy",
+                        // No "mode" key: proxy declares no such startup parameter, and an
+                        // undeclared key fails validation before add_server, so the server
+                        // never started and the test asserted nothing. certificate_mode
+                        // "generate" is what selects MITM.
                         "startup_params": {
-                            "mode": "mitm",
                             "certificate_mode": "generate"
                         },
                         "instruction": "Inspect all HTTPS traffic"
@@ -219,8 +222,11 @@ mod proxy_server_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "Proxy",
+                        // No "mode" key: proxy declares no such startup parameter, and an
+                        // undeclared key fails validation before add_server, so the server
+                        // never started and the test asserted nothing. certificate_mode
+                        // "generate" is what selects MITM.
                         "startup_params": {
-                            "mode": "mitm",
                             "certificate_mode": "generate"
                         },
                         "instruction": "Inspect HTTPS requests and pass them through"
@@ -231,12 +237,16 @@ mod proxy_server_tests {
                 // Mock 2: HTTPS request received after TLS decryption
                 .on_event("proxy_http_request")
                 .and_event_data_contains("url", "https://")
+                // `handle_request_pass`, not `proxy_passthrough` - the latter is not a
+                // proxy action and was rejected as unknown.
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "proxy_passthrough"
+                        "type": "handle_request_pass"
                     }
                 ]))
-                .expect_calls(1)
+                // Cannot be 1: this test drives no client through the proxy, so no
+                // request event is ever raised. See the note above the assertion below.
+                .expect_calls(0)
                 .and()
         });
 
@@ -244,7 +254,11 @@ mod proxy_server_tests {
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ Proxy server intercepted HTTPS request in MITM mode");
+        // This test starts the server and stops it. No client is driven through the
+        // proxy, so nothing is intercepted; the mock above exists only so the action
+        // name is validated against the registry. The real request/response coverage
+        // lives in tests/server/proxy/test.rs.
+        println!("✅ Proxy server started in MITM mode (no traffic driven by this test)");
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -270,8 +284,11 @@ mod proxy_server_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "Proxy",
+                        // No "mode" key: proxy declares no such startup parameter, and an
+                        // undeclared key fails validation before add_server, so the server
+                        // never started and the test asserted nothing. certificate_mode
+                        // "generate" is what selects MITM.
                         "startup_params": {
-                            "mode": "mitm",
                             "certificate_mode": "generate"
                         },
                         "instruction": "Add Authorization header to HTTPS requests"
@@ -282,15 +299,17 @@ mod proxy_server_tests {
                 // Mock 2: HTTPS request to api.example.com - add auth header
                 .on_event("proxy_http_request")
                 .and_event_data_contains("host", "api.example.com")
+                // `handle_request_modify` with a `headers` object, not
+                // `proxy_modify_request` with `add_headers` - neither name existed.
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "proxy_modify_request",
-                        "add_headers": {
+                        "type": "handle_request_modify",
+                        "headers": {
                             "Authorization": "Bearer TOKEN123"
                         }
                     }
                 ]))
-                .expect_calls(1)
+                .expect_calls(0)
                 .and()
         });
 
@@ -298,7 +317,7 @@ mod proxy_server_tests {
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ Proxy server modified HTTPS request in MITM mode");
+        println!("✅ Proxy server started in MITM modify config (no traffic driven)");
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -324,8 +343,11 @@ mod proxy_server_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "Proxy",
+                        // No "mode" key: proxy declares no such startup parameter, and an
+                        // undeclared key fails validation before add_server, so the server
+                        // never started and the test asserted nothing. certificate_mode
+                        // "generate" is what selects MITM.
                         "startup_params": {
-                            "mode": "mitm",
                             "certificate_mode": "generate"
                         },
                         "instruction": "Block HTTPS requests with sensitive data"
@@ -336,14 +358,15 @@ mod proxy_server_tests {
                 // Mock 2: HTTPS request with sensitive data - block it
                 .on_event("proxy_http_request")
                 .and_event_data_contains("url", "https://")
+                // `handle_request_block`, not `proxy_block`.
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "proxy_block",
+                        "type": "handle_request_block",
                         "status": 403,
                         "body": "Request blocked: contains sensitive data"
                     }
                 ]))
-                .expect_calls(1)
+                .expect_calls(0)
                 .and()
         });
 
@@ -351,7 +374,7 @@ mod proxy_server_tests {
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ Proxy server blocked HTTPS request in MITM mode");
+        println!("✅ Proxy server started in MITM blocking config (no traffic driven)");
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -359,54 +382,77 @@ mod proxy_server_tests {
         Ok(())
     }
 
-    /// Test CA certificate export functionality
-    /// LLM calls: 2 (server startup, certificate export)
+    /// Test that the CA certificate is exported to the declared `ca_export_path`.
+    ///
+    /// This is a startup *parameter*, not an action. It used to be tested by mocking an
+    /// `export_ca_certificate` action, which (a) no longer exists - it was one of six
+    /// configuration actions removed for serialising their arguments and writing nothing -
+    /// and (b) was keyed on an instruction the test never sent after startup, so the mock
+    /// could not fire and the test asserted only that a server started.
+    ///
+    /// LLM calls: 1 (server startup)
     #[tokio::test]
     async fn test_proxy_export_ca_certificate() -> E2EResult<()> {
-        // Start a Proxy server in MITM mode and export CA certificate
+        let export_dir = std::env::temp_dir().join(format!(
+            "netget-proxy-ca-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&export_dir)?;
+        let ca_path = export_dir.join("netget-ca.crt");
+
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} using proxy stack with certificate generation. Export CA certificate to netget-ca.crt."
+            "Listen on port {AVAILABLE_PORT} using proxy stack with certificate generation. Export CA certificate."
         )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("certificate generation")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "Proxy",
-                        "startup_params": {
-                            "mode": "mitm",
-                            "certificate_mode": "generate"
-                        },
-                        "instruction": "MITM proxy with certificate export"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Export CA certificate
-                .on_instruction_containing("Export CA certificate")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "export_ca_certificate",
-                        "output_path": "./netget-ca.crt",
-                        "format": "pem"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
+        .with_mock({
+            let ca_path = ca_path.clone();
+            move |mock| {
+                mock.on_instruction_containing("Listen on port")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "startup_params": {
+                                "certificate_mode": "generate",
+                                "ca_export_path": ca_path.to_string_lossy(),
+                            },
+                            "instruction": "MITM proxy with certificate export"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            }
         });
 
         let mut server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let pem = std::fs::read_to_string(&ca_path).unwrap_or_else(|e| {
+            panic!("ca_export_path {} was not written: {e}", ca_path.display())
+        });
+        assert!(
+            pem.starts_with("-----BEGIN CERTIFICATE-----"),
+            "ca_export_path must receive a PEM certificate, got: {:?}",
+            &pem[..pem.len().min(64)]
+        );
+        assert!(
+            pem.trim_end().ends_with("-----END CERTIFICATE-----"),
+            "exported PEM is truncated"
+        );
+        assert!(
+            !pem.contains("PRIVATE KEY"),
+            "the CA private key must never be written to disk"
+        );
 
-        println!("✅ Proxy server exported CA certificate");
+        println!("✅ CA certificate exported to {}", ca_path.display());
 
         server.verify_mocks().await?;
         server.stop().await?;
+
+        let _ = std::fs::remove_dir_all(&export_dir);
 
         Ok(())
     }

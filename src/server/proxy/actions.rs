@@ -40,6 +40,26 @@ impl Protocol for ProxyProtocol {
                     required: false,
                     example: json!("generate"),
                 },
+                // cert_path / key_path are read by ProxyServer::spawn_with_llm_actions in the
+                // 'load_from_file' branch. They must be declared even though that mode is
+                // rejected: StartupParams validates every key against this list *before*
+                // add_server, so an undeclared read produced "Attempted to access undeclared
+                // startup parameter 'cert_path'" and the caller never saw the deliberate
+                // "not implemented" message written below it.
+                ParameterDefinition {
+                    name: "cert_path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to a CA certificate in PEM format. Only read when certificate_mode is 'load_from_file', which is NOT implemented and is rejected at startup - so setting this cannot make HTTPS interception use your own CA. Use certificate_mode 'generate' with ca_export_path instead.".to_string(),
+                    required: false,
+                    example: json!("./ca.crt"),
+                },
+                ParameterDefinition {
+                    name: "key_path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to the CA private key in PEM format. Same restriction as cert_path: only read by the unimplemented 'load_from_file' certificate mode. The key is never read by any working code path.".to_string(),
+                    required: false,
+                    example: json!("./ca.key"),
+                },
                 ParameterDefinition {
                     name: "ca_export_path".to_string(),
                     type_hint: "string".to_string(),
@@ -121,8 +141,8 @@ impl Protocol for ProxyProtocol {
             .state(DevelopmentState::Experimental)
             .implementation("Manual HTTP/1.1 with rcgen v0.14 + rustls")
             .llm_control("Request pass/block/modify, response pass/block/modify (MITM only), HTTPS allow/block")
-            .e2e_testing("curl --proxy / HTTP clients")
-            .notes("HTTP/1.1 only; MITM CA is generated per run and clients must trust it; certificate_mode 'load_from_file' unimplemented; responses on plain HTTP are forwarded without LLM consultation")
+            .e2e_testing("reqwest configured as a real proxy client against local target servers (tests/server/proxy/test.rs), plus mocked-LLM startup and MITM scenarios (tests/server/proxy/e2e_test.rs). No curl and no browser has been run against it.")
+            .notes("HTTP/1.1 only; MITM CA is generated per run and clients must trust it; certificate_mode 'load_from_file' is not implemented and is rejected at startup (its cert_path/key_path parameters are declared only so that rejection is the error the caller sees); responses on plain HTTP are forwarded without LLM consultation; only the first exchange of a keep-alive HTTPS connection is inspected")
             .build()
     }
     fn description(&self) -> &'static str {

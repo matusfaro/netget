@@ -39,6 +39,22 @@ trusting the real CA rejected the connection while the configuration looked
 correct. Supporting a real operator CA requires reading its subject, which needs
 rcgen's `x509-parser` feature (not enabled in `Cargo.toml`).
 
+`cert_path` and `key_path` are **declared** in `get_startup_parameters()` even
+though the only mode that reads them is rejected. They have to be: `StartupParams`
+validates every key against the declared list *before* `add_server`, so while they
+were undeclared the caller got `Attempted to access undeclared startup parameter
+'cert_path'` instead of the deliberate, explanatory "not implemented" error written
+a few lines below the read. Their descriptions say plainly that setting them cannot
+make interception use your own CA.
+
+## Startup parameters
+
+`certificate_mode`, `ca_export_path`, `cert_path`, `key_path`,
+`request_filter_mode`, `response_filter_mode`, `https_connection_filter_mode` —
+seven declared, seven read (`ProxyServer::spawn_with_llm_actions`). None is dead.
+Configuration is startup-only; there is no action that changes it on a running
+server.
+
 ## Library Choices
 
 - **`http-mitm-proxy`** (conceptual) - Protocol framework for MITM operations
