@@ -182,8 +182,25 @@ struct ImapSession<R, W> {
 #[cfg(feature = "imap")]
 impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSession<R, W> {
     async fn handle(&mut self) -> Result<()> {
-        // Send greeting via LLM
-        self.send_greeting().await?;
+        // Send greeting via LLM. A failure here used to propagate and drop the socket without
+        // a single byte written, so the client sat waiting for a banner that never arrived.
+        // RFC 3501 lets a server refuse a connection with an untagged BYE; RFC 5530 gives it
+        // a machine-readable reason.
+        if let Err(e) = self.send_greeting().await {
+            let (code, detail) = imap_failure_code(&e);
+            error!(
+                "IMAP greeting handler failed on connection {}: {}",
+                self.connection_id, e
+            );
+            let _ = self.status_tx.send(format!(
+                "[ERROR] IMAP connection {} refused with BYE [{}]: {}",
+                self.connection_id, code, e
+            ));
+            let bye = format!("* BYE [{}] {}\r\n", code, detail);
+            let _ = self.send_response(bye.as_bytes()).await;
+            // `send_response` flushes; returning drops the session and closes the socket.
+            return Ok(());
+        }
 
         // Main command loop
         loop {
@@ -219,14 +236,23 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
 
                     // Parse and handle IMAP command
                     if let Err(e) = self.handle_command(&line).await {
-                        error!("Error handling IMAP command: {}", e);
-                        let _ = self
-                            .status_tx
-                            .send(format!("[ERROR] IMAP command error: {}", e));
+                        // NO, not BAD. BAD means "I did not understand the command", which
+                        // invites the client to give up on the command permanently; a backend
+                        // failure is a refusal to execute a command we understood fine. The
+                        // tag is echoed so the client can correlate, and the RFC 5530 code
+                        // tells it whether retrying is worth anything.
+                        let (code, detail) = imap_failure_code(&e);
+                        error!(
+                            "Error handling IMAP command on connection {}: {}",
+                            self.connection_id, e
+                        );
+                        let _ = self.status_tx.send(format!(
+                            "[ERROR] IMAP connection {} refusing command with NO [{}]: {}",
+                            self.connection_id, code, e
+                        ));
 
-                        // Send BAD response
                         let (tag, _, _) = parse_imap_command(&line);
-                        let error_response = format!("{} BAD Error processing command\r\n", tag);
+                        let error_response = format!("{} NO [{}] {}\r\n", tag, code, detail);
                         let _ = self.send_response(error_response.as_bytes()).await;
                     }
 
@@ -517,6 +543,30 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
             .send(format!("[TRACE] IMAP sent {} bytes", data.len()));
 
         Ok(())
+    }
+}
+
+/// The RFC 5530 response code and human text to use when the LLM backend fails us.
+///
+/// `UNAVAILABLE` is defined as "temporary failure because a subsystem is down" and is the
+/// signal a client should read as "retry later"; it is what capacity exhaustion deserves.
+/// Anything else - the backend refusing, timing out, or answering with something we cannot
+/// parse - is reported as `SERVERBUG`, which does not invite an immediate retry loop.
+///
+/// Both are refusals. Neither can be confused with success, which is the point: an `OK` here
+/// would tell the client the command was carried out.
+#[cfg(feature = "imap")]
+fn imap_failure_code(err: &anyhow::Error) -> (&'static str, String) {
+    // Response text is a single line; a newline in the error would forge a second response.
+    let sanitized = crate::utils::truncate::truncate_for_log(&err.to_string(), 200)
+        .replace(['\r', '\n'], " ");
+    if crate::llm::is_overload_error(err) {
+        (
+            "UNAVAILABLE",
+            format!("netget: backend at capacity, retry later ({})", sanitized),
+        )
+    } else {
+        ("SERVERBUG", format!("netget: {}", sanitized))
     }
 }
 

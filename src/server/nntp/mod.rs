@@ -140,14 +140,31 @@ impl NntpServer {
                                     }
                                 }
                                 Err(e) => {
+                                    // RFC 3977 5.1: the initial greeting may be `400 service
+                                    // temporarily unavailable`, after which the server closes.
+                                    // Writing nothing left the client blocked reading a
+                                    // greeting line that was never coming.
                                     error!(
                                         "NNTP greeting LLM error on connection {}: {}",
                                         connection_id, e
                                     );
+                                    let line = nntp_greeting_failure_line(&e);
                                     let _ = status_clone.send(format!(
-                                        "[ERROR] NNTP greeting LLM error on connection {}: {}",
-                                        connection_id, e
+                                        "[ERROR] NNTP connection {} refused: {}",
+                                        connection_id,
+                                        line.trim_end()
                                     ));
+                                    {
+                                        let mut write = write_half_arc.lock().await;
+                                        let _ = write.write_all(line.as_bytes()).await;
+                                        let _ = write.flush().await;
+                                        let _ = write.shutdown().await;
+                                    }
+                                    state_clone
+                                        .remove_connection_from_server(server_id, connection_id)
+                                        .await;
+                                    let _ = status_clone.send("__UPDATE_UI__".to_string());
+                                    return;
                                 }
                             }
 
@@ -255,14 +272,34 @@ impl NntpServer {
                                         }
                                     }
                                     Err(e) => {
+                                        // NNTP is strictly one response line per command, so
+                                        // silence desynchronises the client for the rest of
+                                        // the session. 403 is RFC 3977's "internal fault or
+                                        // problem preventing action being taken" and is a
+                                        // refusal on every command NNTP has, AUTHINFO
+                                        // included - there is no way for this path to
+                                        // authenticate anyone or hand back an article.
                                         error!(
                                             "NNTP LLM error on connection {}: {}",
                                             connection_id, e
                                         );
+                                        let (reply, close) = nntp_command_failure_line(&e);
                                         let _ = status_clone.send(format!(
-                                            "[ERROR] NNTP LLM error on connection {}: {}",
-                                            connection_id, e
+                                            "[ERROR] NNTP connection {} replying: {}",
+                                            connection_id,
+                                            reply.trim_end()
                                         ));
+                                        {
+                                            let mut write = write_half_arc.lock().await;
+                                            let _ = write.write_all(reply.as_bytes()).await;
+                                            let _ = write.flush().await;
+                                            if close {
+                                                let _ = write.shutdown().await;
+                                            }
+                                        }
+                                        if close {
+                                            break;
+                                        }
                                     }
                                 }
 
@@ -293,5 +330,46 @@ impl NntpServer {
             .await;
 
         Ok(local_addr)
+    }
+}
+
+/// Sanitise an error for use as the free text of a single NNTP response line.
+///
+/// A response is one CRLF-terminated line, so an embedded newline in the error would forge a
+/// second response and desynchronise the client for the rest of the session.
+fn nntp_reason(err: &anyhow::Error) -> String {
+    crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ")
+}
+
+/// The greeting to write when the LLM backend cannot produce one.
+///
+/// RFC 3977 5.1 defines exactly two failure greetings: 400 (temporarily unavailable) and 502
+/// (permanently unavailable). Neither can be mistaken for the 200/201 that means "ready", so
+/// a client can never read this as a usable session.
+fn nntp_greeting_failure_line(err: &anyhow::Error) -> String {
+    let reason = nntp_reason(err);
+    if crate::llm::is_overload_error(err) {
+        format!("400 netget: backend at capacity, retry later ({reason})\r\n")
+    } else {
+        format!("400 netget: service temporarily unavailable ({reason})\r\n")
+    }
+}
+
+/// The response line for a command the LLM backend failed to answer, and whether to close.
+///
+/// 403 is RFC 3977's generic "internal fault or problem preventing action being taken" and
+/// leaves the session usable, which is what a one-off failure deserves. Capacity exhaustion
+/// gets 400 instead - "service discontinued", which per RFC 3977 3.1 the server follows by
+/// closing the connection - because telling a client to come back later is more useful than
+/// letting it hammer a backend that is already saturated.
+fn nntp_command_failure_line(err: &anyhow::Error) -> (String, bool) {
+    let reason = nntp_reason(err);
+    if crate::llm::is_overload_error(err) {
+        (
+            format!("400 netget: backend at capacity, retry later ({reason})\r\n"),
+            true,
+        )
+    } else {
+        (format!("403 netget: {reason}\r\n"), false)
     }
 }

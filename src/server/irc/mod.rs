@@ -195,9 +195,35 @@ impl IrcServer {
                                         }
                                     }
                                     Err(e) => {
-                                        error!("IRC LLM call failed: {}", e);
-                                        let _ =
-                                            status_clone.send(format!("✗ IRC LLM error: {}", e));
+                                        // Silence here is worse than it looks: a client that
+                                        // has sent NICK/USER blocks until it gives up, because
+                                        // registration only completes on numeric 001. 400
+                                        // (ERR_UNKNOWNERROR) is the numeric reserved for
+                                        // exactly this - a command the server understood and
+                                        // could not carry out - and it can never be mistaken
+                                        // for a registration, a JOIN or a PRIVMSG.
+                                        error!(
+                                            "IRC LLM call failed on connection {}: {}",
+                                            connection_id, e
+                                        );
+                                        let command = irc_command_token(&line);
+                                        let (reply, close) = irc_failure_reply(&command, &e);
+                                        let _ = status_clone.send(format!(
+                                            "[ERROR] IRC connection {} replying: {}",
+                                            connection_id,
+                                            reply.trim_end()
+                                        ));
+                                        {
+                                            let mut write = write_half_arc.lock().await;
+                                            let _ = write.write_all(reply.as_bytes()).await;
+                                            let _ = write.flush().await;
+                                            if close {
+                                                let _ = write.shutdown().await;
+                                            }
+                                        }
+                                        if close {
+                                            break;
+                                        }
                                     }
                                 }
                                 line.clear();
@@ -223,5 +249,64 @@ impl IrcServer {
             .await;
 
         Ok(local_addr)
+    }
+}
+
+/// The command token of an IRC message, uppercased, for echoing back in a numeric.
+///
+/// Handles the optional `:prefix` clients are allowed to send, and falls back to `*` for a
+/// line with nothing usable in it - a numeric with a missing parameter is worse than a vague
+/// one, because it changes the arity the client parses.
+fn irc_command_token(line: &str) -> String {
+    let trimmed = line.trim();
+    let without_prefix = if let Some(rest) = trimmed.strip_prefix(':') {
+        rest.split_once(' ').map(|(_, r)| r).unwrap_or("")
+    } else {
+        trimmed
+    };
+    let token: String = without_prefix
+        .split_whitespace()
+        .next()
+        .unwrap_or("*")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if token.is_empty() {
+        "*".to_string()
+    } else {
+        token.to_uppercase()
+    }
+}
+
+/// What to send an IRC client when the LLM backend fails, and whether to close the link.
+///
+/// Numeric 400 (`ERR_UNKNOWNERROR`) is the code reserved for "an error the server has no more
+/// specific numeric for", carrying the offending command as a parameter. It is not 421
+/// (`ERR_UNKNOWNCOMMAND`), which would tell the client the command does not exist and stop it
+/// ever retrying, and it is not any of the registration numerics, so a client waiting on 001
+/// cannot mistake it for a completed registration.
+///
+/// A capacity failure is transient, so the link survives and the client may try again. Any
+/// other failure means the server cannot answer anything at all, and IRC's honest way to say
+/// that is `ERROR` followed by closing the link - which is also what unblocks a client that is
+/// mid-registration instead of leaving it on a socket that will never speak again.
+fn irc_failure_reply(command: &str, err: &anyhow::Error) -> (String, bool) {
+    // A numeric is one CRLF-terminated line and its trailing parameter runs to end of line, so
+    // an embedded newline in the error would forge a second message.
+    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
+    if crate::llm::is_overload_error(err) {
+        (
+            format!(
+                ":netget 400 * {command} :netget: backend at capacity, retry later ({reason})\r\n"
+            ),
+            false,
+        )
+    } else {
+        (
+            format!(
+                ":netget 400 * {command} :netget: {reason}\r\nERROR :Closing link: netget backend unavailable\r\n"
+            ),
+            true,
+        )
     }
 }

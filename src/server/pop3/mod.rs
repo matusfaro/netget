@@ -186,7 +186,7 @@ impl Pop3Session {
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        use tokio::io::{AsyncBufReadExt, BufReader};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
         let (read_half, write_half) = tokio::io::split(stream);
         let mut reader = BufReader::new(read_half);
@@ -216,9 +216,23 @@ impl Pop3Session {
             Ok(SessionControl::Close) => return Ok(()),
             Ok(SessionControl::Continue) => {}
             Err(e) => {
-                error!("Failed to send POP3 greeting: {}", e);
-                let _ = status_tx.send(format!("[ERROR] POP3 greeting failed: {}", e));
-                return Err(e);
+                // A POP3 client waits for a banner before saying anything, so dropping the
+                // socket here left it blocked until its own timeout. RFC 1939 allows the
+                // greeting to be `-ERR`, and RFC 2449 gives the reason a machine-readable code.
+                error!(
+                    "Failed to send POP3 greeting on connection {}: {}",
+                    connection_id, e
+                );
+                let reply = pop3_failure_reply(&e);
+                let _ = status_tx.send(format!(
+                    "[ERROR] POP3 connection {} refused: {}",
+                    connection_id,
+                    reply.trim_end()
+                ));
+                let mut writer = write_half.lock().await;
+                let _ = writer.write_all(reply.as_bytes()).await;
+                let _ = writer.flush().await;
+                return Ok(());
             }
         }
 
@@ -270,8 +284,24 @@ impl Pop3Session {
                             break;
                         }
                         Err(e) => {
-                            error!("Failed to process POP3 command: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] POP3 command failed: {}", e));
+                            // Answer before hanging up. Silence here is indistinguishable from
+                            // a hung server, and for USER/PASS it is worse than that: the
+                            // client cannot tell a refused login from a lost connection.
+                            // `-ERR` is a refusal on every command POP3 has, so this fails
+                            // closed by construction - there is no `+OK` on this path.
+                            error!(
+                                "Failed to process POP3 command on connection {}: {}",
+                                connection_id, e
+                            );
+                            let reply = pop3_failure_reply(&e);
+                            let _ = status_tx.send(format!(
+                                "[ERROR] POP3 connection {} replying: {}",
+                                connection_id,
+                                reply.trim_end()
+                            ));
+                            let mut writer = write_half.lock().await;
+                            let _ = writer.write_all(reply.as_bytes()).await;
+                            let _ = writer.flush().await;
                             break;
                         }
                     }
@@ -345,6 +375,31 @@ impl Pop3Session {
         }
 
         Ok(control)
+    }
+}
+
+/// The `-ERR` line to write when the LLM backend fails, RFC 2449 extended response code
+/// included so the client can tell "come back later" from "this is broken".
+///
+/// `[SYS/TEMP]` is the retryable one and is reserved for capacity exhaustion - the same split
+/// HTTP makes between 503 and 500. Everything else gets `[SYS/PERM]`, which does not invite an
+/// immediate retry loop against a backend that is down.
+///
+/// Every branch is `-ERR`. POP3 has no response that both refuses and looks like success, so
+/// there is no way for this path to authenticate anybody or hand out a message.
+#[cfg(feature = "pop3")]
+fn pop3_failure_reply(err: &anyhow::Error) -> String {
+    // The reply is one line; a newline in the error text would forge a second response, and a
+    // leading `.` would terminate a multiline block.
+    let sanitized = crate::utils::truncate::truncate_for_log(&err.to_string(), 200)
+        .replace(['\r', '\n'], " ");
+    if crate::llm::is_overload_error(err) {
+        format!(
+            "-ERR [SYS/TEMP] netget: backend at capacity, retry later ({})\r\n",
+            sanitized
+        )
+    } else {
+        format!("-ERR [SYS/PERM] netget: {}\r\n", sanitized)
     }
 }
 

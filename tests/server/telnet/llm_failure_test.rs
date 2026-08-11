@@ -1,0 +1,80 @@
+//! What a Telnet client gets when the LLM backend fails: a plain notice on its own line.
+//!
+//! Telnet is where "send a protocol-appropriate error" has the least to work with. There is no
+//! status code, no framing and no transaction id - it is an unstructured byte stream with a
+//! human on the other end. So the protocol-appropriate answer is literally a sentence, written
+//! on its own CRLF-delimited line so it cannot be mistaken for the output of whatever the user
+//! typed, and prefixed `[netget]` so it is clearly the server speaking rather than the
+//! simulated system.
+//!
+//! Silence would be the wrong call here even though the protocol has no error frame, because
+//! unlike bare UDP there is a connection and a human waiting on it: a Telnet session that
+//! stops answering is indistinguishable from one that has hung.
+
+#![cfg(feature = "telnet")]
+
+use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+
+#[tokio::test]
+async fn test_telnet_writes_a_notice_when_llm_fails() -> E2EResult<()> {
+    let prompt = "listen on port {AVAILABLE_PORT} via telnet. Echo back what you receive";
+
+    let config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("via telnet")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "Telnet",
+                    "instruction": "Echo back what you receive"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+        // No rule for `telnet_message_received`, so every line fails.
+    });
+
+    let server = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+
+    write_half.write_all(b"hello\r\n").await?;
+    write_half.flush().await?;
+
+    // The notice opens with CRLF so it starts on a fresh line; skip that empty line.
+    let notice = loop {
+        let mut line = String::new();
+        let n = tokio::time::timeout(Duration::from_secs(20), reader.read_line(&mut line))
+            .await
+            .map_err(|_| {
+                "No Telnet output within 20s - the server went silent on LLM failure, which is \
+                 the exact defect this test exists to catch"
+            })??;
+        if n == 0 {
+            return Err("Telnet connection closed without writing anything".into());
+        }
+        if !line.trim().is_empty() {
+            break line;
+        }
+    };
+
+    println!("Telnet notice: {}", notice.trim());
+    assert!(
+        notice.trim_start().starts_with("[netget]"),
+        "expected a [netget] notice telling the user the server could not answer, got: {notice}"
+    );
+    assert!(
+        !notice.contains("hello"),
+        "the notice must not look like the echo the handler would have produced: {notice}"
+    );
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}

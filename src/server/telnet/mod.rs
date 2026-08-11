@@ -131,9 +131,24 @@ impl TelnetServer {
                                         }
                                     }
                                     Err(e) => {
-                                        error!("Telnet greeting handler failed: {}", e);
-                                        let _ = status_clone
-                                            .send(format!("✗ Telnet greeting error: {}", e));
+                                        // The client asked for a banner and is sitting at a
+                                        // blank screen. Telnet has no error frame - it is a
+                                        // byte stream with a human on the other end - so the
+                                        // protocol-appropriate answer is a plain notice line.
+                                        error!(
+                                            "Telnet greeting handler failed on connection {}: {}",
+                                            connection_id, e
+                                        );
+                                        let notice = telnet_failure_notice(&e);
+                                        let _ = status_clone.send(format!(
+                                            "[ERROR] Telnet connection {} notice: {}",
+                                            connection_id,
+                                            notice.trim_end()
+                                        ));
+                                        use tokio::io::AsyncWriteExt;
+                                        let mut write = write_half_arc.lock().await;
+                                        let _ = write.write_all(notice.as_bytes()).await;
+                                        let _ = write.flush().await;
                                     }
                                 }
                             }
@@ -272,9 +287,25 @@ impl TelnetServer {
                                         }
                                     }
                                     Err(e) => {
-                                        error!("Telnet LLM call failed: {}", e);
-                                        let _ =
-                                            status_clone.send(format!("✗ Telnet LLM error: {}", e));
+                                        // Same reasoning as the greeting: a Telnet client that
+                                        // sent a line and gets nothing back cannot tell a
+                                        // broken server from a slow one. A notice is not a
+                                        // prompt and not a shell result, so nothing downstream
+                                        // can read it as the command having run.
+                                        error!(
+                                            "Telnet LLM call failed on connection {}: {}",
+                                            connection_id, e
+                                        );
+                                        let notice = telnet_failure_notice(&e);
+                                        let _ = status_clone.send(format!(
+                                            "[ERROR] Telnet connection {} notice: {}",
+                                            connection_id,
+                                            notice.trim_end()
+                                        ));
+                                        use tokio::io::AsyncWriteExt;
+                                        let mut write = write_half_arc.lock().await;
+                                        let _ = write.write_all(notice.as_bytes()).await;
+                                        let _ = write.flush().await;
                                     }
                                 }
                                 line.clear();
@@ -329,5 +360,24 @@ impl TelnetServer {
         _server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         anyhow::bail!("Telnet feature not enabled")
+    }
+}
+
+/// The line to print when the LLM backend fails.
+///
+/// Telnet is an unstructured byte stream: there is no status code to send and no framing a
+/// client could key off, so the only useful thing to do is tell whoever is on the other end,
+/// in words, that the server could not answer - and to say so on its own line so it cannot be
+/// mistaken for the output of whatever they typed.
+///
+/// CRLF because a raw Telnet client is usually in a mode where a bare LF does not return the
+/// carriage, which would leave the message stair-stepping across the terminal.
+#[cfg(feature = "telnet")]
+fn telnet_failure_notice(err: &anyhow::Error) -> String {
+    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
+    if crate::llm::is_overload_error(err) {
+        format!("\r\n[netget] backend at capacity, try again shortly ({reason})\r\n")
+    } else {
+        format!("\r\n[netget] cannot answer right now: {reason}\r\n")
     }
 }
