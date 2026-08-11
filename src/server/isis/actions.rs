@@ -11,6 +11,37 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
 
+/// Name of the loopback interface on this platform.
+///
+/// BSD-derived systems (macOS included) call it `lo0`; Linux calls it `lo`. IS-IS used
+/// to hardcode `"lo"`, so on macOS its declared default named a device that does not
+/// exist and a start with no explicit `interface` could only ever fail with
+/// `no such capture device 'lo'` — a worse diagnosis than the truth, and one that would
+/// mislead anyone who did have capture rights. ARP, DataLink and ICMP each carry this
+/// same constant; IS-IS was missed, exactly as it was missed for the
+/// startup-reports-failure fix (see this protocol's CLAUDE.md).
+///
+/// Loopback remains a poor place to actually run IS-IS — nothing speaks it there — but a
+/// default that cannot resolve is not a useful way to say so.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+const DEFAULT_LOOPBACK_INTERFACE: &str = "lo0";
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+)))]
+const DEFAULT_LOOPBACK_INTERFACE: &str = "lo";
+
 pub struct IsisProtocol;
 
 impl IsisProtocol {
@@ -23,7 +54,9 @@ impl IsisProtocol {
 impl Protocol for IsisProtocol {
     fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
         // IS-IS uses interface-based binding (loopback by default)
-        Some(crate::protocol::BindingDefaults::interface_based("lo"))
+        Some(crate::protocol::BindingDefaults::interface_based(
+            DEFAULT_LOOPBACK_INTERFACE,
+        ))
     }
 
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
