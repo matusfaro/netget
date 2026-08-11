@@ -16,6 +16,61 @@ use std::time::Instant; // Always import for DatabaseInstance fields
 
 use crate::state::{ClientId, ServerId};
 
+/// Path value that marks an in-memory (non-file-backed) database.
+pub const MEMORY_DATABASE_PATH: &str = ":memory:";
+
+/// Longest accepted database name.
+pub const MAX_DATABASE_NAME_LEN: usize = 64;
+
+/// Validate a database name supplied by the model.
+///
+/// The name is not just a label: `create_database` turns it into a filesystem path
+/// (`./netget_db_<name>.db`) that `delete_database` later `remove_file`s. A name
+/// containing `/`, `..`, a NUL, or a leading `/` therefore reads and *destroys* files
+/// outside the working directory. Generated text must never reach a path builder
+/// unchecked, so the name is checked against a strict allowlist and **rejected** rather
+/// than sanitised — a silently rewritten name would make the model's own bookkeeping
+/// (it refers to databases by name) disagree with what exists on disk.
+pub fn validate_database_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!(
+            "Invalid database name: name must not be empty. \
+             Allowed: 1-{} characters from A-Z, a-z, 0-9, '_' and '-'.",
+            MAX_DATABASE_NAME_LEN
+        );
+    }
+    if name.len() > MAX_DATABASE_NAME_LEN {
+        anyhow::bail!(
+            "Invalid database name '{}': {} bytes exceeds the {}-byte limit.",
+            name,
+            name.len(),
+            MAX_DATABASE_NAME_LEN
+        );
+    }
+    if let Some(bad) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || *c == '_' || *c == '-'))
+    {
+        anyhow::bail!(
+            "Invalid database name '{}': character {:?} is not allowed. \
+             A database name may contain only A-Z, a-z, 0-9, '_' and '-' \
+             (it becomes the filename './netget_db_<name>.db').",
+            name,
+            bad
+        );
+    }
+    Ok(())
+}
+
+/// The one filesystem location a file-backed database of this name may occupy.
+///
+/// Returns an error for any name [`validate_database_name`] rejects, so callers cannot
+/// build the path first and validate later.
+pub fn database_file_path(name: &str) -> anyhow::Result<String> {
+    validate_database_name(name)?;
+    Ok(format!("./netget_db_{}.db", name))
+}
+
 /// Unique identifier for a database instance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DatabaseId(u32);
@@ -247,8 +302,13 @@ impl DatabaseConnection {
     }
 
     /// Execute a SQL query and return results as JSON
+    ///
+    /// The connection mutex is taken with `unwrap_or_else(|e| e.into_inner())` rather than
+    /// `unwrap()`: a panic anywhere under this lock would otherwise poison it permanently
+    /// and every later query on this database — including the ones that would report the
+    /// problem — would panic in turn. The `Connection` itself stays usable.
     pub fn execute_query(&mut self, sql: &str) -> Result<QueryResult> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         // Record query execution
         self.instance.record_query();
@@ -320,7 +380,7 @@ impl DatabaseConnection {
 
     /// Refresh table schemas
     pub fn refresh_schema(&mut self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         self.instance.refresh_schema(&conn)
     }
 }
@@ -413,6 +473,16 @@ impl DatabaseManager {
         owner: DatabaseOwner,
         init_sql: Option<&str>,
     ) -> Result<()> {
+        // Defence in depth: the name reaches this point from a model-authored action, and
+        // `delete_database` will `remove_file` whatever path is recorded here. Validate at
+        // the boundary that owns the filesystem effect, not only at the caller — the
+        // caller's own check is one refactor away from being skipped.
+        //
+        // Only the *name* is constrained. `path` is a Rust-caller parameter (tests open
+        // databases at explicit temp paths) and no model-authored value reaches it except
+        // through `database_file_path`, which validates the name first.
+        validate_database_name(&name)?;
+
         // Create database instance
         let instance = DatabaseInstance::new(id, name, path, owner);
 
@@ -422,7 +492,7 @@ impl DatabaseManager {
         // Execute initialization SQL if provided
         if let Some(sql) = init_sql {
             // Use execute_batch for multi-statement SQL
-            let db_conn = conn.conn.lock().unwrap();
+            let db_conn = conn.conn.lock().unwrap_or_else(|e| e.into_inner());
             db_conn.execute_batch(sql)?;
             drop(db_conn);
         }

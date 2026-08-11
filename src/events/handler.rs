@@ -1623,11 +1623,27 @@ impl EventHandler {
             } => {
                 use crate::state::DatabaseOwner;
 
+                // The name becomes a filesystem path (`./netget_db_<name>.db`) that
+                // `delete_database` later removes, so a model-supplied `../` or absolute
+                // path would write and destroy files outside the working directory.
+                // Reject, never sanitise: a rewritten name would leave the model referring
+                // to a database that does not exist under that name.
+                if let Err(e) = crate::state::sqlite::validate_database_name(&name) {
+                    let _ = status_tx.send(format!("[ERROR] {}", e));
+                    return Ok(());
+                }
+
                 // Construct path based on is_memory flag
                 let db_path = if is_memory {
-                    ":memory:".to_string()
+                    crate::state::sqlite::MEMORY_DATABASE_PATH.to_string()
                 } else {
-                    format!("./netget_db_{}.db", name)
+                    match crate::state::sqlite::database_file_path(&name) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            let _ = status_tx.send(format!("[ERROR] {}", e));
+                            return Ok(());
+                        }
+                    }
                 };
 
                 // Determine owner (default to global)
