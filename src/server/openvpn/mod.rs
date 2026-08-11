@@ -201,10 +201,7 @@ impl OpenvpnServer {
             let frame = match ControlFrame::parse(datagram) {
                 Ok(f) => f,
                 Err(e) => {
-                    debug!(
-                        "OpenVPN: malformed {:?} from {}: {}",
-                        opcode, peer_addr, e
-                    );
+                    debug!("OpenVPN: malformed {:?} from {}: {}", opcode, peer_addr, e);
                     continue;
                 }
             };
@@ -231,8 +228,7 @@ impl OpenvpnServer {
     /// Drop peers that have gone quiet, so a scan cannot grow the peer table
     /// without bound and hold the `MAX_PEERS` slots forever.
     async fn sweep_loop(&self, app_state: Arc<AppState>, server_id: crate::state::ServerId) {
-        let mut ticker =
-            tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
         ticker.tick().await; // fires immediately; skip it
 
         loop {
@@ -299,7 +295,10 @@ impl OpenvpnServer {
                             .await;
                     }
                     PeerAdmission::Rejected => {
-                        trace!("OpenVPN: ignoring reset retransmit from rejected {}", peer_addr);
+                        trace!(
+                            "OpenVPN: ignoring reset retransmit from rejected {}",
+                            peer_addr
+                        );
                     }
                 }
                 self.peer_manager.touch(&peer_addr).await;
@@ -480,7 +479,10 @@ impl OpenvpnServer {
 
         if let Err(e) = self.socket.send_to(&reply, peer_addr).await {
             error!("OpenVPN: failed to answer {}: {}", peer_addr, e);
-            let _ = status_tx.send(format!("[ERROR] OpenVPN: reply to {} failed: {}", peer_addr, e));
+            let _ = status_tx.send(format!(
+                "[ERROR] OpenVPN: reply to {} failed: {}",
+                peer_addr, e
+            ));
             return;
         }
 
@@ -518,9 +520,7 @@ impl OpenvpnServer {
             "OpenVPN: answered {} with HARD_RESET_SERVER_V2 ({} bytes){}",
             peer_addr,
             reply.len(),
-            reason
-                .map(|r| format!(" - {}", r))
-                .unwrap_or_default()
+            reason.map(|r| format!(" - {}", r)).unwrap_or_default()
         );
     }
 

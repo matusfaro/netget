@@ -39,8 +39,7 @@ pub const CAPTURED_CLIENT_RESET_V2: &str = "38090a7265e64d55ee0000000000";
 ///
 /// On receiving it the client logged
 /// `TLS: Initial packet from [AF_INET]127.0.0.1:11941, sid=44045c9b 5510b914`.
-pub const CAPTURED_SERVER_RESET_V2: &str =
-    "4044045c9b5510b9140100000000f3bcd18111a444d700000000";
+pub const CAPTURED_SERVER_RESET_V2: &str = "4044045c9b5510b9140100000000f3bcd18111a444d700000000";
 
 /// `P_ACK_V1` that OpenVPN 2.7.4 accepted (22 bytes).
 ///
@@ -49,8 +48,7 @@ pub const CAPTURED_SERVER_RESET_V2: &str =
 pub const CAPTURED_SERVER_ACK_V1: &str = "28e28f68665dda2c98010000000167505a5dc91f20ba";
 
 /// First 64 bytes of the `P_CONTROL_V1` carrying the client's TLS ClientHello.
-pub const CAPTURED_CLIENT_CONTROL_V1: &str =
-    "20f3bcd18111a444d7010000000044045c9b5510b91400000001\
+pub const CAPTURED_CLIENT_CONTROL_V1: &str = "20f3bcd18111a444d7010000000044045c9b5510b91400000001\
      16030105dd010005d903032efac9423c4a6b6467da0684b3e4a2fbadb843d81144f0a078d32e";
 
 pub fn hex(s: &str) -> Vec<u8> {
@@ -95,7 +93,11 @@ pub fn decode_control(data: &[u8]) -> RawControl {
     let mut off = 10;
     let mut acks = Vec::new();
     for _ in 0..ack_len {
-        assert!(data.len() >= off + 4, "truncated ACK array: {}", to_hex(data));
+        assert!(
+            data.len() >= off + 4,
+            "truncated ACK array: {}",
+            to_hex(data)
+        );
         acks.push(u32::from_be_bytes(data[off..off + 4].try_into().unwrap()));
         off += 4;
     }
@@ -154,7 +156,11 @@ pub fn encode_control(
         out.extend_from_slice(&id.to_be_bytes());
     }
     if !acks.is_empty() {
-        out.extend_from_slice(&remote_session_id.expect("peer session id required with ACKs").to_be_bytes());
+        out.extend_from_slice(
+            &remote_session_id
+                .expect("peer session id required with ACKs")
+                .to_be_bytes(),
+        );
     }
     if opcode != OP_ACK_V1 {
         out.extend_from_slice(&packet_id.expect("message packet id required").to_be_bytes());

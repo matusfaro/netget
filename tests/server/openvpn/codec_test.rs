@@ -251,7 +251,10 @@ fn refuses_tls_crypt_v2_rather_than_misparsing_it() {
     // Opcode 10 = P_CONTROL_HARD_RESET_CLIENT_V3, opcode 11 = P_CONTROL_WKC_V1.
     // Everything after the session id is encrypted, so applying the plaintext
     // layout to them would yield confident nonsense.
-    for (opcode, label) in [(OP_HARD_RESET_CLIENT_V3, "HARD_RESET_CLIENT_V3"), (11u8, "WKC_V1")] {
+    for (opcode, label) in [
+        (OP_HARD_RESET_CLIENT_V3, "HARD_RESET_CLIENT_V3"),
+        (11u8, "WKC_V1"),
+    ] {
         let mut bytes = vec![opcode << 3];
         bytes.extend_from_slice(&[0xAB; 40]);
 

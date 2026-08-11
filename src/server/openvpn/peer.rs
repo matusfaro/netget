@@ -52,12 +52,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn new(
-        connection_id: ConnectionId,
-        addr: SocketAddr,
-        session_id: u64,
-        key_id: u8,
-    ) -> Self {
+    pub fn new(connection_id: ConnectionId, addr: SocketAddr, session_id: u64, key_id: u8) -> Self {
         Peer {
             connection_id,
             addr,

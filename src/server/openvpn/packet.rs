@@ -121,7 +121,10 @@ impl Opcode {
 
     /// True for the tls-crypt-v2 opcodes this server cannot decode.
     pub fn is_tls_crypt_v2(&self) -> bool {
-        matches!(self, Opcode::ControlHardResetClientV3 | Opcode::ControlWkcV1)
+        matches!(
+            self,
+            Opcode::ControlHardResetClientV3 | Opcode::ControlWkcV1
+        )
     }
 
     /// True for a client-initiated session reset.
@@ -135,7 +138,9 @@ impl Opcode {
 
 /// Split the leading byte into `(opcode, key_id)` without consuming the frame.
 pub fn parse_opcode_byte(data: &[u8]) -> Result<(Opcode, u8)> {
-    let first = *data.first().ok_or_else(|| anyhow::anyhow!("Empty packet"))?;
+    let first = *data
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Empty packet"))?;
     let raw = (first >> 3) & 0x1F;
     let opcode =
         Opcode::from_u8(raw).ok_or_else(|| anyhow::anyhow!("Unknown OpenVPN opcode: {}", raw))?;

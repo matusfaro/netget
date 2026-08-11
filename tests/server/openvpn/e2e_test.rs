@@ -356,9 +356,9 @@ async fn test_reset_reply_is_spec_correct_and_control_packets_are_acked() -> E2E
     let junk: Vec<Vec<u8>> = vec![
         vec![],
         vec![0xFF; 3],
-        hex("38090a7265e64d55eeff"),               // ACK length 255, nothing behind it
+        hex("38090a7265e64d55eeff"), // ACK length 255, nothing behind it
         hex("50aabbccddeeff00112233445566778899"), // tls-crypt-v2 reset
-        vec![0x20],                                // control opcode, nothing else
+        vec![0x20],                  // control opcode, nothing else
     ];
     for bytes in &junk {
         let _ = sock.send_to(bytes, &addr).await;
