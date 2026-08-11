@@ -2,7 +2,8 @@
 #
 # A .rs file that no `mod` statement names is never compiled, never linted, and never
 # formatted — silently. That cost this repo 29 test functions in three protocol suites plus
-# two whole test trees (see .github/workflows/ci.yml, job `module-reachability`).
+# two whole test trees. Enforced by .github/scripts/check-module-reachability.sh, run from the
+# `orphaned-tests` job in .github/workflows/ci.yml.
 #
 # Anything listed here is exempt from BOTH gates in that job: the reachability check and the
 # rustfmt sweep. That is the whole point — these files are dead, and formatting dead code
@@ -17,16 +18,10 @@
 #
 # The list should only ever shrink.
 
-# --- Dead client protocols -------------------------------------------------------------
-# `src/client/mod.rs` has these two commented out ("temporarily disabled (API fixes needed)"
-# / "(needs API updates)"). The sources were left on disk, compile against nothing, and are
-# the only unformatted code in src/. Remove these entries when the clients are either
-# deleted or repaired and re-declared. Leaving dead modules on disk is how `Http2Server`
-# stayed dead for months.
-src/client/rss/mod.rs
-src/client/rss/actions.rs
-src/client/tftp/mod.rs
-src/client/tftp/actions.rs
+# The RSS and TFTP clients used to be listed here — `src/client/mod.rs` had them commented
+# out as "temporarily disabled (API fixes needed)" while their four source files sat on disk
+# compiling against nothing. They were repaired and re-declared in 6ce2c30d, so their entries
+# are gone. That is what an entry being resolved looks like.
 
 # --- Dead TUI modules ------------------------------------------------------------------
 # `src/ui/mod.rs` declares only `pub mod app;`. These two predate the rolling TUI and
