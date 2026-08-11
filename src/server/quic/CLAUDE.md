@@ -46,7 +46,7 @@ fires only when the requested port is actually below 1024.
 
 **Sync actions** (available on stream/data events)
 
-- `send_quic_data` — `data` (required)
+- `send_quic_data` — `data` (required), `encoding` (optional)
 - `wait_for_more` — accumulate rather than reply
 - `close_this_stream`
 
@@ -60,19 +60,47 @@ re-add them without an executor that owns the quinn `SendStream`.
 both send actions address a stream, and no stream exists yet. That marks the
 absence as deliberate for `tests/event_action_declarations_test.rs`.
 
-### Encoding asymmetry (read before writing prompts)
+### Stream payload encoding (symmetric)
 
-- **Inbound**: a payload of only printable ASCII/whitespace is delivered as text
-  with `encoding: "text"`; anything else is hex-encoded with `encoding: "hex"`.
-- **Outbound**: `send_quic_data.data` is written to the stream **verbatim as
-  UTF-8**. Hex is *not* decoded. `"48656c6c6f"` puts those ten ASCII characters
-  on the wire, not the five bytes they spell.
+Both directions carry an explicit `encoding` field beside the payload string. There
+is deliberately no sniffing: `"48656c6c6f"` is simultaneously valid text and valid
+hex, and only the sender knows which it means.
 
-So binary payloads cannot be sent, and a hex-encoded inbound payload cannot be
-echoed back unchanged. This asymmetry is stated in the action and event parameter
-descriptions the model receives. (It is the same defect shape as `send_tcp_data`,
-except here the documentation matches the executor instead of promising hex
-decoding that never happens.)
+| Direction | Field | `encoding` |
+|---|---|---|
+| Inbound (`quic_data_received`) | `data` | `"utf8"` when every byte is ASCII graphic/whitespace, otherwise `"hex"` |
+| Outbound (`send_quic_data`) | `data` | omitted / `"utf8"` (characters as-is, the default), `"hex"`, `"base64"` |
+
+`"text"` is still accepted on the outbound side as a synonym for `"utf8"`, because
+that is the name the inbound event used before the pair was made symmetric.
+
+Echoing is therefore a pass-through: hand the event's `data` **and** its `encoding`
+straight to `send_quic_data` and the exact received bytes go back out.
+`decode_quic_payload` / `encode_quic_payload` (`actions.rs`) are the bijection, and
+`quic_payload_encoding_round_trips` pins it over every byte value.
+
+**This used to be broken.** Inbound hex-encoded any non-printable payload while
+`send_quic_data` wrote its `data` string verbatim as UTF-8 with no `encoding` field
+at all, so a QUIC echo server could not echo binary — the same defect shape as
+`send_tcp_data` before `d70bb5b5`, honestly documented rather than lied about, but
+equally broken. `test_quic_binary_echo_round_trip` is the regression test: eight
+bytes that are non-printable *and* invalid UTF-8 go in, arrive as hex, are echoed
+back with `encoding: "hex"`, and are asserted byte-for-byte on the client.
+
+## Startup parameters
+
+The shared TLS list from `tls_cert_manager::get_tls_startup_parameters()` **minus
+`tls_enabled`**: `cert_path`, `key_path`, `common_name`, `san_dns_names`,
+`validity_days`, `organization`, `organizational_unit`. All seven are read.
+
+QUIC is TLS 1.3 unconditionally (RFC 9001), so a `tls_enabled` switch has no meaning
+here — and it used to gate everything else. `extract_tls_config_from_params` returns
+`Ok(None)` when `tls_enabled` is absent or false, and `spawn` then fell back to
+`generate_default_tls_config()`: an operator-supplied `cert_path`/`key_path` was
+accepted, silently discarded, and replaced with a fresh self-signed certificate.
+`spawn` now reads the parameters directly and calls `create_tls_config`, and passing
+`tls_enabled` produces a clean "undeclared startup parameter" error naming the keys
+that do exist.
 
 ## Architecture
 
@@ -119,7 +147,6 @@ never updated — the count does not move as streams open and close.
   Filter traffic with a script handler instead.
 - Unidirectional streams, DATAGRAMs, 0-RTT, connection migration, stream
   priorities
-- Binary payloads in either direction (see the encoding asymmetry)
 - Unbounded `wait_for_more` accumulation: no size cap, so a hostile peer can grow
   the buffer indefinitely
 - A live `stream_count` in `ProtocolConnectionInfo`
@@ -147,8 +174,9 @@ design invariant. What used to make this one grate was the shared name, which th
 
 ## Testing
 
-`tests/server/quic/e2e_test.rs` — 3 mocked scenarios (echo, custom response,
-multiple streams), declared in `tests/server/quic/mod.rs`. They use a raw
+`tests/server/quic/e2e_test.rs` — 4 mocked scenarios (echo, custom response,
+multiple streams, **binary round trip**) plus two pure-function tests (keyword
+resolution, payload codec), declared in `tests/server/quic/mod.rs`. They use a raw
 `quinn::Endpoint` client, which is why they pass despite the absence of HTTP/3
 framing; nothing in the suite exercises a real HTTP/3 client.
 

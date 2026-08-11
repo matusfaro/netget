@@ -498,17 +498,14 @@ impl QuicServer {
                 return; // Stream not found
             };
 
-            // Format data for event parameter. The representation switches
-            // between text and hex depending on the payload, so say which one
-            // the model is looking at instead of leaving it to guess.
-            let is_printable = all_data
-                .iter()
-                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace());
-            let (data_str, encoding) = if is_printable {
-                (String::from_utf8_lossy(&all_data).to_string(), "text")
-            } else {
-                (hex::encode(&all_data), "hex")
-            };
+            // Format data for the event parameter. Printable ASCII is passed
+            // through as text, anything else is hex-encoded. `encoding` names
+            // which of the two the model is looking at, and uses the same
+            // vocabulary send_quic_data accepts, so the model can echo the
+            // payload back byte-for-byte by passing both fields straight
+            // through. (It used to say "text" where the outbound side had no
+            // encoding field at all, which made binary un-echoable.)
+            let (data_str, encoding) = crate::server::quic::actions::encode_quic_payload(&all_data);
 
             // Create data received event
             let event = Event::new(

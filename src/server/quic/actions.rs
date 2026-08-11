@@ -65,7 +65,19 @@ impl QuicProtocol {
 // Implement Protocol trait (common functionality)
 impl Protocol for QuicProtocol {
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        // The shared TLS parameter list, minus `tls_enabled`.
+        //
+        // QUIC is TLS 1.3 unconditionally (RFC 9001), so a `tls_enabled` switch has no
+        // meaning here - and worse, it used to gate the others: `extract_tls_config_from_params`
+        // returns `Ok(None)` when `tls_enabled` is absent or false, so `cert_path`/`key_path`
+        // and every self-signed field were accepted, silently discarded, and a fresh default
+        // certificate generated instead. Declaring only the parameters this protocol actually
+        // reads means an operator-supplied certificate now takes effect, and a caller who
+        // passes `tls_enabled` gets a clean error naming the keys that do exist.
         crate::server::tls_cert_manager::get_tls_startup_parameters()
+            .into_iter()
+            .filter(|p| p.name != "tls_enabled")
+            .collect()
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         // Intentionally empty. `send_to_stream`, `close_stream` and
@@ -112,8 +124,19 @@ impl Protocol for QuicProtocol {
             // when the requested port is actually < 1024.
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(443))
             .implementation("quinn v0.11 raw QUIC streams with TLS 1.3 (no HTTP/3 framing layer)")
-            .llm_control("Full stream control - all bytes sent/received on bidirectional streams")
-            .e2e_testing("quinn::Endpoint client + mocked LLM, tests/server/quic/e2e_test.rs")
+            .llm_control(
+                "Full stream control - every byte sent and received on bidirectional streams. \
+                 Both directions carry an explicit `encoding` field (utf8 default, hex, \
+                 base64), so arbitrary binary payloads survive a round trip.",
+            )
+            .e2e_testing(
+                "quinn::Endpoint client + mocked LLM, tests/server/quic/e2e_test.rs. Verified: \
+                 text echo, a fixed custom response, two concurrent streams, and a binary \
+                 round trip in which the 8 bytes 00 ff fe 01 80 7f c3 28 (non-printable and \
+                 not valid UTF-8) are sent in, handed to the model as hex, echoed back through \
+                 send_quic_data with encoding=\"hex\", and asserted byte-for-byte on the \
+                 client. Not tested against any QUIC implementation other than quinn.",
+            )
             .notes(
                 "Raw QUIC streams (RFC 9000/9001), NOT an RFC 9114 HTTP/3 server: bidirectional \
                  streams under ALPN h3 with no HEADERS/DATA frames and no QPACK, so real HTTP/3 \
@@ -197,39 +220,43 @@ impl Server for QuicProtocol {
         Box::pin(async move {
             use crate::server::quic::QuicServer;
 
-            // Parse TLS configuration from startup_params (QUIC always uses TLS)
-            let tls_config = if let Some(ref params) = ctx.startup_params {
-                // For QUIC, extract TLS config or use default
-                match crate::server::tls_cert_manager::extract_tls_config_from_params(params) {
-                    Ok(Some(config)) => Some(config),
-                    Ok(None) => {
-                        // If tls_enabled is false or not set, use default for QUIC
-                        match crate::server::tls_cert_manager::generate_default_tls_config() {
-                            Ok(config) => Some(config),
-                            Err(e) => {
-                                return Err(anyhow::anyhow!(
-                                    "Failed to generate default TLS config: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("Failed to create TLS config: {}", e));
-                    }
+            // QUIC always uses TLS 1.3, so the certificate parameters are read directly
+            // rather than through `extract_tls_config_from_params`, whose `tls_enabled`
+            // gate would discard them. Every parameter declared in
+            // `get_startup_parameters` above is read here.
+            let tls_config = match ctx.startup_params.as_ref() {
+                Some(params) => {
+                    let cert_path = params.get_optional_string("cert_path")?;
+                    let key_path = params.get_optional_string("key_path")?;
+                    let common_name = params.get_optional_string("common_name")?;
+                    let san_dns_names = params.get_optional_array("san_dns_names")?.map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    });
+                    let validity_days = params.get_optional_i64("validity_days")?;
+                    let organization = params.get_optional_string("organization")?;
+                    let organizational_unit = params.get_optional_string("organizational_unit")?;
+
+                    // create_tls_config loads the files when both paths are given and
+                    // generates a self-signed certificate from the remaining fields
+                    // otherwise, so this covers both the operator-supplied and the
+                    // default case.
+                    crate::server::tls_cert_manager::create_tls_config(
+                        cert_path.as_deref(),
+                        key_path.as_deref(),
+                        common_name,
+                        san_dns_names,
+                        validity_days,
+                        organization,
+                        organizational_unit,
+                    )
+                    .map_err(|e| anyhow::anyhow!("Failed to create QUIC TLS config: {}", e))?
                 }
-            } else {
-                // Use default self-signed certificate
-                match crate::server::tls_cert_manager::generate_default_tls_config() {
-                    Ok(config) => Some(config),
-                    Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "Failed to generate default TLS config: {}",
-                            e
-                        ));
-                    }
-                }
+                None => crate::server::tls_cert_manager::generate_default_tls_config()
+                    .map_err(|e| anyhow::anyhow!("Failed to generate default TLS config: {}", e))?,
             };
+            let tls_config = Some(tls_config);
 
             QuicServer::spawn_with_llm_actions(
                 ctx.legacy_listen_addr(),
@@ -264,8 +291,109 @@ impl QuicProtocol {
             .get("data")
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
+        let encoding = action.get("encoding").and_then(|v| v.as_str());
 
-        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        Ok(ActionResult::Output(decode_quic_payload(data, encoding)?))
+    }
+}
+
+// ============================================================================
+// Stream payload encoding
+//
+// A QUIC stream carries arbitrary bytes, so both directions carry an explicit
+// `encoding` field beside the payload string. There is deliberately no sniffing:
+// "48656c6c6f" is simultaneously valid text and valid hex, and only the sender
+// knows which it means. Before this existed the two directions disagreed -
+// inbound hex-encoded any non-printable payload while outbound wrote the string
+// verbatim - so a QUIC echo server could not echo binary. Same shape as the
+// `send_tcp_data` defect fixed in d70bb5b5.
+// ============================================================================
+
+/// Turn the `data` field of `send_quic_data` into the exact bytes written to the stream,
+/// honouring the action's optional `encoding` field.
+///
+/// - absent, `"utf8"` or `"text"`: the string's UTF-8 bytes, verbatim (default)
+/// - `"hex"`: two hex digits per byte, so `"48656c6c6f"` writes the 5 bytes `Hello`
+/// - `"base64"`: standard base64, so `"SGVsbG8="` writes the same 5 bytes
+///
+/// `"text"` is accepted as a synonym for `"utf8"` because that is the name the inbound
+/// event used before this pair was made symmetric.
+pub fn decode_quic_payload(data: &str, encoding: Option<&str>) -> Result<Vec<u8>> {
+    use base64::Engine as _;
+
+    match encoding.unwrap_or("utf8") {
+        "utf8" | "text" => Ok(data.as_bytes().to_vec()),
+        "hex" => {
+            // Tolerate the whitespace / `:` grouping / `0x` prefix models often emit.
+            let cleaned: String = data
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace() && *c != ':')
+                .collect();
+            let cleaned = cleaned.strip_prefix("0x").unwrap_or(&cleaned);
+            if cleaned.len() % 2 != 0 {
+                return Err(anyhow::anyhow!(
+                    "Invalid hex in 'data': expected an even number of hex digits, got {} \
+                     ({data:?}). Each byte is two hex digits, e.g. \"48656c6c6f\" = \"Hello\".",
+                    cleaned.len()
+                ));
+            }
+            hex::decode(cleaned).map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid hex in 'data' ({data:?}): {e}. Use only 0-9/a-f, two digits per \
+                     byte. To send this string as literal text, omit 'encoding' or set it to \
+                     \"utf8\"."
+                )
+            })
+        }
+        "base64" => {
+            let cleaned: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+            base64::engine::general_purpose::STANDARD
+                .decode(&cleaned)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid base64 in 'data' ({data:?}): {e}. To send this string as \
+                         literal text, omit 'encoding' or set it to \"utf8\"."
+                    )
+                })
+        }
+        other => Err(anyhow::anyhow!(
+            "Invalid 'encoding' value {other:?}. Valid values are \"utf8\" (default, send the \
+             string's characters as-is), \"hex\" and \"base64\"."
+        )),
+    }
+}
+
+/// Render bytes received on a stream for the model, with the `encoding` name that says how
+/// to read them back.
+///
+/// Symmetric with [`decode_quic_payload`]: feeding the returned pair straight into
+/// `send_quic_data`'s `data` and `encoding` puts the original bytes back on the wire.
+pub fn encode_quic_payload(bytes: &[u8]) -> (String, &'static str) {
+    if bytes
+        .iter()
+        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+    {
+        (String::from_utf8_lossy(bytes).to_string(), "utf8")
+    } else {
+        (hex::encode(bytes), "hex")
+    }
+}
+
+/// Shared `encoding` parameter for the outbound `data` field.
+fn encoding_parameter() -> Parameter {
+    Parameter {
+        name: "encoding".to_string(),
+        type_hint: "string".to_string(),
+        description: "How to convert 'data' into the bytes written to the stream. \"utf8\" (the \
+            default when omitted) writes the characters of 'data' unchanged - use it for text. \
+            \"hex\" decodes 'data' as hex-encoded bytes, two hex digits per byte, and \
+            \"base64\" as standard base64 - use one of those for binary, e.g. {\"data\": \
+            \"48656c6c6f\", \"encoding\": \"hex\"} writes the 5 bytes 'Hello', whereas the same \
+            'data' without \"encoding\": \"hex\" writes the 10 characters 4-8-6-5-6-c-6-c-6-f. \
+            To echo a quic_data_received event back unchanged, pass its 'data' and its \
+            'encoding' straight through. No other values are accepted"
+            .to_string(),
+        required: false,
     }
 }
 
@@ -277,20 +405,22 @@ fn send_quic_data_action() -> ActionDefinition {
             raw bytes - there is no HTTP/3 framing, so if the peer expects an HTTP-shaped reply \
             you must write the full message yourself."
             .to_string(),
-        parameters: vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "Text to send. It is written to the stream verbatim as UTF-8: hex is NOT \
-                decoded, so \"48656c6c6f\" puts those 10 ASCII characters on the wire, not the 5 \
-                bytes they spell. Binary payloads therefore cannot be sent. Note the asymmetry \
-                with the inbound direction, where a non-printable payload is shown to you as hex \
-                (encoding=\"hex\") - you cannot echo such data back unchanged."
-                .to_string(),
-            required: true,
-        }],
+        parameters: vec![
+            Parameter {
+                name: "data".to_string(),
+                type_hint: "string".to_string(),
+                description: "Payload to write to the stream. Interpreted according to \
+                    'encoding': by default the characters of this string are written as-is \
+                    (UTF-8)."
+                    .to_string(),
+                required: true,
+            },
+            encoding_parameter(),
+        ],
         example: json!({
             "type": "send_quic_data",
-            "data": "Hello from QUIC\n"
+            "data": "Hello from QUIC\n",
+            "encoding": "utf8"
         }),
         log_template: Some(
             LogTemplate::new()
@@ -397,43 +527,49 @@ pub static QUIC_STREAM_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// QUIC data received event - triggered when data is received on a stream
 pub static QUIC_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("quic_data_received", "Data received on QUIC stream", json!({"type": "placeholder", "event_id": "quic_data_received"}))
-        .with_parameters(vec![
-            Parameter {
-                name: "stream_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "The stream ID this data was received on".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "The data received. Printable payloads are given verbatim as text; \
-                    anything else is hex-encoded. Check the `encoding` field before interpreting it."
-                    .to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "encoding".to_string(),
-                type_hint: "string".to_string(),
-                description: "How `data` is encoded: \"text\" (verbatim UTF-8) or \"hex\" (the \
-                    payload was not printable). send_quic_data always writes text verbatim, so \
-                    hex data cannot be echoed back unchanged."
-                    .to_string(),
-                required: true,
-            },
-        ])
-        .with_log_template(
-            LogTemplate::new()
-                .with_info("QUIC data on {stream_id}")
-                .with_debug("QUIC data received on stream {stream_id}")
-                .with_trace("QUIC data: {json_pretty(.)}"),
-        )
-        .with_actions(vec![
-            SEND_QUIC_DATA_ACTION.clone(),
-            WAIT_FOR_MORE_ACTION.clone(),
-            CLOSE_THIS_STREAM_ACTION.clone(),
-        ])
+    EventType::new(
+        "quic_data_received",
+        "Data received on QUIC stream",
+        json!({"type": "placeholder", "event_id": "quic_data_received"}),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "stream_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "The stream ID this data was received on".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "The data received on the stream. Read it according to the \
+                    'encoding' field of this event."
+                .to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "encoding".to_string(),
+            type_hint: "string".to_string(),
+            description: "How to read 'data': \"utf8\" means 'data' is the received bytes as \
+                    literal text, \"hex\" means 'data' is the received bytes hex-encoded (two \
+                    hex digits per byte, used whenever the bytes are not all printable ASCII). \
+                    To echo the received bytes back unchanged, pass the same 'data' and the same \
+                    'encoding' to send_quic_data."
+                .to_string(),
+            required: true,
+        },
+    ])
+    .with_log_template(
+        LogTemplate::new()
+            .with_info("QUIC data on {stream_id}")
+            .with_debug("QUIC data received on stream {stream_id}")
+            .with_trace("QUIC data: {json_pretty(.)}"),
+    )
+    .with_actions(vec![
+        SEND_QUIC_DATA_ACTION.clone(),
+        WAIT_FOR_MORE_ACTION.clone(),
+        CLOSE_THIS_STREAM_ACTION.clone(),
+    ])
 });
 
 /// Get QUIC event types

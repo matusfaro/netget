@@ -450,6 +450,188 @@ async fn test_quic_multiple_streams() -> E2EResult<()> {
     Ok(())
 }
 
+/// The payload codec must be a bijection: whatever `encode_quic_payload` hands the model,
+/// feeding it straight back into `decode_quic_payload` has to reproduce the original bytes.
+///
+/// This is the property that was broken. Inbound hex-encoded any non-printable payload while
+/// `send_quic_data` wrote its `data` string verbatim with no `encoding` field at all, so the
+/// two directions used different alphabets and a QUIC echo server could not echo binary.
+#[test]
+fn quic_payload_encoding_round_trips() {
+    use netget::server::quic::actions::{decode_quic_payload, encode_quic_payload};
+
+    for original in [
+        b"Hello, QUIC!".to_vec(),
+        b"line one\nline two\r\n".to_vec(),
+        // Non-printable and not valid UTF-8 in three different ways.
+        vec![0x00, 0xff, 0xfe, 0x01, 0x80, 0x7f, 0xc3, 0x28],
+        (0u8..=255).collect::<Vec<u8>>(),
+        Vec::new(),
+    ] {
+        let (data, encoding) = encode_quic_payload(&original);
+        let decoded = decode_quic_payload(&data, Some(encoding))
+            .unwrap_or_else(|e| panic!("re-decoding {encoding} payload {data:?} failed: {e}"));
+        assert_eq!(
+            decoded, original,
+            "round trip through encoding={encoding} lost bytes"
+        );
+    }
+
+    // A string that is simultaneously valid text and valid hex must follow the declared
+    // encoding, never a guess: this is why the field exists.
+    assert_eq!(
+        decode_quic_payload("48656c6c6f", None).unwrap(),
+        b"48656c6c6f".to_vec(),
+        "no 'encoding' must send the characters literally"
+    );
+    assert_eq!(
+        decode_quic_payload("48656c6c6f", Some("hex")).unwrap(),
+        b"Hello".to_vec(),
+        "encoding=hex must decode the same string to 5 bytes"
+    );
+    assert_eq!(
+        decode_quic_payload("SGVsbG8=", Some("base64")).unwrap(),
+        b"Hello".to_vec()
+    );
+
+    // Bad input is an error, not a panic and not a silent literal.
+    assert!(decode_quic_payload("xyz", Some("hex")).is_err());
+    assert!(
+        decode_quic_payload("abc", Some("hex")).is_err(),
+        "odd digits"
+    );
+    assert!(decode_quic_payload("hi", Some("rot13")).is_err());
+}
+
+/// Test QUIC binary echo: bytes that are neither printable nor valid UTF-8 must survive a
+/// full round trip through the LLM event and back out onto the stream.
+///
+/// This is the test that catches the whole encoding-asymmetry bug class. The payload is
+/// chosen so that every shortcut fails: `from_utf8_lossy` would replace 0xff/0xfe/0x80 with
+/// U+FFFD, writing `data.as_bytes()` verbatim would put the ASCII hex digits on the wire
+/// instead of the bytes, and any printable-ASCII fast path is bypassed by the 0x00.
+#[tokio::test]
+async fn test_quic_binary_echo_round_trip() -> E2EResult<()> {
+    // 0xff/0xfe can never appear in UTF-8; 0xc3 0x28 is an invalid two-byte sequence;
+    // 0x00/0x80/0x7f are non-printable. Its hex form is "00fffe01807fc328".
+    const BINARY: &[u8] = &[0x00, 0xff, 0xfe, 0x01, 0x80, 0x7f, 0xc3, 0x28];
+    const BINARY_HEX: &str = "00fffe01807fc328";
+
+    assert!(
+        std::str::from_utf8(&BINARY.to_vec()).is_err(),
+        "the test payload must not be valid UTF-8, or it proves nothing"
+    );
+
+    let config = NetGetConfig::new("Start a QUIC server on port 0")
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock.on_event("quic_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "Connection opened"}
+                ]))
+                .and()
+                .on_event("quic_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "Stream opened"}
+                ]))
+                .and()
+                // Matching on the hex string asserts the inbound half: a non-printable
+                // payload must reach the model hex-encoded, not lossily converted.
+                .on_event("quic_data_received")
+                .and_event_data_contains("data", BINARY_HEX)
+                .respond_with_actions_from_event(|event_data| {
+                    // Echo exactly the way the event documentation tells the model to:
+                    // pass 'data' and 'encoding' straight back through.
+                    let data = event_data["data"].as_str().unwrap_or_default();
+                    let encoding = event_data["encoding"].as_str().unwrap_or("utf8");
+                    assert_eq!(
+                        encoding, "hex",
+                        "a non-printable payload must be delivered with encoding=hex, got {encoding:?}"
+                    );
+                    serde_json::json!([
+                        {"type": "send_quic_data", "data": data, "encoding": encoding}
+                    ])
+                })
+                .expect_calls(1)
+                .and()
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "QUIC",
+                        "instruction": "Echo back all data received, byte for byte"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
+    let port = server.port;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let mut client_crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto
+        .dangerous()
+        .set_certificate_verifier(Arc::new(SkipServerVerification));
+    client_crypto.alpn_protocols = vec![b"h3".to_vec()];
+
+    let client_config = quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
+            .expect("Failed to create QUIC client config"),
+    ));
+
+    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())
+        .expect("Failed to create client endpoint");
+    endpoint.set_default_client_config(client_config);
+
+    let connection = timeout(
+        Duration::from_secs(10),
+        endpoint
+            .connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+            .expect("Failed to start connection"),
+    )
+    .await
+    .expect("Connection timeout")
+    .expect("Failed to complete connection");
+
+    let (mut send, mut recv) = timeout(Duration::from_secs(10), connection.open_bi())
+        .await
+        .expect("Stream open timeout")
+        .expect("Failed to open stream");
+
+    send.write_all(BINARY).await.expect("Failed to send data");
+    send.finish().expect("Failed to finish stream");
+
+    let response = timeout(Duration::from_secs(10), recv.read_to_end(1024))
+        .await
+        .expect("Read timeout")
+        .expect("Failed to read response");
+
+    assert_eq!(
+        response,
+        BINARY.to_vec(),
+        "QUIC must echo binary byte-for-byte; got {} ({:?})",
+        hex::encode(&response),
+        String::from_utf8_lossy(&response)
+    );
+
+    connection.close(0u32.into(), b"done");
+    endpoint.wait_idle().await;
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+
+    Ok(())
+}
+
 /// Certificate verifier that skips all verification (for self-signed certs)
 #[derive(Debug)]
 struct SkipServerVerification;

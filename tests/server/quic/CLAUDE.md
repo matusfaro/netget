@@ -29,6 +29,10 @@ client**, because nothing could.
   PING)
 - `test_quic_multiple_streams()`: 5 mocked calls (startup + connection opened +
   3 concurrent streams)
+- `test_quic_binary_echo_round_trip()`: 3 mocked calls (startup + connection
+  opened + stream data)
+- `quic_keyword_resolves_to_this_protocol()` and
+  `quic_payload_encoding_round_trips()` are pure functions — no server, no mock
 - Comfortably under the ~10-call-per-suite guideline
 
 Each test starts its own server for clean state; consolidating onto one server
@@ -95,6 +99,28 @@ mock responses). Against a real model (`--use-ollama`), roughly 25-30s per test.
 - **Expected**: each stream receives an echo of its own data
 - **Purpose**: stream multiplexing and concurrent per-stream state machines
 
+### 4. Binary round trip (`test_quic_binary_echo_round_trip`)
+
+- **Client**: sends `00 ff fe 01 80 7f c3 28` — non-printable, and invalid UTF-8
+  three different ways (`0xff`/`0xfe` never occur in UTF-8; `c3 28` is a broken
+  two-byte sequence)
+- **Mock**: matches on the hex form `00fffe01807fc328`, which asserts the inbound
+  half (a non-printable payload must arrive hex-encoded, not lossily converted),
+  asserts `encoding == "hex"`, then echoes `data` and `encoding` straight back
+- **Expected**: the client receives the identical 8 bytes
+- **Purpose**: this is the test for the whole encoding-asymmetry bug class. Every
+  shortcut fails it: `from_utf8_lossy` would replace three bytes with U+FFFD,
+  `data.as_bytes()` would put 16 ASCII hex digits on the wire, and a
+  printable-ASCII fast path is bypassed by the `0x00`.
+
+### 5. Payload codec (`quic_payload_encoding_round_trips`)
+
+Property test over text, binary, all 256 byte values and the empty slice:
+`decode_quic_payload(encode_quic_payload(x))  == x`. Also pins that `"48656c6c6f"`
+is sent literally with no `encoding` and as 5 bytes with `encoding: "hex"` — the
+ambiguity that makes sniffing impossible — and that bad input errors rather than
+panicking or silently falling back to literal text.
+
 ## Known Issues
 
 ### 1. TLS handshake timing
@@ -131,10 +157,9 @@ to absorb it.
 4. **Flow control** and stream priorities — untested
 5. **Large payloads** (multi-MB) — untested
 6. **Half-close semantics** — no explicit test
-7. **Binary payloads** — untestable end-to-end: inbound non-printable data
-   arrives hex-encoded but `send_quic_data` writes verbatim, so it cannot be
-   echoed back (see the encoding asymmetry in `src/server/quic/CLAUDE.md`)
-8. **`wait_for_more`** — declared, never exercised
+7. **`wait_for_more`** — declared, never exercised
+8. **Startup parameters** — `cert_path`/`key_path` and the self-signed fields are
+   read but no test supplies them
 9. **`stream_count`** in `ProtocolConnectionInfo` — known to be permanently 0,
    so there is nothing to assert yet
 
