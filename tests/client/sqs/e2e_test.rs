@@ -46,7 +46,9 @@ mod sqs_client_tests {
         println!("✅ SQS client connected and sent message successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -84,7 +86,9 @@ mod sqs_client_tests {
         println!("✅ SQS client received messages successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -125,6 +129,7 @@ mod sqs_client_tests {
         println!("✅ SQS client worked with LocalStack");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -152,6 +157,7 @@ mod sqs_client_tests {
         println!("✅ SQS client handled invalid queue URL");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -189,7 +195,9 @@ mod sqs_client_tests {
         println!("✅ SQS client retrieved queue attributes");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

@@ -49,7 +49,9 @@ mod postgresql_client_tests {
         println!("✅ PostgreSQL client connected and executed query successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -92,7 +94,9 @@ mod postgresql_client_tests {
         println!("✅ PostgreSQL client responded to LLM instruction");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -135,7 +139,9 @@ mod postgresql_client_tests {
         println!("✅ PostgreSQL client transaction test completed");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

@@ -38,6 +38,7 @@ mod pypi_client_tests {
         println!("✅ PyPI client fetched package info successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -76,6 +77,7 @@ mod pypi_client_tests {
         println!("✅ PyPI client listed package files successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -111,6 +113,7 @@ mod pypi_client_tests {
         println!("✅ PyPI client handled non-existent package error");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -148,6 +151,7 @@ mod pypi_client_tests {
         println!("✅ PyPI client responded to LLM exploration instruction");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

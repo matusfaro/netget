@@ -65,6 +65,7 @@ mod datalink_client_tests {
         // happens inside the netget subprocess and can't be reported back
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -120,6 +121,7 @@ mod datalink_client_tests {
         // happens inside the netget subprocess and can't be reported back
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -184,6 +186,7 @@ mod datalink_client_tests {
         // happens inside the netget subprocess and can't be reported back
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -238,6 +241,7 @@ mod datalink_client_tests {
         // happens inside the netget subprocess and can't be reported back
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

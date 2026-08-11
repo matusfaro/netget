@@ -54,8 +54,11 @@ mod http_proxy_client_tests {
         println!("✅ HTTP proxy client connected and established tunnel");
 
         // Cleanup
+        proxy_server.verify_mocks().await?;
         proxy_server.stop().await?;
+        target_server.verify_mocks().await?;
         target_server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -95,7 +98,9 @@ mod http_proxy_client_tests {
         println!("✅ HTTP proxy client initiated connection to proxy server");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -137,7 +142,9 @@ mod http_proxy_client_tests {
         println!("✅ HTTP proxy client can send raw data through tunnel");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

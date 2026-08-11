@@ -78,6 +78,7 @@ mod ollama_client_tests {
         // initialized correctly.
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -120,6 +121,7 @@ mod ollama_client_tests {
         println!("✅ Ollama client listed models successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -172,6 +174,7 @@ mod ollama_client_tests {
         // Note: Mock verification not possible in subprocess tests
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -214,6 +217,7 @@ mod ollama_client_tests {
         println!("✅ Ollama client generated text successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -265,6 +269,7 @@ mod ollama_client_tests {
         // Note: Mock verification not possible in subprocess tests
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -306,6 +311,7 @@ mod ollama_client_tests {
         println!("✅ Ollama client chat completion worked");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -356,6 +362,7 @@ mod ollama_client_tests {
         // Note: Mock verification not possible in subprocess tests
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -388,6 +395,7 @@ mod ollama_client_tests {
         println!("✅ Ollama client with custom endpoint worked");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -431,6 +439,7 @@ mod ollama_client_tests {
         // Note: Mock verification not possible in subprocess tests
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -462,6 +471,7 @@ mod ollama_client_tests {
         println!("✅ Ollama client error handling worked");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

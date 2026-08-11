@@ -47,7 +47,9 @@ mod nfs_client_tests {
         println!("✅ NFS client mounted export and read file successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -85,7 +87,9 @@ mod nfs_client_tests {
         println!("✅ NFS client listed directory contents successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -127,7 +131,9 @@ mod nfs_client_tests {
         println!("✅ NFS client wrote file successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -165,7 +171,9 @@ mod nfs_client_tests {
         println!("✅ NFS client created directory successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

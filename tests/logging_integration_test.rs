@@ -76,6 +76,7 @@ mod logging_integration_tests {
             println!("✓ Cleaned up log file");
         } else {
             // Stop the server before returning error
+            server.verify_mocks().await?;
             server.stop().await?;
             return Err(format!(
                 "No log file found matching pattern netget_test_*.log in {:?}",
@@ -85,6 +86,7 @@ mod logging_integration_tests {
         }
 
         // Stop the server
+        server.verify_mocks().await?;
         server.stop().await?;
 
         println!("✓ Test passed! Log file was created and contained expected content.");

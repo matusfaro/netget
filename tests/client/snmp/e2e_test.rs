@@ -46,7 +46,9 @@ mod snmp_client_tests {
         println!("✅ SNMP client connected and queried OID successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -90,7 +92,9 @@ mod snmp_client_tests {
         println!("✅ SNMP client walked MIB tree using GETNEXT");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -138,7 +142,9 @@ mod snmp_client_tests {
         println!("✅ SNMP client retrieved bulk data with GETBULK");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -180,7 +186,9 @@ mod snmp_client_tests {
         println!("✅ SNMP client sent SET request successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -226,7 +234,9 @@ mod snmp_client_tests {
         println!("✅ SNMP client authenticated with custom community string");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -262,6 +272,7 @@ mod snmp_client_tests {
         println!("✅ SNMP client handled timeout correctly");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

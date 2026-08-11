@@ -108,6 +108,7 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
     // not LLM interaction. The binary process has its own mock counters that we can't
     // verify from the test process.
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -157,6 +158,7 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 
     // Note: Mock verification skipped - see comment in first test
 
+    server1.verify_mocks().await?;
     server1.stop().await?;
 
     // Start second server (tests that stopping/starting doesn't break footer)
@@ -203,6 +205,7 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
     // not LLM interaction. The binary process has its own mock counters that we can't
     // verify from the test process.
 
+    server2.verify_mocks().await?;
     server2.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -275,6 +278,7 @@ async fn test_server_output_spacing() -> E2EResult<()> {
 
     // Note: Mock verification skipped - see comment in first test
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())

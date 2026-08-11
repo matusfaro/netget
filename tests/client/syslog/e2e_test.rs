@@ -47,7 +47,9 @@ mod syslog_client_tests {
         println!("✅ Syslog client sent message via UDP successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -89,7 +91,9 @@ mod syslog_client_tests {
         println!("✅ Syslog client sent message via TCP successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -129,7 +133,9 @@ mod syslog_client_tests {
         println!("✅ Syslog client responded to LLM instruction");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

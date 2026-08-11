@@ -71,7 +71,9 @@ mod pop3_client_tests {
         println!("Client output: {:?}", output);
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
+        server.verify_mocks().await?;
         server.stop().await?;
 
         println!("=== Test completed ===\n");
@@ -117,7 +119,9 @@ mod pop3_client_tests {
         println!("Client output: {:?}", output);
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
+        server.verify_mocks().await?;
         server.stop().await?;
 
         println!("=== Test completed ===\n");
@@ -174,7 +178,9 @@ mod pop3_client_tests {
         println!("Client output: {:?}", output);
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
+        server.verify_mocks().await?;
         server.stop().await?;
 
         println!("=== Test completed ===\n");

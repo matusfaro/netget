@@ -59,6 +59,7 @@ mod openai_client_tests {
         // The test assertions above verify the client initialized correctly.
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -106,6 +107,7 @@ mod openai_client_tests {
         println!("✅ OpenAI client with model selection initialized");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -153,6 +155,7 @@ mod openai_client_tests {
         println!("✅ OpenAI client initialized for embeddings");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -202,6 +205,7 @@ mod openai_client_tests {
         println!("✅ OpenAI client with custom parameters initialized");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

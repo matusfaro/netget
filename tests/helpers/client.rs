@@ -283,9 +283,7 @@ impl Drop for NetGetClient {
 
         if let Some(ref mock_config) = self.mock_config {
             if !mock_config.is_verified() {
-                eprintln!("\n⚠️  WARNING: Client dropped without calling .verify_mocks()!");
-                eprintln!("   Mock expectations may not have been checked.");
-                eprintln!("   Add `client.verify_mocks().await?;` before dropping the client.\n");
+                super::mock_config::report_unverified_on_drop("client", mock_config);
             }
         }
     }

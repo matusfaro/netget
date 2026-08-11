@@ -48,7 +48,9 @@ mod mcp_client_tests {
         println!("✅ MCP client connected and initialized successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -97,7 +99,9 @@ mod mcp_client_tests {
         println!("✅ MCP client called tool successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -138,7 +142,9 @@ mod mcp_client_tests {
         println!("✅ MCP client read resource successfully");
 
         // Cleanup
+        server.verify_mocks().await?;
         server.stop().await?;
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

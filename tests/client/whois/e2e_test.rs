@@ -46,6 +46,7 @@ mod whois_client_tests {
         println!("✅ WHOIS client queried example.com successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -83,6 +84,7 @@ mod whois_client_tests {
         println!("✅ WHOIS client queried Verisign successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -116,6 +118,7 @@ mod whois_client_tests {
         println!("✅ WHOIS client handled auto-disconnection");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

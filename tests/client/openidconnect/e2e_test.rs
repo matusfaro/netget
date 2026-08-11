@@ -48,6 +48,7 @@ mod openid_connect_client_tests {
         println!("✅ OpenID Connect client initialized and attempted discovery");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -81,6 +82,7 @@ mod openid_connect_client_tests {
         println!("✅ OpenID Connect client configured with parameters");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -119,6 +121,7 @@ mod openid_connect_client_tests {
         println!("✅ OpenID Connect client interpreted flow instruction");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -155,6 +158,7 @@ mod openid_connect_client_tests {
         println!("✅ OpenID Connect client handled invalid provider gracefully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -191,6 +195,7 @@ mod openid_connect_client_tests {
         println!("✅ OpenID Connect client handled disconnect instruction");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

@@ -74,6 +74,7 @@ mod smtp_client_tests {
         println!("✅ SMTP client connected successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
         smtp_server
             .kill()
@@ -111,6 +112,7 @@ mod smtp_client_tests {
         println!("✅ SMTP client prepared to send email based on LLM instruction");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
         smtp_server
             .kill()
@@ -150,6 +152,7 @@ mod smtp_client_tests {
         println!("✅ SMTP client connected without authentication");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
         smtp_server
             .kill()

@@ -45,6 +45,7 @@ mod s3_client_tests {
         println!("✅ S3 client initialized successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -74,6 +75,7 @@ mod s3_client_tests {
         println!("✅ S3 client listed buckets");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -110,6 +112,7 @@ mod s3_client_tests {
         println!("✅ S3 client performed object operations");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -140,6 +143,7 @@ mod s3_client_tests {
         println!("✅ S3 client handles invalid credentials gracefully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

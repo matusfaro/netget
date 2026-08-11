@@ -383,26 +383,8 @@ impl Drop for NetGetServer {
         self.stderr_reader_handle.abort();
 
         if let Some(ref mock_config) = self.mock_config {
-            // Check if verify was called
             if !mock_config.is_verified() {
-                eprintln!("⚠️  WARNING: Mock expectations not verified!");
-                eprintln!("   Call server.verify_mocks().await? before dropping");
-
-                // Print unmet expectations
-                for (idx, rule) in mock_config.rules.iter().enumerate() {
-                    let actual = rule.actual_calls.load(std::sync::atomic::Ordering::SeqCst);
-                    if let Some(expected) = rule.expected_calls {
-                        if actual != expected {
-                            eprintln!(
-                                "   Rule #{}: Expected {} calls, got {} - {}",
-                                idx,
-                                expected,
-                                actual,
-                                rule.describe()
-                            );
-                        }
-                    }
-                }
+                super::mock_config::report_unverified_on_drop("server", mock_config);
             }
         }
     }

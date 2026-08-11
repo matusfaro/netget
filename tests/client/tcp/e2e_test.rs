@@ -103,10 +103,14 @@ mod tcp_client_tests {
 
         println!("✅ TCP client connected to server and sent data successfully");
 
-        // Verify mock expectations were met (server side only - client echo not required for this test)
+        // Verify mock expectations were met on both ends.
+        //
+        // The client side was previously skipped with a note that "the echo might not arrive
+        // before the connection closes". Its client rule carries no `expect_calls`, so
+        // verifying it asserts only that no harness diagnostic fired — which is exactly the
+        // check that was missing, and costs nothing in flakiness.
         server.verify_mocks().await?;
-        // Note: We're not verifying client's tcp_data_received mock because the echo might not arrive
-        // before the connection closes. The main goal of this test is to verify client can connect and send.
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

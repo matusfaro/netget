@@ -73,16 +73,25 @@ impl MockLlmBuilder {
         )
     }
 
-    /// Match on custom function
+    /// Match on a custom predicate.
+    ///
+    /// The closure is evaluated for real (`MockRule::matches` consults it), but it cannot be
+    /// serialized, so a rule built this way only works with the in-process mock server
+    /// (`MOCK_OLLAMA_BASE_URL`) — which is every test in this repo. Over the
+    /// `NETGET_MOCK_LLM_CONFIG` env-var path the predicate is lost and the rule matches nothing.
+    ///
+    /// Additional `.and_*` criteria compose with the predicate: all must hold.
     pub fn on_custom<F>(self, matcher: F) -> MockRuleBuilder
     where
         F: Fn(&super::mock_matcher::LlmContext) -> bool + Send + Sync + 'static,
     {
         use super::mock_matcher::CustomMatcher;
 
-        // Custom matchers can't be serialized, so we use match_any
+        // `match_any` is a placeholder for the serialized side only; `has_custom_predicate`
+        // is what tells `MockRule::matches` to ignore it and call the closure.
         let mut serialized = SerializedMatcher::new();
         serialized.match_any = true;
+        serialized.has_custom_predicate = true;
 
         MockRuleBuilder::new(self, Box::new(CustomMatcher::new(matcher)), serialized)
     }

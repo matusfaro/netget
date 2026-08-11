@@ -168,9 +168,12 @@ impl MockLlmConfig {
 
 /// A single mock rule with matching criteria and response
 pub struct MockRule {
-    /// Matcher for this rule (trait object, not serializable)
-    #[allow(dead_code)]
-    matcher: Option<Box<dyn MockMatcher>>,
+    /// Matcher for this rule (trait object, not serializable).
+    ///
+    /// `Arc`, not `Box`, because `shallow_clone` has to carry it: the config is cloned once on
+    /// its way to the in-process mock server, and dropping the matcher there is what made
+    /// `.on_custom()` predicates unreachable.
+    matcher: Option<Arc<dyn MockMatcher>>,
 
     /// Serialized matcher data
     serialized_matcher: SerializedMatcher,
@@ -199,7 +202,7 @@ impl MockRule {
         response: MockResponse,
     ) -> Self {
         Self {
-            matcher: Some(matcher),
+            matcher: Some(Arc::from(matcher)),
             serialized_matcher,
             response,
             expected_calls: None,
@@ -211,12 +214,30 @@ impl MockRule {
 
     /// Check if context matches this rule
     pub fn matches(&self, context: &LlmContext) -> bool {
-        // Use serialized matcher for matching (works across process boundaries)
+        // A closure cannot be serialized, so `on_custom` stores `match_any = true` in the
+        // serialized matcher as a placeholder. Consulting only the serialized matcher therefore
+        // turned every `.on_custom(pred)` into `.on_any()` - the predicate was never called, and
+        // seven call sites in the grpc/http2/quic suites were relying on it to filter.
+        if self.serialized_matcher.has_custom_predicate {
+            return match self.matcher.as_ref() {
+                Some(matcher) => matcher.matches(context),
+                // Fail closed. Reaching here means the rule survived a round trip through
+                // `NETGET_MOCK_LLM_CONFIG` that dropped the closure; matching everything would
+                // silently restore exactly the bug this branch exists to fix.
+                None => false,
+            };
+        }
         self.serialized_matcher.matches(context)
     }
 
     /// Get description of this rule
     pub fn describe(&self) -> String {
+        if self.serialized_matcher.has_custom_predicate {
+            return match self.matcher.as_ref() {
+                Some(matcher) => matcher.describe(),
+                None => "custom predicate (lost in serialization - matches nothing)".to_string(),
+            };
+        }
         self.serialized_matcher.describe()
     }
 
@@ -255,7 +276,9 @@ impl MockRule {
     /// Shallow clone (clones Arc references, not underlying data)
     pub fn shallow_clone(&self) -> Self {
         Self {
-            matcher: None, // Don't clone the matcher (not needed after serialization)
+            // Keep the matcher. `MockLlmConfig::clone()` is on the path from the test's builder
+            // to the in-process mock server, so dropping it here disabled custom predicates.
+            matcher: self.matcher.clone(),
             serialized_matcher: self.serialized_matcher.clone(),
             response: self.response.clone(),
             expected_calls: self.expected_calls,
@@ -302,6 +325,12 @@ pub struct SerializedMatcher {
 
     /// Match any (fallback)
     pub match_any: bool,
+
+    /// This rule carries an `on_custom(...)` predicate, which lives in `MockRule::matcher` and
+    /// cannot be serialized. `match_any` is set alongside it purely as a placeholder, so
+    /// `MockRule::matches` must consult the real matcher instead of this struct.
+    #[serde(default)]
+    pub has_custom_predicate: bool,
 }
 
 impl SerializedMatcher {
@@ -316,6 +345,7 @@ impl SerializedMatcher {
             message_role: None,
             prompt_contains: Vec::new(),
             match_any: false,
+            has_custom_predicate: false,
         }
     }
 
@@ -578,6 +608,70 @@ impl<'de> Deserialize<'de> for MockResponse {
             MockResponseHelper::Raw { content } => MockResponse::Raw { content },
         })
     }
+}
+
+/// Backstop for a test that configured mocks and never called `verify_mocks()`.
+///
+/// This used to `eprintln!` a warning. At `--test-threads=100` nobody has ever read it, and 24
+/// test files had drifted into asserting nothing about LLM interaction while still counting as
+/// coverage. A warning that is never read is not a guard, so this now **fails the test** — but
+/// only when there is something real to check:
+///
+/// * a config whose rules carry no `expect_calls` / `expect_at_least` / `expect_at_most` has no
+///   expectation to break, so it only warns. Requiring `verify_mocks()` there would be noise.
+/// * if the thread is already panicking, panicking again in `Drop` aborts the process and
+///   destroys the real failure message, so we print instead.
+///
+/// Call `verify_mocks().await?` at the end of the test to satisfy it.
+pub fn report_unverified_on_drop(kind: &str, mock_config: &MockLlmConfig) {
+    let mut unmet = Vec::new();
+    let mut has_expectations = false;
+
+    for (idx, rule) in mock_config.rules.iter().enumerate() {
+        let actual = rule.actual_calls.load(Ordering::SeqCst);
+        if rule.expected_calls.is_none() && rule.min_calls.is_none() && rule.max_calls.is_none() {
+            continue;
+        }
+        has_expectations = true;
+
+        let broken = rule.expected_calls.is_some_and(|e| actual != e)
+            || rule.min_calls.is_some_and(|m| actual < m)
+            || rule.max_calls.is_some_and(|m| actual > m);
+        if broken {
+            unmet.push(format!(
+                "   Rule #{}: expected {}{}{}, got {} - {}",
+                idx,
+                rule.expected_calls
+                    .map(|e| format!("exactly {e}"))
+                    .unwrap_or_default(),
+                rule.min_calls
+                    .map(|m| format!("at least {m}"))
+                    .unwrap_or_default(),
+                rule.max_calls
+                    .map(|m| format!("at most {m}"))
+                    .unwrap_or_default(),
+                actual,
+                rule.describe()
+            ));
+        }
+    }
+
+    let mut message = format!(
+        "{} dropped without calling .verify_mocks(), so this test asserted nothing about LLM \
+         interaction.\n   Add `{}.verify_mocks().await?;` before the end of the test.",
+        if kind == "server" { "Server" } else { "Client" },
+        kind
+    );
+    if !unmet.is_empty() {
+        message.push_str("\n   Unmet expectations already visible:\n");
+        message.push_str(&unmet.join("\n"));
+    }
+
+    if has_expectations && !std::thread::panicking() {
+        panic!("{message}");
+    }
+
+    eprintln!("⚠️  WARNING: {message}");
 }
 
 /// Sentinel `matched_rule_idx` for calls the mock harness answered itself

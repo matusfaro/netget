@@ -40,6 +40,7 @@ mod stun_client_tests {
         println!("✅ STUN client discovered external address successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -66,6 +67,7 @@ mod stun_client_tests {
         println!("✅ STUN client connected to alternative server");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -103,6 +105,7 @@ mod stun_client_tests {
         println!("✅ STUN client processed binding response");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

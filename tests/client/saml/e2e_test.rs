@@ -51,6 +51,7 @@ mod saml_client_tests {
         // initialized correctly.
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -94,6 +95,7 @@ mod saml_client_tests {
         // Note: Mock verification not possible in subprocess tests
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

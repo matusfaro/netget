@@ -38,6 +38,7 @@ mod maven_client_tests {
         println!("✅ Maven client downloaded artifact successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -74,6 +75,7 @@ mod maven_client_tests {
         println!("✅ Maven client downloaded POM successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -109,6 +111,7 @@ mod maven_client_tests {
         println!("✅ Maven client searched for versions successfully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -137,6 +140,7 @@ mod maven_client_tests {
         println!("✅ Maven client connected to custom repository");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -175,6 +179,7 @@ mod maven_client_tests {
         println!("✅ Maven client handled missing artifact gracefully");
 
         // Cleanup
+        client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

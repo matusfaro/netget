@@ -109,7 +109,9 @@ async fn test_ftp_client_connect_to_server() -> E2EResult<()> {
     println!("FTP client connected to server successfully");
 
     // Cleanup
+    client.verify_mocks().await?;
     client.stop().await?;
+    server.verify_mocks().await?;
     server.stop().await?;
 
     println!("=== Test completed ===\n");
