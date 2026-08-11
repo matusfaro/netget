@@ -2,5 +2,4 @@
 
 #![cfg(all(test, feature = "bluetooth-ble-keyboard"))]
 
-// Tests would go here - same pattern as bluetooth_ble
-// Requires real BLE hardware to test keyboard functionality
+mod e2e_test;

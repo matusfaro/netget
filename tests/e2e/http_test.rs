@@ -12,6 +12,7 @@ mod tests {
     use crate::validators::HttpValidator;
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_http_server_basic() -> Result<()> {
         // Start NetGet
         let mut netget = NetGetWrapper::new();
@@ -61,6 +62,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_http_server_with_memory() -> Result<()> {
         let mut netget = NetGetWrapper::new();
         netget.start("qwen2.5-coder:7b", vec![]).await?;
@@ -105,6 +107,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_multiple_servers() -> Result<()> {
         let mut netget = NetGetWrapper::new();
         netget.start("qwen2.5-coder:7b", vec![]).await?;
@@ -148,6 +151,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     #[cfg(feature = "scripting")]
     async fn test_http_with_scripting() -> Result<()> {
         let mut netget = NetGetWrapper::new();

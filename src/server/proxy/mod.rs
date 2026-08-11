@@ -1280,27 +1280,35 @@ impl ProxyServer {
                 request_line = format!("{} {} {}", method, target, version);
             }
 
-            // Build headers map
-            let mut headers_map = HashMap::new();
+            // Build headers map.
+            //
+            // HTTP field names are case-insensitive (RFC 9110 §5.1) and hyper/reqwest put them
+            // on the wire lowercased, while a model writes `User-Agent` / `Content-Type`. Keying
+            // this map on the raw name therefore made `remove_headers: ["User-Agent"]` a no-op
+            // and made `headers: {"Host": ...}` *append* a second Host header instead of
+            // replacing the existing `host`. Key on the lowercased name and keep the original
+            // spelling only for output. The MITM response path (`tls_mitm.rs`) already did this;
+            // the plain-HTTP request path did not.
+            let mut headers_map: HashMap<String, (String, String)> = HashMap::new();
             for line in &header_lines[1..] {
                 if let Some(colon_pos) = line.find(':') {
                     let name = line[..colon_pos].trim().to_string();
                     let value = line[colon_pos + 1..].trim().to_string();
-                    headers_map.insert(name, value);
+                    headers_map.insert(name.to_lowercase(), (name, value));
                 }
             }
 
             // Remove headers
             if let Some(remove) = remove_headers {
                 for header_name in remove {
-                    headers_map.remove(header_name);
+                    headers_map.remove(&header_name.to_lowercase());
                 }
             }
 
             // Add/modify headers
             if let Some(add_headers) = headers {
                 for (name, value) in add_headers {
-                    headers_map.insert(name.clone(), value.clone());
+                    headers_map.insert(name.to_lowercase(), (name.clone(), value.clone()));
                 }
             }
 
@@ -1336,10 +1344,16 @@ impl ProxyServer {
 
             // Update Content-Length to match new body size
             if !body.is_empty() {
-                headers_map.insert("Content-Length".to_string(), body.len().to_string());
+                headers_map.insert(
+                    "content-length".to_string(),
+                    ("Content-Length".to_string(), body.len().to_string()),
+                );
             } else if new_body.is_some() || body_replacements.is_some() {
                 // Body was explicitly modified to empty
-                headers_map.insert("Content-Length".to_string(), "0".to_string());
+                headers_map.insert(
+                    "content-length".to_string(),
+                    ("Content-Length".to_string(), "0".to_string()),
+                );
             }
 
             // Reconstruct request with proper \r\n line endings
@@ -1347,7 +1361,7 @@ impl ProxyServer {
             result.extend_from_slice(request_line.as_bytes());
             result.extend_from_slice(b"\r\n");
 
-            for (name, value) in headers_map {
+            for (_key, (name, value)) in headers_map {
                 result.extend_from_slice(name.as_bytes());
                 result.extend_from_slice(b": ");
                 result.extend_from_slice(value.as_bytes());

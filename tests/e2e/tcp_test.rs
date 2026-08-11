@@ -10,6 +10,7 @@ mod tests {
     use crate::validators::TcpValidator;
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_tcp_echo_server() -> Result<()> {
         // Start NetGet
         let mut netget = NetGetWrapper::new();
@@ -38,6 +39,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_tcp_chat_server() -> Result<()> {
         let mut netget = NetGetWrapper::new();
         netget.start("qwen2.5-coder:7b", vec![]).await?;
@@ -69,6 +71,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_tcp_protocol_implementation() -> Result<()> {
         let mut netget = NetGetWrapper::new();
         netget.start("qwen2.5-coder:7b", vec![]).await?;
@@ -105,6 +108,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Drives the real netget binary against a real Ollama (qwen2.5-coder:7b); there is no mock path through NetGetWrapper. Run with --ignored."]
     async fn test_tcp_with_memory() -> Result<()> {
         let mut netget = NetGetWrapper::new();
         netget.start("qwen2.5-coder:7b", vec![]).await?;
