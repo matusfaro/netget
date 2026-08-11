@@ -13,8 +13,10 @@ This file previously described the module as "Beta - Production-ready exit relay
 
 | Claim | Reality |
 |---|---|
-| Tested with the official Tor client | No Tor client appears anywhere. The one E2E test is `#[ignore]`d, sends a single zero-filled cell, and prints `✓` for *every* outcome including timeout. |
-| Speaks OR protocol v4 | There is no link handshake. VERSIONS / CERTS / AUTH_CHALLENGE / NETINFO are never sent or parsed, and the reader consumes fixed 514-byte cells only, so the first variable-length cell a real client sends desynchronises it permanently. |
+| Tested with the official Tor client | No Tor client appears anywhere. The one E2E test was `#[ignore]`d, sent a single zero-filled cell, and printed `✓` for *every* outcome including timeout. It also passed `base_stack: "TorRelay"`, which the registry rejects — so it could never have started a server even if it had been run. Rewritten; see Testing below. |
+| Speaks OR protocol v4 | There was no link handshake at all, and the reader consumed fixed 514-byte cells only, so the first variable-length cell a real client sends desynchronised it permanently. Cells are now framed by length and VERSIONS is answered; CERTS / AUTH_CHALLENGE / NETINFO are still never sent or parsed, so a real client still cannot finish the handshake. |
+| Usable by any peer | The ntor handshake mixes the relay's onion public key **B** into `secret_input`, and the relay generated a fresh one per process and never published it — only the fingerprint was logged. No peer on earth could derive the same keys. Both values are now logged at startup. |
+| Forwards exit traffic | The per-stream forwarder held one `Mutex<TcpStream>` across a blocking `read()`, so `handle_data_cell` could never acquire it to write. Every exit stream deadlocked on its first RELAY/DATA cell, in the client-to-target direction. The stream is now split into owned halves with a lock each. |
 | Correct cell handling | The command table was shifted by one from command 7 up, so a client's CREATE2 (10) was read as CREATED2 and dropped as "unhandled", and replies went out with the wrong command byte. Fixed. |
 | Cryptographically correct | The ntor KDF took 72 bytes as `Kf\|Kb\|Df\|Db`; tor-spec 5.2.2 specifies 92 bytes as `Df\|Db\|Kf\|Kb\|KH`, so the AES keys were read out of the digest-seed region. The two direction ciphers were also swapped. Both fixed. The relay cell digest is still never computed or verified - see Known non-conformances. |
 | LLM-controlled policies | The only event carrying actions was `tor_relay_cell_detected`, which was never emitted; the two events that *were* emitted declared no actions, so the model was offered no tools. All seven async actions returned "implementation in server logic" for logic that did not exist. Fixed by wiring the real events and deleting the dead actions. |
@@ -331,11 +333,15 @@ a circuit can open a TCP stream to anything this host can reach.
 
 ### Known non-conformances (why real Tor cannot talk to this)
 
-1. **No link handshake.** tor-spec 4: a connection opens with VERSIONS, then CERTS,
-   AUTH_CHALLENGE and NETINFO. None are sent or parsed. This alone is fatal - a real client
-   never gets as far as CREATE2.
-2. **Variable-length cells desynchronise the reader.** `handle()` does `read_exact` into a
-   fixed 514-byte buffer. VERSIONS (7) and commands 128+ are variable-length.
+1. **The link handshake stops after VERSIONS.** tor-spec 4: a connection opens with VERSIONS,
+   then CERTS, AUTH_CHALLENGE and NETINFO. VERSIONS is now framed and answered with link
+   version 4; the other three are still neither sent nor parsed, so a real client gets one
+   cell further than before and then gives up. This alone is still fatal for real Tor.
+2. ~~**Variable-length cells desynchronise the reader.**~~ Fixed. `take_cell` frames by
+   length: VERSIONS (command 7, 2-byte circuit id) and commands 128+ read their own length
+   field, everything else is a 514-byte fixed cell. The `select!` read is also
+   cancellation-safe now — it was `read_exact`, which discards a partial cell when the
+   outgoing-cell branch wins, desynchronising the connection at random.
 3. **Relay cell digest is never computed or verified.** Outbound cells ship a zero digest
    field and inbound digests are ignored, so the tor-spec 6.1 `recognized` check does not
    happen. Conforming needs a running SHA-1; no SHA-1 dependency is available to this crate,
@@ -400,11 +406,23 @@ Show me relay statistics including total bytes transferred
 
 ## Testing
 
-There is no meaningful test. `tests/server/tor_relay/e2e_test.rs` is `#[ignore]`d, starts the
-server, opens TLS, writes one zero-filled 514-byte cell, and accepts a response, an empty read,
-an error or a timeout as success. Its closing note says cell encryption is "verified in unit
-tests of the relay implementation" - there are none, and project policy forbids tests under
-`src/`.
+`tests/server/tor_relay/e2e_test.rs` runs (no `#[ignore]`) and drives a Tor client written
+from tor-spec **in the test file**, not by calling into `circuit.rs`. That independence is the
+point: the client recomputes the server's AUTH value and derives Kf/Kb itself, so any
+divergence in the ntor handshake, the 92-byte KDF layout, the forward/backward key assignment
+or the cell layout fails the test.
 
-To make the `Stable` rating meaningful, the order is: link handshake, then cell digests, then a
-real `tor` or Arti client in the E2E suite, then EXTEND.
+It covers, in one connection and 2 LLM calls:
+
+1. VERSIONS (11 bytes, 2-byte circuit id) → VERSIONS reply offering link version 4
+2. CREATE2 → CREATED2, with the client verifying AUTH and deriving the circuit keys
+3. RELAY/BEGIN to a localhost HTTP server → RELAY/CONNECTED
+4. RELAY/DATA carrying an HTTP request out, and the response back, decrypted with Kb and
+   asserted against the body the HTTP server sent
+
+Not covered, and the reason the rating stays `Experimental`: no real `tor` or Arti binary
+(they cannot get past the missing CERTS/AUTH_CHALLENGE/NETINFO), no cell digests, no EXTEND,
+no multi-hop.
+
+Order of work to make a `Beta` rating meaningful: finish the link handshake, then cell
+digests, then a real `tor` or Arti client in the E2E suite, then EXTEND.

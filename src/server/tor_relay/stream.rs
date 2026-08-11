@@ -19,8 +19,14 @@ pub enum StreamState {
     Connecting,
     /// Stream is active and forwarding data
     Active {
-        /// TCP connection to destination
-        connection: Arc<Mutex<TcpStream>>,
+        /// Read half of the TCP connection to the destination, used only by the forwarder
+        /// task. It is deliberately a *separate* lock from `writer`: the forwarder parks in
+        /// `read()` waiting for the target, and while it held one lock over the whole
+        /// `TcpStream` the client-to-target direction could never acquire it to write. The
+        /// exit stream deadlocked on its first RELAY/DATA cell, every time.
+        reader: Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>,
+        /// Write half, used by `handle_data_cell` for client-to-target data.
+        writer: Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>,
         /// Bytes sent to destination
         bytes_sent: u64,
         /// Bytes received from destination
@@ -75,8 +81,10 @@ impl Stream {
 
     /// Set stream as active with TCP connection
     pub fn set_active(&mut self, connection: TcpStream) {
+        let (reader, writer) = connection.into_split();
         self.state = StreamState::Active {
-            connection: Arc::new(Mutex::new(connection)),
+            reader: Arc::new(Mutex::new(reader)),
+            writer: Arc::new(Mutex::new(writer)),
             bytes_sent: 0,
             bytes_received: 0,
             package_window: STREAM_WINDOW_START,
@@ -105,10 +113,18 @@ impl Stream {
         matches!(self.state, StreamState::Directory { .. })
     }
 
-    /// Get TCP connection if active
-    pub fn connection(&self) -> Option<Arc<Mutex<TcpStream>>> {
+    /// Write half of the TCP connection, if active (client -> target).
+    pub fn writer(&self) -> Option<Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>> {
         match &self.state {
-            StreamState::Active { connection, .. } => Some(connection.clone()),
+            StreamState::Active { writer, .. } => Some(writer.clone()),
+            _ => None,
+        }
+    }
+
+    /// Read half of the TCP connection, if active (target -> client).
+    pub fn reader(&self) -> Option<Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>> {
+        match &self.state {
+            StreamState::Active { reader, .. } => Some(reader.clone()),
             _ => None,
         }
     }

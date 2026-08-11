@@ -1,9 +1,11 @@
 //! Tor Relay (OR protocol) server - **partial, not interoperable with real Tor**.
 //!
-//! There is no link handshake (VERSIONS/CERTS/AUTH_CHALLENGE/NETINFO), the reader consumes
-//! fixed 514-byte cells so any variable-length cell desynchronises it, relay cell digests are
-//! neither computed nor verified, and there is no EXTEND. See `CLAUDE.md` in this directory for
-//! the full list of non-conformances. What is implemented:
+//! The link handshake stops after VERSIONS (no CERTS/AUTH_CHALLENGE/NETINFO), relay cell
+//! digests are neither computed nor verified, and there is no EXTEND. See `CLAUDE.md` in this
+//! directory for the full list of non-conformances. What is implemented:
+//! - **Length-driven cell framing**: VERSIONS (2-byte circuit id, variable length) and
+//!   commands >= 128 are framed by their length field rather than assumed to be 514 bytes,
+//!   and the read is cancellation-safe inside the `select!`
 //! - **ntor handshake** for circuit creation (CREATE2/CREATED2) with Curve25519 DH
 //! - **Relay cell encryption** using AES-128-CTR with forward/backward keys
 //! - **Circuit management** with crypto state and stream multiplexing
@@ -136,12 +138,28 @@ impl TorRelayServer {
         // Create circuit manager (shared across all connections)
         let circuit_manager = Arc::new(CircuitManager::new());
 
-        // Log relay identity
+        // Publish the relay identity.
+        //
+        // The ntor handshake mixes the relay's identity fingerprint (ID) and its onion
+        // public key (B) into `secret_input`, so a peer that does not know both cannot
+        // derive the same key material — it gets a CREATED2 it can do nothing with. A real
+        // relay publishes them in its router descriptor. This one generates a fresh onion
+        // key per process and used to print only the fingerprint, which meant **no peer
+        // could ever complete a circuit with it**. Both are public values by design.
         let fingerprint = circuit_manager.identity_fingerprint();
-        info!("Relay identity fingerprint: {}", hex::encode(fingerprint));
+        let onion_key = *circuit_manager.onion_public_key().as_bytes();
+        info!(
+            "Relay identity fingerprint: {}, onion key: {}",
+            hex::encode(fingerprint),
+            hex::encode(onion_key)
+        );
         let _ = status_tx.send(format!(
             "[INFO] Relay fingerprint: {}",
             hex::encode(fingerprint)
+        ));
+        let _ = status_tx.send(format!(
+            "[INFO] Relay onion key: {}",
+            hex::encode(onion_key)
         ));
 
         let protocol = Arc::new(TorRelayProtocol::new());
@@ -299,59 +317,83 @@ struct TorRelaySession {
 }
 
 impl TorRelaySession {
-    /// Handle Tor Relay session - read cells and process
+    /// Handle Tor Relay session - read cells and process.
+    ///
+    /// Two properties this loop has to hold, both of which it used to break:
+    ///
+    /// 1. **Framing follows the cell, not a fixed size.** It used to `read_exact` into a
+    ///    514-byte buffer, so the first thing a real Tor client sends - an 11-byte VERSIONS
+    ///    cell - blocked it forever and `tor` logged `died in state handshaking`. Any
+    ///    variable-length cell (VERSIONS, or command >= 128) did the same.
+    /// 2. **The read is cancellation-safe.** `read_exact` is not: dropping it mid-cell when
+    ///    the `outgoing_rx` branch of the `select!` wins discards the bytes already taken
+    ///    off the TLS stream, permanently desynchronising the connection. `read` is
+    ///    cancel-safe, so bytes are accumulated in `inbuf` and cells are framed out of it.
     async fn handle(&mut self) -> Result<()> {
         debug!("Tor Relay session started for {}", self.remote_addr);
 
-        let mut cell_buffer = vec![0u8; 514];
+        let mut inbuf: Vec<u8> = Vec::with_capacity(4096);
+        let mut read_buf = vec![0u8; 4096];
+        // Only the first cell of a connection may be a VERSIONS cell, and only a VERSIONS
+        // cell uses a 2-byte circuit id (tor-spec 3). After it, framing is unambiguous.
+        let mut expecting_versions = true;
 
         loop {
-            tokio::select! {
-                // Read incoming cells from TLS stream
-                read_result = self.stream.read_exact(&mut cell_buffer) => {
-                    match read_result {
-                        Ok(_) => {
-                            trace!("Received Tor cell ({} bytes) from {}", cell_buffer.len(), self.remote_addr);
+            // Drain every complete cell already buffered before waiting for more bytes.
+            while let Some(cell) = take_cell(&mut inbuf, expecting_versions) {
+                expecting_versions = false;
 
-                            // Parse cell header
-                            if let Some(cell_info) = parse_tor_cell(&cell_buffer) {
-                                debug!(
-                                    "Tor cell: type={}, circuit_id={}",
-                                    cell_info.cell_type, cell_info.circuit_id
-                                );
+                match cell {
+                    FramedCell::Variable {
+                        command, payload, ..
+                    } => {
+                        if let Some(response) = self.handle_variable_cell(command, &payload) {
+                            self.stream.write_all(&response).await?;
+                        }
+                    }
+                    FramedCell::Fixed { circuit_id, raw } => {
+                        let Some(cell_info) = parse_tor_cell(&raw) else {
+                            warn!("Failed to parse Tor cell from {}", self.remote_addr);
+                            continue;
+                        };
+                        debug!(
+                            "Tor cell: type={}, circuit_id={}",
+                            cell_info.cell_type, cell_info.circuit_id
+                        );
 
-                                let circuit_id = cell_info.circuit_id;  // Save circuit_id for error handling
-
-                                // Handle cell based on type
-                                match self.handle_cell(cell_info, &cell_buffer).await {
-                                    Ok(Some(response)) => {
-                                        // Send response
-                                        self.stream.write_all(&response).await?;
-                                        debug!("Sent response cell ({} bytes)", response.len());
-                                    }
-                                    Ok(None) => {
-                                        // No response needed
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to handle cell: {}", e);
-                                        // Send DESTROY cell
-                                        let destroy = self.create_destroy_cell(circuit_id);
-                                        self.stream.write_all(&destroy).await?;
-                                        return Err(e);
-                                    }
-                                }
-                            } else {
-                                warn!("Failed to parse Tor cell from {}", self.remote_addr);
+                        match self.handle_cell(cell_info, &raw).await {
+                            Ok(Some(response)) => {
+                                self.stream.write_all(&response).await?;
+                                debug!("Sent response cell ({} bytes)", response.len());
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                error!("Failed to handle cell: {}", e);
+                                let destroy = self.create_destroy_cell(circuit_id);
+                                self.stream.write_all(&destroy).await?;
+                                return Err(e);
                             }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            // Connection closed
+                    }
+                }
+            }
+
+            tokio::select! {
+                // Read incoming bytes from the TLS stream. `read` is cancel-safe: if the
+                // other branch wins, nothing has been consumed.
+                read_result = self.stream.read(&mut read_buf) => {
+                    match read_result {
+                        Ok(0) => {
                             debug!("Tor Relay connection closed by {}", self.remote_addr);
                             let _ = self.status_tx.send(format!(
                                 "→ Tor Relay connection closed by {}",
                                 self.remote_addr
                             ));
                             return Ok(());
+                        }
+                        Ok(n) => {
+                            trace!("Received {} bytes from {}", n, self.remote_addr);
+                            inbuf.extend_from_slice(&read_buf[..n]);
                         }
                         Err(e) => {
                             error!("Failed to read Tor cell from {}: {}", self.remote_addr, e);
@@ -365,6 +407,51 @@ impl TorRelaySession {
                     trace!("Sending outgoing cell ({} bytes)", cell.len());
                     self.stream.write_all(&cell).await?;
                 }
+            }
+        }
+    }
+
+    /// Handle a variable-length cell.
+    ///
+    /// VERSIONS is answered so that a peer's first cell no longer goes unacknowledged. The
+    /// rest of the link handshake (CERTS, AUTH_CHALLENGE, NETINFO) is still not implemented,
+    /// so a real Tor client gets this far and then gives up - which is a great deal better
+    /// than the reader blocking forever, but is still not interoperability.
+    fn handle_variable_cell(&self, command: u8, payload: &[u8]) -> Option<Vec<u8>> {
+        match command {
+            CELL_COMMAND_VERSIONS => {
+                let offered: Vec<u16> = payload
+                    .chunks_exact(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect();
+                info!("Received VERSIONS cell offering {:?}", offered);
+                let _ = self
+                    .status_tx
+                    .send(format!("[INFO] Tor VERSIONS offering {:?}", offered));
+
+                if !offered.contains(&LINK_PROTOCOL_VERSION) {
+                    warn!(
+                        "Peer offered link versions {:?}, none of which is {}",
+                        offered, LINK_PROTOCOL_VERSION
+                    );
+                }
+
+                // VERSIONS always uses a 2-byte circuit id (tor-spec 3).
+                let mut cell = Vec::with_capacity(7);
+                cell.extend_from_slice(&0u16.to_be_bytes());
+                cell.push(CELL_COMMAND_VERSIONS);
+                cell.extend_from_slice(&2u16.to_be_bytes());
+                cell.extend_from_slice(&LINK_PROTOCOL_VERSION.to_be_bytes());
+                Some(cell)
+            }
+            _ => {
+                warn!(
+                    "Ignoring variable-length cell command {} ({} byte payload): the link \
+                     handshake past VERSIONS is not implemented",
+                    command,
+                    payload.len()
+                );
+                None
             }
         }
     }
@@ -874,10 +961,10 @@ impl TorRelaySession {
                 .await;
         }
 
-        // Get TCP connection for this stream
+        // Get the write half of this stream's TCP connection
         if let Some(connection) = self
             .circuit_manager
-            .get_stream_connection(circuit_id, stream_id)
+            .get_stream_writer(circuit_id, stream_id)
             .await?
         {
             // Write data to TCP connection
@@ -1175,10 +1262,11 @@ impl TorRelaySession {
         stream_id: StreamId,
         outgoing_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<()> {
-        // Get TCP connection
+        // Read half only. Holding a lock over the whole TcpStream here parked the
+        // client-to-target write path forever, because this task waits in `read()`.
         let connection = self
             .circuit_manager
-            .get_stream_connection(circuit_id, stream_id)
+            .get_stream_reader(circuit_id, stream_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Stream not found"))?;
 
@@ -1289,6 +1377,91 @@ struct TorCellInfo {
     cell_type: String,
 }
 
+/// The link protocol version this relay frames cells for: 4-byte circuit ids, 514-byte
+/// fixed cells.
+const LINK_PROTOCOL_VERSION: u16 = 4;
+/// tor-spec 3, command 7. Variable length, and the only cell with a 2-byte circuit id.
+const CELL_COMMAND_VERSIONS: u8 = 7;
+/// Fixed cell size for link protocol v4: 4 (circuit id) + 1 (command) + 509 (payload).
+const FIXED_CELL_LEN: usize = 514;
+
+/// One cell framed off the wire.
+#[derive(Debug)]
+enum FramedCell {
+    /// A fixed-length v4 cell. `raw` is all 514 bytes, so the existing handlers can keep
+    /// indexing it directly.
+    Fixed { circuit_id: CircuitId, raw: Vec<u8> },
+    /// A variable-length cell: VERSIONS (7), or any command >= 128 (VPADDING, CERTS,
+    /// AUTH_CHALLENGE, AUTHENTICATE, AUTHORIZE).
+    Variable {
+        #[allow(dead_code)]
+        circuit_id: u32,
+        command: u8,
+        payload: Vec<u8>,
+    },
+}
+
+/// Frame one cell out of `buf`, consuming its bytes. `None` means more bytes are needed.
+///
+/// `expecting_versions` must be true only for the first cell of a connection. tor-spec 3
+/// allows VERSIONS only there, and gives it a 2-byte circuit id while every other cell in
+/// link protocol v4 has a 4-byte one — so the command byte sits at a different offset and
+/// the two layouts are only distinguishable because of that rule.
+fn take_cell(buf: &mut Vec<u8>, expecting_versions: bool) -> Option<FramedCell> {
+    if expecting_versions && buf.len() >= 3 && buf[2] == CELL_COMMAND_VERSIONS {
+        // CircID (2) | Command (1) | Length (2) | Payload (Length)
+        if buf.len() < 5 {
+            return None;
+        }
+        let length = u16::from_be_bytes([buf[3], buf[4]]) as usize;
+        if buf.len() < 5 + length {
+            return None;
+        }
+        let circuit_id = u16::from_be_bytes([buf[0], buf[1]]) as u32;
+        let payload = buf[5..5 + length].to_vec();
+        buf.drain(..5 + length);
+        return Some(FramedCell::Variable {
+            circuit_id,
+            command: CELL_COMMAND_VERSIONS,
+            payload,
+        });
+    }
+
+    if buf.len() < 5 {
+        return None;
+    }
+    let circuit_id = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let command = buf[4];
+
+    // Commands 128 and above are variable-length in every link protocol version.
+    if command >= 128 {
+        if buf.len() < 7 {
+            return None;
+        }
+        let length = u16::from_be_bytes([buf[5], buf[6]]) as usize;
+        if buf.len() < 7 + length {
+            return None;
+        }
+        let payload = buf[7..7 + length].to_vec();
+        buf.drain(..7 + length);
+        return Some(FramedCell::Variable {
+            circuit_id,
+            command,
+            payload,
+        });
+    }
+
+    if buf.len() < FIXED_CELL_LEN {
+        return None;
+    }
+    let raw = buf[..FIXED_CELL_LEN].to_vec();
+    buf.drain(..FIXED_CELL_LEN);
+    Some(FramedCell::Fixed {
+        circuit_id: CircuitId::new(circuit_id),
+        raw,
+    })
+}
+
 /// Parse Tor cell header
 ///
 /// Tor v4 cell format:
@@ -1315,8 +1488,9 @@ struct TorCellInfo {
 /// - 12: PADDING_NEGOTIATE
 ///
 /// Commands 128+ (VPADDING, CERTS, AUTH_CHALLENGE, AUTHENTICATE, AUTHORIZE) and VERSIONS are
-/// variable-length cells. This reader consumes fixed 514-byte cells only, so any of them
-/// desynchronises it permanently. That is why a real Tor client cannot get past its first cell.
+/// variable-length cells. They are framed by `take_cell` and dispatched to
+/// `handle_variable_cell` before reaching here, so this function only ever sees the
+/// fixed-length 514-byte form.
 fn parse_tor_cell(data: &[u8]) -> Option<TorCellInfo> {
     if data.len() < 5 {
         return None;

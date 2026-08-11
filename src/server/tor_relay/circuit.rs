@@ -576,12 +576,12 @@ impl CircuitManager {
         Ok(())
     }
 
-    /// Get stream connection
-    pub async fn get_stream_connection(
+    /// Write half of a stream's TCP connection (client -> target).
+    pub async fn get_stream_writer(
         &self,
         circuit_id: CircuitId,
         stream_id: StreamId,
-    ) -> Result<Option<Arc<tokio::sync::Mutex<tokio::net::TcpStream>>>> {
+    ) -> Result<Option<Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedWriteHalf>>>> {
         let circuits = self.circuits.lock().await;
         let circuit = circuits.get(&circuit_id).context("Circuit not found")?;
 
@@ -590,7 +590,28 @@ impl CircuitManager {
             .get(stream_id)
             .context("Stream not found")?;
 
-        Ok(stream.connection())
+        Ok(stream.writer())
+    }
+
+    /// Read half of a stream's TCP connection (target -> client).
+    ///
+    /// Separate from the write half on purpose: the forwarder task holds this one across a
+    /// blocking `read()`, and sharing a single lock with the write path deadlocked every
+    /// exit stream.
+    pub async fn get_stream_reader(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<Option<Arc<tokio::sync::Mutex<tokio::net::tcp::OwnedReadHalf>>>> {
+        let circuits = self.circuits.lock().await;
+        let circuit = circuits.get(&circuit_id).context("Circuit not found")?;
+
+        let stream = circuit
+            .stream_manager
+            .get(stream_id)
+            .context("Stream not found")?;
+
+        Ok(stream.reader())
     }
 
     /// Check if stream is a directory stream (BEGIN_DIR)
