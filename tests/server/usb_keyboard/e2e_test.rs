@@ -1,333 +1,295 @@
-//! E2E tests for USB HID Keyboard server
+//! E2E tests for the USB HID keyboard server.
 //!
-//! These tests verify the USB keyboard server by:
-//! 1. Starting the server with LLM integration (mocked)
-//! 2. Connecting a USB/IP client to trigger the device-attach event
-//! 3. Verifying LLM-driven typing and key combinations
+//! The question these answer: *the model says "type hello" — do the bytes a host reads off the
+//! interrupt endpoint spell hello?*
 //!
-//! Note: the `usb_keyboard_attached` event is emitted when a TCP client connects
-//! to the USB/IP listening socket (`UsbKeyboardServer::handle_connection` ->
-//! `call_llm_on_attach`). Starting the server alone fires nothing, so every test
-//! that expects the attach event must actually connect.
+//! They drive a real USB/IP client over TCP (`tests/helpers/usbip_client.rs`): `OP_REQ_IMPORT`,
+//! then interrupt transfers on endpoint 1. At the USB/IP layer an interrupt transfer is
+//! indistinguishable from a bulk one — both are `USBIP_CMD_SUBMIT` carrying an endpoint
+//! *number* — so `bulk_in`/`bulk_out` drive the HID endpoints. HID reports are decoded here
+//! against the boot-protocol layout rather than against netget's encoder.
+//!
+//! **What this does not prove.** There is no `vhci-hcd`, no `/dev/input/eventX`, no `evtest` —
+//! macOS has no USB/IP client. A passing run means netget emits the right HID reports for the
+//! model's actions; it does not mean Linux turns them into key events.
+//!
+//! ## What this file replaced
+//!
+//! Six tests that opened a bare `TcpStream` to the USB/IP port and asserted only that a mock
+//! rule fired. They could not observe a single HID report, so `type_text`, `press_key_combo` and
+//! `release_all_keys` were "tested" without anything checking what went on the wire. Two were
+//! `#[ignore]`d with accurate product-gap notes:
+//!
+//! - `usb_keyboard_led_status` was declared and never emitted, because the crate's
+//!   `UsbHidKeyboardHandler` discards HID output reports. `handler.rs` now intercepts
+//!   `SET_REPORT` and the event has a real emit site — so that test is live, and drives a real
+//!   LED write.
+//! - `usb_keyboard_detached` was noted as unreachable behind `sleep(u64::MAX)`. That was fixed
+//!   in the source before this pass; the `#[ignore]` was simply stale.
 
 #[cfg(all(test, feature = "usb-keyboard"))]
 mod usb_keyboard_e2e {
+    use crate::helpers::usbip_client::UsbIpClient;
     use crate::helpers::*;
     use std::time::Duration;
 
     /// Log line emitted by the server *after* the attach LLM call returns.
     ///
-    /// Must be the post-call line, not the "Calling LLM for ..." line that precedes
-    /// it: the pre-call line is printed before the HTTP request reaches the mock,
-    /// so waiting on it races `verify_mocks()` under parallel load.
+    /// Must be the post-call line, not the "Calling LLM for ..." line that precedes it: the
+    /// pre-call line is printed before the HTTP request reaches the mock, so waiting on it
+    /// races `verify_mocks()` under parallel load.
     const ATTACH_LOG: &str = "USB keyboard LLM call completed for connection";
+    const LED_LOG: &str = "USB keyboard LLM call completed (led_status)";
 
-    /// Connect a USB/IP client so the server emits `usb_keyboard_attached`.
+    /// HID usage codes for the characters the tests type (HID Usage Tables, keyboard page).
+    const KEY_H: u8 = 0x0b;
+    const KEY_I: u8 = 0x0c;
+    const KEY_C: u8 = 0x06;
+    /// Left Control, as a modifier bit.
+    const MOD_LEFT_CTRL: u8 = 0x01;
+
+    /// A boot-protocol keyboard report: modifier, reserved, six key slots.
+    const REPORT_LEN: usize = 8;
+
+    /// Read `count` non-empty input reports off the interrupt IN endpoint.
     ///
-    /// The returned stream must be kept alive for the duration of the test:
-    /// dropping it closes the connection.
-    async fn attach_usbip_client(port: u16) -> E2EResult<tokio::net::TcpStream> {
-        Ok(tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await?)
+    /// A real host polls every 10ms and takes one report per poll; this does the same, and
+    /// gives up rather than hanging if the device stops producing.
+    async fn read_reports(client: &mut UsbIpClient, count: usize) -> E2EResult<Vec<Vec<u8>>> {
+        let mut reports = Vec::with_capacity(count);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while reports.len() < count {
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "device produced {} of {} expected HID reports",
+                    reports.len(),
+                    count
+                )
+                .into());
+            }
+            let report = client.bulk_in(REPORT_LEN as u32).await?;
+            if report.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+            reports.push(report);
+        }
+        Ok(reports)
     }
 
-    /// Test USB keyboard device startup and attach
-    /// LLM calls: 2 (startup, device attached)
+    /// Build the 8-byte `SET_REPORT(Output)` setup packet a host uses to set keyboard LEDs.
+    ///
+    /// `0x21` = host-to-device | class | interface; `0x09` = SET_REPORT; wValue `0x0200` selects
+    /// report type Output, report id 0.
+    fn set_leds_setup() -> [u8; 8] {
+        let mut setup = [0u8; 8];
+        setup[0] = 0x21;
+        setup[1] = 0x09;
+        setup[2..4].copy_from_slice(&0x0200u16.to_le_bytes()); // wValue (LE on the wire)
+        setup[4..6].copy_from_slice(&0u16.to_le_bytes()); // wIndex: interface 0
+        setup[6..8].copy_from_slice(&1u16.to_le_bytes()); // wLength: one LED byte
+        setup
+    }
+
+    /// The headline case: the model types, and the host reads the right keystrokes.
+    ///
+    /// Both actions are bundled into one attach response, so the whole keyboard vocabulary
+    /// costs a single LLM call. LLM calls: 2 (startup, attach).
     #[tokio::test]
-    async fn test_usb_keyboard_startup_and_attach() -> E2EResult<()> {
-        // Start USB keyboard server with mocks
+    async fn test_usb_keyboard_types_what_the_model_asked_for() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Create a USB keyboard on port {AVAILABLE_PORT}. When attached, type 'hello'."
-                .to_string(),
+            "Create a USB keyboard. When attached, type 'hi' and then press Ctrl+C.".to_string(),
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB keyboard")
+            mock.on_instruction_containing("USB keyboard")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "USB-Keyboard",
+                    "instruction": "Type 'hi' then Ctrl+C when attached"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("usb_keyboard_attached")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Keyboard",
-                        "instruction": "Type 'hello' when device is attached"
-                    }
+                    {"type": "type_text", "text": "hi"},
+                    {"type": "press_key_combo", "keys": ["ctrl", "c"]}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Device attached event
-                .on_event("usb_keyboard_attached")
+                .on_event("usb_keyboard_detached")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "type_text",
-                        "text": "hello"
-                    }
+                    {"type": "show_message", "message": "detached"}
                 ]))
-                .expect_calls(1)
+                .expect_at_least(0)
                 .and()
         });
 
         let mut server = start_netget_server(server_config).await?;
-
-        // Verify server is running
         assert!(server.is_running(), "USB keyboard server should be running");
 
-        // Attach a USB/IP client -> triggers usb_keyboard_attached
-        let _device = attach_usbip_client(server.port).await?;
+        // 1. Enumeration: what would `usbip list -r <host>` show?
+        let mut client = UsbIpClient::connect(server.port).await?;
+        let devices = client.list_devices().await?;
+        assert_eq!(devices.len(), 1, "exactly one device should be exported");
+        assert_eq!(
+            devices[0].interfaces,
+            vec![(0x03, 0x00, 0x00)],
+            "the interface must advertise the HID class"
+        );
+
+        // 2. Attach. The attach event fires on connect, before the import.
+        client.import("0-0-0").await?;
         server.wait_for_log(ATTACH_LOG, 10).await?;
 
-        println!("✅ USB keyboard server started and device attached");
+        // 3. Read the reports the model's two actions produced: 'h' down/up, 'i' down/up,
+        //    Ctrl+C down/up.
+        let reports = read_reports(&mut client, 6).await?;
+        for (i, report) in reports.iter().enumerate() {
+            assert_eq!(
+                report.len(),
+                REPORT_LEN,
+                "report {} is {} bytes; a boot-protocol keyboard report is 8",
+                i,
+                report.len()
+            );
+        }
 
-        // Verify mock expectations
+        assert_eq!(
+            reports[0][2], KEY_H,
+            "the first key down must be 'h' (usage {:#04x}), got {:#04x}",
+            KEY_H, reports[0][2]
+        );
+        assert_eq!(reports[0][0], 0, "'h' needs no modifier");
+        assert_eq!(
+            reports[1],
+            vec![0u8; REPORT_LEN],
+            "every key down must be followed by an all-zero release, or the host sees the key \
+             as held"
+        );
+        assert_eq!(
+            reports[2][2], KEY_I,
+            "the second key down must be 'i' (usage {:#04x})",
+            KEY_I
+        );
+        assert_eq!(reports[3], vec![0u8; REPORT_LEN]);
+
+        assert_eq!(
+            reports[4][0], MOD_LEFT_CTRL,
+            "Ctrl+C must set the left-control modifier bit"
+        );
+        assert_eq!(
+            reports[4][2], KEY_C,
+            "Ctrl+C must carry 'c' (usage {:#04x}) in the first key slot",
+            KEY_C
+        );
+        assert_eq!(reports[5], vec![0u8; REPORT_LEN]);
+
         server.verify_mocks().await?;
-
-        // Cleanup
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test typing text with USB keyboard
-    /// LLM calls: 2 (startup, type text)
+    /// The host toggles Caps Lock, and the model hears about it.
+    ///
+    /// This was `#[ignore]`d as a product gap for the whole life of the protocol: the event was
+    /// declared, carried a full action vocabulary, and had no emit site, because the crate's
+    /// keyboard handler discards HID output reports — and would in fact have hit its own
+    /// `unimplemented!()` and panicked the session on this very request.
+    ///
+    /// LLM calls: 3 (startup, attach, LED status).
     #[tokio::test]
-    async fn test_usb_keyboard_type_text() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB keyboard. Type 'Hello World!' when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB keyboard")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Keyboard",
-                        "instruction": "Type 'Hello World!' when attached"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached, type text
-                .on_event("usb_keyboard_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "type_text",
-                        "text": "Hello World!",
-                        "typing_speed_ms": 50
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB keyboard typing test passed");
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test pressing key combination (Ctrl+C)
-    /// LLM calls: 2 (startup, key combo)
-    #[tokio::test]
-    async fn test_usb_keyboard_key_combo() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB keyboard. Press Ctrl+C when attached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB keyboard")
-                        .and_instruction_containing("Ctrl+C")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Keyboard",
-                                "instruction": "Press Ctrl+C when attached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Device attached, press Ctrl+C
-                        .on_event("usb_keyboard_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "press_key",
-                                "key": "c",
-                                "modifiers": ["ctrl"]
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB keyboard key combination test passed");
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test LED status event handling
-    /// LLM calls: 3 (startup, attach, LED status change)
-    #[tokio::test]
-    #[ignore = "PRODUCT GAP: usb_keyboard_led_status is declared in get_event_types() (src/server/usb/keyboard/actions.rs:201) but is never emitted -- src/server/usb/keyboard/mod.rs only ever constructs USB_KEYBOARD_ATTACHED_EVENT, and the usbip crate's UsbHidKeyboardHandler output (LED) reports are never parsed or surfaced. Un-ignore once the server emits the event."]
-    async fn test_usb_keyboard_led_status() -> E2EResult<()> {
+    async fn test_usb_keyboard_led_status_reaches_the_model() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB keyboard. Report LED status changes.".to_string())
                 .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB keyboard")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Keyboard",
-                                "instruction": "Report LED status changes"
-                            }
-                        ]))
+                    mock.on_instruction_containing("USB keyboard")
+                        .respond_with_actions(serde_json::json!([{
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "USB-Keyboard",
+                            "instruction": "Report LED status changes"
+                        }]))
                         .expect_calls(1)
                         .and()
-                        // Mock 2: Device attached
                         .on_event("usb_keyboard_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
+                        .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
                         .expect_calls(1)
                         .and()
-                        // Mock 3: LED status changed (Caps Lock ON)
+                        // The rule matches on the decoded flag, so a server that reported the
+                        // wrong LED, or reported the raw byte, would not satisfy it.
                         .on_event("usb_keyboard_led_status")
                         .and_event_data_contains("caps_lock", "true")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "show_message",
-                                "message": "Caps Lock is now ON"
-                            }
+                            {"type": "show_message", "message": "Caps Lock is now ON"}
                         ]))
                         .expect_calls(1)
+                        .and()
+                        .on_event("usb_keyboard_detached")
+                        .respond_with_actions(serde_json::json!([
+                            {"type": "show_message", "message": "detached"}
+                        ]))
+                        .expect_at_least(0)
                         .and()
                 });
 
         let server = start_netget_server(server_config).await?;
 
-        let _device = attach_usbip_client(server.port).await?;
+        let mut client = UsbIpClient::attach(server.port).await?;
         server.wait_for_log(ATTACH_LOG, 10).await?;
 
-        // The host would toggle Caps Lock here, producing a HID output report.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Caps Lock on: bit 1 of the LED byte.
+        client.control_out(set_leds_setup(), &[0x02]).await?;
+        server.wait_for_log(LED_LOG, 10).await?;
 
-        println!("✅ USB keyboard LED status test passed");
+        // The device also answers GET_REPORT with the LED state it was given, which is how a
+        // host re-reads it after a resume.
+        let mut get_report = [0u8; 8];
+        get_report[0] = 0xa1; // device-to-host | class | interface
+        get_report[1] = 0x01; // GET_REPORT
+        get_report[2..4].copy_from_slice(&0x0200u16.to_le_bytes());
+        get_report[6..8].copy_from_slice(&1u16.to_le_bytes());
+        let leds = client.control_in(get_report, 1).await?;
+        assert_eq!(
+            leds,
+            vec![0x02],
+            "GET_REPORT must return the LED byte the host set"
+        );
 
-        // Verify mocks
+        // An identical repeat must not raise a second event; the mock's expect_calls(1) is what
+        // catches it, since a duplicate would make it 2.
+        client.control_out(set_leds_setup(), &[0x02]).await?;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test release all keys action
-    /// LLM calls: 2 (startup, emergency release)
+    /// Closing the USB/IP session raises `usb_keyboard_detached`.
+    ///
+    /// LLM calls: 3 (startup, attach, detach).
     #[tokio::test]
-    async fn test_usb_keyboard_release_all() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB keyboard. Type 'test' then release all keys when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB keyboard")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Keyboard",
-                        "instruction": "Type test then release all keys"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Device attached, type and release
-                .on_event("usb_keyboard_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "type_text",
-                        "text": "test"
-                    },
-                    {
-                        "type": "release_all_keys"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB keyboard release all keys test passed");
-
-        // Verify mocks
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test device detach event
-    /// LLM calls: 3 (startup, attach, detach)
-    #[tokio::test]
-    #[ignore = "PRODUCT GAP: usb_keyboard_detached is declared in get_event_types() (src/server/usb/keyboard/actions.rs:200) but is never emitted -- src/server/usb/keyboard/mod.rs::handle_connection parks on sleep(u64::MAX) after the attach call and has no disconnect path, so closing the USB/IP connection produces no event. Un-ignore once the server emits the event."]
     async fn test_usb_keyboard_detach() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB keyboard. Log when device is detached.".to_string())
                 .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB keyboard")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Keyboard",
-                                "instruction": "Log when detached"
-                            }
-                        ]))
+                    mock.on_instruction_containing("USB keyboard")
+                        .respond_with_actions(serde_json::json!([{
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "USB-Keyboard",
+                            "instruction": "Log when detached"
+                        }]))
                         .expect_calls(1)
                         .and()
-                        // Mock 2: Device attached
                         .on_event("usb_keyboard_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
+                        .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
                         .expect_calls(1)
                         .and()
-                        // Mock 3: Device detached
                         .on_event("usb_keyboard_detached")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "show_message",
-                                "message": "Keyboard device detached"
-                            }
+                            {"type": "show_message", "message": "Keyboard device detached"}
                         ]))
                         .expect_calls(1)
                         .and()
@@ -335,19 +297,16 @@ mod usb_keyboard_e2e {
 
         let server = start_netget_server(server_config).await?;
 
-        let device = attach_usbip_client(server.port).await?;
+        let client = UsbIpClient::attach(server.port).await?;
         server.wait_for_log(ATTACH_LOG, 10).await?;
 
-        // Detach: close the USB/IP connection.
-        drop(device);
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        drop(client);
+        server
+            .wait_for_log("USB keyboard host detached on connection", 10)
+            .await?;
 
-        println!("✅ USB keyboard detach test passed");
-
-        // Verify mocks
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 }

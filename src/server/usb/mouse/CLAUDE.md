@@ -2,101 +2,143 @@
 
 ## Overview
 
-Virtual USB HID mouse using USB/IP protocol. LLM controls cursor movement, button clicks, and wheel scrolling.
+A virtual USB HID mouse exported over USB/IP. The device presents a boot-protocol mouse
+interface (class 0x03, subclass 0x01 boot, protocol 0x02 mouse) with a single interrupt IN
+endpoint, and the model drives the host's pointer with `move_relative`, `move_absolute`, `click`,
+`scroll` and `drag`.
 
-## HID Mouse Protocol
+**State: Experimental.** See *What is and is not verified*.
 
-**Report Format** (4 bytes):
+## Layout
 
-- Byte 0: Buttons (bit 0: left, bit 1: right, bit 2: middle)
-- Byte 1: X movement (-127 to 127, signed)
-- Byte 2: Y movement (-127 to 127, signed)
-- Byte 3: Wheel (-127 to 127, signed, vertical scroll)
+| File | What it does |
+|---|---|
+| `mod.rs` | Accept loop, USB/IP session, the two events, connection state |
+| `handler.rs` | `UsbHidMouseHandler` — the `UsbInterfaceHandler`, report descriptor, report queue |
+| `actions.rs` | Action/event definitions, handler registry, `execute_action` |
 
-## LLM Actions
+## The protocol did nothing at all, and said so in a comment
 
-**move_relative**: Move cursor by offset
+Worth remembering, because every outward sign said otherwise — it was registered, rated
+`Experimental`, shipped in `all-protocols`, had a complete six-action vocabulary, and a test
+suite of seven passing E2E tests.
 
-```json
-{"type": "move_relative", "x": 10, "y": -5}
-```
+- `handle_connection` took the accepted socket as **`_stream` and dropped it**. No USB/IP session
+  was ever run, so the device could not be enumerated, let alone imported. It logged
+  *"NOT YET FUNCTIONAL - waiting for usbip crate mouse support"*, called the LLM once for
+  `usb_mouse_attached`, and parked on `sleep(Duration::from_secs(u64::MAX))` forever — leaking
+  the task and making `usb_mouse_detached` an event with no emit site.
+- Every action in `actions.rs` parsed its parameters, logged
+  *"not yet implemented - usbip crate lacks mouse support"*, and returned `NoAction`.
+- The premise was stale anyway. `usbip` 0.9 still ships no mouse handler, but netget has had its
+  own complete one in `handler.rs` — report descriptor, 4-byte reports, automatic release — for
+  some time. Nothing was wired to it. `CLAUDE.md` meanwhile claimed
+  "✅ UsbHidMouseHandler from usbip crate", which does not exist in any version.
+- The seven E2E tests opened a bare `TcpStream` and asserted only that a mock rule fired, which
+  is why none of the above showed up.
 
-**move_absolute**: Move to screen position (converted to relative movements)
+The lesson is the one about tests that never speak the protocol: they cannot distinguish a
+working device from a socket that gets dropped.
 
-```json
-{"type": "move_absolute", "x": 960, "y": 540, "screen_width": 1920, "screen_height": 1080}
-```
+## HID mouse protocol
 
-**click**: Press and release button
+Report format, 4 bytes:
 
-```json
-{"type": "click", "button": "left"}
-```
+| Byte | Meaning |
+|---|---|
+| 0 | Buttons — bit 0 left, bit 1 right, bit 2 middle |
+| 1 | X movement, **signed**, -127..127 |
+| 2 | Y movement, signed |
+| 3 | Wheel, signed; positive is up |
 
-**scroll**: Scroll wheel
+The host polls the interrupt IN endpoint on its own schedule (10ms interval here) and takes one
+report per poll, so a queued sequence paces itself on the wire. Nothing in `execute_action`
+sleeps — it is a synchronous trait method running on a runtime worker, where a blocking sleep
+stalls that worker.
 
-```json
-{"type": "scroll", "direction": "up", "amount": 3}
-```
+## LLM actions
 
-**drag**: Move with button held
+**move_relative** — `{"type": "move_relative", "x": 300, "y": -5}`. One signed byte per axis means
+anything past ±127 becomes several reports; the model is not asked to know that.
 
-```json
-{"type": "drag", "start_x": 100, "start_y": 100, "end_x": 200, "end_y": 200, "duration_ms": 500}
-```
+**click** — `{"type": "click", "button": "left"}`. Press *and* release. Without the trailing
+all-zero report the host sees the button as still held, which turns a click into a stuck drag.
 
-## LLM Events
+**scroll** — `{"type": "scroll", "direction": "down", "amount": 2}`. One detent per report, capped
+at 64: a wheel value of N is not N clicks on every host, and repeated single detents is what a
+real wheel produces.
 
-- `usb_mouse_attached`: Device imported by host
-- `usb_mouse_detached`: Device removed
+**drag** — `{"type": "drag", "start_x": 100, "start_y": 100, "end_x": 140, "end_y": 120,
+"duration_ms": 40}`. Press, then every intermediate movement report **keeps the button held**,
+then release. Releasing at the first move is the classic mistake: the host reads a click followed
+by a pointer move, and the selection or window drag silently does nothing. `duration_ms` becomes
+the step count at the endpoint's 10ms interval, capped at 64 steps.
 
-## Current Status: Experimental (USB/IP Integrated)
+**move_absolute** — `{"type": "move_absolute", "x": 960, "y": 540, "screen_width": 1920,
+"screen_height": 1080}`. A boot-protocol mouse reports *relative* motion and nothing tells the
+device where the pointer is, so absolute positioning is done the way every automation tool does
+it: slam into the top-left corner, which the host clamps, then move out from a known origin. This
+is more reports than a relative move and **visibly moves the pointer to the corner first**. It
+also assumes the host applies no pointer acceleration; with acceleration on, the second leg
+overshoots.
 
-### What Works
+### `connection_id` is optional
 
-- ✅ Protocol registration and discovery
-- ✅ Action/event definitions
-- ✅ HID descriptor builders (mouse report descriptor)
-- ✅ Server trait implementation (spawn, execute_action)
-- ✅ TCP listener for USB/IP connections
-- ✅ USB/IP server integration using usbip crate
-- ✅ UsbHidMouseHandler from usbip crate
-- ✅ Device creation with HID mouse interface
-- ✅ LLM action execution (move_relative, click, scroll)
-- ✅ Mouse event queue (pending_mouse_events)
+Every action takes an optional `connection_id`. With exactly one host attached it is inferred;
+with several, omitting it is an error naming the candidates. Three forms are accepted — the
+number, the number as a string, and the `conn-N` form the **events themselves carry**. That last
+one matters: events report `connection_id.to_string()`, which is `"conn-2"`, not `2`.
 
-### What's Limited (Known Issues)
+## LLM events
 
-- ⚠️ **Build Requirement**: Requires libusb-1.0-dev to compile
-- ⚠️ **move_absolute**: Not yet implemented (requires position tracking)
-- ⚠️ **drag**: Not yet implemented (requires smooth movement + position tracking)
-- ⚠️ **Relative Movements Only**: HID boot protocol uses relative positioning
-- ⚠️ **Testing**: Not yet tested with real usbip client
+- `usb_mouse_attached` — a host imported the device. Carries `connection_id`. Full action set.
+- `usb_mouse_detached` — the USB/IP session ended. Declared `with_no_actions()`: there is no wire
+  left to write to. This is emitted for the first time; see above for why it never could be.
 
-### Implementation Status
+## What is and is not verified
 
-**Phase 1 Complete** (USB/IP Integration):
+**Verified** by `tests/server/usb_mouse/e2e_test.rs`, which speaks USB/IP over TCP and decodes
+the HID reports against the boot-protocol layout:
 
-1. ✅ Integrated usbip crate (v0.3)
-2. ✅ Device export using UsbIpServer::new_simulated()
-3. ✅ Handler via usbip::hid::UsbHidMouseHandler
-4. ✅ Endpoint setup (interrupt IN endpoint 0x81)
-5. ✅ URB processing (handled by usbip crate)
-6. ✅ LLM action execution (move_relative, click, scroll convert to HID reports)
+- The device is enumerated (`OP_REQ_DEVLIST`) advertising 03/01/02, and imported.
+- `move_relative(300, -5)` produces reports whose signed dx sums to exactly 300 and dy to -5,
+  with no buttons held.
+- `click` produces a press report with bit 0 set followed by an all-zero release.
+- `scroll down 2` produces two reports with wheel = -1.
+- `drag` presses without moving, holds the button on every intermediate report, covers the full
+  delta, and releases at the end.
+- Closing the session raises `usb_mouse_detached`.
+
+**Not verified:**
+
+- Any real host. No `vhci-hcd`, no `usbip attach`, no `/dev/input/eventX`, no `evtest` — macOS
+  has no USB/IP client.
+- `move_absolute` — its corner-slam strategy is untested even in the mock, and is the action most
+  likely to behave differently against a real desktop (pointer acceleration, multi-monitor
+  layouts, clamping behaviour).
+- Multiple hosts attached at once, and therefore the multi-candidate branch of `resolve_handler`.
+- `GET_REPORT` on the control endpoint (implemented, nothing asserts on it).
 
 ## Build
 
-Same requirements as usb-keyboard (libusb-1.0-dev).
-
 ```bash
-# Ubuntu/Debian
-sudo apt-get install libusb-1.0-0-dev pkg-config
-
-# Build with USB mouse feature
 ./cargo-isolated.sh build --no-default-features --features usb-mouse
 ```
 
-## OS Support
+Needs `libusb-1.0` (the `usbip` crate links it): `brew install libusb pkg-config` on macOS,
+`apt-get install libusb-1.0-0-dev pkg-config` on Debian. Not available in Claude Code for Web.
 
-- **Server**: Linux/macOS/Windows (theoretically)
-- **Client**: **Linux only** (requires vhci-hcd kernel module)
+## Testing
+
+```bash
+./cargo-isolated.sh test --no-default-features --features usb-mouse \
+    --test server -- --test-threads=100 usb_mouse
+```
+
+See `tests/server/usb_mouse/CLAUDE.md`.
+
+## References
+
+- **USB HID 1.11**: https://www.usb.org/sites/default/files/documents/hid1_11.pdf
+- **HID Usage Tables**: https://usb.org/sites/default/files/hut1_4.pdf
+- **USB/IP protocol**: https://docs.kernel.org/usb/usbip_protocol.html

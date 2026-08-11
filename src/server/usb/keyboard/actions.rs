@@ -40,7 +40,9 @@ pub static USB_KEYBOARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
         type_hint: "string".to_string(),
-        description: "Connection ID of the USB/IP session".to_string(),
+        description: "Connection ID of the USB/IP session. Actions may quote it back, but it \
+                      is optional: with one host attached it is inferred."
+            .to_string(),
         required: true,
     }])
     .with_actions(vec![
@@ -64,7 +66,9 @@ pub static USB_KEYBOARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
         type_hint: "string".to_string(),
-        description: "Connection ID of the USB/IP session".to_string(),
+        description: "Connection ID of the USB/IP session. Actions may quote it back, but it \
+                      is optional: with one host attached it is inferred."
+            .to_string(),
         required: true,
     }])
     .with_no_actions()
@@ -85,7 +89,9 @@ pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(||
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
-            description: "Connection ID of the USB/IP session".to_string(),
+            description: "Connection ID of the USB/IP session. Actions may quote it back, but it \
+                      is optional: with one host attached it is inferred."
+                .to_string(),
             required: true,
         },
         Parameter {
@@ -129,21 +135,25 @@ pub struct UsbKeyboardProtocol {
     /// called from inside the tokio runtime, and `tokio::sync::Mutex::blocking_lock` panics
     /// with "Cannot block the current thread from within a runtime" when it is. The guard is
     /// only ever held across a `HashMap` lookup, never across an `.await`.
-    handlers: Arc<
-        std::sync::Mutex<
-            HashMap<
-                ConnectionId,
-                Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
-            >,
-        >,
-    >,
+    handlers: Arc<std::sync::Mutex<HashMap<ConnectionId, SharedHandler>>>,
 }
+
+/// The handler `usbip` holds for one attached host, as this module shares it.
+#[cfg(feature = "usb-keyboard")]
+type SharedHandler = Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>;
 
 #[cfg(feature = "usb-keyboard")]
 #[derive(Clone)]
 pub struct ConnectionData {
     // Placeholder for keyboard-specific connection data
     // Will be populated during USB/IP implementation
+}
+
+#[cfg(feature = "usb-keyboard")]
+impl Default for UsbKeyboardProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(feature = "usb-keyboard")]
@@ -156,11 +166,7 @@ impl UsbKeyboardProtocol {
     }
 
     /// Store the USB/IP keyboard handler for a connection
-    pub fn set_handler(
-        &self,
-        connection_id: ConnectionId,
-        handler: Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
-    ) {
+    pub fn set_handler(&self, connection_id: ConnectionId, handler: SharedHandler) {
         if let Ok(mut handlers) = self.handlers.lock() {
             handlers.insert(connection_id, handler);
         }
@@ -173,15 +179,53 @@ impl UsbKeyboardProtocol {
         }
     }
 
-    /// Get the USB/IP keyboard handler for a connection
-    fn get_handler(
-        &self,
-        connection_id: ConnectionId,
-    ) -> Option<Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>> {
-        self.handlers
+    /// Find the handler an action refers to.
+    ///
+    /// `connection_id` is **optional**, and all three forms a model can produce are accepted:
+    /// the number, the number as a string, and the `conn-N` form the events themselves carry.
+    ///
+    /// That last one is why this exists. Actions used to demand
+    /// `action["connection_id"].as_u64()`, while every event reports
+    /// `connection_id.to_string()` — which is `"conn-2"`, not `2`. A model quoting the event's
+    /// own field back therefore *always* failed with "USB keyboard actions require
+    /// connection_id field in action", and there was no value it could have sent instead.
+    /// Every keystroke this protocol was asked for was dropped.
+    fn resolve_handler(&self, action: &serde_json::Value) -> Result<SharedHandler> {
+        let handlers = self
+            .handlers
             .lock()
-            .ok()
-            .and_then(|handlers| handlers.get(&connection_id).cloned())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let requested = action["connection_id"].as_u64().or_else(|| {
+            action["connection_id"].as_str().and_then(|s| {
+                let s = s.trim();
+                s.strip_prefix("conn-").unwrap_or(s).parse::<u64>().ok()
+            })
+        });
+
+        if let Some(id) = requested {
+            let connection_id = ConnectionId::new(id as u32);
+            return handlers.get(&connection_id).cloned().ok_or_else(|| {
+                anyhow::anyhow!("No USB keyboard attached on connection {}", connection_id)
+            });
+        }
+
+        match handlers.len() {
+            0 => Err(anyhow::anyhow!(
+                "No USB/IP host is attached to this keyboard, so a keystroke has nowhere to go"
+            )),
+            1 => Ok(handlers.values().next().cloned().expect("len checked")),
+            _ => {
+                let mut ids: Vec<u32> = handlers.keys().map(|c| c.as_u32()).collect();
+                ids.sort_unstable();
+                Err(anyhow::anyhow!(
+                    "{} USB/IP hosts are attached ({:?}); the action must name one with \
+                     'connection_id'",
+                    ids.len(),
+                    ids
+                ))
+            }
+        }
     }
 
     /// Queue a HID report on the connection's keyboard handler.
@@ -189,21 +233,18 @@ impl UsbKeyboardProtocol {
     /// Returns an error if the connection has no live USB/IP session.
     fn queue_reports(
         &self,
-        connection_id: ConnectionId,
+        handler: SharedHandler,
         reports: Vec<usbip::hid::UsbHidKeyboardReport>,
     ) -> Result<()> {
-        let handler = self
-            .get_handler(connection_id)
-            .context("No USB keyboard handler found for connection")?;
         let mut handler_guard = handler
             .lock()
             .map_err(|_| anyhow::anyhow!("USB keyboard handler mutex poisoned"))?;
         let hid = handler_guard
             .as_any()
-            .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
+            .downcast_mut::<crate::server::usb::keyboard::handler::NetGetKeyboardHandler>()
             .context("Handler is not a USB HID keyboard handler")?;
         for report in reports {
-            hid.pending_key_events.push_back(report);
+            hid.queue(report);
         }
         Ok(())
     }
@@ -257,7 +298,7 @@ impl Protocol for UsbKeyboardProtocol {
             .llm_control("LLM controls keyboard input (typing, key presses, combinations)")
             .e2e_testing("Mocked E2E over the USB/IP socket; real HID typing needs a Linux usbip client")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("USB/IP runs on the accepted socket via usbip::handler (usbip 0.9, tokio 1.x), so the listen port is whatever the caller asks for and multiple instances can coexist. usb_keyboard_attached and usb_keyboard_detached are both emitted. press_key_combo is accepted but is a no-op, and press_key/type_text only cover ASCII that usbip's UsbHidKeyboardReport::from_ascii maps (a-z, A-Z, 0-9, space, enter) -- anything else is silently dropped or panics in the crate. usb_keyboard_led_status is declared but never emitted: the crate's UsbHidKeyboardHandler discards HID output reports.")
+            .notes("USB/IP runs on the accepted socket via usbip::handler (usbip 0.9, tokio 1.x), so the listen port is whatever the caller asks for and multiple instances can coexist. All three events are emitted: attached, detached, and led_status. led_status became reachable when the crate's UsbHidKeyboardHandler was wrapped by handler.rs -- the crate discards HID output reports, so a declared event could never fire; the wrapper also stops a control request the crate does not know (GET_PROTOCOL, GET_REPORT, and SET_REPORT itself) from hitting its unimplemented!() and panicking the session task. press_key_combo folds modifiers and up to six keys into one report. type_text/press_key cover the characters key_name_to_hid maps and refuse the rest rather than typing a different string. Exercised against an in-test USB/IP client that reads HID reports off the interrupt endpoint and writes LED reports; never against a real Linux usbip host, so nothing here has been seen by a kernel HID driver.")
             .build()
     }
 
@@ -349,11 +390,9 @@ impl Server for UsbKeyboardProtocol {
             return Ok(ActionResult::WaitForMore);
         }
 
-        // Extract connection_id from action JSON
-        let connection_id = action["connection_id"]
-            .as_u64()
-            .map(|id| ConnectionId::new(id as u32))
-            .context("USB keyboard actions require connection_id field in action")?;
+        // Resolve the device once, up front, so a detached host is one clear error rather
+        // than a per-action surprise. `connection_id` is optional; see `resolve_handler`.
+        let handler = self.resolve_handler(&action)?;
 
         match action_type {
             "type_text" => {
@@ -391,7 +430,7 @@ impl Server for UsbKeyboardProtocol {
                 }
 
                 if typing_speed_ms == 0 {
-                    self.queue_reports(connection_id, reports)?;
+                    self.queue_reports(handler, reports)?;
                 } else {
                     // Pace the reports on a task rather than sleeping here: `execute_action`
                     // is sync and runs on a runtime worker, so a `thread::sleep` (what this
@@ -400,40 +439,27 @@ impl Server for UsbKeyboardProtocol {
                     // reported as an error to the model.
                     let mut rest = reports;
                     let first = rest.remove(0);
-                    self.queue_reports(connection_id, vec![first])?;
+                    self.queue_reports(handler.clone(), vec![first])?;
 
-                    let handlers = self.handlers.clone();
                     tokio::runtime::Handle::current().spawn(async move {
                         for report in rest {
                             tokio::time::sleep(std::time::Duration::from_millis(typing_speed_ms))
                                 .await;
-                            let handler = handlers
+                            let mut guard = handler
                                 .lock()
-                                .ok()
-                                .and_then(|h| h.get(&connection_id).cloned());
-                            let Some(handler) = handler else {
-                                tracing::debug!(
-                                    "USB keyboard connection {} detached mid-type_text",
-                                    connection_id
-                                );
-                                return;
-                            };
-                            if let Ok(mut guard) = handler.lock() {
-                                if let Some(hid) = guard
-                                    .as_any()
-                                    .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
-                                {
-                                    hid.pending_key_events.push_back(report);
-                                }
-                            };
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            if let Some(hid) = guard.as_any().downcast_mut::<
+                                crate::server::usb::keyboard::handler::NetGetKeyboardHandler,
+                            >() {
+                                hid.queue(report);
+                            }
                         }
                     });
                 }
 
                 tracing::info!(
-                    "Queued {} keyboard reports for connection {} (speed {}ms)",
+                    "Queued {} keyboard reports (speed {}ms)",
                     count,
-                    connection_id,
                     typing_speed_ms
                 );
                 Ok(ActionResult::NoAction)
@@ -454,18 +480,13 @@ impl Server for UsbKeyboardProtocol {
                 }
 
                 self.queue_reports(
-                    connection_id,
+                    handler,
                     vec![usbip::hid::UsbHidKeyboardReport {
                         modifier,
                         keys: [keycode, 0, 0, 0, 0, 0],
                     }],
                 )?;
-                tracing::info!(
-                    "Queued key press '{}' (modifier={:#04x}) for connection {}",
-                    key,
-                    modifier,
-                    connection_id
-                );
+                tracing::info!("Queued key press '{}' (modifier={:#04x})", key, modifier);
                 Ok(ActionResult::NoAction)
             }
             "press_key_combo" => {
@@ -505,27 +526,22 @@ impl Server for UsbKeyboardProtocol {
                 }
 
                 self.queue_reports(
-                    connection_id,
+                    handler,
                     vec![usbip::hid::UsbHidKeyboardReport { modifier, keys }],
                 )?;
-                tracing::info!(
-                    "Queued key combo {:?} (modifier={:#04x}) for connection {}",
-                    names,
-                    modifier,
-                    connection_id
-                );
+                tracing::info!("Queued key combo {:?} (modifier={:#04x})", names, modifier);
                 Ok(ActionResult::NoAction)
             }
             "release_all_keys" => {
                 // An all-zero report is the HID "nothing is pressed" state.
                 self.queue_reports(
-                    connection_id,
+                    handler,
                     vec![usbip::hid::UsbHidKeyboardReport {
                         modifier: 0,
                         keys: [0; 6],
                     }],
                 )?;
-                tracing::info!("Released all keys for connection {}", connection_id);
+                tracing::info!("Released all keys");
                 Ok(ActionResult::NoAction)
             }
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),

@@ -1,359 +1,287 @@
-//! E2E tests for USB HID Mouse server
+//! E2E tests for the USB HID mouse server.
 //!
-//! These tests verify the USB mouse server by:
-//! 1. Starting the server with LLM integration (mocked)
-//! 2. Connecting a USB/IP client to trigger the device-attach event
-//! 3. Verifying LLM-driven mouse movements and clicks
+//! The question these answer: *the model says "move right and click" — do the 4-byte reports a
+//! host reads off the interrupt endpoint say that?*
 //!
-//! Note: the `usb_mouse_attached` event is emitted when a TCP client connects to
-//! the USB/IP listening socket (`UsbMouseServer::handle_connection` ->
-//! `call_llm_on_attach`). Starting the server alone fires nothing, so every test
-//! that expects the attach event must actually connect.
+//! They drive a real USB/IP client over TCP (`tests/helpers/usbip_client.rs`): `OP_REQ_IMPORT`,
+//! then interrupt transfers on endpoint 1. At the USB/IP layer an interrupt transfer is
+//! indistinguishable from a bulk one — both are `USBIP_CMD_SUBMIT` carrying an endpoint
+//! *number* — so `bulk_in` drives the HID endpoint. Reports are decoded here against the
+//! boot-protocol mouse layout (buttons, dx, dy, wheel), not against netget's encoder.
+//!
+//! **What this does not prove.** There is no `vhci-hcd` and no `/dev/input/eventX`; macOS has no
+//! USB/IP client. A passing run means netget emits the right HID reports for the model's
+//! actions, not that a pointer moves on a Linux desktop.
+//!
+//! ## What this file replaced
+//!
+//! Seven tests that opened a bare `TcpStream` and asserted only that a mock rule fired. They
+//! passed while the protocol did **nothing at all**: `handle_connection` took the accepted
+//! socket as `_stream` and dropped it, never ran a USB/IP session, logged
+//! "NOT YET FUNCTIONAL - waiting for usbip crate mouse support", and parked on
+//! `sleep(u64::MAX)`; and every action in `actions.rs` parsed its parameters, logged
+//! "not yet implemented", and returned `NoAction`. A suite that never enumerates the device
+//! cannot tell that apart from a working mouse.
 
 #[cfg(all(test, feature = "usb-mouse"))]
 mod usb_mouse_e2e {
+    use crate::helpers::usbip_client::UsbIpClient;
     use crate::helpers::*;
     use std::time::Duration;
 
     /// Log line emitted by the server *after* the attach LLM call returns.
     ///
-    /// Must be the post-call line, not the "Calling LLM for ..." line that precedes
-    /// it: the pre-call line is printed before the HTTP request reaches the mock,
-    /// so waiting on it races `verify_mocks()` under parallel load.
+    /// Must be the post-call line, not the "Calling LLM for ..." line that precedes it: the
+    /// pre-call line is printed before the HTTP request reaches the mock, so waiting on it
+    /// races `verify_mocks()` under parallel load.
     const ATTACH_LOG: &str = "USB mouse LLM call completed for connection";
 
-    /// Connect a USB/IP client so the server emits `usb_mouse_attached`.
+    /// A boot-protocol mouse report: buttons, dx, dy, wheel.
+    const REPORT_LEN: usize = 4;
+
+    const BUTTON_LEFT: u8 = 0x01;
+
+    /// Read `count` non-empty input reports off the interrupt IN endpoint.
     ///
-    /// The returned stream must be kept alive for the duration of the test:
-    /// dropping it closes the connection.
-    async fn attach_usbip_client(port: u16) -> E2EResult<tokio::net::TcpStream> {
-        Ok(tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await?)
+    /// A real host polls every 10ms and takes one report per poll; this does the same, and
+    /// gives up rather than hanging if the device stops producing.
+    async fn read_reports(client: &mut UsbIpClient, count: usize) -> E2EResult<Vec<Vec<u8>>> {
+        let mut reports = Vec::with_capacity(count);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while reports.len() < count {
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "device produced {} of {} expected HID reports",
+                    reports.len(),
+                    count
+                )
+                .into());
+            }
+            let report = client.bulk_in(REPORT_LEN as u32).await?;
+            if report.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+            reports.push(report);
+        }
+        Ok(reports)
     }
 
-    /// Test USB mouse device startup and attach
-    /// LLM calls: 2 (startup, device attached)
+    /// Decode one report's buttons and signed axes.
+    fn axes(report: &[u8]) -> (u8, i8, i8, i8) {
+        (report[0], report[1] as i8, report[2] as i8, report[3] as i8)
+    }
+
+    /// The headline case: move, click and scroll, decoded off the wire.
+    ///
+    /// All three actions are bundled into one attach response, so the vocabulary costs a single
+    /// LLM call. The move is deliberately larger than one report can carry: a boot-protocol
+    /// report holds one signed byte per axis, so 300 has to become several reports summing to
+    /// 300, and the model is not asked to know that.
+    ///
+    /// LLM calls: 2 (startup, attach).
     #[tokio::test]
-    async fn test_usb_mouse_startup_and_attach() -> E2EResult<()> {
+    async fn test_usb_mouse_moves_clicks_and_scrolls() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Create a USB mouse on port {AVAILABLE_PORT}. When attached, move cursor to (100, 100)."
-                .to_string(),
+            "Create a USB mouse. When attached, move right, click and scroll down.".to_string(),
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB mouse")
+            mock.on_instruction_containing("USB mouse")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "USB-Mouse",
+                    "instruction": "Move, click and scroll when attached"
+                }]))
+                .expect_calls(1)
+                .and()
+                .on_event("usb_mouse_attached")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Mouse",
-                        "instruction": "Move cursor to (100, 100) when attached"
-                    }
+                    {"type": "move_relative", "x": 300, "y": -5},
+                    {"type": "click", "button": "left"},
+                    {"type": "scroll", "direction": "down", "amount": 2}
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Device attached
-                .on_event("usb_mouse_attached")
+                .on_event("usb_mouse_detached")
                 .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "move_absolute",
-                        "x": 100,
-                        "y": 100
-                    }
+                    {"type": "show_message", "message": "detached"}
                 ]))
-                .expect_calls(1)
+                .expect_at_least(0)
                 .and()
         });
 
         let mut server = start_netget_server(server_config).await?;
-
         assert!(server.is_running(), "USB mouse server should be running");
 
-        let _device = attach_usbip_client(server.port).await?;
+        // 1. Enumeration: the device must actually be exported. The previous implementation
+        //    dropped the accepted socket, so this alone would have failed.
+        let mut client = UsbIpClient::connect(server.port).await?;
+        let devices = client.list_devices().await?;
+        assert_eq!(devices.len(), 1, "exactly one device should be exported");
+        assert_eq!(
+            devices[0].interfaces,
+            vec![(0x03, 0x01, 0x02)],
+            "the interface must advertise HID / boot interface / mouse"
+        );
+
+        client.import("0-0-0").await?;
         server.wait_for_log(ATTACH_LOG, 10).await?;
 
-        println!("✅ USB mouse server started and device attached");
+        // 2. move_relative(300, -5): several reports whose dx sums to 300.
+        let moves = read_reports(&mut client, 3).await?;
+        for (i, report) in moves.iter().enumerate() {
+            assert_eq!(
+                report.len(),
+                REPORT_LEN,
+                "report {} is {} bytes; a boot-protocol mouse report is 4",
+                i,
+                report.len()
+            );
+        }
+        let total_x: i32 = moves.iter().map(|r| axes(r).1 as i32).sum();
+        let total_y: i32 = moves.iter().map(|r| axes(r).2 as i32).sum();
+        assert_eq!(
+            total_x, 300,
+            "the split reports must sum to the movement the model asked for"
+        );
+        assert_eq!(total_y, -5, "vertical movement must survive the split too");
+        assert!(
+            moves.iter().all(|r| axes(r).0 == 0),
+            "a plain move must hold no buttons"
+        );
+
+        // 3. click: press then release.
+        let click = read_reports(&mut client, 2).await?;
+        assert_eq!(
+            axes(&click[0]).0,
+            BUTTON_LEFT,
+            "the click must set the left button bit"
+        );
+        assert_eq!(
+            click[1],
+            vec![0u8; REPORT_LEN],
+            "a click must be followed by a release, or it becomes a stuck drag"
+        );
+
+        // 4. scroll down x2: one detent per report, negative wheel.
+        let scroll = read_reports(&mut client, 2).await?;
+        for report in &scroll {
+            assert_eq!(
+                axes(report).3,
+                -1,
+                "scrolling down must send negative wheel detents, got {}",
+                axes(report).3
+            );
+        }
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test relative mouse movement
-    /// LLM calls: 2 (startup, move relative)
+    /// A drag must hold the button down for *every* intermediate movement.
+    ///
+    /// Releasing at the first move is the classic mistake: the host sees a click followed by a
+    /// pointer move rather than a drag, and a selection or a window drag silently does nothing.
+    ///
+    /// LLM calls: 2 (startup, attach).
     #[tokio::test]
-    async fn test_usb_mouse_move_relative() -> E2EResult<()> {
+    async fn test_usb_mouse_drag_holds_the_button_throughout() -> E2EResult<()> {
         let server_config = NetGetConfig::new(
-            "Create a USB mouse. Move cursor 50 pixels right when attached.".to_string(),
+            "Create a USB mouse and drag from one point to another when attached.".to_string(),
         )
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB mouse")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Mouse",
-                        "instruction": "Move 50 pixels right when attached"
-                    }
-                ]))
+            mock.on_instruction_containing("USB mouse")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "USB-Mouse",
+                    "instruction": "Drag when attached"
+                }]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Move relative
                 .on_event("usb_mouse_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "move_relative",
-                        "dx": 50,
-                        "dy": 0
-                    }
-                ]))
+                .respond_with_actions(serde_json::json!([{
+                    "type": "drag",
+                    "start_x": 100, "start_y": 100,
+                    "end_x": 140, "end_y": 120,
+                    "duration_ms": 40
+                }]))
                 .expect_calls(1)
+                .and()
+                .on_event("usb_mouse_detached")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "detached"}
+                ]))
+                .expect_at_least(0)
                 .and()
         });
 
         let server = start_netget_server(server_config).await?;
 
-        let _device = attach_usbip_client(server.port).await?;
+        let mut client = UsbIpClient::attach(server.port).await?;
         server.wait_for_log(ATTACH_LOG, 10).await?;
 
-        println!("✅ USB mouse relative movement test passed");
+        // duration_ms 40 at the endpoint's 10ms interval is 4 movement steps, plus a press
+        // report and a release report.
+        let reports = read_reports(&mut client, 6).await?;
+
+        assert_eq!(
+            axes(&reports[0]),
+            (BUTTON_LEFT, 0, 0, 0),
+            "a drag must begin by pressing the button without moving"
+        );
+
+        let movements = &reports[1..reports.len() - 1];
+        assert!(
+            movements.iter().all(|r| axes(r).0 == BUTTON_LEFT),
+            "every intermediate report must keep the button held: {:?}",
+            movements.iter().map(|r| axes(r)).collect::<Vec<_>>()
+        );
+        let total_x: i32 = movements.iter().map(|r| axes(r).1 as i32).sum();
+        let total_y: i32 = movements.iter().map(|r| axes(r).2 as i32).sum();
+        assert_eq!(total_x, 40, "the drag must cover the full horizontal delta");
+        assert_eq!(total_y, 20, "the drag must cover the full vertical delta");
+
+        assert_eq!(
+            reports[reports.len() - 1],
+            vec![0u8; REPORT_LEN],
+            "a drag must end by releasing the button"
+        );
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 
-    /// Test mouse click
-    /// LLM calls: 2 (startup, click)
+    /// Closing the USB/IP session raises `usb_mouse_detached`.
+    ///
+    /// This was `#[ignore]`d as a product gap, and correctly so: the event had no emit site
+    /// because `handle_connection` parked on `sleep(u64::MAX)` and there was no session to end.
+    ///
+    /// LLM calls: 3 (startup, attach, detach).
     #[tokio::test]
-    async fn test_usb_mouse_click() -> E2EResult<()> {
-        let server_config =
-            NetGetConfig::new("Create a USB mouse. Left-click when attached.".to_string())
-                .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mouse")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Mouse",
-                                "instruction": "Left-click when attached"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                        // Mock 2: Click
-                        .on_event("usb_mouse_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "click",
-                                "button": "left"
-                            }
-                        ]))
-                        .expect_calls(1)
-                        .and()
-                });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB mouse click test passed");
-
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test mouse scroll
-    /// LLM calls: 2 (startup, scroll)
-    #[tokio::test]
-    async fn test_usb_mouse_scroll() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB mouse. Scroll down 3 clicks when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB mouse")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Mouse",
-                        "instruction": "Scroll down 3 clicks when attached"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Scroll
-                .on_event("usb_mouse_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "scroll",
-                        "amount": -3
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB mouse scroll test passed");
-
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test mouse drag
-    /// LLM calls: 2 (startup, drag)
-    #[tokio::test]
-    async fn test_usb_mouse_drag() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB mouse. Drag from (0,0) to (100,100) when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB mouse")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Mouse",
-                        "instruction": "Drag from (0,0) to (100,100) when attached"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Drag
-                .on_event("usb_mouse_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "drag",
-                        "start_x": 0,
-                        "start_y": 0,
-                        "end_x": 100,
-                        "end_y": 100
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB mouse drag test passed");
-
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test multiple button clicks
-    /// LLM calls: 2 (startup, multiple clicks)
-    #[tokio::test]
-    async fn test_usb_mouse_multiple_clicks() -> E2EResult<()> {
-        let server_config = NetGetConfig::new(
-            "Create a USB mouse. Right-click then middle-click when attached.".to_string(),
-        )
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("USB mouse")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "USB-Mouse",
-                        "instruction": "Right-click then middle-click when attached"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Multiple clicks
-                .on_event("usb_mouse_attached")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "click",
-                        "button": "right"
-                    },
-                    {
-                        "type": "click",
-                        "button": "middle"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-        });
-
-        let server = start_netget_server(server_config).await?;
-
-        let _device = attach_usbip_client(server.port).await?;
-        server.wait_for_log(ATTACH_LOG, 10).await?;
-
-        println!("✅ USB mouse multiple clicks test passed");
-
-        server.verify_mocks().await?;
-        server.stop().await?;
-
-        Ok(())
-    }
-
-    /// Test device detach event
-    /// LLM calls: 3 (startup, attach, detach)
-    #[tokio::test]
-    #[ignore = "PRODUCT GAP: usb_mouse_detached is declared in get_event_types() (src/server/usb/mouse/actions.rs:149) but is never emitted -- src/server/usb/mouse/mod.rs::handle_connection parks on sleep(u64::MAX) after the attach call and has no disconnect path, so closing the USB/IP connection produces no event. Un-ignore once the server emits the event."]
     async fn test_usb_mouse_detach() -> E2EResult<()> {
         let server_config =
             NetGetConfig::new("Create a USB mouse. Log when device is detached.".to_string())
                 .with_mock(|mock| {
-                    mock
-                        // Mock 1: Server startup
-                        .on_instruction_containing("USB mouse")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "open_server",
-                                "port": 0,
-                                "base_stack": "USB-Mouse",
-                                "instruction": "Log when detached"
-                            }
-                        ]))
+                    mock.on_instruction_containing("USB mouse")
+                        .respond_with_actions(serde_json::json!([{
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "USB-Mouse",
+                            "instruction": "Log when detached"
+                        }]))
                         .expect_calls(1)
                         .and()
-                        // Mock 2: Device attached
                         .on_event("usb_mouse_attached")
-                        .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "wait_for_more"
-                            }
-                        ]))
+                        .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))
                         .expect_calls(1)
                         .and()
-                        // Mock 3: Device detached
                         .on_event("usb_mouse_detached")
                         .respond_with_actions(serde_json::json!([
-                            {
-                                "type": "show_message",
-                                "message": "Mouse device detached"
-                            }
+                            {"type": "show_message", "message": "Mouse device detached"}
                         ]))
                         .expect_calls(1)
                         .and()
@@ -361,18 +289,16 @@ mod usb_mouse_e2e {
 
         let server = start_netget_server(server_config).await?;
 
-        let device = attach_usbip_client(server.port).await?;
+        let client = UsbIpClient::attach(server.port).await?;
         server.wait_for_log(ATTACH_LOG, 10).await?;
 
-        // Detach: close the USB/IP connection.
-        drop(device);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        println!("✅ USB mouse detach test passed");
+        drop(client);
+        server
+            .wait_for_log("USB mouse host detached on connection", 10)
+            .await?;
 
         server.verify_mocks().await?;
         server.stop().await?;
-
         Ok(())
     }
 }

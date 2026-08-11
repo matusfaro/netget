@@ -3,6 +3,19 @@
 //! This module implements a virtual USB HID mouse using the USB/IP protocol.
 //! The mouse can be controlled by the LLM to move the cursor, click buttons,
 //! and scroll the wheel.
+//!
+//! ## What was wrong here
+//!
+//! `handle_connection` took the accepted socket as `_stream` and **dropped it**. It never ran
+//! a USB/IP session at all: it logged "NOT YET FUNCTIONAL - waiting for usbip crate mouse
+//! support", called the LLM once for `usb_mouse_attached`, and then parked on
+//! `sleep(Duration::from_secs(u64::MAX))` forever. So the device could not be enumerated, let
+//! alone imported; `usb_mouse_detached` had no emit site and could never fire; and the
+//! connection task leaked for the lifetime of the process.
+//!
+//! The premise was also stale. `usbip` 0.9 still has no mouse handler, but netget has had its
+//! own complete one in `handler.rs` — report descriptor, 4-byte reports, automatic release —
+//! for some time. Nothing was wired to it.
 
 pub mod actions;
 
@@ -24,7 +37,7 @@ use std::sync::Arc;
 #[cfg(feature = "usb-mouse")]
 use tokio::sync::{mpsc, Mutex};
 #[cfg(feature = "usb-mouse")]
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[cfg(feature = "usb-mouse")]
 use crate::llm::action_helper::call_llm;
@@ -37,7 +50,7 @@ use crate::server::connection::ConnectionId;
 #[cfg(feature = "usb-mouse")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-mouse")]
-use actions::USB_MOUSE_ATTACHED_EVENT;
+use actions::{USB_MOUSE_ATTACHED_EVENT, USB_MOUSE_DETACHED_EVENT};
 
 /// Connection state for LLM processing
 #[cfg(feature = "usb-mouse")]
@@ -84,8 +97,9 @@ impl UsbMouseServer {
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::mouse::UsbMouseProtocol::new());
 
+        let task_registrar = app_state.clone();
         // Spawn accept loop for USB/IP connections
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
@@ -149,11 +163,19 @@ impl UsbMouseServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept USB/IP connection: {}", e);
+                        // A persistent accept error recurs immediately, so continuing spins a
+                        // hot loop on an unbounded status channel. Give up the listener.
+                        error!("USB mouse accept failed, stopping accept loop: {}", e);
+                        break;
                     }
                 }
             }
         });
+
+        // Without this, stop_server has no handle to abort and the listener stays bound.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }
@@ -164,7 +186,7 @@ impl UsbMouseServer {
     /// The server handles USB/IP protocol operations and integrates with LLM actions.
     #[allow(clippy::too_many_arguments)]
     async fn handle_connection(
-        _stream: tokio::net::TcpStream,
+        mut stream: tokio::net::TcpStream,
         connection_id: ConnectionId,
         remote_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -188,24 +210,49 @@ impl UsbMouseServer {
             },
         );
 
-        // TODO: USB mouse handler not yet available in usbip crate
-        // Once usbip crate adds UsbHidMouseHandler, uncomment the code below
+        let local_addr = stream.local_addr().unwrap_or(remote_addr);
 
-        warn!(
-            "USB mouse protocol registered but not yet functional - waiting for usbip crate mouse support (connection {})",
-            connection_id
+        // netget's own HID mouse handler. `usbip` 0.9 ships a keyboard handler and no mouse
+        // equivalent, which is what the "not yet functional" placeholder here was waiting for;
+        // handler.rs has implemented one for some time.
+        let handler = Arc::new(std::sync::Mutex::new(
+            Box::new(handler::UsbHidMouseHandler::new())
+                as Box<dyn usbip::UsbInterfaceHandler + Send>,
+        ));
+        protocol.set_handler(connection_id, handler.clone()).await;
+
+        let device = usbip::UsbDevice::new(0).with_interface(
+            usbip::ClassCode::HID as u8,
+            0x01, // Subclass: boot interface
+            0x02, // Protocol: mouse
+            Some("NetGet Virtual Mouse"),
+            handler::UsbHidMouseHandler::endpoints(),
+            handler.clone(),
         );
+
+        let usbip_server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
+
         let _ = status_tx.send(format!(
-            "USB mouse device for connection {} from {} - NOT YET FUNCTIONAL (waiting for usbip crate mouse support)",
-            connection_id, remote_addr
+            "USB mouse ready on {} - run: sudo usbip attach -r {} -b 0-0-0",
+            local_addr,
+            local_addr.ip()
         ));
 
-        // Placeholder: Would create HID mouse handler here
-        // let handler = Arc::new(std::sync::Mutex::new(
-        //     Box::new(usbip::hid::UsbHidMouseHandler::new_mouse())
-        //         as Box<dyn usbip::UsbInterfaceHandler + Send>,
-        // ));
-        // protocol.set_handler(connection_id, handler.clone()).await;
+        // Drive USB/IP on the socket netget already accepted. Calling `usbip::server()` here
+        // would bind a second listener on the client's own address; the previous version did
+        // neither and simply dropped the socket.
+        let usbip_task = tokio::spawn(async move {
+            match usbip::handler(&mut stream, usbip_server).await {
+                Ok(()) => debug!(
+                    "USB/IP session ended for mouse connection {}",
+                    connection_id
+                ),
+                Err(e) => debug!(
+                    "USB/IP session for mouse connection {} ended with error: {}",
+                    connection_id, e
+                ),
+            }
+        });
 
         // Call LLM on device attach
         if let Err(e) = Self::call_llm_on_attach(
@@ -225,10 +272,86 @@ impl UsbMouseServer {
             );
         }
 
-        // Keep connection alive - the USB/IP protocol runs independently
-        tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;
+        // Block until the USB/IP session ends (host detached, or socket closed). This replaced
+        // `sleep(u64::MAX)`, which is why usb_mouse_detached could never fire.
+        let _ = usbip_task.await;
+
+        info!(
+            "USB mouse host detached on connection {} from {}",
+            connection_id, remote_addr
+        );
+
+        Self::call_llm_on_detach(
+            connection_id,
+            &llm_client,
+            &app_state,
+            &connections,
+            &protocol,
+            server_id,
+        )
+        .await;
+
+        // The USB/IP session owned this handler; drop it so a later action cannot move a mouse
+        // that no longer exists.
+        protocol.remove_handler(connection_id).await;
+        connections.lock().await.remove(&connection_id);
+        app_state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         Ok(())
+    }
+
+    /// Raise `usb_mouse_detached` once the USB/IP session has ended.
+    ///
+    /// This is the event's only emit site, and it did not exist before. The event is declared
+    /// `with_no_actions()`: there is no wire left to write to, so the model's vocabulary here is
+    /// the common action set.
+    async fn call_llm_on_detach(
+        connection_id: ConnectionId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        protocol: &Arc<crate::server::usb::mouse::UsbMouseProtocol>,
+        server_id: crate::state::ServerId,
+    ) {
+        {
+            let mut conns = connections.lock().await;
+            if let Some(conn) = conns.get_mut(&connection_id) {
+                conn.state = ConnectionState::Processing;
+            }
+        }
+
+        let event = Event::new(
+            &USB_MOUSE_DETACHED_EVENT,
+            serde_json::json!({ "connection_id": connection_id.to_string() }),
+        );
+
+        match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(_) => info!(
+                "USB mouse LLM call completed (detach) for connection {}",
+                connection_id
+            ),
+            Err(e) => error!(
+                "LLM call failed for USB mouse detach on connection {}: {}",
+                connection_id, e
+            ),
+        }
+
+        let mut conns = connections.lock().await;
+        if let Some(conn) = conns.get_mut(&connection_id) {
+            conn.state = ConnectionState::Idle;
+        }
     }
 
     /// Call LLM when device is attached

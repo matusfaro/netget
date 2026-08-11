@@ -6,6 +6,9 @@
 
 pub mod actions;
 
+#[cfg(feature = "usb-keyboard")]
+pub mod handler;
+
 // Re-export protocol struct for registration
 #[cfg(feature = "usb-keyboard")]
 pub use actions::UsbKeyboardProtocol;
@@ -34,7 +37,11 @@ use crate::server::connection::ConnectionId;
 #[cfg(feature = "usb-keyboard")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-keyboard")]
-use actions::{USB_KEYBOARD_ATTACHED_EVENT, USB_KEYBOARD_DETACHED_EVENT};
+use actions::{
+    USB_KEYBOARD_ATTACHED_EVENT, USB_KEYBOARD_DETACHED_EVENT, USB_KEYBOARD_LED_STATUS_EVENT,
+};
+#[cfg(feature = "usb-keyboard")]
+use handler::{LedState, NetGetKeyboardHandler};
 
 /// Connection state for LLM processing
 #[cfg(feature = "usb-keyboard")]
@@ -52,8 +59,8 @@ struct ConnectionData {
     state: ConnectionState,
     #[allow(dead_code)]
     memory: String,
-    #[allow(dead_code)]
-    led_status: u8, // Num Lock, Caps Lock, Scroll Lock
+    /// Last LED byte the host set, kept so the TUI/state view can show it.
+    led_status: u8,
 }
 
 /// USB HID Keyboard server
@@ -83,8 +90,9 @@ impl UsbKeyboardServer {
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::keyboard::UsbKeyboardProtocol::new());
 
+        let task_registrar = app_state.clone();
         // Spawn accept loop for USB/IP connections
-        tokio::spawn(async move {
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
@@ -149,11 +157,19 @@ impl UsbKeyboardServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept USB/IP connection: {}", e);
+                        // A persistent accept error recurs immediately, so continuing spins a
+                        // hot loop on an unbounded status channel. Give up the listener.
+                        error!("USB keyboard accept failed, stopping accept loop: {}", e);
+                        break;
                     }
                 }
             }
         });
+
+        // Without this, stop_server has no handle to abort and the listener stays bound.
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
 
         Ok(local_addr)
     }
@@ -191,9 +207,16 @@ impl UsbKeyboardServer {
             },
         );
 
-        // Create HID keyboard handler from usbip crate
+        // LED reports arrive on a synchronous URB callback, which cannot raise an event by
+        // itself. The channel is the seam between the two, exactly as in usb/msc.
+        let (led_tx, mut led_rx) = mpsc::unbounded_channel::<LedState>();
+
+        // A wrapper around the crate's keyboard handler: it keeps the key-down/key-up state
+        // machine but takes over endpoint 0, so LED SET_REPORTs are seen (the crate discards
+        // them, which is why usb_keyboard_led_status could never fire) and no control request
+        // reaches the crate's `unimplemented!()`.
         let handler = Arc::new(std::sync::Mutex::new(Box::new(
-            usbip::hid::UsbHidKeyboardHandler::new_keyboard(),
+            NetGetKeyboardHandler::new().with_led_events(led_tx),
         )
             as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
@@ -265,8 +288,33 @@ impl UsbKeyboardServer {
             );
         }
 
-        // Block until the USB/IP session ends (host detached, or socket closed).
-        let _ = usbip_task.await;
+        // Serve the host until the USB/IP session ends. This loop is why
+        // usb_keyboard_led_status can fire at all: the previous version awaited the session
+        // handle directly and never looked at the LED channel.
+        let mut usbip_task = usbip_task;
+        loop {
+            tokio::select! {
+                received = led_rx.recv() => {
+                    let Some(mut leds) = received else { break };
+                    // A burst of LED writes (Caps then Num within a millisecond) is folded
+                    // into the last state, so one keypress does not become several LLM calls.
+                    while let Ok(newer) = led_rx.try_recv() {
+                        leds = newer;
+                    }
+                    Self::call_llm_on_led_status(
+                        connection_id,
+                        leds,
+                        &llm_client,
+                        &app_state,
+                        &connections,
+                        &protocol,
+                        server_id,
+                    )
+                    .await;
+                }
+                _ = &mut usbip_task => break,
+            }
+        }
 
         info!(
             "USB keyboard host detached on connection {} from {}",
@@ -296,6 +344,75 @@ impl UsbKeyboardServer {
         connections.lock().await.remove(&connection_id);
 
         Ok(())
+    }
+
+    /// Raise `usb_keyboard_led_status` after the host changed a lock LED.
+    ///
+    /// This is the event's only emit site, and it did not exist before: the event was declared,
+    /// advertised to the model with a full action vocabulary, and could never fire, because the
+    /// crate's keyboard handler discards HID output reports.
+    #[allow(clippy::too_many_arguments)]
+    async fn call_llm_on_led_status(
+        connection_id: ConnectionId,
+        leds: LedState,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        protocol: &Arc<crate::server::usb::keyboard::UsbKeyboardProtocol>,
+        server_id: crate::state::ServerId,
+    ) {
+        {
+            let mut conns = connections.lock().await;
+            match conns.get_mut(&connection_id) {
+                Some(conn) if conn.state != ConnectionState::Idle => {
+                    debug!(
+                        "USB keyboard connection {} already processing, skipping LED event",
+                        connection_id
+                    );
+                    return;
+                }
+                Some(conn) => {
+                    conn.state = ConnectionState::Processing;
+                    conn.led_status = leds.raw;
+                }
+                None => {}
+            }
+        }
+
+        let event = Event::new(
+            &USB_KEYBOARD_LED_STATUS_EVENT,
+            serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "num_lock": leds.num_lock(),
+                "caps_lock": leds.caps_lock(),
+                "scroll_lock": leds.scroll_lock(),
+            }),
+        );
+
+        match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(_) => info!(
+                "USB keyboard LLM call completed (led_status) for connection {}",
+                connection_id
+            ),
+            Err(e) => error!(
+                "LLM call failed for USB keyboard led_status on connection {}: {}",
+                connection_id, e
+            ),
+        }
+
+        let mut conns = connections.lock().await;
+        if let Some(conn) = conns.get_mut(&connection_id) {
+            conn.state = ConnectionState::Idle;
+        }
     }
 
     /// Call LLM when the USB/IP host detaches.

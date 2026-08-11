@@ -1,252 +1,91 @@
-# USB Keyboard E2E Testing
+# USB Keyboard E2E Tests
 
-## Test Strategy
+## What these prove, and what they do not
 
-The USB keyboard E2E tests verify the virtual HID keyboard device by using real Linux `usbip` client tools to attach the
-device and read keyboard events.
+One question: *the model says "type hi" — do the bytes a host reads off the interrupt endpoint
+spell `hi`?*
 
-## Test Environment Requirements
+The tests drive a **real USB/IP client over TCP** (`tests/helpers/usbip_client.rs`):
+`OP_REQ_DEVLIST`, `OP_REQ_IMPORT`, then interrupt transfers on endpoint 1 and control transfers
+on endpoint 0. At the USB/IP layer an interrupt transfer is indistinguishable from a bulk one —
+both are `USBIP_CMD_SUBMIT` carrying an endpoint *number* — so `bulk_in` drives the HID endpoint.
+Reports are decoded against the boot-protocol layout (modifier, reserved, six key slots), written
+out here rather than reusing netget's encoder.
 
-### System Requirements
+**This is the device side only.** There is no `vhci-hcd`, no `/dev/input/eventX`, no `evtest` —
+macOS has no USB/IP client. A passing run means netget emits the right HID reports for the
+model's actions. It does **not** mean Linux turns them into key events.
 
-- **OS**: Linux (kernel 3.17+ with vhci-hcd support)
-- **Tools**: `usbip`, `evtest` (or similar event reader)
-- **Privileges**: Root access for `usbip attach` and `/dev/input` access
-- **Network**: Localhost (127.0.0.1) - no external endpoints
+## What this suite replaced
 
-### Installation
+Six tests that opened a bare `TcpStream` and asserted only that a mock rule fired. They could not
+observe a single HID report, so `type_text`, `press_key_combo` and `release_all_keys` were
+"tested" with nothing checking what went on the wire — and in fact **every one of those actions
+was failing at runtime**, for a reason no test of that shape could see:
 
-```bash
-# Ubuntu/Debian
-sudo apt-get install usbip evtest
+> `Action 'type_text' failed: USB keyboard actions require connection_id field in action`
 
-# Fedora/RHEL
-sudo dnf install usbip-utils evtest
+Actions demanded `action["connection_id"].as_u64()`, while every event reported
+`connection_id.to_string()` — which is `"conn-2"`, not `2`. A model quoting the event's own field
+back always failed, and there was no value it could have sent instead. `connection_id` is now
+optional and inferred, and all three forms are accepted.
 
-# Load kernel module
-sudo modprobe vhci-hcd
-```
+Two tests were `#[ignore]`d with product-gap notes:
 
-## Test Approach
+- `usb_keyboard_led_status` — accurate: the crate's `UsbHidKeyboardHandler` discards HID output
+  reports, so the event had no emit site, and the crate would in fact have hit its own
+  `unimplemented!()` and panicked the session on a `SET_REPORT`. `handler.rs` intercepts it now
+  and the test is live, driving a real LED write.
+- `usb_keyboard_detached` — stale: the source gained an emit site before this pass.
 
-### Unit Tests
+## Tests
 
-**Current**: None (protocol implementation not complete)
-**Future**: Test descriptor builders, HID report generation, character mapping
+| Test | Proves | LLM calls |
+|---|---|---|
+| `test_usb_keyboard_types_what_the_model_asked_for` | devlist advertises the HID class and the device imports; `type_text("hi")` produces `h` down / all-zero release / `i` down / release with the right HID usage codes; `press_key_combo(["ctrl","c"])` sets the left-control modifier bit with `c` in the first key slot; **every report is 8 bytes** | 2 |
+| `test_usb_keyboard_led_status_reaches_the_model` | a real `SET_REPORT(Output)` with the Caps Lock bit raises `usb_keyboard_led_status` with `caps_lock: true`; `GET_REPORT` returns the LED byte back; an identical repeat raises **no** second event | 3 |
+| `test_usb_keyboard_detach` | closing the USB/IP session raises `usb_keyboard_detached` | 3 |
 
-### E2E Tests
+**LLM budget: 8 calls.** The first test bundles both keyboard actions into one attach response.
 
-**Current**: Placeholder (waiting for USB/IP protocol integration)
-**Future**: Real client tests using usbip tools
+Two assertions are load-bearing and worth keeping:
 
-## Planned E2E Test Cases
+- **8 bytes.** The crate answers a key release with `vec![0; 6]`. A boot-protocol report is 8
+  bytes — modifier, reserved, six key slots — and a short release is a different message with the
+  same intent, which a strict HID parser reads as malformed rather than as "all keys up". The
+  wrapper produces 8; the test pins it.
+- **No duplicate LED event.** `expect_calls(1)` on the LED rule is what catches a server that
+  re-raises on every identical `SET_REPORT`. Hosts re-assert the LED byte routinely (X11 does it
+  periodically), and without the change-detection the model would be woken by a stream of
+  identical events.
 
-### Test 1: Device Enumeration
+## Synchronisation
 
-**Objective**: Verify device appears in usbip list
+Every test waits for `"USB keyboard LLM call completed for connection"` before asserting: the
+attach event fires as soon as the TCP connection is accepted, well before `OP_REQ_IMPORT`. The
+LED test additionally waits for `"USB keyboard LLM call completed (led_status)"` — the event kind
+is in the line precisely so a test can wait on one specific event with a substring match, rather
+than on a call count that a racing event would also satisfy.
 
-```bash
-# Start server
-netget server usb-keyboard 127.0.0.1:3240
+`read_reports` polls the IN endpoint the way a host does, with a 10s ceiling so a device that
+stops producing fails rather than hangs.
 
-# List devices
-usbip list -r 127.0.0.1 -p 3240
-
-# Expected output:
-#   Exportable USB devices
-#   ======================
-#    - 127.0.0.1:3240
-#        1-1: NetGet Virtual Keyboard
-#             : HID / Boot Interface Subclass / Keyboard (03/01/01)
-```
-
-**LLM Calls**: 0 (no LLM needed for enumeration)
-
-### Test 2: Device Attachment
-
-**Objective**: Verify device can be attached and appears as /dev/input/eventX
-
-```bash
-# Start server
-netget server usb-keyboard 127.0.0.1:3240
-
-# Attach device
-sudo usbip attach -r 127.0.0.1 -p 3240 -b 1-1
-
-# Verify device attached
-lsusb | grep "NetGet"
-ls /dev/input/by-id/ | grep keyboard
-```
-
-**LLM Calls**: 1 (device attached event)
-
-### Test 3: Simple Typing
-
-**Objective**: Verify LLM can type text
-
-**Setup**:
+## Running
 
 ```bash
-# Start server with LLM instruction
-netget server usb-keyboard 127.0.0.1:3240 --instruction "Type 'test123' when keyboard is attached"
-
-# Attach and monitor events
-sudo usbip attach -r 127.0.0.1 -p 3240 -b 1-1
-sudo evtest /dev/input/eventX
+./cargo-isolated.sh test --no-default-features --features usb-keyboard \
+    --test server -- --test-threads=100 usb_keyboard
 ```
 
-**Expected Events**:
+Under two seconds. Needs `libusb-1.0`; not available in Claude Code for Web. **Run it twice**:
+the first run after a source edit relinks the `netget` binary the tests spawn.
 
-- Key press events for: t, e, s, t, 1, 2, 3
-- Each key: press event, release event
-- Correct HID usage codes
+## Not covered
 
-**LLM Calls**: 1 (on attach, executes type_text action)
-
-### Test 4: Key Combinations
-
-**Objective**: Verify modifier keys (Ctrl, Shift, Alt)
-
-**Setup**:
-
-```bash
-# Test Ctrl+C
-netget server usb-keyboard 127.0.0.1:3240 --instruction "Press Ctrl+C when attached"
-```
-
-**Expected Events**:
-
-- Key press: Left Control (modifier)
-- Key press: C
-- Key release: C
-- Key release: Left Control
-
-**LLM Calls**: 1
-
-### Test 5: LED Status Feedback
-
-**Objective**: Verify server receives LED status from host
-
-**Setup**:
-
-```bash
-# Start server with LED monitoring
-netget server usb-keyboard 127.0.0.1:3240 --instruction "Report LED status changes"
-
-# Attach device
-sudo usbip attach -r 127.0.0.1 -p 3240 -b 1-1
-
-# Toggle Caps Lock on host
-xdotool key Caps_Lock
-```
-
-**Expected**:
-
-- Server logs LED status change (Caps Lock ON)
-- LLM receives usb_keyboard_led_status event
-
-**LLM Calls**: 2 (attach + LED status)
-
-## LLM Call Budget
-
-**Target**: < 10 LLM calls per full test suite
-
-### Breakdown:
-
-- Device enumeration: 0 calls (no LLM)
-- Device attachment: 1 call (on connect)
-- Simple typing: 1 call (execute type_text)
-- Key combinations: 1 call (execute press_key_combo)
-- LED status: 2 calls (attach + LED event)
-- **Total**: ~5 calls
-
-### Optimization Strategies:
-
-1. **Scripting Mode**: Use deterministic behavior, no LLM needed for predictable actions
-2. **Single Server Instance**: Reuse server across multiple test cases
-3. **Mock Mode**: Test protocol without LLM for unit tests
-4. **Batch Actions**: Test multiple keypresses in single LLM call
-
-## Expected Runtime
-
-**Per Test**:
-
-- Device enumeration: < 1 second
-- Device attachment: < 2 seconds
-- Typing test: < 5 seconds (depends on typing speed)
-- Key combo test: < 2 seconds
-- LED test: < 3 seconds
-
-**Full Suite**: < 15 seconds (excluding LLM warm-up)
-
-## Known Issues / Flaky Tests
-
-### Current Status: No Tests Yet
-
-Once tests are implemented, document any flaky behavior here.
-
-### Potential Issues:
-
-1. **vhci-hcd Not Loaded**: Tests fail if kernel module missing
-2. **Port Conflicts**: Need unique port for each test or sequential execution
-3. **Root Privileges**: Tests require sudo (may need CI configuration)
-4. **evtest Timing**: Need to wait for device ready before reading events
-5. **Device Cleanup**: Must detach devices after tests to avoid conflicts
-
-## Running Tests
-
-### Full Suite
-
-```bash
-# Build with USB keyboard feature
-./cargo-isolated.sh build --no-default-features --features usb-keyboard
-
-# Run E2E tests (requires root for usbip)
-sudo ./cargo-isolated.sh test --no-default-features --features usb-keyboard \
-  --test usb_keyboard_e2e
-```
-
-### Single Test
-
-```bash
-sudo ./cargo-isolated.sh test --no-default-features --features usb-keyboard \
-  --test usb_keyboard_e2e -- test_keyboard_typing
-```
-
-### Debug Mode
-
-```bash
-# Enable trace logging
-RUST_LOG=netget=trace sudo ./cargo-isolated.sh test \
-  --no-default-features --features usb-keyboard \
-  --test usb_keyboard_e2e
-```
-
-## CI Considerations
-
-### Docker/Container
-
-- Need privileged container for vhci-hcd module
-- Or use VM with full kernel access
-- Alternative: Mock tests without real usbip
-
-### Permissions
-
-- Tests require root/sudo
-- May need special CI runner configuration
-- Consider marking tests as manual/optional
-
-## Future Improvements
-
-1. **Mock USB/IP Client**: Avoid requiring real usbip tools
-2. **Automated Event Verification**: Parse evtest output programmatically
-3. **Performance Tests**: Measure typing latency, throughput
-4. **Stress Tests**: Multiple simultaneous connections, rapid attach/detach
-5. **Compatibility Tests**: Test with different Linux distros/kernels
-
-## References
-
-- **usbip man page**: `man usbip`
-- **evtest**: https://gitlab.freedesktop.org/libevdev/evtest
-- **Linux Input Subsystem**: https://www.kernel.org/doc/html/latest/input/input.html
-- **vhci-hcd**: https://docs.kernel.org/usb/usbip_protocol.html#vhci
+- A real Linux host: `sudo usbip attach`, `vhci-hcd`, `evtest`, `xdotool key Caps_Lock`.
+- `typing_speed_ms` pacing — the paced path spawns a task and is not exercised.
+- `release_all_keys`.
+- Characters outside what `key_name_to_hid` maps; the refusal path (which errors rather than
+  typing a different string) is not asserted.
+- Two hosts attached at once, and therefore the multi-candidate branch of `resolve_handler`.
+- N-key rollover, multimedia keys, and anything outside the boot protocol.

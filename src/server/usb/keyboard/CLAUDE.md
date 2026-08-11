@@ -236,42 +236,60 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 }
 ```
 
-## Current Status: Experimental (USB/IP Integrated)
+## Current status: Experimental, and now actually exercised
 
-### What Works
+### What was broken
 
-- ✅ Protocol registration and discovery
-- ✅ Action/event definitions
-- ✅ HID descriptor builders (device, config, HID report)
-- ✅ Character-to-HID-usage mapping
-- ✅ Server trait implementation (spawn, execute_action)
-- ✅ TCP listener for USB/IP connections
-- ✅ USB/IP server integration using usbip crate
-- ✅ UsbHidKeyboardHandler from usbip crate
-- ✅ Device creation with HID keyboard interface
-- ✅ LLM action execution (type_text, press_key, release_all_keys)
-- ✅ Keyboard event queue (pending_key_events)
+**1. Every action failed at runtime.** Actions demanded `action["connection_id"].as_u64()`, while
+every event reports `connection_id.to_string()` — which is `"conn-2"`, not `2`. A model quoting
+the event's own field back got *"USB keyboard actions require connection_id field in action"*,
+and there was no value it could have sent instead. Every keystroke this protocol was asked for
+was dropped. `connection_id` is optional now and all three forms are accepted (number, numeric
+string, `conn-N`); with one host attached it is inferred, and with several, omitting it is an
+error naming the candidates.
 
-### What's Limited (Known Issues)
+**2. `usb_keyboard_led_status` could never fire.** It was declared, carried the full action
+vocabulary, and had no emit site: a host sets keyboard LEDs with a class `SET_REPORT` on the
+control endpoint, and the crate's `UsbHidKeyboardHandler` never sees output reports.
 
-- ⚠️ **Build Requirement**: Requires libusb-1.0-dev to compile (see Build Requirements above)
-- ⚠️ **press_key_combo**: Not yet implemented (requires custom HID report construction)
-- ⚠️ **LED status events**: Not yet implemented (requires URB output report parsing)
-- ⚠️ **Modifier keys**: Currently limited by UsbHidKeyboardReport::from_ascii()
-- ⚠️ **Special keys**: F-keys, arrow keys not yet supported (ASCII only)
-- ⚠️ **Testing**: Not yet tested with real usbip client
+**3. The crate panics on any control request it does not know.** Its `handle_urb` control arm
+ends in `unimplemented!("hid request {:?}", setup)`, and `handle_urb` runs on a tokio worker
+inside the session task. `GET_PROTOCOL`, `GET_IDLE`, `GET_REPORT` — and the very `SET_REPORT`
+above — would take the connection down with a panic. Pressing Caps Lock sends one.
 
-### Implementation Status
+**4. Key releases were 6 bytes.** The crate answers a release with `vec![0; 6]`. A boot-protocol
+report is **8** bytes (modifier, reserved, six key slots); a short release is a different message
+with the same intent, which a strict HID parser reads as malformed rather than as "all keys up".
 
-**Phase 1 Complete** (USB/IP Integration):
+`handler.rs` (`NetGetKeyboardHandler`) fixes 2, 3 and 4 by wrapping the crate's handler: it keeps
+the pending-report queue and the report descriptor, and takes over endpoint 0 and the interrupt
+IN state machine. Unknown control requests are answered **empty**, not with an error — an error
+aborts the USB/IP session for the whole device, and a host probing an optional request must not
+disconnect the keyboard.
 
-1. ✅ Integrated usbip crate (v0.3)
-2. ✅ Device export using UsbIpServer::new_simulated()
-3. ✅ Descriptor handling via usbip::hid::UsbHidKeyboardHandler
-4. ✅ Endpoint setup (interrupt IN endpoint 0x81)
-5. ✅ URB processing (handled by usbip crate)
-6. ✅ LLM action execution (type_text converts to HID reports)
-7. ⏳ LED reading (deferred to future enhancement)
+### What works
+
+- USB/IP on the accepted socket (`usbip::handler`), so the listen port is whatever the caller
+  asked for and multiple instances coexist.
+- `type_text`, `press_key`, `press_key_combo` (modifiers plus up to six keys in one report),
+  `release_all_keys`.
+- All three events emitted: `usb_keyboard_attached`, `usb_keyboard_led_status`,
+  `usb_keyboard_detached`.
+- LED changes are de-duplicated: an identical repeat raises no event. Hosts re-assert the LED
+  byte routinely (X11 does it periodically), and without this the model is woken by a stream of
+  identical events.
+- `type_text` **refuses** characters the US HID layout cannot produce rather than typing a
+  different string; a partial send is indistinguishable from success.
+- `typing_speed_ms` paces on a spawned task, not `thread::sleep` — `execute_action` is a
+  synchronous trait method on a runtime worker.
+
+### What is not verified
+
+Nothing here has been seen by a kernel HID driver. There is no `vhci-hcd`, no
+`/dev/input/eventX`, no `evtest`; macOS has no USB/IP client, so the E2E tests speak USB/IP
+directly and decode the reports themselves. Also untested: `typing_speed_ms` pacing,
+`release_all_keys`, two hosts attached at once, and anything outside the boot protocol (N-key
+rollover, multimedia keys).
 
 ## Limitations
 

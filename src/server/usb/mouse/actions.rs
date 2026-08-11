@@ -12,6 +12,8 @@ use crate::protocol::EventType;
 #[cfg(feature = "usb-mouse")]
 use crate::server::connection::ConnectionId;
 #[cfg(feature = "usb-mouse")]
+use crate::server::usb::descriptors::{mouse_buttons, MouseReport};
+#[cfg(feature = "usb-mouse")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-mouse")]
 use anyhow::{Context, Result};
@@ -36,7 +38,9 @@ pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
         type_hint: "string".to_string(),
-        description: "Connection ID of the USB/IP session".to_string(),
+        description: "Connection ID of the USB/IP session. Actions may quote it back, but it is \
+                      optional: with one host attached it is inferred."
+            .to_string(),
         required: true,
     }])
     .with_actions(vec![
@@ -61,7 +65,9 @@ pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
         type_hint: "string".to_string(),
-        description: "Connection ID of the USB/IP session".to_string(),
+        description: "Connection ID of the USB/IP session. Actions may quote it back, but it is \
+                      optional: with one host attached it is inferred."
+            .to_string(),
         required: true,
     }])
     .with_no_actions()
@@ -73,16 +79,17 @@ pub struct UsbMouseProtocol {
     /// Map of active connections (for async actions)
     #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
-    /// Map of USB/IP mouse handlers for each connection
-    handlers: Arc<
-        Mutex<
-            HashMap<
-                ConnectionId,
-                Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
-            >,
-        >,
-    >,
+    /// Map of USB/IP mouse handlers for each connection.
+    ///
+    /// A `std::sync::Mutex`, not a tokio one: `execute_action` is synchronous and runs on a
+    /// runtime worker, so reaching an async lock from it would need
+    /// `Handle::current().block_on`, which panics there. No guard is held across an `.await`.
+    handlers: Arc<std::sync::Mutex<HashMap<ConnectionId, SharedHandler>>>,
 }
+
+/// The handler `usbip` holds for one attached host, as this module shares it.
+#[cfg(feature = "usb-mouse")]
+type SharedHandler = Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>;
 
 #[cfg(feature = "usb-mouse")]
 pub struct ConnectionData {
@@ -90,30 +97,138 @@ pub struct ConnectionData {
 }
 
 #[cfg(feature = "usb-mouse")]
+impl Default for UsbMouseProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "usb-mouse")]
 impl UsbMouseProtocol {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
-            handlers: Arc::new(Mutex::new(HashMap::new())),
+            handlers: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
-    /// Store the USB/IP mouse handler for a connection
-    pub async fn set_handler(
-        &self,
-        connection_id: ConnectionId,
-        handler: Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
-    ) {
-        self.handlers.lock().await.insert(connection_id, handler);
+    /// Store the USB/IP mouse handler for a connection.
+    pub async fn set_handler(&self, connection_id: ConnectionId, handler: SharedHandler) {
+        self.lock_handlers().insert(connection_id, handler);
     }
 
-    /// Get the USB/IP mouse handler for a connection
-    #[allow(dead_code)]
-    async fn get_handler(
-        &self,
-        connection_id: ConnectionId,
-    ) -> Option<Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>> {
-        self.handlers.lock().await.get(&connection_id).cloned()
+    /// Forget a connection's handler when its USB/IP session ends.
+    pub async fn remove_handler(&self, connection_id: ConnectionId) {
+        self.lock_handlers().remove(&connection_id);
+    }
+
+    fn lock_handlers(&self) -> std::sync::MutexGuard<'_, HashMap<ConnectionId, SharedHandler>> {
+        self.handlers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Find the handler an action refers to.
+    ///
+    /// `connection_id` is **optional**: with exactly one host attached it is inferred, and with
+    /// several, omitting it is an error that names the candidates. It used to be required *and*
+    /// string-typed, so a model that emitted the id as a number - which they routinely do -
+    /// got "USB mouse actions require 'connection_id'". Both forms are accepted.
+    fn resolve_handler(&self, action: &serde_json::Value) -> Result<SharedHandler> {
+        let handlers = self.lock_handlers();
+
+        // All three forms a model can produce: the number, the number as a string, and the
+        // `conn-N` form the events themselves carry. That last one matters — every event
+        // reports `connection_id.to_string()`, which is `"conn-2"`, not `2`.
+        let requested = action["connection_id"].as_u64().or_else(|| {
+            action["connection_id"].as_str().and_then(|s| {
+                let s = s.trim();
+                s.strip_prefix("conn-").unwrap_or(s).parse::<u64>().ok()
+            })
+        });
+
+        if let Some(id) = requested {
+            let connection_id = ConnectionId::new(id as u32);
+            return handlers.get(&connection_id).cloned().ok_or_else(|| {
+                anyhow::anyhow!("No USB mouse attached on connection {}", connection_id)
+            });
+        }
+
+        match handlers.len() {
+            0 => Err(anyhow::anyhow!(
+                "No USB/IP host is attached to this mouse, so an input report has nowhere to go"
+            )),
+            1 => Ok(handlers.values().next().cloned().expect("len checked")),
+            _ => {
+                let mut ids: Vec<u32> = handlers.keys().map(|c| c.as_u32()).collect();
+                ids.sort_unstable();
+                Err(anyhow::anyhow!(
+                    "{} USB/IP hosts are attached ({:?}); the action must name one with \
+                     'connection_id'",
+                    ids.len(),
+                    ids
+                ))
+            }
+        }
+    }
+
+    /// Queue reports on the handler an action refers to.
+    ///
+    /// The host polls the interrupt IN endpoint every 10ms and takes one report per poll, so a
+    /// sequence of reports paces itself on the wire. Nothing here sleeps.
+    fn queue(&self, action: &serde_json::Value, reports: Vec<MouseReport>) -> Result<usize> {
+        if reports.is_empty() {
+            return Err(anyhow::anyhow!("action produced no mouse reports"));
+        }
+        let handler = self.resolve_handler(action)?;
+        let mut guard = handler
+            .lock()
+            .map_err(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|guard| guard);
+        let mouse = guard
+            .as_any()
+            .downcast_mut::<super::handler::UsbHidMouseHandler>()
+            .context("Handler is not a USB HID mouse handler")?;
+        let count = reports.len();
+        for report in reports {
+            mouse.queue(report);
+        }
+        Ok(count)
+    }
+}
+
+/// Split a movement into steps a single HID report can carry.
+///
+/// A boot-protocol report holds one signed byte per axis, so anything past +/-127 has to become
+/// several reports. The model is not asked to know that: it says "move 400 right" and gets four
+/// reports.
+#[cfg(feature = "usb-mouse")]
+fn split_movement(mut x: i64, mut y: i64) -> Vec<MouseReport> {
+    let mut reports = Vec::new();
+    while x != 0 || y != 0 {
+        let dx = x.clamp(-127, 127);
+        let dy = y.clamp(-127, 127);
+        let mut report = MouseReport::new();
+        report.x = dx as i8;
+        report.y = dy as i8;
+        reports.push(report);
+        x -= dx;
+        y -= dy;
+    }
+    reports
+}
+
+/// Map a button name to its HID report bit.
+#[cfg(feature = "usb-mouse")]
+fn button_bit(name: &str) -> Result<u8> {
+    match name.to_ascii_lowercase().as_str() {
+        "left" => Ok(mouse_buttons::LEFT),
+        "right" => Ok(mouse_buttons::RIGHT),
+        "middle" => Ok(mouse_buttons::MIDDLE),
+        other => Err(anyhow::anyhow!(
+            "unknown mouse button '{}'; expected left, right or middle",
+            other
+        )),
     }
 }
 
@@ -165,7 +280,7 @@ impl Protocol for UsbMouseProtocol {
             .llm_control("LLM controls mouse movement, clicks, and scrolling")
             .e2e_testing("E2E tests using Linux usbip client")
             .privilege_requirement(crate::protocol::metadata::PrivilegeRequirement::None)
-            .notes("Virtual USB HID mouse over USB/IP. A hand-written UsbInterfaceHandler (handler.rs) supplies the HID report descriptor and 4-byte reports, because usbip 0.9 still ships no UsbHidMouseHandler. The tokio 0.3 reactor panic that made this unusable is gone since the usbip 0.9 upgrade (verified: zero 'no reactor running' panics). Not yet exercised against a real Linux usbip client.")
+            .notes("Virtual USB HID mouse over USB/IP. A hand-written UsbInterfaceHandler (handler.rs) supplies the report descriptor and 4-byte reports, because usbip 0.9 still ships no UsbHidMouseHandler. It was written but never wired: handle_connection took the accepted socket as _stream, dropped it, ran no USB/IP session, and parked on sleep(u64::MAX), while every action logged 'not yet implemented' and returned NoAction. All of that is live now, and usb_mouse_detached has an emit site for the first time. move_relative splits movement larger than a report can carry; click and drag emit their own release, so neither sticks; scroll sends one detent per report. move_absolute has no way to know where the pointer is -- a boot-protocol mouse is relative-only -- so it slams into the top-left corner first and moves out from there, which is visible on screen. Exercised against an in-test USB/IP client that decodes the HID reports; never against a real Linux usbip host, so nothing here has been seen by a kernel HID driver.")
             .build()
     }
 
@@ -253,76 +368,172 @@ impl Server for UsbMouseProtocol {
             .as_str()
             .context("Action must have 'type' field")?;
 
-        let _connection_id = action["connection_id"]
-            .as_str()
-            .context("USB mouse actions require 'connection_id' field in action")?;
-
-        // TODO: USB mouse handler integration once usbip crate supports mouse
-        // For now, all actions are stubs that log warnings
-
+        // Every action below used to parse its parameters, log
+        // "not yet implemented - usbip crate lacks mouse support", and return NoAction. The
+        // model was handed a full pointer vocabulary that moved nothing: the server never even
+        // ran a USB/IP session (see mod.rs). They drive handler.rs now.
         match action_type {
             "move_relative" => {
-                let _x = action["x"]
+                let x = action["x"]
                     .as_i64()
-                    .context("move_relative requires 'x' field")? as i8;
-                let _y = action["y"]
+                    .context("move_relative requires 'x' field")?;
+                let y = action["y"]
                     .as_i64()
-                    .context("move_relative requires 'y' field")? as i8;
+                    .context("move_relative requires 'y' field")?;
+                if x == 0 && y == 0 {
+                    return Err(anyhow::anyhow!(
+                        "move_relative with x=0 and y=0 would move nothing"
+                    ));
+                }
 
-                // TODO: USB mouse support not yet implemented in usbip crate
-                // Need to implement UsbHidMouseHandler and UsbHidMouseReport
-                // See keyboard implementation for reference
-                tracing::warn!(
-                    "move_relative not yet implemented - usbip crate lacks mouse support"
+                let reports = split_movement(x, y);
+                let count = self.queue(&action, reports)?;
+                tracing::info!("USB mouse move ({}, {}) as {} report(s)", x, y, count);
+                Ok(ActionResult::NoAction)
+            }
+
+            "move_absolute" => {
+                let x = action["x"]
+                    .as_i64()
+                    .context("move_absolute requires 'x' field")?;
+                let y = action["y"]
+                    .as_i64()
+                    .context("move_absolute requires 'y' field")?;
+                let screen_width = action["screen_width"].as_i64().unwrap_or(1920);
+                let screen_height = action["screen_height"].as_i64().unwrap_or(1080);
+
+                if !(0..=screen_width).contains(&x) || !(0..=screen_height).contains(&y) {
+                    return Err(anyhow::anyhow!(
+                        "move_absolute target ({}, {}) is outside the {}x{} screen",
+                        x,
+                        y,
+                        screen_width,
+                        screen_height
+                    ));
+                }
+
+                // A boot-protocol mouse reports *relative* motion and nothing tells the device
+                // where the pointer currently is. The only way to reach an absolute position is
+                // the one every automation tool uses: slam into the top-left corner, which the
+                // host clamps, and move out from a known origin. It is not silent about the
+                // cost - this is more reports than a relative move, and it visibly moves the
+                // pointer to the corner first.
+                let mut reports = split_movement(-screen_width - 127, -screen_height - 127);
+                reports.extend(split_movement(x, y));
+                let count = self.queue(&action, reports)?;
+                tracing::info!(
+                    "USB mouse move_absolute to ({}, {}) on {}x{} as {} report(s)",
+                    x,
+                    y,
+                    screen_width,
+                    screen_height,
+                    count
                 );
                 Ok(ActionResult::NoAction)
             }
-            "move_absolute" => {
-                let _x = action["x"]
-                    .as_i64()
-                    .context("move_absolute requires 'x' field")?;
-                let _y = action["y"]
-                    .as_i64()
-                    .context("move_absolute requires 'y' field")?;
-                let _screen_width = action["screen_width"].as_i64().unwrap_or(1920);
-                let _screen_height = action["screen_height"].as_i64().unwrap_or(1080);
-                // TODO: Implement absolute positioning (requires tracking current position)
-                tracing::warn!("move_absolute not yet implemented for USB mouse");
-                Ok(ActionResult::NoAction)
-            }
+
             "click" => {
-                let _button = action["button"]
+                let button = action["button"]
                     .as_str()
                     .context("click requires 'button' field")?;
+                let bit = button_bit(button)?;
 
-                // TODO: USB mouse support not yet implemented in usbip crate
-                tracing::warn!("click not yet implemented - usbip crate lacks mouse support");
+                // Press then release. Without the release report the host sees the button as
+                // still held, which turns a click into a stuck drag.
+                let mut press = MouseReport::new();
+                press.buttons = bit;
+                self.queue(&action, vec![press, MouseReport::new()])?;
+                tracing::info!("USB mouse {} click", button);
                 Ok(ActionResult::NoAction)
             }
+
             "scroll" => {
-                let _direction = action["direction"]
+                let direction = action["direction"]
                     .as_str()
                     .context("scroll requires 'direction' field")?;
-                let _amount = action["amount"].as_i64().unwrap_or(1) as i8;
+                let amount = action["amount"].as_i64().unwrap_or(1);
+                if amount <= 0 {
+                    return Err(anyhow::anyhow!("scroll 'amount' must be positive"));
+                }
 
-                // TODO: USB mouse support not yet implemented in usbip crate
-                tracing::warn!("scroll not yet implemented - usbip crate lacks mouse support");
+                let step: i8 = match direction.to_ascii_lowercase().as_str() {
+                    "up" => 1,
+                    "down" => -1,
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "unknown scroll direction '{}'; expected up or down",
+                            other
+                        ))
+                    }
+                };
+
+                // One detent per report: a wheel value of N is not N clicks to every host, and
+                // repeated single detents is what a real wheel produces.
+                let reports: Vec<MouseReport> = (0..amount.min(64))
+                    .map(|_| {
+                        let mut r = MouseReport::new();
+                        r.wheel = step;
+                        r
+                    })
+                    .collect();
+                let count = self.queue(&action, reports)?;
+                tracing::info!("USB mouse scroll {} x{}", direction, count);
                 Ok(ActionResult::NoAction)
             }
+
             "drag" => {
-                let _start_x = action["start_x"]
+                let start_x = action["start_x"]
                     .as_i64()
                     .context("drag requires 'start_x'")?;
-                let _start_y = action["start_y"]
+                let start_y = action["start_y"]
                     .as_i64()
                     .context("drag requires 'start_y'")?;
-                let _end_x = action["end_x"].as_i64().context("drag requires 'end_x'")?;
-                let _end_y = action["end_y"].as_i64().context("drag requires 'end_y'")?;
-                let _duration_ms = action["duration_ms"].as_i64().unwrap_or(500);
-                // TODO: Implement drag (requires position tracking + smooth movement)
-                tracing::warn!("drag not yet implemented for USB mouse");
+                let end_x = action["end_x"].as_i64().context("drag requires 'end_x'")?;
+                let end_y = action["end_y"].as_i64().context("drag requires 'end_y'")?;
+                let duration_ms = action["duration_ms"].as_i64().unwrap_or(500).max(0);
+                let button = action["button"].as_str().unwrap_or("left");
+                let bit = button_bit(button)?;
+
+                // The host polls every 10ms and takes one report per poll, so the number of
+                // steps *is* the duration. Nothing sleeps: `execute_action` is synchronous and
+                // runs on a runtime worker, where a blocking sleep would stall it.
+                let steps = (duration_ms / 10).clamp(1, 64);
+                let (dx, dy) = (end_x - start_x, end_y - start_y);
+
+                let mut reports = Vec::new();
+                let mut press = MouseReport::new();
+                press.buttons = bit;
+                reports.push(press);
+
+                let mut moved_x = 0i64;
+                let mut moved_y = 0i64;
+                for step in 1..=steps {
+                    let target_x = dx * step / steps;
+                    let target_y = dy * step / steps;
+                    for mut report in split_movement(target_x - moved_x, target_y - moved_y) {
+                        // Keep the button held for every intermediate report, or the host sees
+                        // the drag end at the first movement.
+                        report.buttons = bit;
+                        reports.push(report);
+                    }
+                    moved_x = target_x;
+                    moved_y = target_y;
+                }
+                reports.push(MouseReport::new()); // release
+
+                let count = self.queue(&action, reports)?;
+                tracing::info!(
+                    "USB mouse drag ({}, {}) -> ({}, {}) with {} held, {} report(s)",
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    button,
+                    count
+                );
                 Ok(ActionResult::NoAction)
             }
+
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
         }
